@@ -108,6 +108,16 @@ export function ResultsModal({
 
         {/* Footer Actions */}
         <div className="px-6 py-4 border-t border-white/10 flex items-center justify-end gap-3 bg-[#0d1118]">
+          <a
+            href="/"
+            className="px-4 py-2.5 rounded bg-transparent hover:bg-sky-500/10 border border-sky-500/30 hover:border-sky-400 text-xs font-semibold text-sky-400 cursor-pointer flex items-center gap-1.5 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+              <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </svg>
+            Back to Hub
+          </a>
           <button
             type="button"
             onClick={onReturnToTitle}

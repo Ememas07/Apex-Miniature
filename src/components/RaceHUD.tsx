@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Camera, Volume2, VolumeX, Pause, Wrench } from 'lucide-react';
+import { Camera, Volume2, VolumeX, Pause, Wrench, Home } from 'lucide-react';
 import { CAR_CLASSES, getCarById } from '../game/cars';
 import { formatLapTime } from '../game/physics';
 import { compileTrack, getTrackById } from '../game/tracks';
@@ -212,6 +212,15 @@ export function RaceHUD({
             >
               <Pause className="w-4 h-4" />
             </button>
+            <a
+              href="/"
+              tabIndex={-1}
+              aria-label="Return to Hub"
+              title="Return to Hub"
+              className="p-2 rounded bg-[#0b0e13]/90 border border-sky-500/30 hover:border-sky-400 text-sky-400 hover:text-sky-300 cursor-pointer flex items-center justify-center transition-colors"
+            >
+              <Home className="w-4 h-4" />
+            </a>
           </div>
 
           {/* Track Minimap */}
