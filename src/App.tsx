@@ -1,0 +1,349 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { GarageModal } from './components/GarageModal';
+import { PauseModal } from './components/PauseModal';
+import { RaceHUD } from './components/RaceHUD';
+import { RaceSetupModal } from './components/RaceSetupModal';
+import { ResultsModal } from './components/ResultsModal';
+import { TitleOverlay } from './components/TitleOverlay';
+import { CAR_CLASSES, CARS, getCarById } from './game/cars';
+import { MultiplayerClient } from './game/multiplayer';
+import { computeUpdatedAdaptiveBoost, formatLapTime } from './game/physics';
+import { getTrackById } from './game/tracks';
+import {
+  CameraMode,
+  CarClassId,
+  GamePhase,
+  HudSnapshot,
+  LiveryConfig,
+  PitStrategy,
+  RaceConfig,
+  RoomState,
+} from './game/types';
+import { RaceViewport } from './three/RaceViewport';
+
+const INITIAL_CAR = CARS[0]; // Ferrari 499P
+
+const INITIAL_CONFIG: RaceConfig = {
+  trackId: 'spa-francorchamps',
+  activeClasses: [CarClassId.HYPERCAR_GTP, CarClassId.LMP2, CarClassId.GT3],
+  playerCarId: INITIAL_CAR.id,
+  playerLivery: { ...INITIAL_CAR.defaultLivery },
+  gridSize: 12,
+  totalLaps: 5,
+  weather: 'dry',
+  startingCompound: 'medium',
+  qualifyingEnabled: false,
+  aiDifficulty: 'Pro',
+  aiAdaptiveBoost: 0,
+};
+
+export default function App() {
+  const [phase, setPhase] = useState<GamePhase>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('autostart') === '1' ? 'playing' : 'title';
+  });
+  const [activePrePausePhase, setActivePrePausePhase] = useState<'playing' | 'qualifying'>('playing');
+  const [raceConfig, setRaceConfig] = useState<RaceConfig>(INITIAL_CONFIG);
+  const [runNonce, setRunNonce] = useState<number>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('autostart') === '1' ? 1 : 0;
+  });
+
+  const [garageOpen, setGarageOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [cameraMode, setCameraMode] = useState<CameraMode>('chase-34');
+  const [muted, setMuted] = useState(false);
+  const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
+    serviceType: 'full-service',
+    nextCompound: 'medium',
+  });
+
+  const [hud, setHud] = useState<HudSnapshot | null>(null);
+  const [finalSnapshot, setFinalSnapshot] = useState<HudSnapshot | null>(null);
+  const [qualiBanner, setQualiBanner] = useState<{ time: number; gridPos: number } | null>(null);
+
+  const mpClientRef = useRef<MultiplayerClient | null>(null);
+  if (!mpClientRef.current) {
+    mpClientRef.current = new MultiplayerClient();
+  }
+  const [room, setRoom] = useState<RoomState | null>(null);
+  const [mpError, setMpError] = useState<string | null>(null);
+
+  // Sync document.body.dataset.state
+  useEffect(() => {
+    document.body.dataset.state = phase === 'qualifying' ? 'playing' : phase;
+  }, [phase]);
+
+  // Subscribe to Multiplayer events
+  useEffect(() => {
+    const mp = mpClientRef.current!;
+    mp.onRoomUpdate = (nextRoom) => {
+      setRoom(nextRoom);
+      setMpError(null);
+      if (nextRoom?.config) {
+        setRaceConfig((prev) => ({ ...prev, ...nextRoom.config }));
+      }
+    };
+    mp.onRaceStart = (startedRoom) => {
+      setRoom(startedRoom);
+      setSetupOpen(false);
+      setGarageOpen(false);
+      setFinalSnapshot(null);
+      setQualiBanner(null);
+      setRunNonce((n) => n + 1);
+      setPhase(raceConfig.qualifyingEnabled ? 'qualifying' : 'playing');
+    };
+    mp.onError = (msg) => setMpError(msg);
+  }, [raceConfig.qualifyingEnabled]);
+
+  const handleStartSession = useCallback(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    setGarageOpen(false);
+    setSetupOpen(false);
+    setFinalSnapshot(null);
+    setQualiBanner(null);
+
+    if (room && room.hostId === mpClientRef.current?.peerId) {
+      mpClientRef.current.startRace();
+    }
+    const targetPhase = raceConfig.qualifyingEnabled ? 'qualifying' : 'playing';
+    setActivePrePausePhase(targetPhase);
+    setRunNonce((n) => n + 1);
+    setPhase(targetPhase);
+  }, [raceConfig.qualifyingEnabled, room]);
+
+  // Enter / Space shortcut on Title screen
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (phase !== 'title' || garageOpen || setupOpen) return;
+      if (e.code === 'Enter' || e.code === 'Space') {
+        e.preventDefault();
+        handleStartSession();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [phase, garageOpen, setupOpen, handleStartSession]);
+
+  const handleTogglePause = useCallback(() => {
+    setPhase((cur) => {
+      if (cur === 'playing' || cur === 'qualifying') {
+        setActivePrePausePhase(cur);
+        return 'paused';
+      }
+      if (cur === 'paused') {
+        return activePrePausePhase;
+      }
+      return cur;
+    });
+  }, [activePrePausePhase]);
+
+  const handleCycleCamera = useCallback(() => {
+    setCameraMode((prev) =>
+      prev === 'chase-34' ? 'high-chase' : prev === 'high-chase' ? 'isometric' : 'chase-34',
+    );
+  }, []);
+
+  const handleToggleMute = useCallback(() => {
+    setMuted((m) => !m);
+  }, []);
+
+  const handleRaceFinish = useCallback(
+    (snapshot: HudSnapshot) => {
+      setFinalSnapshot(snapshot);
+      const playerRow = snapshot.standings.find((s) => s.isPlayer);
+      const track = getTrackById(raceConfig.trackId);
+      const car = getCarById(raceConfig.playerCarId);
+      const nextBoost = computeUpdatedAdaptiveBoost(
+        raceConfig.aiAdaptiveBoost,
+        playerRow?.bestLapTime ?? null,
+        track.targetLapSeconds,
+        CAR_CLASSES[car.classId].basePaceIndex,
+      );
+      setRaceConfig((prev) => ({ ...prev, aiAdaptiveBoost: nextBoost }));
+      setPhase('gameover');
+    },
+    [raceConfig.aiAdaptiveBoost, raceConfig.playerCarId, raceConfig.trackId],
+  );
+
+  const handleQualifyingFinish = useCallback((qualiTime: number, gridPos: number) => {
+    setQualiBanner({ time: qualiTime, gridPos });
+  }, []);
+
+  const handleLaunchRaceAfterQuali = useCallback(() => {
+    setQualiBanner(null);
+    setActivePrePausePhase('playing');
+    setRunNonce((n) => n + 1);
+    setPhase('playing');
+  }, []);
+
+  const handleUpdateConfig = (patch: Partial<RaceConfig>) => {
+    setRaceConfig((prev) => {
+      const next = { ...prev, ...patch };
+      if (room && room.hostId === mpClientRef.current?.peerId) {
+        mpClientRef.current.updateConfig(patch);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectCar = (carId: string, resetLivery: LiveryConfig) => {
+    const car = getCarById(carId);
+    setRaceConfig((prev) => {
+      const classes = prev.activeClasses.includes(car.classId)
+        ? prev.activeClasses
+        : [car.classId, ...prev.activeClasses].slice(0, 3);
+      return {
+        ...prev,
+        playerCarId: carId,
+        playerLivery: resetLivery,
+        activeClasses: classes,
+      };
+    });
+    mpClientRef.current?.updatePeer({ carId, livery: resetLivery });
+  };
+
+  const handleChangeLivery = (livery: LiveryConfig) => {
+    setRaceConfig((prev) => ({ ...prev, playerLivery: livery }));
+    mpClientRef.current?.updatePeer({ livery });
+  };
+
+  const track = getTrackById(raceConfig.trackId);
+
+  return (
+    <main className="relative w-full h-full overflow-hidden bg-[#0b0e13]">
+      {/* Isolated 3D Canvas Viewport */}
+      <RaceViewport
+        phase={phase}
+        raceConfig={raceConfig}
+        cameraMode={cameraMode}
+        muted={muted}
+        pitStrategy={pitStrategy}
+        runNonce={runNonce}
+        mpClient={mpClientRef.current}
+        roomPeers={room?.peers ?? []}
+        onHudUpdate={setHud}
+        onRaceFinish={handleRaceFinish}
+        onQualifyingFinish={handleQualifyingFinish}
+        onTogglePause={handleTogglePause}
+        onCycleCamera={handleCycleCamera}
+        onToggleMute={handleToggleMute}
+      />
+
+      {/* Title Screen */}
+      {phase === 'title' && !garageOpen && !setupOpen && (
+        <TitleOverlay
+          raceConfig={raceConfig}
+          roomCode={room?.code ?? null}
+          onStartRace={handleStartSession}
+          onOpenGarage={() => setGarageOpen(true)}
+          onOpenSetup={() => setSetupOpen(true)}
+        />
+      )}
+
+      {/* Garage & Livery Customizer */}
+      {garageOpen && (
+        <GarageModal
+          selectedCarId={raceConfig.playerCarId}
+          livery={raceConfig.playerLivery}
+          onSelectCar={handleSelectCar}
+          onChangeLivery={handleChangeLivery}
+          onClose={() => setGarageOpen(false)}
+        />
+      )}
+
+      {/* Track Catalog, Multi-Class Rules & Multiplayer Setup */}
+      {setupOpen && (
+        <RaceSetupModal
+          config={raceConfig}
+          room={room}
+          mpError={mpError}
+          onUpdateConfig={handleUpdateConfig}
+          onCreateRoom={(name) =>
+            mpClientRef.current?.createRoom(name, raceConfig.playerCarId, raceConfig.playerLivery, raceConfig)
+          }
+          onJoinRoom={(code, name) =>
+            mpClientRef.current?.joinRoom(code, name, raceConfig.playerCarId, raceConfig.playerLivery)
+          }
+          onLeaveRoom={() => mpClientRef.current?.leaveRoom()}
+          onStartFromLobby={handleStartSession}
+          onClose={() => setSetupOpen(false)}
+        />
+      )}
+
+      {/* Active Race / Qualifying HUD */}
+      {(phase === 'playing' || phase === 'qualifying') && hud && (
+        <RaceHUD
+          hud={hud}
+          trackId={raceConfig.trackId}
+          playerCarId={raceConfig.playerCarId}
+          muted={muted}
+          onChangePitStrategy={setPitStrategy}
+          onCycleCamera={handleCycleCamera}
+          onToggleMute={handleToggleMute}
+          onTogglePause={handleTogglePause}
+        />
+      )}
+
+      {/* Qualifying Hotlap Complete Modal */}
+      {phase === 'qualifying' && qualiBanner && (
+        <div
+          data-testid="quali-result-modal"
+          role="dialog"
+          aria-label="Qualifying Result"
+          className="fixed inset-0 z-30 bg-black/75 flex items-center justify-center p-4"
+        >
+          <div className="w-full max-w-md bg-[#11151d] border border-white/15 rounded-lg p-6 text-center space-y-4 shadow-2xl">
+            <div className="text-xs text-slate-400 uppercase tracking-widest">Qualifying Complete</div>
+            <div className="text-4xl font-display font-extrabold text-white tabular-nums">
+              P{qualiBanner.gridPos} Grid Start
+            </div>
+            <div className="font-telemetry text-lg text-emerald-400">
+              Hotlap: {formatLapTime(qualiBanner.time)}
+            </div>
+            <button
+              type="button"
+              data-start="true"
+              onClick={handleLaunchRaceAfterQuali}
+              className="w-full py-3 rounded bg-red-600 hover:bg-red-500 text-sm font-display font-bold text-white cursor-pointer"
+            >
+              Start Race from P{qualiBanner.gridPos}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Pause Modal */}
+      {phase === 'paused' && (
+        <PauseModal
+          onResume={handleTogglePause}
+          onRestart={() => {
+            setRunNonce((n) => n + 1);
+            setPhase(activePrePausePhase);
+          }}
+          onReturnToTitle={() => {
+            setFinalSnapshot(null);
+            setQualiBanner(null);
+            setPhase('title');
+          }}
+        />
+      )}
+
+      {/* Post-Race Results Modal */}
+      {phase === 'gameover' && finalSnapshot && (
+        <ResultsModal
+          snapshot={finalSnapshot}
+          trackName={track.name}
+          adaptiveBoost={raceConfig.aiAdaptiveBoost}
+          onRaceAgain={handleStartSession}
+          onReturnToTitle={() => {
+            setFinalSnapshot(null);
+            setPhase('title');
+          }}
+        />
+      )}
+    </main>
+  );
+}

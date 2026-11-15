@@ -1,0 +1,6 @@
+{
+  "name": "Apex Miniature",
+  "description": "3D die-cast miniature sim-cade motorsport racer with multi-class endurance, F1 eras, pit strategy, interactive livery studio, and multiplayer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
