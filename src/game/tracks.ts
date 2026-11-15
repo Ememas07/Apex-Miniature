@@ -1,4 +1,5 @@
 import { SceneryTheme, TrackRegion, TrackSpec, TrackWaypoint } from './types';
+import { getCustomTrackById } from './customTracks';
 
 function pts(coords: Array<[number, number, number?]>): TrackWaypoint[] {
   return coords.map(([x, z, y = 0]) => ({ x, y, z }));
@@ -7,6 +8,7 @@ function pts(coords: Array<[number, number, number?]>): TrackWaypoint[] {
 /**
  * Generates a unique, non-intersecting closed circuit silhouette from a deterministic seed
  * and corner profile for catalog circuits outside the 10 flagship bespoke circuits.
+ * Coordinates are scaled so standard circuits average ~1800m length and 38-52s lap time.
  */
 function generateCircuitShape(
   seed: number,
@@ -16,22 +18,24 @@ function generateCircuitShape(
   chicanes: number,
   elevationAmp: number,
 ): TrackWaypoint[] {
-  const count = 20;
+  const scaledRx = rx * 1.52;
+  const scaledRz = rz * 1.52;
+  const count = 22;
   const out: TrackWaypoint[] = [];
   for (let i = 0; i < count; i++) {
     const t = (i / count) * Math.PI * 2;
-    // Keep indices 0, 1, 2 and count-1 aligned on a clean pit straight along z = -rz * 0.9
+    // Keep indices 0, 1, 2 and count-1 aligned on a clean pit straight along z = -scaledRz * 0.9
     if (i === 0 || i === 1 || i === count - 1) {
-      const straightX = i === count - 1 ? -rx * 0.35 : i === 0 ? 0 : rx * 0.35;
-      out.push({ x: straightX, y: 0, z: -rz * 0.88 });
+      const straightX = i === count - 1 ? -scaledRx * 0.35 : i === 0 ? 0 : scaledRx * 0.35;
+      out.push({ x: straightX, y: 0, z: -scaledRz * 0.88 });
       continue;
     }
     const harmonic1 = Math.sin(t * lobes + seed * 1.3) * 0.16;
     const harmonic2 = Math.cos(t * (lobes + 1) - seed * 0.7) * (0.08 + chicanes * 0.018);
     const rScale = 0.86 + harmonic1 + harmonic2;
-    const x = Math.sin(t) * rx * rScale;
-    const z = -Math.cos(t) * rz * rScale;
-    const y = Math.max(0, Math.sin(t * 2 + seed) * elevationAmp);
+    const x = Math.sin(t) * scaledRx * rScale;
+    const z = -Math.cos(t) * scaledRz * rScale;
+    const y = Math.max(0, Math.sin(t * 2 + seed) * elevationAmp * 1.4);
     out.push({
       x: Math.round(x * 10) / 10,
       y: Math.round(y * 10) / 10,
@@ -56,26 +60,29 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#e11d48',
     kerbSecondary: '#facc15',
     trackWidth: 18,
-    targetLapSeconds: 42,
+    targetLapSeconds: 70, // Authentic endurance/F1 lap scaling (~65-75s)
     corners: 19,
-    // La Source -> Eau Rouge/Raidillon climb -> Kemmel Straight -> Les Combes -> Pouhon -> Blanchimont -> Bus Stop
+    // Authentic Spa: Pit Straight -> La Source Hairpin -> Eau Rouge/Raidillon Climb -> Kemmel Straight -> Les Combes -> Bruxelles -> Pouhon -> Blanchimont -> Bus Stop
     waypoints: pts([
-      [-55, -170, 0],
-      [45, -170, 0],     // Pit straight
-      [115, -160, 0],    // La Source hairpin approach
-      [135, -120, 1],    // La Source exit
-      [155, -55, 6],     // Eau Rouge compression -> Raidillon climb
-      [185, 25, 16],     // Kemmel Straight top
-      [215, 125, 14],    // Les Combes braking
-      [165, 165, 11],    // Malmedy
-      [95, 130, 7],      // Bruxelles hairpin
-      [40, 185, 4],      // Pouhon double-left
-      [-45, 190, 3],     // Campus / Stavelot
-      [-120, 135, 2],    // Paul Frere
-      [-165, 45, 2],     // Blanchimont sweeping kink
-      [-145, -70, 1],    // Blanchimont exit
-      [-120, -135, 0],   // Bus Stop chicane entry
-      [-95, -165, 0],    // Bus Stop exit
+      [-140, -425, 0],   // Start / Finish line
+      [105, -425, 0],    // Pit straight
+      [280, -400, 1],    // La Source braking zone
+      [335, -295, 2],    // La Source hairpin apex & exit
+      [385, -135, 12],   // Downhill plunge to Eau Rouge compression
+      [455, 65, 30],     // Raidillon uphill climb crest (+30m)
+      [530, 305, 26],    // Kemmel Straight flat-out high speed
+      [495, 410, 22],    // Les Combes right-left chicane entry
+      [400, 425, 20],    // Les Combes exit / Malmedy
+      [235, 335, 16],    // Bruxelles downhill hairpin
+      [165, 375, 12],    // Speaker's Corner
+      [90, 460, 9],      // Double-left Pouhon entry
+      [-110, 470, 7],    // Pouhon exit
+      [-230, 390, 5],    // Pif-Paf / Fagnes chicane
+      [-305, 330, 5],    // Campus / Stavelot
+      [-410, 120, 3],    // Blanchimont fast sweeping entry
+      [-375, -170, 2],   // Blanchimont exit
+      [-295, -340, 0],   // Bus Stop chicane entry braking
+      [-230, -410, 0],   // Bus Stop chicane exit onto pit straight
     ]),
   },
   {
@@ -91,22 +98,23 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#facc15',
     kerbSecondary: '#2563eb',
     trackWidth: 19,
-    targetLapSeconds: 38,
+    targetLapSeconds: 46,
     corners: 12,
+    // Authentic Daytona Road: Tri-oval Front Stretch -> Infield Turn 1-2 -> International Horseshoe -> West Horseshoe -> Oval Banking Turns 1-2 -> Backstretch -> Le Mans Bus Stop -> Oval Banking Turns 3-4
     waypoints: pts([
-      [-70, -165, 0],
-      [60, -165, 0],     // Tri-oval pit straight
-      [150, -145, 3],    // Turn 1 banking entry
-      [160, -85, 1],     // Turn 1 infield dive
-      [95, -45, 0],      // International Horseshoe
-      [115, 30, 0],      // Turn 5 kink
-      [55, 75, 0],       // West Horseshoe
-      [-20, 45, 0],      // Infield exit onto NASCAR 1-2
-      [-95, 135, 5],     // High-speed banking
-      [-175, 95, 6],     // Backstretch approach
-      [-190, -15, 4],    // Le Mans Bus Stop chicane
-      [-170, -110, 5],   // NASCAR Turn 3-4 banking
-      [-135, -155, 2],   // Pit entry chute
+      [-110, -265, 0],
+      [95, -265, 0],     // Tri-oval front stretch
+      [240, -230, 4],    // Turn 1 banking entry
+      [255, -135, 1],    // Infield dive
+      [150, -70, 0],     // International Horseshoe hairpin
+      [185, 50, 0],      // Turn 5 dogleg
+      [90, 120, 0],      // West Horseshoe
+      [-30, 70, 0],      // Infield exit
+      [-150, 215, 7],    // NASCAR Oval Banking Turns 1-2!
+      [-280, 150, 7],    // Oval Superstretch flat out
+      [-305, -25, 5],    // Le Mans Bus Stop Chicane
+      [-270, -175, 7],   // NASCAR Oval Banking Turns 3-4!
+      [-215, -250, 3],   // Tri-oval chute
     ]),
   },
   {
@@ -122,21 +130,22 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#dc2626',
     kerbSecondary: '#f8fafc',
     trackWidth: 16.5,
-    targetLapSeconds: 33,
+    targetLapSeconds: 36,
     corners: 11,
+    // Authentic Laguna Seca: Front Straight -> Andretti Hairpin -> Turn 3-4 -> Uphill Turn 5-6 -> Rahal Straight Crest -> THE CORKSCREW Plunge (-17m drop) -> Rainey Curve -> Turn 10 -> Turn 11 Hairpin
     waypoints: pts([
-      [-55, -145, 0],
-      [55, -145, 0],     // Front straight
-      [130, -125, 1],    // Andretti Hairpin
-      [105, -50, 3],     // Turn 3
-      [135, 20, 5],      // Turn 4
-      [95, 95, 10],      // Turn 5 uphill
-      [25, 155, 18],     // Rahal Straight crest
-      [-45, 150, 17],    // The Corkscrew entry!
-      [-70, 95, 7],      // Corkscrew plunge
-      [-135, 55, 4],     // Rainey Curve
-      [-155, -30, 2],    // Turn 10
-      [-130, -115, 0],   // Turn 11 hairpin
+      [-85, -225, 0],
+      [85, -225, 0],     // Front straight
+      [205, -195, 2],    // Andretti Hairpin
+      [165, -80, 4],     // Turn 3
+      [215, 30, 7],      // Turn 4
+      [150, 150, 14],    // Turn 5 uphill sweep
+      [40, 245, 24],     // Rahal Straight steep uphill crest (+24m)
+      [-70, 235, 22],    // The Corkscrew blind turn entry (+22m)
+      [-110, 150, 7],    // Violent Corkscrew plunge drop (plunges down to +7m!)
+      [-215, 85, 5],     // Rainey Curve fast left
+      [-245, -45, 3],    // Turn 10 fast sweep
+      [-205, -180, 0],   // Turn 11 90-degree hairpin onto front straight
     ]),
   },
   {
@@ -152,24 +161,27 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#2563eb',
     kerbSecondary: '#facc15',
     trackWidth: 18.5,
-    targetLapSeconds: 48,
+    targetLapSeconds: 72, // Authentic 65-75s scaling for 24h classic
     corners: 21,
+    // Authentic Le Mans: Pit Straight -> Dunlop Curve & Chicane -> Tertre Rouge -> Mulsanne Straight (Chicane 1 & 2) -> Mulsanne Corner -> Indianapolis -> Arnage -> Porsche Curves -> Maison Blanche -> Ford Chicanes
     waypoints: pts([
-      [-65, -185, 0],
-      [65, -185, 0],     // Pit straight
-      [145, -170, 2],    // Dunlop Curve
-      [175, -110, 4],    // Dunlop Chicane
-      [165, -35, 1],     // Tertre Rouge
-      [215, 70, 0],      // Mulsanne Straight 1
-      [195, 155, 0],     // Forza Chicane
-      [135, 210, 0],     // Mulsanne Straight 2
-      [40, 225, 0],      // Mulsanne Corner
-      [-45, 195, 1],     // Indianapolis
-      [-115, 165, 1],    // Arnage
-      [-155, 90, 2],     // Porsche Curves entry
-      [-185, 15, 2],     // Porsche Curves sweep
-      [-160, -75, 1],    // Karting / Corvette
-      [-140, -145, 0],   // Ford Chicanes
+      [-165, -470, 0],
+      [165, -470, 0],    // Pit straight
+      [365, -430, 5],    // Dunlop Curve right
+      [440, -275, 8],    // Dunlop Chicane over the bridge hill
+      [418, -90, 2],     // Tertre Rouge right-hander
+      [540, 175, 0],     // Mulsanne Straight section 1
+      [495, 390, 0],     // First Mulsanne Chicane (Forza)
+      [340, 530, 0],     // Mulsanne Straight section 2
+      [260, 545, 0],     // Second Mulsanne Chicane (Michelin)
+      [100, 565, 0],     // Mulsanne Corner 90-degree right
+      [-120, 495, 2],    // Blast to Indianapolis
+      [-290, 410, 2],    // Indianapolis bank & Arnage slow right
+      [-390, 230, 5],    // Approach to Porsche Curves
+      [-460, 35, 5],     // Porsche Curves sweeping esses
+      [-400, -190, 2],   // Maison Blanche / Corvette corner
+      [-345, -370, 0],   // Ford Chicanes double-chicane entry
+      [-245, -450, 0],   // Ford Chicanes exit
     ]),
   },
   {
@@ -185,21 +197,22 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#16a34a',
     kerbSecondary: '#ffffff',
     trackWidth: 18,
-    targetLapSeconds: 34,
+    targetLapSeconds: 40,
     corners: 11,
+    // Authentic Monza: Rettifilo Straight -> Variante del Rettifilo Chicane -> Curva Grande -> Variante della Roggia -> Lesmo 1 & 2 -> Curva del Serraglio -> Variante Ascari -> Backstraight -> Curva Parabolica / Alboreto
     waypoints: pts([
-      [-70, -155, 0],
-      [70, -155, 0],     // Rettifilo straight
-      [135, -145, 0],    // Prima Variante chicane
-      [165, -80, 0],     // Curva Grande
-      [145, 35, 0],      // Variante della Roggia
-      [115, 130, 1],     // Lesmo 1
-      [45, 155, 1],      // Lesmo 2
-      [-45, 130, 0],     // Serraglio straight
-      [-115, 150, 0],    // Variante Ascari
-      [-165, 55, 0],     // Back straight
-      [-170, -75, 0],    // Parabolica / Alboreto entry
-      [-130, -140, 0],   // Parabolica exit
+      [-110, -260, 0],
+      [110, -260, 0],    // Rettifilo straight
+      [215, -245, 0],    // Variante del Rettifilo chicane
+      [265, -135, 0],    // Curva Grande sweeping right
+      [230, 55, 0],      // Variante della Roggia chicane
+      [185, 210, 2],     // Curva di Lesmo 1
+      [75, 250, 2],      // Curva di Lesmo 2
+      [-75, 210, 0],     // Curva del Serraglio straight
+      [-185, 240, 0],    // Variante Ascari fast chicane
+      [-265, 90, 0],     // Rettifilo back straight
+      [-275, -120, 0],   // Curva Parabolica / Alboreto long sweeper
+      [-210, -225, 0],   // Parabolica exit
     ]),
   },
   {
@@ -215,23 +228,24 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#dc2626',
     kerbSecondary: '#f8fafc',
     trackWidth: 18.5,
-    targetLapSeconds: 39,
+    targetLapSeconds: 46,
     corners: 18,
+    // Authentic Silverstone: Hamilton Straight -> Abbey & Farm -> Village / Loop -> Wellington Straight -> Brooklands / Luffield -> Copse -> Maggotts / Becketts / Chapel -> Hangar Straight -> Stowe -> Vale & Club
     waypoints: pts([
-      [-60, -165, 0],
-      [60, -165, 0],     // Hamilton Straight
-      [135, -150, 0],    // Abbey
-      [170, -90, 0],     // Village / The Loop
-      [145, -20, 0],     // Wellington Straight
-      [175, 65, 0],      // Brooklands / Luffield
-      [115, 135, 1],     // Copse
-      [35, 165, 2],      // Maggotts
-      [-25, 125, 2],     // Becketts
-      [-75, 170, 1],     // Hangar Straight
-      [-155, 130, 0],    // Stowe
-      [-175, 35, 0],     // Vale
-      [-150, -85, 0],    // Club corner
-      [-115, -150, 0],
+      [-100, -265, 0],
+      [100, -265, 0],    // Hamilton Straight
+      [220, -240, 0],    // Abbey
+      [275, -145, 0],    // Village / The Loop
+      [235, -30, 0],     // Wellington Straight
+      [280, 105, 0],     // Brooklands / Luffield
+      [185, 215, 2],     // Copse
+      [55, 265, 3],      // Maggotts
+      [-40, 200, 3],     // Becketts & Chapel
+      [-120, 270, 2],    // Hangar Straight
+      [-250, 210, 0],    // Stowe
+      [-280, 55, 0],     // Vale
+      [-240, -135, 0],   // Club corner
+      [-185, -240, 0],
     ]),
   },
   {
@@ -247,24 +261,24 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#dc2626',
     kerbSecondary: '#f8fafc',
     trackWidth: 17.5,
-    targetLapSeconds: 41,
+    targetLapSeconds: 48,
     corners: 18,
-    // Non-intersecting Suzuka-inspired technical flow preserving iconic S-curves, Degner, Hairpin, Spoon, 130R, Casio Triangle
+    // Authentic Suzuka: Front Straight -> First Turn 1-2 -> The Esses (S-Curves 3-4-5-6) -> Dunlop Curve -> Degner 1-2 -> Hairpin -> 200R -> Spoon Curve -> West Straight -> 130R -> Casio Triangle
     waypoints: pts([
-      [-60, -165, 0],
-      [60, -165, 0],     // Front straight
-      [140, -145, 1],    // Turn 1-2
-      [170, -70, 2],     // S-Curves 1
-      [135, -15, 3],     // S-Curves 2
-      [175, 55, 4],      // Dunlop Curve
-      [145, 130, 3],     // Degner 1-2
-      [60, 155, 1],      // Hairpin
-      [-10, 120, 2],     // 200R sweep
-      [-75, 175, 3],     // Spoon Curve
-      [-160, 135, 4],    // West straight
-      [-185, 25, 2],     // 130R flat-out kink
-      [-160, -85, 1],    // Casio Triangle chicane
-      [-125, -145, 0],
+      [-100, -270, 0],
+      [100, -270, 0],    // Front straight
+      [225, -235, 2],    // Turns 1-2 fast right
+      [275, -115, 3],    // The S-Curves 1
+      [215, -25, 5],     // The S-Curves 2
+      [280, 90, 6],      // Dunlop Curve long uphill left
+      [230, 210, 5],     // Degner 1 and 2
+      [95, 250, 2],      // Hairpin slow turn 11
+      [-15, 195, 3],     // 200R sweeping curve
+      [-120, 280, 4],    // Spoon Curve double-left
+      [-255, 215, 5],    // West Straight high speed
+      [-295, 40, 3],     // 130R legendary flat-out kink
+      [-255, -135, 1],   // Casio Triangle chicane
+      [-200, -230, 0],   // Casio Triangle exit
     ]),
   },
   {
@@ -280,23 +294,24 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#ef4444',
     kerbSecondary: '#ffffff',
     trackWidth: 14.5,
-    targetLapSeconds: 36,
+    targetLapSeconds: 38,
     corners: 19,
+    // Authentic Monaco: Boulevard Albert 1er -> Sainte-Devote -> Beau Rivage Climb -> Casino Square -> Mirabeau -> Fairmont Hairpin -> Portier -> Tunnel -> Nouvelle Chicane -> Tabac -> Swimming Pool -> La Rascasse -> Anthony Noghes
     waypoints: pts([
-      [-55, -145, 0],
-      [55, -145, 0],     // Boulevard Albert 1er
-      [120, -135, 3],    // Sainte Devote
-      [145, -75, 10],    // Beau Rivage climb
-      [155, 5, 12],      // Massenet / Casino Square
-      [120, 70, 9],      // Mirabeau
-      [145, 125, 5],     // Fairmont Hairpin
-      [80, 150, 2],      // Portier
-      [0, 145, 1],       // Tunnel fast kink
-      [-85, 140, 0],     // Nouvelle Chicane
-      [-135, 85, 0],     // Tabac
-      [-155, 10, 0],     // Swimming Pool S-chicane
-      [-140, -75, 0],    // La Rascasse
-      [-110, -130, 0],   // Anthony Noghes
+      [-85, -225, 0],
+      [85, -225, 0],     // Boulevard Albert 1er pit straight
+      [190, -210, 4],    // Sainte-Devote 90-degree right
+      [230, -115, 14],   // Montee du Beau Rivage climb (+14m)
+      [245, 10, 16],     // Massenet / Casino Square (+16m)
+      [190, 110, 12],    // Mirabeau Haute downhill
+      [230, 195, 6],     // Fairmont Hairpin (slowest turn in F1!)
+      [125, 235, 3],     // Mirabeau Bas & Portier
+      [0, 225, 2],       // Fairmont Tunnel fast blind curve
+      [-135, 220, 0],    // Nouvelle Chicane hard brake
+      [-215, 135, 0],    // Tabac fast left harbour bend
+      [-245, 15, 0],     // Swimming Pool S-chicane
+      [-220, -120, 0],   // La Rascasse tight wrap
+      [-175, -205, 0],   // Anthony Noghes tight right
     ]),
   },
   {
@@ -312,23 +327,24 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#ef4444',
     kerbSecondary: '#2563eb',
     trackWidth: 18,
-    targetLapSeconds: 43,
+    targetLapSeconds: 48,
     corners: 20,
+    // Authentic COTA: Pit Straight -> Steep Uphill Hairpin Turn 1 (+22m) -> Esses 2-3-4-5-6 -> Hairpin Turn 11 -> 1km Back Straight -> Turn 12 Brake -> Stadium Section 13-15 -> Carousel 16-18 -> Turns 19-20
     waypoints: pts([
-      [-60, -165, 0],
-      [60, -165, 0],     // Pit straight
-      [145, -155, 14],   // Turn 1 steep uphill hairpin!
-      [170, -75, 9],     // Esses 1
-      [130, -25, 6],     // Esses 2
-      [175, 35, 4],      // Esses 3
-      [140, 115, 2],     // Hairpin Turn 11
-      [45, 165, 1],      // Back straight
-      [-55, 165, 2],     // Turn 12 braking
-      [-110, 115, 3],    // Stadium Twist 13-15
-      [-165, 130, 3],    // Carousel Turn 16-18
-      [-175, 25, 2],     // Turn 19
-      [-145, -95, 1],    // Turn 20 approach
-      [-110, -150, 0],
+      [-95, -265, 0],
+      [95, -265, 0],     // Pit straight
+      [230, -245, 22],   // Turn 1 steep uphill hairpin! (+22m climb)
+      [270, -120, 14],   // Esses 1
+      [210, -40, 9],     // Esses 2
+      [280, 55, 6],      // Esses 3
+      [225, 185, 3],     // Hairpin Turn 11
+      [70, 265, 1],      // 1km Back straight
+      [-90, 265, 2],     // Turn 12 heavy braking
+      [-175, 185, 4],    // Stadium Twist 13-15
+      [-265, 210, 4],    // Carousel Turn 16-18
+      [-280, 40, 3],     // Turn 19
+      [-230, -150, 1],   // Turn 20 approach
+      [-175, -240, 0],
     ]),
   },
   {
@@ -344,22 +360,23 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#facc15',
     kerbSecondary: '#111827',
     trackWidth: 18,
-    targetLapSeconds: 39,
+    targetLapSeconds: 45,
     corners: 17,
+    // Authentic Sebring: Concrete Runway Frontstretch -> Turn 1 Sweeper -> Big Bend -> Hairpin Turn 7 -> Fangio Chicane -> Tower Turn -> Ulmann Straight -> Sunset Bend 17
     waypoints: pts([
-      [-60, -160, 0],
-      [60, -160, 0],     // Front concrete straight
-      [145, -140, 0],    // Turn 1 sweeping left
-      [165, -60, 0],     // Turn 3-5
-      [120, 10, 0],      // Big Bend
-      [160, 85, 0],      // Hairpin Turn 7
-      [90, 145, 0],      // Fangio Chicane
-      [-10, 160, 0],     // Tower Turn
-      [-105, 145, 0],    // Ulmann Straight
-      [-165, 85, 0],     // Bishop Bend
-      [-150, -10, 0],    // Le Mans Straight
-      [-170, -95, 0],    // Sunset Bend!
-      [-125, -145, 0],
+      [-95, -255, 0],
+      [95, -255, 0],     // Front concrete straight
+      [230, -225, 0],    // Turn 1 sweeping left
+      [265, -95, 0],     // Turn 3-5
+      [190, 15, 0],      // Big Bend
+      [255, 135, 0],     // Hairpin Turn 7
+      [145, 230, 0],     // Fangio Chicane
+      [-15, 255, 0],     // Tower Turn
+      [-170, 230, 0],    // Ulmann Straight
+      [-265, 135, 0],    // Bishop Bend
+      [-240, -15, 0],    // Le Mans Straight
+      [-270, -150, 0],   // Sunset Bend!
+      [-200, -230, 0],
     ]),
   },
 
@@ -377,7 +394,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#2563eb',
     kerbSecondary: '#ffffff',
     trackWidth: 15.5,
-    targetLapSeconds: 33,
+    targetLapSeconds: 38,
     corners: 11,
     waypoints: generateCircuitShape(1.1, 155, 115, 2, 1, 1),
   },
@@ -394,7 +411,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#ef4444',
     kerbSecondary: '#ffffff',
     trackWidth: 15,
-    targetLapSeconds: 34,
+    targetLapSeconds: 39,
     corners: 14,
     waypoints: generateCircuitShape(1.7, 150, 120, 3, 2, 0),
   },
@@ -411,7 +428,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#2563eb',
     kerbSecondary: '#facc15',
     trackWidth: 16.5,
-    targetLapSeconds: 34,
+    targetLapSeconds: 38,
     corners: 13,
     waypoints: generateCircuitShape(2.2, 150, 130, 3, 1, 6),
   },
@@ -445,7 +462,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#dc2626',
     kerbSecondary: '#ffffff',
     trackWidth: 17,
-    targetLapSeconds: 34,
+    targetLapSeconds: 38,
     corners: 10,
     waypoints: generateCircuitShape(3.4, 165, 125, 2, 1, 10),
   },
@@ -462,7 +479,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#dc2626',
     kerbSecondary: '#ffffff',
     trackWidth: 15.5,
-    targetLapSeconds: 30,
+    targetLapSeconds: 35,
     corners: 7,
     waypoints: generateCircuitShape(4.1, 145, 110, 2, 0, 5),
   },
@@ -547,7 +564,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#dc2626',
     kerbSecondary: '#ffffff',
     trackWidth: 17,
-    targetLapSeconds: 34,
+    targetLapSeconds: 40,
     corners: 14,
     waypoints: generateCircuitShape(7.1, 185, 110, 2, 3, 0),
   },
@@ -685,7 +702,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#dc2626',
     kerbSecondary: '#f8fafc',
     trackWidth: 18,
-    targetLapSeconds: 31,
+    targetLapSeconds: 36,
     corners: 10,
     waypoints: generateCircuitShape(11.9, 165, 120, 2, 1, 10),
   },
@@ -719,7 +736,7 @@ export const TRACKS: TrackSpec[] = [
     kerbPrimary: '#f97316',
     kerbSecondary: '#ffffff',
     trackWidth: 16,
-    targetLapSeconds: 34,
+    targetLapSeconds: 39,
     corners: 14,
     waypoints: generateCircuitShape(13.0, 160, 130, 3, 1, 6),
   },
@@ -932,6 +949,8 @@ export const TRACKS: TrackSpec[] = [
 ];
 
 export function getTrackById(id: string): TrackSpec {
+  const custom = getCustomTrackById(id);
+  if (custom) return custom;
   return TRACKS.find((t) => t.id === id) ?? TRACKS[0];
 }
 
@@ -951,6 +970,8 @@ export interface SampledSplinePoint {
   s: number; // cumulative arc length
   t: number; // normalized 0..1 progress
   curvature: number; // signed horizontal curvature
+  banking?: number; // banking angle in radians
+  width?: number; // local track width
 }
 
 export interface CompiledTrack {
@@ -975,9 +996,14 @@ function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): 
 }
 
 export function compileTrack(spec: TrackSpec, sampleCount = 320): CompiledTrack {
-  const ptsArr = spec.waypoints;
+  let ptsArr = spec.waypoints;
+  if (spec.startNodeIndex !== undefined && spec.startNodeIndex > 0 && spec.startNodeIndex < ptsArr.length) {
+    const head = ptsArr.slice(spec.startNodeIndex);
+    const tail = ptsArr.slice(0, spec.startNodeIndex);
+    ptsArr = [...head, ...tail];
+  }
   const n = ptsArr.length;
-  const raw: Array<{ x: number; y: number; z: number }> = [];
+  const raw: Array<{ x: number; y: number; z: number; banking: number; width: number }> = [];
 
   for (let i = 0; i < sampleCount; i++) {
     const u = (i / sampleCount) * n;
@@ -987,10 +1013,23 @@ export function compileTrack(spec: TrackSpec, sampleCount = 320): CompiledTrack 
     const p1 = ptsArr[seg];
     const p2 = ptsArr[(seg + 1) % n];
     const p3 = ptsArr[(seg + 2) % n];
+
+    const bank0 = (p0.banking || 0) * (Math.PI / 180);
+    const bank1 = (p1.banking || 0) * (Math.PI / 180);
+    const bank2 = (p2.banking || 0) * (Math.PI / 180);
+    const bank3 = (p3.banking || 0) * (Math.PI / 180);
+
+    const w0 = p0.width || spec.trackWidth;
+    const w1 = p1.width || spec.trackWidth;
+    const w2 = p2.width || spec.trackWidth;
+    const w3 = p3.width || spec.trackWidth;
+
     raw.push({
       x: catmullRom(p0.x, p1.x, p2.x, p3.x, localT),
       y: catmullRom(p0.y, p1.y, p2.y, p3.y, localT),
       z: catmullRom(p0.z, p1.z, p2.z, p3.z, localT),
+      banking: catmullRom(bank0, bank1, bank2, bank3, localT),
+      width: catmullRom(w0, w1, w2, w3, localT),
     });
   }
 
@@ -1047,8 +1086,13 @@ export function compileTrack(spec: TrackSpec, sampleCount = 320): CompiledTrack 
       s: cumLen[i],
       t: cumLen[i] / totalLength,
       curvature,
+      banking: curr.banking,
+      width: curr.width,
     });
   }
+
+  const pitSign = spec.pitSide === 'right' ? 1 : -1;
+  const pitOffset = pitSign * (spec.trackWidth * 0.5 + 8.5);
 
   return {
     spec,
@@ -1056,7 +1100,7 @@ export function compileTrack(spec: TrackSpec, sampleCount = 320): CompiledTrack 
     totalLength,
     pitEntryT: 0.90,
     pitExitT: 0.08,
-    pitOffset: -(spec.trackWidth * 0.5 + 8.5), // Pit lane sits inside (left) of start/finish straight
+    pitOffset,
   };
 }
 
@@ -1076,6 +1120,11 @@ export function sampleTrackAtT(compiled: CompiledTrack, tRaw: number): SampledSp
   const utx = tx / tLen;
   const utz = tz / tLen;
   const xzLen = Math.hypot(utx, utz) || 1;
+  const banking = (a.banking || 0) + ((b.banking || 0) - (a.banking || 0)) * alpha;
+  const width =
+    (a.width || compiled.spec.trackWidth) +
+    ((b.width || compiled.spec.trackWidth) - (a.width || compiled.spec.trackWidth)) * alpha;
+
   return {
     x: a.x + (b.x - a.x) * alpha,
     y: a.y + (b.y - a.y) * alpha,
@@ -1088,6 +1137,8 @@ export function sampleTrackAtT(compiled: CompiledTrack, tRaw: number): SampledSp
     s: t * compiled.totalLength,
     t,
     curvature: a.curvature + (b.curvature - a.curvature) * alpha,
+    banking,
+    width,
   };
 }
 

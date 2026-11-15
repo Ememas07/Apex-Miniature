@@ -11,11 +11,15 @@ import {
   TireCompound,
 } from './types';
 
+export const SPEED_KMH_FACTOR = 3.6;
+
 export interface ControlInput {
   throttle: number; // 0..1
   brake: number; // 0..1
   steer: number; // -1 (left) .. +1 (right)
   specialPressed: boolean; // edge-triggered or held depending on class
+  specialJustPressed?: boolean; // edge-triggered activation
+  pitLimiterToggle?: boolean; // toggle 60 km/h pit speed limiter
 }
 
 export interface CarSimState {
@@ -47,15 +51,20 @@ export interface CarSimState {
   tireWear: number; // 100 down to 0
   tireTemp: number; // Celsius (50..125)
   fuel: number; // 100 down to 0
+  fuelLapsRemaining: number; // estimated laps of fuel remaining
   aeroDamage: number; // 0..100
   specialCharge: number; // 0..100
   specialActive: boolean;
+  attackModeUsesRemaining: number;
+  attackModeTimer: number;
   inSlipstream: boolean;
   understeerFactor: number; // 0..1
   warningCount: number;
   offTrackCooldown: number;
   penaltyTimeRemaining: number;
   inPitLane: boolean;
+  pitLimiterActive: boolean;
+  pitLimiterManual: boolean;
   pitBoxTimer: number;
   pitStopRemaining: number;
   pitSpeeding: boolean;
@@ -67,6 +76,7 @@ export interface CarSimState {
   aiTargetOffset: number;
   aiPassTimer: number;
   aiPaceMultiplier: number;
+  aiStuckTimer: number;
 }
 
 export function createCarSimState(params: {
@@ -122,15 +132,20 @@ export function createCarSimState(params: {
     tireWear: 100,
     tireTemp: 72,
     fuel: 100,
+    fuelLapsRemaining: 14.3,
     aeroDamage: 0,
     specialCharge: 100,
     specialActive: false,
+    attackModeUsesRemaining: 2,
+    attackModeTimer: 0,
     inSlipstream: false,
     understeerFactor: 0,
     warningCount: 0,
     offTrackCooldown: 0,
     penaltyTimeRemaining: 0,
     inPitLane: false,
+    pitLimiterActive: false,
+    pitLimiterManual: false,
     pitBoxTimer: 0,
     pitStopRemaining: 0,
     pitSpeeding: false,
@@ -145,6 +160,7 @@ export function createCarSimState(params: {
     aiTargetOffset: lat * 0.4,
     aiPassTimer: 0,
     aiPaceMultiplier: params.aiPaceMultiplier ?? 1.0,
+    aiStuckTimer: 0,
   };
 }
 
@@ -261,34 +277,117 @@ export function stepCarPhysics(
     return;
   }
 
+  // Pit lane check
+  const inPitProgress = car.trackT >= compiledTrack.pitEntryT || car.trackT <= compiledTrack.pitExitT;
+  const halfW = compiledTrack.spec.trackWidth * 0.5;
+  const pitSideSign = compiledTrack.spec.pitSide === 'right' ? 1 : -1;
+  const isInPitCorridor =
+    inPitProgress &&
+    (pitSideSign === 1
+      ? car.lateralOffset > halfW - 0.5 && car.lateralOffset < halfW + 16
+      : car.lateralOffset < -halfW + 0.5 && car.lateralOffset > -halfW - 16);
+  car.inPitLane = isInPitCorridor;
+
+  // Manual pit limiter toggle
+  if (input.pitLimiterToggle) {
+    car.pitLimiterManual = !car.pitLimiterManual;
+  }
+
+  // Auto-release pit limiter cleanly at pit-exit line
+  const crossedPitExit = car.prevTrackT <= compiledTrack.pitExitT && car.trackT > compiledTrack.pitExitT;
+  if (crossedPitExit) {
+    car.inPitLane = false;
+    car.pitLimiterManual = false;
+    car.pitSpeeding = false;
+  }
+
+  car.pitLimiterActive = car.inPitLane || car.pitLimiterManual;
+
   // Class special activation / toggle
-  if (input.specialPressed) {
-    if (classMeta.specialType === 'active-aero') {
-      car.specialActive = !car.specialActive;
-    } else if (classMeta.specialType === 'attack-mode' && car.specialCharge >= 30) {
-      car.specialActive = true;
-    } else if (classMeta.specialType === 'hybrid-deploy' && car.specialCharge > 10) {
-      car.specialActive = !car.specialActive;
+  const isSpecialTriggered = input.specialJustPressed ?? input.specialPressed;
+
+  switch (classMeta.specialType) {
+    case 'active-aero': {
+      if (isSpecialTriggered) {
+        car.specialActive = !car.specialActive;
+      }
+      if (car.specialActive && input.brake > 0.35) {
+        // Braking automatically closes low-drag wing back to high-downforce corner mode
+        car.specialActive = false;
+      }
+      break;
+    }
+    case 'attack-mode': {
+      // 2 uses per race, 15s duration: enables AWD acceleration boost and +15% power
+      if (isSpecialTriggered && car.attackModeUsesRemaining > 0 && car.attackModeTimer <= 0) {
+        car.attackModeUsesRemaining -= 1;
+        car.attackModeTimer = 15.0;
+        car.specialActive = true;
+      }
+      if (car.attackModeTimer > 0) {
+        car.attackModeTimer = Math.max(0, car.attackModeTimer - dt);
+        car.specialCharge = Math.round((car.attackModeTimer / 15.0) * 100);
+        if (car.attackModeTimer <= 0) {
+          car.specialActive = false;
+        }
+      } else {
+        car.specialCharge = car.attackModeUsesRemaining * 50;
+      }
+      break;
+    }
+    case 'ers-overtake':
+    case 'hybrid-deploy': {
+      // Hold or toggle to deploy rechargeable battery for +15% acceleration
+      if (input.specialPressed && car.specialCharge > 1) {
+        car.specialActive = true;
+        car.specialCharge = Math.max(0, car.specialCharge - dt * 20);
+      } else {
+        car.specialActive = false;
+      }
+      if (!car.specialActive) {
+        // Recharges under braking
+        const rechargeRate = input.brake > 0.2 ? 22 : 3.5;
+        car.specialCharge = Math.min(100, car.specialCharge + dt * rechargeRate);
+      }
+      break;
+    }
+    case 'v10-overboost': {
+      // Temporary +8% power/RPM surge with +35% fuel burn while active
+      if (input.specialPressed && car.specialCharge > 2) {
+        car.specialActive = true;
+        car.specialCharge = Math.max(0, car.specialCharge - dt * 15);
+      } else {
+        car.specialActive = false;
+        car.specialCharge = Math.min(100, car.specialCharge + dt * 10);
+      }
+      break;
+    }
+    case 'high-beam-flash': {
+      // Flashes headlights and signals slower traffic ahead to yield
+      car.specialActive = Boolean(input.specialPressed);
+      car.flashingHeadlights = car.specialActive;
+      break;
+    }
+    default: {
+      car.specialActive = false;
+      break;
     }
   }
 
-  if (car.specialActive) {
-    if (classMeta.specialType === 'active-aero') {
-      // Braking automatically closes low-drag wing back to high-downforce corner mode
-      if (input.brake > 0.35) {
-        car.specialActive = false;
+  // Prototype / GT High-Beam flash signals traffic ahead to yield
+  if (car.flashingHeadlights) {
+    for (let i = 0; i < opts.allCars.length; i++) {
+      const other = opts.allCars[i];
+      if (other.id === car.id || other.inPitLane) continue;
+      let dT = other.trackT - car.trackT;
+      if (dT < 0) dT += 1;
+      const distAhead = dT * compiledTrack.totalLength;
+      if (distAhead > 1.0 && distAhead < 32) {
+        const yieldSide = other.lateralOffset >= 0 ? -1 : 1;
+        other.aiTargetOffset = yieldSide * Math.min(compiledTrack.spec.trackWidth * 0.48, 4.5);
+        other.aiPassTimer = 2.0;
       }
-    } else if (classMeta.specialType === 'attack-mode') {
-      car.specialCharge = Math.max(0, car.specialCharge - dt * 13);
-      if (car.specialCharge <= 0.1) car.specialActive = false;
-    } else if (classMeta.specialType === 'hybrid-deploy') {
-      car.specialCharge = Math.max(0, car.specialCharge - dt * 16);
-      if (car.specialCharge <= 0.5) car.specialActive = false;
     }
-  } else {
-    // Recharge ERS/Attack mode under braking & cornering
-    const rechargeRate = input.brake > 0.2 ? 14 : 2.8;
-    car.specialCharge = Math.min(100, car.specialCharge + dt * rechargeRate);
   }
 
   // Slipstream detection (within 1.5..14m ahead and +/-2.8m laterally)
@@ -323,15 +422,22 @@ export function stepCarPhysics(
   let specialGripMult = 1.0;
   if (car.specialActive) {
     if (classMeta.specialType === 'active-aero') {
-      specialSpeedMult = 1.09;
-      specialGripMult = 0.84; // Low drag = less downforce in corners!
+      // 2026 F1: +12% top speed, -25% cornering grip vs High-Downforce Corner Mode
+      specialSpeedMult = 1.12;
+      specialGripMult = 0.75;
     } else if (classMeta.specialType === 'attack-mode') {
-      specialSpeedMult = 1.07;
-      specialAccelMult = 1.18;
-      specialGripMult = 1.05; // AWD bite
-    } else if (classMeta.specialType === 'hybrid-deploy') {
+      // Formula E: enables AWD acceleration boost and +15% power
       specialSpeedMult = 1.06;
-      specialAccelMult = 1.14;
+      specialAccelMult = 1.15;
+      specialGripMult = 1.08;
+    } else if (classMeta.specialType === 'ers-overtake' || classMeta.specialType === 'hybrid-deploy') {
+      // 2021 F1 & Hypercar: +15% acceleration
+      specialSpeedMult = 1.05;
+      specialAccelMult = 1.15;
+    } else if (classMeta.specialType === 'v10-overboost') {
+      // 2005 F1: temporary +8% power surge with +35% fuel burn
+      specialSpeedMult = 1.04;
+      specialAccelMult = 1.08;
     }
   }
 
@@ -340,12 +446,6 @@ export function stepCarPhysics(
   if (car.penaltyTimeRemaining > 0) {
     car.penaltyTimeRemaining = Math.max(0, car.penaltyTimeRemaining - dt);
   }
-
-  // Pit lane check
-  const inPitProgress = car.trackT >= compiledTrack.pitEntryT || car.trackT <= compiledTrack.pitExitT;
-  const halfW = compiledTrack.spec.trackWidth * 0.5;
-  const isInPitCorridor = inPitProgress && car.lateralOffset < -halfW + 0.4 && car.lateralOffset > -halfW - 15;
-  car.inPitLane = isInPitCorridor;
 
   // Off-track / runoff resistance
   const onAsphalt = Math.abs(car.lateralOffset) <= halfW + 1.0 || isInPitCorridor;
@@ -363,13 +463,21 @@ export function stepCarPhysics(
     penaltyCap *
     (car.isPlayer ? 1.0 : car.aiPaceMultiplier);
 
-  if (car.inPitLane) {
-    const pitLimitSpeed = 16.7; // ~60 km/h scaled
-    if (car.speed > pitLimitSpeed * 1.18 && !car.pitSpeeding && car.pitCooldown <= 0) {
-      car.pitSpeeding = true;
-      car.penaltyTimeRemaining = Math.max(car.penaltyTimeRemaining, 3.0);
+  // Pit Speed Limiter: Strictly clamp to 60 km/h (framerate-independent using dt)
+  const PIT_LIMIT_KMH = 60;
+  const PIT_LIMIT_SPEED = PIT_LIMIT_KMH / SPEED_KMH_FACTOR; // 60 / 3.6 = 16.6667 m/s
+
+  if (car.pitLimiterActive) {
+    if (car.speed > PIT_LIMIT_SPEED) {
+      if (car.inPitLane && car.speed > PIT_LIMIT_SPEED * 1.08 && !car.pitSpeeding && car.pitCooldown <= 0) {
+        car.pitSpeeding = true;
+        car.penaltyTimeRemaining = Math.max(car.penaltyTimeRemaining, 3.0);
+      }
+      // Smoothly brake down to 60 km/h if entered faster
+      const decel = Math.max(22, (car.speed - PIT_LIMIT_SPEED) * 5.5);
+      car.speed = Math.max(PIT_LIMIT_SPEED, car.speed - decel * dt);
     }
-    effectiveMaxSpeed = Math.min(effectiveMaxSpeed, pitLimitSpeed);
+    effectiveMaxSpeed = Math.min(effectiveMaxSpeed, PIT_LIMIT_SPEED);
   }
 
   // Longitudinal acceleration & braking
@@ -377,9 +485,17 @@ export function stepCarPhysics(
   const brake = Math.max(0, Math.min(1, input.brake));
 
   if (throttle > 0 && brake < 0.1) {
-    const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
-    const torqueCurve = Math.max(0.15, 1.15 - speedRatio * 0.85);
-    car.speed += accelBase * specialAccelMult * fuelFactor * throttle * torqueCurve * dt;
+    if (car.pitLimiterActive && car.speed >= PIT_LIMIT_SPEED - 0.05) {
+      // Ignore excess throttle above 60 km/h
+      car.speed = PIT_LIMIT_SPEED;
+    } else {
+      const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
+      const torqueCurve = Math.max(0.15, 1.15 - speedRatio * 0.85);
+      car.speed += accelBase * specialAccelMult * fuelFactor * throttle * torqueCurve * dt;
+      if (car.pitLimiterActive && car.speed > PIT_LIMIT_SPEED) {
+        car.speed = PIT_LIMIT_SPEED;
+      }
+    }
   }
 
   if (brake > 0) {
@@ -388,7 +504,9 @@ export function stepCarPhysics(
 
   // Natural aero/rolling drag when coasting or above effectiveMaxSpeed
   const dragCoeff = car.specialActive && classMeta.specialType === 'active-aero' ? 0.35 : 0.48;
-  if (car.speed > effectiveMaxSpeed) {
+  if (car.pitLimiterActive && car.speed > PIT_LIMIT_SPEED) {
+    car.speed = PIT_LIMIT_SPEED;
+  } else if (car.speed > effectiveMaxSpeed) {
     car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
   } else if (throttle < 0.05 && brake < 0.05) {
     car.speed = Math.max(0, car.speed - car.speed * dragCoeff * dt);
@@ -401,8 +519,17 @@ export function stepCarPhysics(
   const speedNorm = Math.min(1, car.speed / Math.max(1, maxSpeedBase));
   // Trail-braking bonus: gentle braking (0.1..0.65) while turning sharpens front bite
   const trailBrakeBonus = brake > 0.08 && brake < 0.7 && Math.abs(steerInput) > 0.25 ? 1.14 : 1.0;
+  const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
+  const bankingGripBonus = 1.0 + Math.sin(Math.abs(sampleBank)) * 0.35;
   const availableGrip =
-    gripBase * compoundMod.grip * wearGripFactor * specialGripMult * offTrackGrip * damageFactor * trailBrakeBonus;
+    gripBase *
+    compoundMod.grip *
+    wearGripFactor *
+    specialGripMult *
+    offTrackGrip *
+    damageFactor *
+    trailBrakeBonus *
+    bankingGripBonus;
 
   // High-speed steering sensitivity tapers slightly, rewarding slow-in / fast-out
   const maxTurnRate = availableGrip * (1.28 - speedNorm * 0.48);
@@ -433,12 +560,14 @@ export function stepCarPhysics(
 
   // Project onto track spline
   const proj = projectOntoTrack(compiledTrack, car.x, car.z, car.trackT);
-  car.y = proj.sample.y;
+  const bank = proj.sample.banking || 0;
+  car.y = proj.sample.y + car.lateralOffset * Math.sin(bank);
   car.lateralOffset = proj.lateralOffset;
 
   // Guardrail outer containment so cars bounce gently rather than leaving the world
-  const maxAllowedLat = halfW + (inPitProgress ? 16.5 : 7.5);
-  const maxRightLat = halfW + 7.5;
+  const sampleHalfW = (proj.sample.width ? proj.sample.width : compiledTrack.spec.trackWidth) * 0.5;
+  const maxLeftLat = sampleHalfW + (inPitProgress && pitSideSign === -1 ? 16.5 : 7.5);
+  const maxRightLat = sampleHalfW + (inPitProgress && pitSideSign === 1 ? 16.5 : 7.5);
   if (car.lateralOffset > maxRightLat) {
     const push = car.lateralOffset - maxRightLat;
     car.x -= proj.sample.nx * push;
@@ -446,13 +575,13 @@ export function stepCarPhysics(
     car.speed *= 0.82;
     car.aeroDamage = Math.min(100, car.aeroDamage + 2.5);
     car.lateralOffset = maxRightLat;
-  } else if (car.lateralOffset < -maxAllowedLat) {
-    const push = -maxAllowedLat - car.lateralOffset;
+  } else if (car.lateralOffset < -maxLeftLat) {
+    const push = -maxLeftLat - car.lateralOffset;
     car.x += proj.sample.nx * push;
     car.z += proj.sample.nz * push;
     car.speed *= 0.82;
     car.aeroDamage = Math.min(100, car.aeroDamage + 2.5);
-    car.lateralOffset = -maxAllowedLat;
+    car.lateralOffset = -maxLeftLat;
   }
 
   // Pit box trigger
@@ -516,18 +645,49 @@ export function stepCarPhysics(
     ? car.trackT - 1
     : (car.lap - 1) + car.trackT;
 
-  // Tire wear, temperature & fuel consumption (scaled for 5-20 lap races)
+  // Tire wear, temperature & fuel consumption (calibrated so a full tank lasts ~12-16 laps at full push)
   const efficiencyFactor = 1.25 - (attrs.efficiency / 100) * 0.55;
-  const lapScale = 10 / Math.max(5, opts.totalLaps);
   const cornerLoad = Math.abs(steerInput) * speedNorm;
-  const wearDelta = (0.28 + cornerLoad * 0.72 + car.understeerFactor * 0.85) * compoundMod.wearRate * efficiencyFactor * lapScale * dt;
+  const wearDelta = (0.014 + cornerLoad * 0.045 + car.understeerFactor * 0.04) * compoundMod.wearRate * efficiencyFactor * dt;
   car.tireWear = Math.max(5, car.tireWear - wearDelta);
 
   const targetTemp = compoundMod.optimalTemp + cornerLoad * 24 + car.understeerFactor * 16 - opts.trackWetness * 14;
   car.tireTemp += (targetTemp - car.tireTemp) * Math.min(1, dt * 1.4);
 
-  const fuelDelta = (0.38 + throttle * 0.82) * efficiencyFactor * lapScale * dt;
-  car.fuel = Math.max(0, car.fuel - fuelDelta);
+  // Recalibrated fuel consumption: ~6.5% - 7.5% per race lap at full push -> ~12-16 laps on full tank
+  const lapProgressDelta = (car.speed * dt) / Math.max(400, compiledTrack.totalLength);
+  const throttleLoad = 0.40 + 0.60 * throttle;
+  let overboostFuelMult = 1.0;
+  if (car.specialActive && classMeta.specialType === 'v10-overboost') {
+    overboostFuelMult = 1.35; // +35% fuel burn while V10 Overboost active!
+  }
+  const fuelBurn = 14.5 * lapProgressDelta * throttleLoad * efficiencyFactor * overboostFuelMult;
+  car.fuel = Math.max(0, car.fuel - fuelBurn);
+
+  const avgBurnRatePerLap = Math.max(4.5, 14.5 * efficiencyFactor * 0.55 * overboostFuelMult);
+  car.fuelLapsRemaining = Number((car.fuel / avgBurnRatePerLap).toFixed(1));
+
+  // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 2.0s outside pit box, smoothly reset to nearest spline point at rolling speed
+  if (!car.isPlayer && !car.inPitLane && car.pitStopRemaining <= 0) {
+    if (car.speed < 5 / SPEED_KMH_FACTOR) {
+      car.aiStuckTimer = (car.aiStuckTimer || 0) + dt;
+      if (car.aiStuckTimer >= 2.0) {
+        const sp = sampleTrackAtT(compiledTrack, car.trackT);
+        car.x = sp.x + sp.nx * (car.aiTargetOffset || 0);
+        car.y = sp.y;
+        car.z = sp.z + sp.nz * (car.aiTargetOffset || 0);
+        car.heading = Math.atan2(sp.tx, sp.tz);
+        car.speed = 16.0; // rolling speed ~58 km/h
+        car.vx = Math.sin(car.heading) * car.speed;
+        car.vz = Math.cos(car.heading) * car.speed;
+        car.steerAngle = 0;
+        car.understeerFactor = 0;
+        car.aiStuckTimer = 0;
+      }
+    } else {
+      car.aiStuckTimer = 0;
+    }
+  }
 }
 
 /**
@@ -600,18 +760,30 @@ export function computeAIControl(
     };
   }
 
-  // Lookahead along spline
-  const lookAheadDist = 18 + car.speed * 0.42;
-  const lookT = car.trackT + lookAheadDist / compiledTrack.totalLength;
-  const farLookT = car.trackT + (lookAheadDist * 2.1) / compiledTrack.totalLength;
-  const nearTarget = sampleTrackAtT(compiledTrack, lookT);
-  const farTarget = sampleTrackAtT(compiledTrack, farLookT);
+  // Lookahead along spline: sample track curvature 20m–65m ahead based on AI speed
+  const lookAheadDist = Math.max(20, Math.min(65, 18 + car.speed * 0.95));
+  const tDist1 = (lookAheadDist * 0.35) / compiledTrack.totalLength;
+  const tDist2 = (lookAheadDist * 0.70) / compiledTrack.totalLength;
+  const tDist3 = (lookAheadDist * 1.05) / compiledTrack.totalLength;
+
+  const target1 = sampleTrackAtT(compiledTrack, car.trackT + tDist1);
+  const target2 = sampleTrackAtT(compiledTrack, car.trackT + tDist2);
+  const target3 = sampleTrackAtT(compiledTrack, car.trackT + tDist3);
+
+  const maxCurvature = Math.max(
+    Math.abs(target1.curvature),
+    Math.abs(target2.curvature),
+    Math.abs(target3.curvature),
+  );
+
+  // Dynamic lateral lane offset (-0.65 to +0.65 of track width)
+  const halfW = compiledTrack.spec.trackWidth * 0.5;
+  const maxLateralLane = halfW * 0.65;
 
   // Traffic & overtaking logic
   car.aiPassTimer = Math.max(0, car.aiPassTimer - dt);
   let blockedAhead = false;
   let slowerClassAhead = false;
-  let dodgeSign = 0;
 
   for (let i = 0; i < allCars.length; i++) {
     const other = allCars[i];
@@ -619,18 +791,19 @@ export function computeAIControl(
     let dT = other.trackT - car.trackT;
     if (dT < 0) dT += 1;
     const distAhead = dT * compiledTrack.totalLength;
-    if (distAhead > 1.5 && distAhead < 22) {
+    if (distAhead > 1.2 && distAhead < 24) {
       const latGap = Math.abs(other.lateralOffset - car.lateralOffset);
-      if (latGap < 3.4) {
+      if (latGap < 3.2) {
         blockedAhead = true;
         const otherClass = CAR_CLASSES[other.carSpec.classId];
-        if (classMeta.basePaceIndex > otherClass.basePaceIndex + 0.05) {
+        if (classMeta.basePaceIndex > otherClass.basePaceIndex + 0.04) {
           slowerClassAhead = true;
         }
         if (car.aiPassTimer <= 0) {
-          dodgeSign = other.lateralOffset >= 0 ? -1 : 1;
-          car.aiTargetOffset = dodgeSign * Math.min(compiledTrack.spec.trackWidth * 0.34, 4.6);
-          car.aiPassTimer = 1.6;
+          // Choose open lane (-0.65 to +0.65 of track width)
+          const dodgeSign = other.lateralOffset >= 0 ? -1 : 1;
+          car.aiTargetOffset = dodgeSign * Math.min(maxLateralLane, Math.max(2.5, halfW * 0.55));
+          car.aiPassTimer = 1.8;
         }
       }
     }
@@ -642,9 +815,13 @@ export function computeAIControl(
 
   if (!blockedAhead && car.aiPassTimer <= 0) {
     // Return smoothly toward racing apex line (inside of upcoming corner)
-    const apexSign = farTarget.curvature > 0.005 ? 1 : farTarget.curvature < -0.005 ? -1 : 0;
-    car.aiTargetOffset += (apexSign * 2.2 - car.aiTargetOffset) * Math.min(1, dt * 1.5);
+    const apexSign = target3.curvature > 0.005 ? 1 : target3.curvature < -0.005 ? -1 : 0;
+    const targetApexLat = apexSign * Math.min(maxLateralLane * 0.7, 2.8);
+    car.aiTargetOffset += (targetApexLat - car.aiTargetOffset) * Math.min(1, dt * 1.5);
   }
+
+  // Strict clamp of dynamic lane offset to -0.65 .. +0.65 of track width
+  car.aiTargetOffset = Math.max(-maxLateralLane, Math.min(maxLateralLane, car.aiTargetOffset));
 
   // Pit lane entry override
   let targetOffset = car.aiTargetOffset;
@@ -652,8 +829,8 @@ export function computeAIControl(
     targetOffset = compiledTrack.pitOffset;
   }
 
-  const targetX = nearTarget.x + nearTarget.nx * targetOffset;
-  const targetZ = nearTarget.z + nearTarget.nz * targetOffset;
+  const targetX = target1.x + target1.nx * targetOffset;
+  const targetZ = target1.z + target1.nz * targetOffset;
 
   const dx = targetX - car.x;
   const dz = targetZ - car.z;
@@ -665,29 +842,45 @@ export function computeAIControl(
   // Steering: heading increases left, decreases right -> steer > 0 means right
   const steer = Math.max(-1, Math.min(1, -headingErr * 2.3));
 
-  // Corner braking anticipation based on upcoming curvature
-  const maxCurvature = Math.max(Math.abs(nearTarget.curvature), Math.abs(farTarget.curvature));
+  // Compute safe target corner speed v = sqrt(grip / curvature)
+  const attrs = car.carSpec.attributes;
+  const gripBase = (1.35 + (attrs.corneringGrip / 100) * 1.15) * classMeta.basePaceIndex;
+  const compoundMod = getCompoundModifiers(car.compound, trackWetness);
   const personalityBrakeMult =
     personality === 'Late-Braker'
-      ? 1.14
+      ? 1.10
       : personality === 'Tire-Saver'
-      ? 0.90
+      ? 0.92
       : 1.0;
 
+  const bankAngle = Math.abs(target1.banking || 0);
+  const bankingGripBonus = 1.0 + Math.sin(bankAngle) * 0.35;
+  const effectiveGrip = gripBase * compoundMod.grip * personalityBrakeMult * bankingGripBonus;
   const cornerTargetSpeed =
-    maxCurvature > 0.004
-      ? Math.max(15, (29 / (1 + maxCurvature * 26)) * classMeta.basePaceIndex * personalityBrakeMult)
+    maxCurvature > 0.003
+      ? Math.max(13, Math.sqrt((effectiveGrip * 9.5) / Math.max(0.0001, maxCurvature)))
       : 999;
+
+  // Anticipatory braking before hairpins and chicanes
+  const brakeDecel = (24 + (attrs.braking / 100) * 18) * classMeta.basePaceIndex * 0.85;
+  const reqBrakeDist =
+    car.speed > cornerTargetSpeed
+      ? (car.speed * car.speed - cornerTargetSpeed * cornerTargetSpeed) / (2 * Math.max(1, brakeDecel))
+      : 0;
 
   let throttle = 1.0;
   let brake = 0.0;
 
   if (car.inPitLane) {
     throttle = car.speed < 14.5 ? 0.55 : 0;
-    brake = car.speed > 16 ? 0.8 : 0;
+    brake = car.speed > 16.5 ? 0.85 : 0;
+  } else if (car.speed > cornerTargetSpeed && lookAheadDist <= reqBrakeDist * 1.25) {
+    const excess = (car.speed - cornerTargetSpeed) / 10;
+    brake = Math.min(1.0, 0.45 + excess * 0.55);
+    throttle = 0;
   } else if (car.speed > cornerTargetSpeed) {
-    const excess = (car.speed - cornerTargetSpeed) / 14;
-    brake = Math.min(1, 0.25 + excess);
+    const excess = (car.speed - cornerTargetSpeed) / 12;
+    brake = Math.min(1.0, 0.3 + excess);
     throttle = 0;
   } else if (personality === 'Tire-Saver' && car.tireWear > 45 && Math.abs(steer) > 0.55) {
     throttle = 0.82; // Conserves rubber early
@@ -701,7 +894,11 @@ export function computeAIControl(
   if (classMeta.specialType === 'active-aero') {
     if (onStraight && !car.specialActive && car.speed > 26) specialPressed = true;
     if (!onStraight && car.specialActive) specialPressed = true;
-  } else if (onStraight && !car.specialActive && car.specialCharge > 55 && car.speed > 24) {
+  } else if (classMeta.specialType === 'attack-mode') {
+    if (onStraight && !car.specialActive && car.attackModeUsesRemaining > 0 && car.speed > 25) {
+      specialPressed = true;
+    }
+  } else if (onStraight && !car.specialActive && car.specialCharge > 50 && car.speed > 24) {
     specialPressed = true;
   }
 

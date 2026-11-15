@@ -5,7 +5,9 @@ import { RaceHUD } from './components/RaceHUD';
 import { RaceSetupModal } from './components/RaceSetupModal';
 import { ResultsModal } from './components/ResultsModal';
 import { TitleOverlay } from './components/TitleOverlay';
+import { TrackStudioModal } from './components/TrackStudioModal';
 import { CAR_CLASSES, CARS, getCarById } from './game/cars';
+import { registerCustomTrackInMemory } from './game/customTracks';
 import { MultiplayerClient } from './game/multiplayer';
 import { computeUpdatedAdaptiveBoost, formatLapTime } from './game/physics';
 import { getTrackById } from './game/tracks';
@@ -18,6 +20,7 @@ import {
   PitStrategy,
   RaceConfig,
   RoomState,
+  TrackSpec,
 } from './game/types';
 import { RaceViewport } from './three/RaceViewport';
 
@@ -35,6 +38,8 @@ const INITIAL_CONFIG: RaceConfig = {
   qualifyingEnabled: false,
   aiDifficulty: 'Pro',
   aiAdaptiveBoost: 0,
+  aiBotCount: 11,
+  noAi: false,
 };
 
 export default function App() {
@@ -51,6 +56,8 @@ export default function App() {
 
   const [garageOpen, setGarageOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [trackStudioOpen, setTrackStudioOpen] = useState(false);
+  const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
   const [cameraMode, setCameraMode] = useState<CameraMode>('chase-34');
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
@@ -81,6 +88,9 @@ export default function App() {
       setRoom(nextRoom);
       setMpError(null);
       if (nextRoom?.config) {
+        if (nextRoom.config.customTrack) {
+          registerCustomTrackInMemory(nextRoom.config.customTrack);
+        }
         setRaceConfig((prev) => ({ ...prev, ...nextRoom.config }));
       }
     };
@@ -88,6 +98,7 @@ export default function App() {
       setRoom(startedRoom);
       setSetupOpen(false);
       setGarageOpen(false);
+      setTrackStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
       setRunNonce((n) => n + 1);
@@ -102,6 +113,7 @@ export default function App() {
     }
     setGarageOpen(false);
     setSetupOpen(false);
+    setTrackStudioOpen(false);
     setFinalSnapshot(null);
     setQualiBanner(null);
 
@@ -117,7 +129,7 @@ export default function App() {
   // Enter / Space shortcut on Title screen
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (phase !== 'title' || garageOpen || setupOpen) return;
+      if (phase !== 'title' || garageOpen || setupOpen || trackStudioOpen) return;
       if (e.code === 'Enter' || e.code === 'Space') {
         e.preventDefault();
         handleStartSession();
@@ -125,7 +137,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [phase, garageOpen, setupOpen, handleStartSession]);
+  }, [phase, garageOpen, setupOpen, trackStudioOpen, handleStartSession]);
 
   const handleTogglePause = useCallback(() => {
     setPhase((cur) => {
@@ -210,7 +222,32 @@ export default function App() {
     mpClientRef.current?.updatePeer({ livery });
   };
 
-  const track = getTrackById(raceConfig.trackId);
+  const handleOpenStudio = (trackToEdit?: TrackSpec) => {
+    setEditingCustomTrack(trackToEdit);
+    setTrackStudioOpen(true);
+  };
+
+  const handleStudioSaveTrack = (saved: TrackSpec) => {
+    registerCustomTrackInMemory(saved);
+    if (raceConfig.trackId === saved.id) {
+      handleUpdateConfig({ customTrack: saved });
+    }
+  };
+
+  const handleStudioTestDrive = (saved: TrackSpec) => {
+    registerCustomTrackInMemory(saved);
+    handleUpdateConfig({ trackId: saved.id, customTrack: saved });
+    setTrackStudioOpen(false);
+    setSetupOpen(false);
+    setGarageOpen(false);
+    setFinalSnapshot(null);
+    setQualiBanner(null);
+    setActivePrePausePhase('playing');
+    setRunNonce((n) => n + 1);
+    setPhase('playing');
+  };
+
+  const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
 
   return (
     <main className="relative w-full h-full overflow-hidden bg-[#0b0e13]">
@@ -233,13 +270,14 @@ export default function App() {
       />
 
       {/* Title Screen */}
-      {phase === 'title' && !garageOpen && !setupOpen && (
+      {phase === 'title' && !garageOpen && !setupOpen && !trackStudioOpen && (
         <TitleOverlay
           raceConfig={raceConfig}
           roomCode={room?.code ?? null}
           onStartRace={handleStartSession}
           onOpenGarage={() => setGarageOpen(true)}
           onOpenSetup={() => setSetupOpen(true)}
+          onOpenStudio={() => handleOpenStudio()}
         />
       )}
 
@@ -261,15 +299,39 @@ export default function App() {
           room={room}
           mpError={mpError}
           onUpdateConfig={handleUpdateConfig}
+          onUpdatePeer={(payload) => mpClientRef.current?.updatePeer(payload)}
           onCreateRoom={(name) =>
-            mpClientRef.current?.createRoom(name, raceConfig.playerCarId, raceConfig.playerLivery, raceConfig)
+            mpClientRef.current?.createRoom(
+              name,
+              raceConfig.playerCarId,
+              raceConfig.playerLivery,
+              raceConfig,
+              getCarById(raceConfig.playerCarId).classId,
+            )
           }
           onJoinRoom={(code, name) =>
-            mpClientRef.current?.joinRoom(code, name, raceConfig.playerCarId, raceConfig.playerLivery)
+            mpClientRef.current?.joinRoom(
+              code,
+              name,
+              raceConfig.playerCarId,
+              raceConfig.playerLivery,
+              getCarById(raceConfig.playerCarId).classId,
+            )
           }
           onLeaveRoom={() => mpClientRef.current?.leaveRoom()}
           onStartFromLobby={handleStartSession}
           onClose={() => setSetupOpen(false)}
+          onOpenStudio={(trackToEdit) => handleOpenStudio(trackToEdit)}
+        />
+      )}
+
+      {/* Interactive Track Studio Circuit Builder */}
+      {trackStudioOpen && (
+        <TrackStudioModal
+          initialTrack={editingCustomTrack}
+          onClose={() => setTrackStudioOpen(false)}
+          onSaveTrack={handleStudioSaveTrack}
+          onTestDrive={handleStudioTestDrive}
         />
       )}
 

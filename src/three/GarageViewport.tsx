@@ -286,7 +286,7 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
       s.carAnchor.remove(s.carRig.root);
       s.carRig.dispose();
     }
-    const built = buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, s.maxAniso);
+    const built = buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, s.maxAniso, carSpec.id);
     s.carRig = built;
     s.carAnchor.add(built.root);
     s.requestRender();

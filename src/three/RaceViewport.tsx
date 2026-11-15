@@ -9,6 +9,7 @@ import {
   computeStandings,
   createCarSimState,
   resolveCarCollisions,
+  SPEED_KMH_FACTOR,
   stepCarPhysics,
 } from '../game/physics';
 import { compileTrack, getTrackById, sampleTrackAtT } from '../game/tracks';
@@ -105,6 +106,7 @@ export function RaceViewport(props: RaceViewportProps) {
     rainMesh: THREE.InstancedMesh | null;
     keysPressed: Set<string>;
     specialJustPressed: boolean;
+    pitLimiterToggle: boolean;
     rebuildWorld: () => void;
   } | null>(null);
 
@@ -192,7 +194,8 @@ export function RaceViewport(props: RaceViewportProps) {
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
     const keysPressed = new Set<string>();
 
-    const initialCompiled = compileTrack(getTrackById(propsRef.current.raceConfig.trackId));
+    const initialTrackSpec = propsRef.current.raceConfig.customTrack || getTrackById(propsRef.current.raceConfig.trackId);
+    const initialCompiled = compileTrack(initialTrackSpec);
     const sim = {
       scene,
       camera,
@@ -216,13 +219,14 @@ export function RaceViewport(props: RaceViewportProps) {
       rainMesh,
       keysPressed,
       specialJustPressed: false,
+      pitLimiterToggle: false,
       rebuildWorld: () => {},
     };
 
     const rebuildWorld = () => {
       const cfg = propsRef.current.raceConfig;
       const currentPhase = propsRef.current.phase;
-      const trackSpec = getTrackById(cfg.trackId);
+      const trackSpec = cfg.customTrack || getTrackById(cfg.trackId);
       const compiled = compileTrack(trackSpec);
       sim.compiledTrack = compiled;
 
@@ -258,15 +262,22 @@ export function RaceViewport(props: RaceViewportProps) {
       const newCars: CarSimState[] = [];
       const playerSpec = getCarById(cfg.playerCarId);
 
-      // Determine grid slot for player
-      const totalGrid = isQuali ? 1 : currentPhase === 'title' ? 10 : Math.max(4, Math.min(24, cfg.gridSize));
+      // Determine grid slot for player and peers
+      const peers = propsRef.current.roomPeers.filter((p) => p.peerId !== propsRef.current.mpClient.peerId);
+      const aiCount = isQuali
+        ? 0
+        : cfg.noAi
+        ? 0
+        : cfg.aiBotCount !== undefined
+        ? Math.max(0, Math.min(23, cfg.aiBotCount))
+        : Math.max(0, cfg.gridSize - 1 - peers.length);
+      const totalGrid = isQuali ? 1 : currentPhase === 'title' ? 10 : Math.max(1, 1 + peers.length + aiCount);
       const playerSlot = isQuali
         ? 0
         : sim.qualiGridPos !== null
         ? Math.min(totalGrid - 1, sim.qualiGridPos - 1)
         : Math.min(totalGrid - 1, Math.floor(totalGrid * 0.45));
 
-      const peers = propsRef.current.roomPeers.filter((p) => p.peerId !== propsRef.current.mpClient.peerId);
       const aiPaceMult = (1.0 * (cfg.aiDifficulty === 'Rookie' ? 0.84 : cfg.aiDifficulty === 'Amateur' ? 0.92 : cfg.aiDifficulty === 'Pro' ? 1.0 : 1.07)) + cfg.aiAdaptiveBoost;
 
       let peerCursor = 0;
@@ -352,7 +363,7 @@ export function RaceViewport(props: RaceViewportProps) {
 
       sim.cars = newCars;
       for (const c of newCars) {
-        const rig = buildDiecastCar(c.carSpec.silhouette, c.carSpec.classId, c.livery, maxAniso);
+        const rig = buildDiecastCar(c.carSpec.silhouette, c.carSpec.classId, c.livery, maxAniso, c.carSpec.id);
         rig.root.position.set(c.x, c.y, c.z);
         rig.root.rotation.y = c.heading;
         scene.add(rig.root);
@@ -407,7 +418,10 @@ export function RaceViewport(props: RaceViewportProps) {
         propsRef.current.onToggleMute();
         return;
       }
-      if ((code === 'Space' || code === 'ShiftLeft') && !e.repeat) {
+      if (code === 'KeyL' && !e.repeat) {
+        sim.pitLimiterToggle = true;
+      }
+      if ((code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyE') && !e.repeat) {
         sim.specialJustPressed = true;
       }
 
@@ -549,6 +563,12 @@ export function RaceViewport(props: RaceViewportProps) {
         let steer =
           (keysPressed.has('KeyD') || keysPressed.has('ArrowRight') ? 1 : 0) -
           (keysPressed.has('KeyA') || keysPressed.has('ArrowLeft') ? 1 : 0);
+        let specialPressed =
+          sim.specialJustPressed ||
+          keysPressed.has('ShiftLeft') ||
+          keysPressed.has('ShiftRight') ||
+          keysPressed.has('KeyE') ||
+          keysPressed.has('Space');
 
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
         const gp = gamepads[0];
@@ -557,7 +577,18 @@ export function RaceViewport(props: RaceViewportProps) {
           if (Math.abs(axisX) > 0.14) steer = axisX;
           if (gp.buttons[7]?.value > 0.1) throttle = gp.buttons[7].value;
           if (gp.buttons[6]?.value > 0.1) brake = gp.buttons[6].value;
-          if (gp.buttons[0]?.pressed) sim.specialJustPressed = true;
+          if (
+            gp.buttons[0]?.pressed ||
+            gp.buttons[2]?.pressed ||
+            gp.buttons[4]?.pressed ||
+            gp.buttons[5]?.pressed
+          ) {
+            specialPressed = true;
+            sim.specialJustPressed = true;
+          }
+          if (gp.buttons[1]?.pressed || gp.buttons[3]?.pressed) {
+            sim.pitLimiterToggle = true;
+          }
         }
 
         if (sim.countdown <= 0) {
@@ -567,7 +598,14 @@ export function RaceViewport(props: RaceViewportProps) {
               c.pitStrategy = p.pitStrategy;
               stepCarPhysics(
                 c,
-                { throttle, brake, steer, specialPressed: sim.specialJustPressed },
+                {
+                  throttle,
+                  brake,
+                  steer,
+                  specialPressed,
+                  specialJustPressed: sim.specialJustPressed,
+                  pitLimiterToggle: sim.pitLimiterToggle,
+                },
                 sim.compiledTrack,
                 dt,
                 {
@@ -578,6 +616,7 @@ export function RaceViewport(props: RaceViewportProps) {
                 },
               );
               sim.specialJustPressed = false;
+              sim.pitLimiterToggle = false;
             } else if (c.isHumanPeer) {
               const pkt = p.mpClient.peerTelemetry.get(c.id);
               if (pkt) {
@@ -675,7 +714,16 @@ export function RaceViewport(props: RaceViewportProps) {
           const speedRatio = Math.min(1, playerCar.speed / 52);
           const gear = Math.max(1, Math.min(8, Math.ceil(speedRatio * 7.8) || 1));
           const rpmNorm = ((speedRatio * 7.8) % 1) * 0.65 + 0.28;
-          sim.audio.updateEngine(rpmNorm, throttle, playerCar.carSpec.engineType, sim.countdown <= 0);
+          const liveSpeedKmh = Math.round(playerCar.speed * SPEED_KMH_FACTOR);
+          sim.audio.updateEngine(
+            rpmNorm,
+            throttle,
+            playerCar.carSpec.engineType,
+            sim.countdown <= 0,
+            playerCar.carSpec.classId,
+            brake > 0,
+            liveSpeedKmh,
+          );
         }
       } else {
         // Paused or Gameover: silence engine
@@ -770,8 +818,7 @@ export function RaceViewport(props: RaceViewportProps) {
         const behind = pIdx >= 0 && pIdx + 1 < standings.length ? standings[pIdx + 1] : null;
         const classCars = standings.filter((s) => s.classId === playerCar.carSpec.classId).length;
 
-        const speedScale = 5.4;
-        const speedKmh = Math.round(playerCar.speed * speedScale);
+        const speedKmh = Math.round(playerCar.speed * SPEED_KMH_FACTOR);
         const speedRatio = Math.min(1, playerCar.speed / 52);
         const gear = playerCar.speed < 1.5 ? 1 : Math.min(8, Math.max(1, Math.ceil(speedRatio * 7.9)));
         const rpmNormalized = playerCar.speed < 1 ? 0.18 : ((speedRatio * 7.9) % 1) * 0.65 + 0.3;
@@ -797,6 +844,10 @@ export function RaceViewport(props: RaceViewportProps) {
           tireTemp: Math.round(playerCar.tireTemp),
           compound: playerCar.compound,
           fuel: Math.round(playerCar.fuel),
+          fuelLapsRemaining: playerCar.fuelLapsRemaining,
+          pitLimiterActive: playerCar.pitLimiterActive,
+          attackModeUsesRemaining: playerCar.attackModeUsesRemaining,
+          attackModeTimer: playerCar.attackModeTimer,
           aeroDamage: Math.round(playerCar.aeroDamage),
           specialCharge: Math.round(playerCar.specialCharge),
           specialActive: playerCar.specialActive,

@@ -12,6 +12,7 @@ interface PeerRecord {
   peerId: string;
   name: string;
   carId: string;
+  classId?: string;
   livery: unknown;
   ready: boolean;
   isHost: boolean;
@@ -39,19 +40,27 @@ function generateRoomCode(): string {
 }
 
 function serializeRoom(room: RoomRecord) {
+  const peersList = Array.from(room.peers.values()).map((p) => ({
+    peerId: p.peerId,
+    name: p.name,
+    carId: p.carId,
+    classId: p.classId || 'wec-hypercar',
+    livery: p.livery,
+    ready: p.ready,
+    isHost: p.isHost,
+  }));
+  const players: Record<string, typeof peersList[0]> = {};
+  for (const p of peersList) {
+    players[p.peerId] = p;
+  }
   return {
     code: room.code,
     hostId: room.hostId,
     config: room.config,
+    customTrack: (room.config as Record<string, unknown>)?.customTrack,
     started: room.started,
-    peers: Array.from(room.peers.values()).map((p) => ({
-      peerId: p.peerId,
-      name: p.name,
-      carId: p.carId,
-      livery: p.livery,
-      ready: p.ready,
-      isHost: p.isHost,
-    })),
+    peers: peersList,
+    players,
   };
 }
 
@@ -136,6 +145,7 @@ async function startServer() {
           peerId,
           name: String(msg.name || 'Host Driver').slice(0, 24),
           carId: String(msg.carId || 'ferrari-499p'),
+          classId: String(msg.classId || 'wec-hypercar'),
           livery: msg.livery || {},
           ready: true,
           isHost: true,
@@ -162,6 +172,7 @@ async function startServer() {
           peerId,
           name: String(msg.name || 'Guest Driver').slice(0, 24),
           carId: String(msg.carId || 'porsche-963'),
+          classId: String(msg.classId || 'wec-hypercar'),
           livery: msg.livery || {},
           ready: false,
           isHost: room.hostId === peerId,
@@ -185,6 +196,7 @@ async function startServer() {
         const peer = room.peers.get(currentPeerId);
         if (peer) {
           if (msg.carId) peer.carId = String(msg.carId);
+          if (msg.classId) peer.classId = String(msg.classId);
           if (msg.livery) peer.livery = msg.livery;
           if (typeof msg.ready === 'boolean') peer.ready = msg.ready;
           if (msg.name) peer.name = String(msg.name).slice(0, 24);

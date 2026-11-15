@@ -36,11 +36,12 @@ function getSceneryPalette(scenery: SceneryTheme): {
 }
 
 function buildRibbonGeometry(
-  points: Array<{ x: number; y: number; z: number; nx: number; nz: number }>,
-  halfWidth: number,
+  points: Array<{ x: number; y: number; z: number; nx: number; nz: number; banking?: number; width?: number }>,
+  baseHalfWidth: number,
   yOffset: number,
   uvRepeatLength: number,
   closed: boolean,
+  nominalTrackWidth = 16,
 ): THREE.BufferGeometry {
   const n = points.length;
   const vertCount = (closed ? n + 1 : n) * 2;
@@ -58,22 +59,43 @@ function buildRibbonGeometry(
     }
     const vCoord = accLen / uvRepeatLength;
 
-    const lx = p.x - p.nx * halfWidth;
-    const lz = p.z - p.nz * halfWidth;
-    const rx = p.x + p.nx * halfWidth;
-    const rz = p.z + p.nz * halfWidth;
+    const widthScale = p.width ? p.width / nominalTrackWidth : 1;
+    const hw = baseHalfWidth * widthScale;
+
+    // Apply banking rotation around tangent (banking > 0 raises right side, lowers left side)
+    const bank = p.banking || 0;
+    const cosB = Math.cos(bank);
+    const sinB = Math.sin(bank);
+
+    const lx = p.x - p.nx * hw * cosB;
+    const ly = p.y + yOffset - hw * sinB;
+    const lz = p.z - p.nz * hw * cosB;
+
+    const rx = p.x + p.nx * hw * cosB;
+    const ry = p.y + yOffset + hw * sinB;
+    const rz = p.z + p.nz * hw * cosB;
 
     const base = i * 2;
     positions[base * 3] = lx;
-    positions[base * 3 + 1] = p.y + yOffset;
+    positions[base * 3 + 1] = ly;
     positions[base * 3 + 2] = lz;
 
     positions[(base + 1) * 3] = rx;
-    positions[(base + 1) * 3 + 1] = p.y + yOffset;
+    positions[(base + 1) * 3 + 1] = ry;
     positions[(base + 1) * 3 + 2] = rz;
 
-    normals[base * 3 + 1] = 1;
-    normals[(base + 1) * 3 + 1] = 1;
+    // Upward surface normal tilted by banking
+    const vertNx = -p.nx * sinB;
+    const vertNy = cosB;
+    const vertNz = -p.nz * sinB;
+
+    normals[base * 3] = vertNx;
+    normals[base * 3 + 1] = vertNy;
+    normals[base * 3 + 2] = vertNz;
+
+    normals[(base + 1) * 3] = vertNx;
+    normals[(base + 1) * 3 + 1] = vertNy;
+    normals[(base + 1) * 3 + 2] = vertNz;
 
     uvs[base * 2] = 0;
     uvs[base * 2 + 1] = vCoord;
@@ -94,7 +116,6 @@ function buildRibbonGeometry(
   geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geo.setIndex(indices);
-  geo.computeVertexNormals();
   return geo;
 }
 
@@ -146,7 +167,7 @@ export function buildTrackEnvironment(
   // 2. Main Track Asphalt Ribbon
   const halfW = compiled.spec.trackWidth * 0.5;
   const asphaltTex = track(createAsphaltTexture(compiled.spec.asphaltColor, maxAniso));
-  const roadGeo = track(buildRibbonGeometry(compiled.samples, halfW, 0.05, 16, true));
+  const roadGeo = track(buildRibbonGeometry(compiled.samples, halfW, 0.05, 16, true, compiled.spec.trackWidth));
   const roadMat = track(
     new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -160,7 +181,7 @@ export function buildTrackEnvironment(
   group.add(roadMesh);
 
   // 3. Gravel / Turf Runoff Apron under Track
-  const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, -0.04, 24, true));
+  const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, -0.04, 24, true, compiled.spec.trackWidth));
   const apronMat = track(
     new THREE.MeshStandardMaterial({
       color: compiled.spec.scenery === 'desert' ? 0xc49c6e : 0x3b483d,
@@ -173,7 +194,7 @@ export function buildTrackEnvironment(
   group.add(apronMesh);
 
   // 4. Pit Lane Bypass Corridor + Speed Limit Line
-  const pitSamples: Array<{ x: number; y: number; z: number; nx: number; nz: number }> = [];
+  const pitSamples: Array<{ x: number; y: number; z: number; nx: number; nz: number; banking?: number; width?: number }> = [];
   const pitSteps = 44;
   for (let i = 0; i <= pitSteps; i++) {
     const u = i / pitSteps;
@@ -188,9 +209,11 @@ export function buildTrackEnvironment(
       z: sp.z + sp.nz * lat,
       nx: sp.nx,
       nz: sp.nz,
+      banking: 0,
+      width: 7.6,
     });
   }
-  const pitRoadGeo = track(buildRibbonGeometry(pitSamples, 3.8, 0.03, 12, false));
+  const pitRoadGeo = track(buildRibbonGeometry(pitSamples, 3.8, 0.03, 12, false, 7.6));
   const pitRoadMat = track(
     new THREE.MeshStandardMaterial({
       color: 0x333944,
@@ -230,12 +253,17 @@ export function buildTrackEnvironment(
     if (Math.abs(s.curvature) > 0.0038) {
       // Place kerb on inside of corner
       const side = s.curvature > 0 ? 1 : -1;
+      const bank = s.banking || 0;
+      const cosB = Math.cos(bank);
+      const sinB = Math.sin(bank);
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const kerbDist = curHalfW + 0.55;
       dummy.position.set(
-        s.x + s.nx * side * (halfW + 0.55),
-        s.y + 0.08 + (i % 2) * 0.004,
-        s.z + s.nz * side * (halfW + 0.55),
+        s.x + s.nx * side * kerbDist * cosB,
+        s.y + 0.08 + (i % 2) * 0.004 + side * kerbDist * sinB,
+        s.z + s.nz * side * kerbDist * cosB,
       );
-      dummy.rotation.set(0, Math.atan2(s.tx, s.tz), 0);
+      dummy.rotation.set(bank * side * Math.cos(Math.atan2(s.tx, s.tz)), Math.atan2(s.tx, s.tz), bank * side);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       kerbMatrices.push(dummy.matrix.clone());
@@ -261,15 +289,24 @@ export function buildTrackEnvironment(
     }),
   );
   const barrierMatrices: THREE.Matrix4[] = [];
+  const pitSideSign = compiled.pitOffset >= 0 ? 1 : -1;
   for (let i = 0; i < compiled.samples.length; i += 2) {
     const s = compiled.samples[i];
     // Skip inner barrier along pit lane corridor so players can enter pits cleanly
     const inPitWindow = s.t >= 0.88 || s.t <= 0.10;
     for (const side of [-1, 1]) {
-      if (side === -1 && inPitWindow) continue;
-      const offset = halfW + 5.6;
-      dummy.position.set(s.x + s.nx * side * offset, s.y + 0.35, s.z + s.nz * side * offset);
-      dummy.rotation.set(0, Math.atan2(s.tx, s.tz), 0);
+      if (side === pitSideSign && inPitWindow) continue;
+      const bank = s.banking || 0;
+      const cosB = Math.cos(bank);
+      const sinB = Math.sin(bank);
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const offset = curHalfW + 5.6;
+      dummy.position.set(
+        s.x + s.nx * side * offset * cosB,
+        s.y + 0.35 + side * offset * sinB,
+        s.z + s.nz * side * offset * cosB,
+      );
+      dummy.rotation.set(0, Math.atan2(s.tx, s.tz), bank * side);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       barrierMatrices.push(dummy.matrix.clone());
@@ -431,6 +468,50 @@ export function buildTrackEnvironment(
   if (propInst.instanceColor) propInst.instanceColor.needsUpdate = true;
   propInst.computeBoundingSphere();
   group.add(propInst);
+
+  // 10. Night Street Circuit Floodlight Towers
+  if (compiled.spec.scenery === 'street-night') {
+    const floodlightGeo = track(new THREE.CylinderGeometry(0.25, 0.35, 11, 8));
+    const floodlightHeadGeo = track(new THREE.BoxGeometry(2.0, 0.8, 1.4));
+    const floodMat = track(
+      new THREE.MeshStandardMaterial({
+        color: 0x334155,
+        metalness: 0.8,
+        roughness: 0.3,
+      }),
+    );
+    const lampMat = track(
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0xffedd5,
+        emissiveIntensity: 2.5,
+        roughness: 0.2,
+      }),
+    );
+
+    const floodStep = Math.max(12, Math.floor(compiled.samples.length / 20));
+    for (let i = 0; i < compiled.samples.length; i += floodStep) {
+      const s = compiled.samples[i];
+      const flGroup = new THREE.Group();
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const postX = s.x - s.nx * (curHalfW + 7.2);
+      const postZ = s.z - s.nz * (curHalfW + 7.2);
+      flGroup.position.set(postX, s.y, postZ);
+      flGroup.rotation.y = Math.atan2(s.nx, s.nz);
+
+      const mast = new THREE.Mesh(floodlightGeo, floodMat);
+      mast.position.y = 5.5;
+      mast.castShadow = true;
+      flGroup.add(mast);
+
+      const head = new THREE.Mesh(floodlightHeadGeo, lampMat);
+      head.position.set(0, 10.8, 1.0);
+      head.rotation.x = 0.45;
+      flGroup.add(head);
+
+      group.add(flGroup);
+    }
+  }
 
   return {
     group,

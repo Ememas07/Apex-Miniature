@@ -12,7 +12,14 @@ export enum CarClassId {
 
 export type BodySilhouette = 'prototype' | 'lmp2' | 'gt' | 'formula' | 'coupe' | 'supercar';
 
-export type ClassSpecialType = 'none' | 'active-aero' | 'attack-mode' | 'hybrid-deploy';
+export type ClassSpecialType =
+  | 'none'
+  | 'active-aero'
+  | 'attack-mode'
+  | 'ers-overtake'
+  | 'v10-overboost'
+  | 'high-beam-flash'
+  | 'hybrid-deploy';
 
 export interface BoPAttributes {
   topSpeed: number; // 1-100
@@ -80,7 +87,7 @@ export interface CarSpec {
   defaultLivery: LiveryConfig;
 }
 
-export type TrackRegion = 'Americas' | 'Europe' | 'Asia-Pacific & Middle East';
+export type TrackRegion = 'Americas' | 'Europe' | 'Asia-Pacific & Middle East' | 'Custom';
 
 export type SceneryTheme = 'stadium' | 'forest' | 'desert' | 'street-night' | 'coastal' | 'parkland';
 
@@ -88,7 +95,8 @@ export interface TrackWaypoint {
   x: number;
   y: number; // elevation
   z: number;
-  width?: number;
+  width?: number; // per-node width override
+  banking?: number; // per-node banking in degrees
 }
 
 export interface TrackSpec {
@@ -107,6 +115,11 @@ export interface TrackSpec {
   targetLapSeconds: number;
   corners: number;
   waypoints: TrackWaypoint[];
+  isCustom?: boolean;
+  startNodeIndex?: number;
+  pitSide?: 'left' | 'right';
+  banking?: number;
+  createdAt?: number;
 }
 
 export type TireCompound = 'soft' | 'medium' | 'hard' | 'wet';
@@ -128,10 +141,13 @@ export interface PitStrategy {
 
 export interface RaceConfig {
   trackId: string;
+  customTrack?: TrackSpec;
   activeClasses: CarClassId[];
   playerCarId: string;
   playerLivery: LiveryConfig;
-  gridSize: number; // 4 to 24
+  gridSize: number; // 1 to 24
+  aiBotCount: number; // 0 to 23
+  noAi: boolean; // quick toggle for No AI (Humans Only / Solo)
   totalLaps: number; // 5 to 20
   weather: WeatherMode;
   startingCompound: TireCompound;
@@ -190,14 +206,18 @@ export interface HudSnapshot {
   tireTemp: number; // Celsius
   compound: TireCompound;
   fuel: number; // 100 down to 0
+  fuelLapsRemaining: number; // estimated laps of fuel remaining
   aeroDamage: number; // 0 up to 100
   specialCharge: number; // 0..100
   specialActive: boolean;
+  attackModeUsesRemaining?: number;
+  attackModeTimer?: number;
   inSlipstream: boolean;
   trackWetness: number; // 0..1
   warningCount: number;
   penaltyTimeRemaining: number;
   inPitLane: boolean;
+  pitLimiterActive: boolean;
   pitStopRemaining: number;
   pitSpeeding: boolean;
   pitStrategy: PitStrategy;
@@ -219,6 +239,7 @@ export interface RoomPeer {
   peerId: string;
   name: string;
   carId: string;
+  classId: CarClassId;
   livery: LiveryConfig;
   ready: boolean;
   isHost: boolean;
@@ -228,6 +249,8 @@ export interface RoomState {
   code: string;
   hostId: string;
   config: Partial<RaceConfig>;
+  customTrack?: TrackSpec;
   peers: RoomPeer[];
+  players?: Record<string, RoomPeer>;
   started: boolean;
 }

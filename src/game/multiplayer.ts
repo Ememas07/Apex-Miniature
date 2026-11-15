@@ -1,4 +1,4 @@
-import { LiveryConfig, RaceConfig, RoomState } from './types';
+import { CarClassId, LiveryConfig, RaceConfig, RoomState } from './types';
 
 export interface PeerTelemetryPacket {
   x: number;
@@ -79,7 +79,7 @@ export class MultiplayerClient {
     });
   }
 
-  async createRoom(name: string, carId: string, livery: LiveryConfig, config: RaceConfig) {
+  async createRoom(name: string, carId: string, livery: LiveryConfig, config: RaceConfig, classId?: CarClassId) {
     await this.connect();
     this.ws?.send(
       JSON.stringify({
@@ -87,13 +87,14 @@ export class MultiplayerClient {
         peerId: this.peerId,
         name,
         carId,
+        classId,
         livery,
         config,
       }),
     );
   }
 
-  async joinRoom(code: string, name: string, carId: string, livery: LiveryConfig) {
+  async joinRoom(code: string, name: string, carId: string, livery: LiveryConfig, classId?: CarClassId) {
     await this.connect();
     this.ws?.send(
       JSON.stringify({
@@ -102,6 +103,7 @@ export class MultiplayerClient {
         peerId: this.peerId,
         name,
         carId,
+        classId,
         livery,
       }),
     );
@@ -112,7 +114,7 @@ export class MultiplayerClient {
     this.ws.send(JSON.stringify({ type: 'room:configure', config }));
   }
 
-  updatePeer(payload: { name?: string; carId?: string; livery?: LiveryConfig; ready?: boolean }) {
+  updatePeer(payload: { name?: string; carId?: string; classId?: CarClassId; livery?: LiveryConfig; ready?: boolean }) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify({ type: 'room:peer_update', ...payload }));
   }

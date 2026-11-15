@@ -116,18 +116,18 @@ export function RaceHUD({
           </div>
 
           {/* Contextual Racecraft / Rulebook Alerts */}
-          {(hud.inSlipstream || hud.penaltyTimeRemaining > 0 || hud.warningCount > 0 || hud.inPitLane) && (
+          {(hud.inSlipstream || hud.penaltyTimeRemaining > 0 || hud.warningCount > 0 || hud.inPitLane || hud.pitLimiterActive) && (
             <div className="mt-2 pt-2 border-t border-white/10 space-y-1 text-[11px] font-semibold">
               {hud.inSlipstream && (
                 <div className="text-sky-300">SLIPSTREAM TOW ACTIVE</div>
               )}
-              {hud.inPitLane && (
+              {(hud.inPitLane || hud.pitLimiterActive) && (
                 <div className={hud.pitSpeeding ? 'text-red-400' : 'text-amber-300'}>
                   {hud.pitStopRemaining > 0
                     ? `PIT SERVICE ${hud.pitStopRemaining.toFixed(1)}s`
                     : hud.pitSpeeding
                     ? 'PIT SPEEDING PENALTY (3.0s)'
-                    : 'PIT LIMITER 60 KM/H'}
+                    : 'PIT LIMITER: 60 KM/H CLAMP (ACTIVE [L])'}
                 </div>
               )}
               {hud.penaltyTimeRemaining > 0 && !hud.inPitLane && (
@@ -348,7 +348,16 @@ export function RaceHUD({
               <div className="flex items-center justify-end gap-2">
                 <span className="text-slate-400">Temp / Fuel</span>
                 <span className="font-telemetry text-slate-200">
-                  {hud.tireTemp}°C · {hud.fuel}%
+                  {hud.tireTemp}°C · {hud.fuel}%{' '}
+                  <span
+                    className={
+                      hud.fuelLapsRemaining !== undefined && hud.fuelLapsRemaining < 2
+                        ? 'text-red-400 font-bold'
+                        : 'text-amber-300 font-semibold'
+                    }
+                  >
+                    ({hud.fuelLapsRemaining ?? Math.round(hud.fuel * 0.15)} Laps)
+                  </span>
                 </span>
               </div>
             </div>
@@ -368,10 +377,49 @@ export function RaceHUD({
           {/* Class Special & Track Surface Footer */}
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
             <span>
-              {classMeta.specialLabel}:{' '}
-              <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
-                {hud.specialActive ? 'ACTIVE' : `${hud.specialCharge}%`}
-              </strong>
+              {classMeta.specialType === 'active-aero' ? (
+                <span>
+                  Active Aero:{' '}
+                  <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
+                    {hud.specialActive ? 'STRAIGHT (LOW DRAG +12%)' : 'CORNER (HIGH DOWNFORCE)'}
+                  </strong>{' '}
+                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                </span>
+              ) : classMeta.specialType === 'attack-mode' ? (
+                <span>
+                  Attack Mode AWD:{' '}
+                  <strong className={hud.specialActive ? 'text-cyan-300' : 'text-slate-200'}>
+                    {hud.specialActive
+                      ? `ACTIVE ${hud.attackModeTimer?.toFixed(1) ?? '15.0'}s (+15% PWR)`
+                      : `${hud.attackModeUsesRemaining ?? 2}/2 USES READY`}
+                  </strong>{' '}
+                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                </span>
+              ) : classMeta.specialType === 'v10-overboost' ? (
+                <span>
+                  V10 Overboost:{' '}
+                  <strong className={hud.specialActive ? 'text-red-400 font-bold' : 'text-slate-200'}>
+                    {hud.specialActive ? 'OVERBOOST (+8% PWR, +35% FUEL)' : `${hud.specialCharge}% READY`}
+                  </strong>{' '}
+                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                </span>
+              ) : classMeta.specialType === 'high-beam-flash' ? (
+                <span>
+                  High Beams:{' '}
+                  <strong className={hud.specialActive ? 'text-amber-300' : 'text-slate-200'}>
+                    {hud.specialActive ? 'FLASHING TRAFFIC' : 'READY'}
+                  </strong>{' '}
+                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                </span>
+              ) : (
+                <span>
+                  {classMeta.specialLabel}:{' '}
+                  <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
+                    {hud.specialActive ? 'ACTIVE (+15% ACCEL)' : `${hud.specialCharge}% (HOLD)`}
+                  </strong>{' '}
+                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                </span>
+              )}
             </span>
             {hud.trackWetness > 0.1 ? (
               <span className="text-sky-300 font-semibold">
@@ -380,7 +428,7 @@ export function RaceHUD({
             ) : hud.aeroDamage > 4 ? (
               <span className="text-amber-300 font-semibold">Aero {hud.aeroDamage}% dmg</span>
             ) : (
-              <span>Cam: {hud.cameraMode}</span>
+              <span>Cam: {hud.cameraMode} · [L] Limiter</span>
             )}
           </div>
         </div>
