@@ -1286,25 +1286,32 @@ export function buildHullStations(
     let yCrown = 0.48;
 
     if (t <= 0.07) {
-      halfW = width * (0.43 + t * 0.4);
+      // Rear bumper / diffuser zone
+      halfW = width * (isProto ? (0.43 + t * 0.4) : (0.46 + t * 0.35));
       yBelt = 0.44 * design.tailHeightRatio;
       yCrown = yBelt + 0.04;
     } else if (t <= 0.22) {
+      // Rear wheels & flared haunches
       const env = Math.sin(((t - 0.07) / 0.15) * Math.PI);
-      halfW = width * (0.46 + env * 0.065) * hScale;
+      const baseHaunch = isProto ? 0.46 : 0.49;
+      halfW = width * (baseHaunch + env * (isProto ? 0.065 : 0.04)) * hScale;
       ySill = 0.26;
       yBelt = 0.48 + env * 0.03;
       yCrown = 0.50 + env * 0.02;
     } else if (t <= 0.52) {
+      // Coke-bottle waist / cabin door sills
       const pinch = Math.sin(((t - 0.22) / 0.30) * Math.PI);
-      const minWFactor = isProto ? 0.40 : isStreetCar ? 0.44 : 0.42;
-      halfW = width * (0.47 - pinch * (0.47 - minWFactor));
+      const minWFactor = isProto ? 0.40 : isStreetCar ? 0.46 : 0.45;
+      const startW = isProto ? 0.47 : 0.49;
+      halfW = width * (startW - pinch * (startW - minWFactor));
       ySill = 0.24;
       yBelt = 0.46;
       yCrown = 0.49;
     } else if (t <= 0.80) {
+      // Front wheels & front fenders
       const arch = Math.sin(((t - 0.52) / 0.28) * Math.PI);
-      halfW = width * (0.46 + arch * 0.045);
+      const baseFender = isProto ? 0.46 : 0.48;
+      halfW = width * (baseFender + arch * (isProto ? 0.045 : 0.04));
       ySill = 0.25;
       yBelt = 0.48 + arch * 0.02;
       if (isPowerDome) {
@@ -1315,8 +1322,10 @@ export function buildHullStations(
         yCrown = 0.49;
       }
     } else {
+      // Front hood & bumper
       const frac = (t - 0.80) / 0.20;
-      halfW = width * (0.48 - frac * 0.13);
+      const baseNose = isProto ? 0.48 : 0.49;
+      halfW = width * (baseNose - frac * (isProto ? 0.13 : 0.08));
       yBelt = (0.48 - frac * 0.18) * design.noseHeightRatio;
       if (isPowerDome) {
         yCrown = (0.52 - frac * 0.20) * design.noseHeightRatio;
@@ -1327,8 +1336,8 @@ export function buildHullStations(
       }
     }
 
-    const wBelt = halfW * 0.90;
-    const wCrown = halfW * 0.45;
+    const wBelt = halfW * (isProto ? 0.90 : 0.93);
+    const wCrown = halfW * (isProto ? 0.45 : 0.48);
     stations.push({ z, halfW, yFloor, ySill, yBelt, wBelt, yCrown, wCrown });
   }
 
@@ -1634,6 +1643,16 @@ export function buildDiecastCar(
     new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       map: liveryTex,
+      roughness: 0.24,
+      metalness: 0.18,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.12,
+    }),
+  );
+
+  const primaryMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(livery.primaryColor),
       roughness: 0.24,
       metalness: 0.18,
       clearcoat: 1.0,
@@ -2089,7 +2108,7 @@ export function buildDiecastCar(
     }
   } else {
     // ================= BESPOKE LOFTED 3D CLOSED-WHEEL CARS (53 CHASSIS) =================
-    const bodyWidth = width * 0.96;
+    const bodyWidth = width * (isProto ? 0.96 : 1.02);
     const bodyLen = length * 0.94;
 
     // 1. Parametric Lofted Hull Geometry with Coke-Bottle Waist, Flared Haunches & Pontoon Channels
@@ -2115,16 +2134,18 @@ export function buildDiecastCar(
     cabin.castShadow = true;
     bodyGroup.add(cabin);
 
-    // Sculpted Wheel Arch Flares
-    const archRadius = isStreetCar ? 0.40 : 0.44;
-    const archGeo = track(new THREE.CylinderGeometry(archRadius, archRadius + 0.025, 0.22, 14, 1, false, 0, Math.PI));
-    archGeo.rotateZ(Math.PI / 2);
-    for (const sx of [-bodyWidth * 0.49, bodyWidth * 0.49]) {
-      for (const sz of [-wheelBaseZ, wheelBaseZ]) {
-        const arch = new THREE.Mesh(archGeo, design.sidepodStyle === 'clean-street' ? bodyMat : secondaryMat);
-        arch.position.set(sx, 0.36, sz);
-        arch.castShadow = true;
-        bodyGroup.add(arch);
+    // Sculpted Prototype Wheel Arch Flares (Prototypes only; GT & Coupes use continuous full-width enclosed hull)
+    if (isProto) {
+      const archRadius = 0.44;
+      const archGeo = track(new THREE.CylinderGeometry(archRadius, archRadius + 0.025, 0.22, 14, 1, false, 0, Math.PI));
+      archGeo.rotateZ(Math.PI / 2);
+      for (const sx of [-bodyWidth * 0.49, bodyWidth * 0.49]) {
+        for (const sz of [-wheelBaseZ, wheelBaseZ]) {
+          const arch = new THREE.Mesh(archGeo, secondaryMat);
+          arch.position.set(sx, 0.36, sz);
+          arch.castShadow = true;
+          bodyGroup.add(arch);
+        }
       }
     }
 
@@ -2213,7 +2234,7 @@ export function buildDiecastCar(
       mesh.position.set(0, 0.33, frontZ);
       bodyGroup.add(mesh);
     } else if (design.grilleStyle === 'supra-nose') {
-      const noseBeak = new THREE.Mesh(track(new THREE.BoxGeometry(0.32, 0.18, 0.12)), bodyMat);
+      const noseBeak = new THREE.Mesh(track(new THREE.BoxGeometry(0.32, 0.18, 0.12)), primaryMat);
       noseBeak.position.set(0, 0.36, frontZ + 0.03);
       bodyGroup.add(noseBeak);
       for (const gx of [-0.42, 0.42]) {
@@ -2222,7 +2243,7 @@ export function buildDiecastCar(
         bodyGroup.add(intake);
       }
     } else if (design.grilleStyle === 'alpine-arrow') {
-      const arrowNose = new THREE.Mesh(track(new THREE.BoxGeometry(0.24, 0.14, 0.10)), bodyMat);
+      const arrowNose = new THREE.Mesh(track(new THREE.BoxGeometry(0.24, 0.14, 0.10)), primaryMat);
       arrowNose.position.set(0, 0.36, frontZ + 0.02);
       bodyGroup.add(arrowNose);
     } else if (
@@ -2310,28 +2331,37 @@ export function buildDiecastCar(
       }
     }
 
-    // Windshield Banner
-    if (!isStreetCar) {
-      const bannerGeo = track(new THREE.PlaneGeometry(bodyWidth * 0.62, 0.14));
-      bannerGeo.rotateX(-0.62);
+    // Windshield Banner (Anchored flush onto sloped windshield glass)
+    if (!isStreetCar && cabinStations.length >= 2) {
+      const stTop = cabinStations[cabinStations.length - 2];
+      const stBtm = cabinStations[cabinStations.length - 1];
+      const dz = stBtm.z - stTop.z;
+      const dy = stBtm.yRoof - stTop.yRoof;
+      const bannerWidth = Math.max(0.62, stTop.wRoof * 2 * 0.96);
+      const bannerHeight = 0.11;
+      const bannerGeo = track(new THREE.PlaneGeometry(bannerWidth, bannerHeight));
+      const pitch = -Math.atan2(-dy, dz);
       const bannerMesh = new THREE.Mesh(bannerGeo, bannerMat);
-      bannerMesh.position.set(0, isProto ? 0.84 : 0.94, design.cabinOffsetZ + 0.58);
+      bannerMesh.rotation.x = pitch;
+      const tPos = 0.20;
+      const bZ = stTop.z + dz * tPos;
+      const bY = stTop.yRoof + dy * tPos + 0.008;
+      bannerMesh.position.set(0, bY, bZ);
       bodyGroup.add(bannerMesh);
     }
 
-    // Front Splitter
+    // Front Splitter (Tucked flush with lower bumper, compact overhang matching body width)
+    const splitterWidth = bodyWidth * (isGT3 ? 1.01 : isGT4 ? 1.00 : isProto ? 1.02 : 0.98);
+    const splitterLen = isGT3 ? 0.18 : isGT4 ? 0.14 : isProto ? 0.20 : 0.12;
+    const splitterOverhang = isGT3 ? 0.07 : isGT4 ? 0.05 : isProto ? 0.08 : 0.03;
     const splitterGeo = track(
-      new THREE.BoxGeometry(
-        bodyWidth * (isGT3 ? 1.08 : isGT4 ? 1.04 : isStreetCar ? 1.01 : 1.04),
-        0.06,
-        isGT3 ? 0.38 : isGT4 ? 0.28 : isStreetCar ? 0.20 : 0.32,
-      ),
+      new THREE.BoxGeometry(splitterWidth, 0.045, splitterLen),
     );
     const splitterMesh = new THREE.Mesh(
       splitterGeo,
       livery.carbonSplitter || isGT3 || isGT4 ? carbonMat : tertiaryMat,
     );
-    splitterMesh.position.set(0, 0.18, bodyLen * 0.5 + 0.04);
+    splitterMesh.position.set(0, 0.18, bodyLen * 0.5 + splitterOverhang);
     bodyGroup.add(splitterMesh);
 
     // Rear Diffuser
@@ -2438,7 +2468,7 @@ export function buildDiecastCar(
       rearWingFlap = lip;
     } else if (design.rearDeckStyle === 'deck-tunnel') {
       for (const sx of [-0.52, 0.52]) {
-        const buttress = new THREE.Mesh(track(new THREE.BoxGeometry(0.18, 0.18, 0.85)), bodyMat);
+        const buttress = new THREE.Mesh(track(new THREE.BoxGeometry(0.18, 0.18, 0.85)), primaryMat);
         buttress.position.set(sx, 0.72, -bodyLen * 0.26);
         bodyGroup.add(buttress);
       }

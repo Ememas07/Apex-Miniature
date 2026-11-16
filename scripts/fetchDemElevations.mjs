@@ -71,16 +71,16 @@ function readTrackSvgs() {
   const ccwMatch = code.match(/export const CCW_CIRCUIT_IDS = new Set\(\[([\s\S]*?)\]\);/);
   const ccwIds = new Set();
   if (ccwMatch) {
-    for (const m of ccwMatch[1].matchAll(/'([^']+)'/g)) {
+    for (const m of ccwMatch[1].matchAll(/['"]([^'"]+)['"]/g)) {
       ccwIds.add(m[1]);
     }
   }
 
-  // Parse TRACK_SVG_REGISTRY
-  const regMatch = code.match(/export const TRACK_SVG_REGISTRY: Record<string, string> = {([\s\S]*?)};/);
+  // Parse TRACK_SVG_PATHS or TRACK_SVG_REGISTRY
+  const regMatch = code.match(/export const TRACK_SVG_(?:PATHS|REGISTRY): Record<string, string> = {([\s\S]*?)};/);
   const svgRegistry = {};
   if (regMatch) {
-    const entryRegex = /'([a-z0-9-]+)':\s*[\r\n\s]*'([^']+)'/g;
+    const entryRegex = /['"]([a-z0-9-]+)['"]:\s*[\r\n\s]*['"]([^'"]+)['"]/g;
     for (const m of regMatch[1].matchAll(entryRegex)) {
       svgRegistry[m[1]] = m[2];
     }
@@ -266,7 +266,8 @@ async function fetchElevationBatch(coords, maxRetries = 10) {
         } else if (resetHeader) {
           const resetEpoch = Number(resetHeader);
           const nowEpoch = Math.floor(Date.now() / 1000);
-          waitSec = Math.max(3, resetEpoch - nowEpoch + 1);
+          const diff = resetEpoch - nowEpoch + 1;
+          waitSec = (diff > 0 && diff <= 65) ? diff : 3;
         }
         console.warn(`  [HTTP 429] Rate limit reached. Waiting ${waitSec}s for quota reset (attempt ${attempt}/${maxRetries})...`);
         await sleep(waitSec * 1000);
@@ -277,21 +278,9 @@ async function fetchElevationBatch(coords, maxRetries = 10) {
         throw new Error(`HTTP error ${res.status}: ${res.statusText}`);
       }
 
-      const remaining = Number(res.headers.get('x-ratelimit-remaining'));
-      const resetHeader = res.headers.get('x-ratelimit-reset');
-
       const data = await res.json();
       if (!data || !Array.isArray(data.elevation)) {
         throw new Error(`Invalid response format from Open-Meteo: ${JSON.stringify(data)}`);
-      }
-
-      // Proactively pause if quota is nearly exhausted (< 100 points remaining for next batch)
-      if (!isNaN(remaining) && remaining < 100 && resetHeader) {
-        const resetEpoch = Number(resetHeader);
-        const nowEpoch = Math.floor(Date.now() / 1000);
-        const waitSec = Math.max(2, resetEpoch - nowEpoch + 1);
-        console.log(`  [Quota] Low quota remaining (${remaining}). Proactively waiting ${waitSec}s for reset...`);
-        await sleep(waitSec * 1000);
       }
 
       return data.elevation;

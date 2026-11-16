@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+track images/
+.dem_cache.json
+scripts/.dem_cache.json
