@@ -18,6 +18,14 @@ export class MotorsportAudioEngine {
   private electricFilter: BiquadFilterNode | null = null;
   private electricGain: GainNode | null = null;
 
+  // Tire scrub & kerb rumble nodes
+  private scrubSource: AudioBufferSourceNode | null = null;
+  private scrubFilter: BiquadFilterNode | null = null;
+  private scrubGain: GainNode | null = null;
+  private kerbOsc: OscillatorNode | null = null;
+  private kerbFilter: BiquadFilterNode | null = null;
+  private kerbGain: GainNode | null = null;
+
   // Noise / Pops / Wastegate buffer
   private noiseBuffer: AudioBuffer | null = null;
 
@@ -114,14 +122,57 @@ export class MotorsportAudioEngine {
       this.oscElectricInverter = oscEl1;
       this.oscElectricGear = oscEl2;
 
-      // 3. Pre-render white noise buffer for exhaust pops & wastegate flutter
-      const bufferLength = Math.floor(ctx.sampleRate * 0.4);
+      // 3. Pre-render white noise buffer for exhaust pops, wastegate & continuous tire scrub
+      const bufferLength = Math.floor(ctx.sampleRate * 0.8);
       const noiseBuf = ctx.createBuffer(1, bufferLength, ctx.sampleRate);
       const data = noiseBuf.getChannelData(0);
       for (let i = 0; i < bufferLength; i++) {
         data[i] = Math.random() * 2 - 1;
       }
       this.noiseBuffer = noiseBuf;
+
+      // 4. Continuous Tire Lateral-Slip Scrub channel
+      const sSrc = ctx.createBufferSource();
+      sSrc.buffer = noiseBuf;
+      sSrc.loop = true;
+
+      const sFilter = ctx.createBiquadFilter();
+      sFilter.type = 'bandpass';
+      sFilter.frequency.value = 1250;
+      sFilter.Q.value = 2.6;
+
+      const sGain = ctx.createGain();
+      sGain.gain.value = 0;
+
+      sSrc.connect(sFilter);
+      sFilter.connect(sGain);
+      sGain.connect(master);
+      sSrc.start();
+
+      this.scrubSource = sSrc;
+      this.scrubFilter = sFilter;
+      this.scrubGain = sGain;
+
+      // 5. Kerb / Rumble Strip vibration channel
+      const kOsc = ctx.createOscillator();
+      kOsc.type = 'triangle';
+      kOsc.frequency.value = 62;
+
+      const kFilter = ctx.createBiquadFilter();
+      kFilter.type = 'lowpass';
+      kFilter.frequency.value = 210;
+
+      const kGain = ctx.createGain();
+      kGain.gain.value = 0;
+
+      kOsc.connect(kFilter);
+      kFilter.connect(kGain);
+      kGain.connect(master);
+      kOsc.start();
+
+      this.kerbOsc = kOsc;
+      this.kerbFilter = kFilter;
+      this.kerbGain = kGain;
 
       this.initialized = true;
     } catch {
@@ -151,6 +202,9 @@ export class MotorsportAudioEngine {
     classId?: CarClassId,
     _isBraking?: boolean,
     speedKmh?: number,
+    carId?: string,
+    lateralSlip = 0,
+    onKerb = false,
   ) {
     if (
       !this.initialized ||
@@ -176,9 +230,12 @@ export class MotorsportAudioEngine {
     const now = this.ctx.currentTime;
     if (!active || this.muted) {
       this.engineGain.gain.setTargetAtTime(0, now, 0.06);
+      this.scrubGain?.gain.setTargetAtTime(0, now, 0.05);
+      this.kerbGain?.gain.setTargetAtTime(0, now, 0.04);
       return;
     }
 
+    const isNonHybridHypercar = carId === 'aston-valkyrie-lmh' || carId === 'glickenhaus-scg-007';
     const isF1_2005 = classId === CarClassId.F1_2005 || (engineType === 'v10' && classId === undefined);
     const isF1Modern = classId === CarClassId.F1_2026 || classId === CarClassId.F1_2021;
     const isFormulaE = classId === CarClassId.FORMULA_E || engineType === 'electric';
@@ -239,8 +296,12 @@ export class MotorsportAudioEngine {
       subRatio = 0.5;
       filterCutoff = 1350;
       combGainLevel = 0.18 + throttle * 0.10;
-      // Hybrid electric pit-exit & launch whine
-      elGainLevel = (throttle > 0.4 || (speedKmh !== undefined && speedKmh < 90)) ? 0.07 : 0.02;
+      // Hybrid electric pit-exit & launch whine (strictly suppressed for non-hybrid V12/ICE entries)
+      elGainLevel = isNonHybridHypercar
+        ? 0.0
+        : throttle > 0.4 || (speedKmh !== undefined && speedKmh < 90)
+        ? 0.07
+        : 0.02;
       inverterHz = 900 + rpmNorm * 1400;
       gearHz = 1800 + rpmNorm * 1600;
       this.electricFilter.frequency.setTargetAtTime(inverterHz, now, 0.03);
@@ -310,6 +371,21 @@ export class MotorsportAudioEngine {
 
     const overallEngineGain = 0.10 + throttle * 0.12;
     this.engineGain.gain.setTargetAtTime(overallEngineGain, now, 0.04);
+
+    // Live Tire Scrub Audio (lateralSlip > 0.14 at speed)
+    const speedNum = speedKmh ?? 0;
+    if (this.scrubGain && this.scrubFilter) {
+      const slipIntensity = speedNum > 22 && lateralSlip > 0.14 ? Math.min(1, (lateralSlip - 0.14) * 1.45) : 0;
+      this.scrubFilter.frequency.setTargetAtTime(1050 + slipIntensity * 850, now, 0.04);
+      this.scrubGain.gain.setTargetAtTime(slipIntensity * 0.14, now, 0.04);
+    }
+
+    // Live Kerb Rumble Audio
+    if (this.kerbGain && this.kerbOsc) {
+      const kerbActive = onKerb && speedNum > 18;
+      this.kerbOsc.frequency.setTargetAtTime(52 + Math.min(48, speedNum * 0.24), now, 0.03);
+      this.kerbGain.gain.setTargetAtTime(kerbActive ? 0.18 : 0, now, 0.03);
+    }
 
     // Throttle Lift-Off Detection: Exhaust Crackles & Wastegate Flutter
     if (this.prevThrottle > 0.65 && throttle < 0.25 && rpmNorm > 0.45 && now - this.lastCrackleTime > 0.5) {
@@ -401,6 +477,8 @@ export class MotorsportAudioEngine {
       this.oscSub?.stop();
       this.oscElectricInverter?.stop();
       this.oscElectricGear?.stop();
+      this.scrubSource?.stop();
+      this.kerbOsc?.stop();
       this.ctx?.close();
     } catch {
       // ignore

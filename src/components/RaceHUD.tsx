@@ -1,36 +1,41 @@
 import { useMemo, useState } from 'react';
 import { Camera, Volume2, VolumeX, Pause, Wrench, Home } from 'lucide-react';
-import { CAR_CLASSES, getCarById } from '../game/cars';
+import { CAR_CLASSES, getCarById, resolveCarSpecial } from '../game/cars';
 import { formatLapTime } from '../game/physics';
 import { compileTrack, getTrackById } from '../game/tracks';
-import { HudSnapshot, PitServiceType, PitStrategy, TireCompound } from '../game/types';
+import { HudSnapshot, PitServiceType, PitStrategy, TireCompound, TrackSpec } from '../game/types';
 
 interface RaceHUDProps {
   hud: HudSnapshot;
   trackId: string;
+  customTrack?: TrackSpec;
   playerCarId: string;
   muted: boolean;
   onChangePitStrategy: (strategy: PitStrategy) => void;
   onCycleCamera: () => void;
   onToggleMute: () => void;
   onTogglePause: () => void;
+  onReturnToTitle: () => void;
 }
 
 export function RaceHUD({
   hud,
   trackId,
+  customTrack,
   playerCarId,
   muted,
   onChangePitStrategy,
   onCycleCamera,
   onToggleMute,
   onTogglePause,
+  onReturnToTitle,
 }: RaceHUDProps) {
   const [pitMenuOpen, setPitMenuOpen] = useState(false);
 
-  const track = getTrackById(trackId);
+  const track = customTrack || getTrackById(trackId);
   const playerCar = getCarById(playerCarId);
   const classMeta = CAR_CLASSES[playerCar.classId];
+  const carSpecial = resolveCarSpecial(playerCar);
 
   const minimapGeometry = useMemo(() => {
     const compiled = compileTrack(track, 100);
@@ -212,15 +217,19 @@ export function RaceHUD({
             >
               <Pause className="w-4 h-4" />
             </button>
-            <a
-              href="/"
+            <button
+              type="button"
               tabIndex={-1}
-              aria-label="Return to Hub"
-              title="Return to Hub"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onReturnToTitle();
+              }}
+              aria-label="Return to Title Screen"
+              title="Return to Title"
               className="p-2 rounded bg-[#0b0e13]/90 border border-sky-500/30 hover:border-sky-400 text-sky-400 hover:text-sky-300 cursor-pointer flex items-center justify-center transition-colors"
             >
               <Home className="w-4 h-4" />
-            </a>
+            </button>
           </div>
 
           {/* Track Minimap */}
@@ -313,7 +322,7 @@ export function RaceHUD({
         </div>
 
         {/* Bottom-Right Cluster: Speed, Gear, Tire/Fuel & Class Special */}
-        <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 min-w-[260px] shadow-lg">
+        <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 min-w-[310px] shadow-lg">
           <div className="flex items-end justify-between gap-5">
             <div>
               <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
@@ -375,9 +384,9 @@ export function RaceHUD({
           </div>
 
           {/* Class Special & Track Surface Footer */}
-          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+          <div className="mt-2 flex items-center justify-between gap-4 text-[11px] text-slate-400 whitespace-nowrap">
             <span>
-              {classMeta.specialType === 'active-aero' ? (
+              {carSpecial.specialType === 'active-aero' ? (
                 <span>
                   Active Aero:{' '}
                   <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
@@ -385,7 +394,7 @@ export function RaceHUD({
                   </strong>{' '}
                   <span className="text-[10px] text-slate-500">[Shift/E]</span>
                 </span>
-              ) : classMeta.specialType === 'attack-mode' ? (
+              ) : carSpecial.specialType === 'attack-mode' ? (
                 <span>
                   Attack Mode AWD:{' '}
                   <strong className={hud.specialActive ? 'text-cyan-300' : 'text-slate-200'}>
@@ -395,7 +404,7 @@ export function RaceHUD({
                   </strong>{' '}
                   <span className="text-[10px] text-slate-500">[Shift/E]</span>
                 </span>
-              ) : classMeta.specialType === 'v10-overboost' ? (
+              ) : carSpecial.specialType === 'v10-overboost' ? (
                 <span>
                   V10 Overboost:{' '}
                   <strong className={hud.specialActive ? 'text-red-400 font-bold' : 'text-slate-200'}>
@@ -403,7 +412,15 @@ export function RaceHUD({
                   </strong>{' '}
                   <span className="text-[10px] text-slate-500">[Shift/E]</span>
                 </span>
-              ) : classMeta.specialType === 'high-beam-flash' ? (
+              ) : carSpecial.specialType === 'rich-fuel-overboost' ? (
+                <span>
+                  Rich Fuel Overboost:{' '}
+                  <strong className={hud.specialActive ? 'text-amber-400 font-bold' : 'text-slate-200'}>
+                    {hud.specialActive ? 'RICH MAP (+8% PWR, +35% FUEL)' : `${hud.specialCharge}% READY`}
+                  </strong>{' '}
+                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                </span>
+              ) : carSpecial.specialType === 'high-beam-flash' ? (
                 <span>
                   High Beams:{' '}
                   <strong className={hud.specialActive ? 'text-amber-300' : 'text-slate-200'}>
@@ -413,7 +430,7 @@ export function RaceHUD({
                 </span>
               ) : (
                 <span>
-                  {classMeta.specialLabel}:{' '}
+                  {carSpecial.specialLabel}:{' '}
                   <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
                     {hud.specialActive ? 'ACTIVE (+15% ACCEL)' : `${hud.specialCharge}% (HOLD)`}
                   </strong>{' '}

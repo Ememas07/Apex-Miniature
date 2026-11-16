@@ -6,6 +6,7 @@ import {
   computeBoPEquilibriumScore,
   getCarById,
   getCarsByClass,
+  resolveCarSpecial,
   validateDriverNumber,
 } from '../game/cars';
 import {
@@ -262,7 +263,7 @@ export function GarageModal({
               <div className="pt-3 border-t border-white/10 space-y-2.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-200">Asymmetric BoP Profile</span>
-                  <span className="text-slate-400">Special: {classMeta.specialLabel}</span>
+                  <span className="text-slate-400">Special: {resolveCarSpecial(activeCar).specialLabel}</span>
                 </div>
                 {[
                   { label: 'Top Speed', val: activeCar.attributes.topSpeed, color: '#ef4444' },

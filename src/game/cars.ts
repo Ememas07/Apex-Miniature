@@ -253,6 +253,8 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 90, acceleration: 84, corneringGrip: 87, braking: 83, efficiency: 80 },
     tradeoffNote: 'Featherweight V12 top-end screamer with rapid direction change; shorter braking margin.',
     engineType: 'v12',
+    specialTypeOverride: 'rich-fuel-overboost',
+    specialLabelOverride: 'Rich Fuel Overboost',
     defaultLivery: makeLivery('#065f46', '#a3e635', '#ffffff', '007', { template: 'racing-stripes', rimFinish: 'gold-bronze' }),
   },
   {
@@ -286,6 +288,8 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 88, acceleration: 83, corneringGrip: 85, braking: 86, efficiency: 89 },
     tradeoffNote: 'Non-hybrid mechanical purity: ultra-light on fuel and tires, slightly slower off slow corners.',
     engineType: 'v8-hybrid',
+    specialTypeOverride: 'rich-fuel-overboost',
+    specialLabelOverride: 'Rich Fuel Overboost',
     defaultLivery: makeLivery('#0284c7', '#ffffff', '#dc2626', '708', { template: 'heritage', rimFinish: 'white' }),
   },
 
@@ -399,7 +403,7 @@ export const CARS: CarSpec[] = [
     silhouette: 'gt',
     attributes: { topSpeed: 78, acceleration: 80, corneringGrip: 79, braking: 78, efficiency: 76 },
     tradeoffNote: 'Explosive mid-corner rotation and launch punch; works rear tires hard.',
-    engineType: 'v8-hybrid',
+    engineType: 'v10',
     defaultLivery: makeLivery('#84cc16', '#0f172a', '#ffffff', '19', { template: 'geometric', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -807,6 +811,17 @@ export function getCarById(id: string): CarSpec {
 
 export function getCarsByClass(classId: CarClassId): CarSpec[] {
   return CARS.filter((c) => c.classId === classId);
+}
+
+export function resolveCarSpecial(car: CarSpec): {
+  specialType: NonNullable<CarSpec['specialTypeOverride']>;
+  specialLabel: string;
+} {
+  const cls = CAR_CLASSES[car.classId];
+  return {
+    specialType: car.specialTypeOverride ?? cls.specialType,
+    specialLabel: car.specialLabelOverride ?? cls.specialLabel,
+  };
 }
 
 export function validateDriverNumber(raw: string): string {

@@ -34,7 +34,10 @@ export class MultiplayerClient {
     }
     return new Promise((resolve, reject) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${protocol}//${window.location.host}/ws`;
+      const basePath = window.location.pathname.endsWith('/')
+        ? window.location.pathname
+        : window.location.pathname.replace(/\/[^/]*$/, '/');
+      const url = `${protocol}//${window.location.host}${basePath}ws`;
       const socket = new WebSocket(url);
       this.ws = socket;
 

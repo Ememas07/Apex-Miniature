@@ -1,4 +1,4 @@
-import { CAR_CLASSES, getCarById } from './cars';
+import { CAR_CLASSES, getCarById, resolveCarSpecial } from './cars';
 import { CompiledTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
 import {
   AIDifficulty,
@@ -59,6 +59,8 @@ export interface CarSimState {
   attackModeTimer: number;
   inSlipstream: boolean;
   understeerFactor: number; // 0..1
+  lateralSlip: number; // 0..1 tire lateral scrub intensity
+  onKerb: boolean; // currently riding corner kerb rumble strips
   warningCount: number;
   offTrackCooldown: number;
   penaltyTimeRemaining: number;
@@ -140,6 +142,8 @@ export function createCarSimState(params: {
     attackModeTimer: 0,
     inSlipstream: false,
     understeerFactor: 0,
+    lateralSlip: 0,
+    onKerb: false,
     warningCount: 0,
     offTrackCooldown: 0,
     penaltyTimeRemaining: 0,
@@ -303,10 +307,12 @@ export function stepCarPhysics(
 
   car.pitLimiterActive = car.inPitLane || car.pitLimiterManual;
 
-  // Class special activation / toggle
+  // Class / car-specific special activation / toggle
+  const resolvedSpecial = resolveCarSpecial(car.carSpec);
+  const specialType = resolvedSpecial.specialType;
   const isSpecialTriggered = input.specialJustPressed ?? input.specialPressed;
 
-  switch (classMeta.specialType) {
+  switch (specialType) {
     case 'active-aero': {
       if (isSpecialTriggered) {
         car.specialActive = !car.specialActive;
@@ -351,8 +357,9 @@ export function stepCarPhysics(
       }
       break;
     }
-    case 'v10-overboost': {
-      // Temporary +8% power/RPM surge with +35% fuel burn while active
+    case 'v10-overboost':
+    case 'rich-fuel-overboost': {
+      // Temporary +8% power/RPM surge with +35% fuel burn while active (NA V10 / Valkyrie / Glickenhaus)
       if (input.specialPressed && car.specialCharge > 2) {
         car.specialActive = true;
         car.specialCharge = Math.max(0, car.specialCharge - dt * 15);
@@ -421,21 +428,21 @@ export function stepCarPhysics(
   let specialAccelMult = 1.0;
   let specialGripMult = 1.0;
   if (car.specialActive) {
-    if (classMeta.specialType === 'active-aero') {
+    if (specialType === 'active-aero') {
       // 2026 F1: +12% top speed, -25% cornering grip vs High-Downforce Corner Mode
       specialSpeedMult = 1.12;
       specialGripMult = 0.75;
-    } else if (classMeta.specialType === 'attack-mode') {
+    } else if (specialType === 'attack-mode') {
       // Formula E: enables AWD acceleration boost and +15% power
       specialSpeedMult = 1.06;
       specialAccelMult = 1.15;
       specialGripMult = 1.08;
-    } else if (classMeta.specialType === 'ers-overtake' || classMeta.specialType === 'hybrid-deploy') {
+    } else if (specialType === 'ers-overtake' || specialType === 'hybrid-deploy') {
       // 2021 F1 & Hypercar: +15% acceleration
       specialSpeedMult = 1.05;
       specialAccelMult = 1.15;
-    } else if (classMeta.specialType === 'v10-overboost') {
-      // 2005 F1: temporary +8% power surge with +35% fuel burn
+    } else if (specialType === 'v10-overboost' || specialType === 'rich-fuel-overboost') {
+      // 2005 F1 & Non-hybrid LMH: temporary +8% power surge with +35% fuel burn
       specialSpeedMult = 1.04;
       specialAccelMult = 1.08;
     }
@@ -503,7 +510,7 @@ export function stepCarPhysics(
   }
 
   // Natural aero/rolling drag when coasting or above effectiveMaxSpeed
-  const dragCoeff = car.specialActive && classMeta.specialType === 'active-aero' ? 0.35 : 0.48;
+  const dragCoeff = car.specialActive && specialType === 'active-aero' ? 0.35 : 0.48;
   if (car.pitLimiterActive && car.speed > PIT_LIMIT_SPEED) {
     car.speed = PIT_LIMIT_SPEED;
   } else if (car.speed > effectiveMaxSpeed) {
@@ -512,12 +519,12 @@ export function stepCarPhysics(
     car.speed = Math.max(0, car.speed - car.speed * dragCoeff * dt);
   }
 
-  // Sim-Cade Steering, Trail-Braking & Understeer Scrub
+  // Sim-Cade Steering, Centripetal Cornering Limit, Trail-Braking & Understeer Scrub
   const steerInput = Math.max(-1, Math.min(1, input.steer));
   car.steerAngle += (steerInput * 0.5 - car.steerAngle) * Math.min(1, dt * 14);
 
   const speedNorm = Math.min(1, car.speed / Math.max(1, maxSpeedBase));
-  // Trail-braking bonus: gentle braking (0.1..0.65) while turning sharpens front bite
+  // Trail-braking bonus: gentle braking (0.08..0.7) while turning sharpens front bite
   const trailBrakeBonus = brake > 0.08 && brake < 0.7 && Math.abs(steerInput) > 0.25 ? 1.14 : 1.0;
   const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
   const bankingGripBonus = 1.0 + Math.sin(Math.abs(sampleBank)) * 0.35;
@@ -531,29 +538,38 @@ export function stepCarPhysics(
     trailBrakeBonus *
     bankingGripBonus;
 
-  // High-speed steering sensitivity tapers slightly, rewarding slow-in / fast-out
-  const maxTurnRate = availableGrip * (1.28 - speedNorm * 0.48);
-  const lateralDemand = Math.abs(steerInput) * speedNorm * 1.35;
-  const understeer = Math.max(0, lateralDemand - availableGrip * 0.56);
+  // Centripetal lateral physics cap: high-speed flat-out turning cannot cheat tight hairpins
+  const maxTurnRate = Math.min(
+    availableGrip * 1.48,
+    (availableGrip * 14.8) / Math.max(7.5, car.speed),
+  );
+  const lateralDemand = Math.abs(steerInput) * speedNorm * speedNorm * 1.65;
+  const understeer = Math.max(0, (lateralDemand - availableGrip * 0.54) * 1.75);
   car.understeerFactor = Math.min(1, understeer);
 
-  // Over-driving entries scrubs speed & reduces turn efficiency
-  if (understeer > 0.05 && car.speed > 12) {
-    car.speed = Math.max(10, car.speed - understeer * 8.5 * dt);
+  // Over-driving entries scrubs speed & pushes the car wide with genuine front-axle washout
+  if (understeer > 0.05 && car.speed > 10) {
+    car.speed = Math.max(9.5, car.speed - understeer * 13.5 * dt);
   }
 
-  const turnEffectiveness = 1 - Math.min(0.38, understeer * 0.34);
+  const turnEffectiveness = 1 - Math.min(0.55, understeer * 0.45);
   const lowSpeedScale = Math.min(1, car.speed / 6.0);
-  // Note: steerInput > 0 = turn right -> in right-handed XZ with heading 0 = +Z, turning right decreases heading (-X is right? Wait: sin(h), cos(h): h = +pi/2 => +X, h = -pi/2 => -X)
-  // Let's keep consistent convention: heading angle increases counter-clockwise (+Y up), so left steer (-1) increases heading, right steer (+1) decreases heading!
   car.heading -= steerInput * maxTurnRate * turnEffectiveness * lowSpeedScale * dt;
 
-  // Lateral velocity blend (playful slide angle for coupes/2005 F1, planted for 2021 F1)
+  // Lateral velocity blend & lateral slip calculation for tire scrub audio
   const desiredVx = Math.sin(car.heading) * car.speed;
   const desiredVz = Math.cos(car.heading) * car.speed;
-  const lateralBlend = Math.min(1, dt * (6.5 + availableGrip * 3.5));
+  const lateralBlend = Math.min(1, dt * (6.5 + availableGrip * 3.5) * (1 - Math.min(0.45, understeer * 0.4)));
   car.vx += (desiredVx - car.vx) * lateralBlend;
   car.vz += (desiredVz - car.vz) * lateralBlend;
+
+  const fwdX = Math.sin(car.heading);
+  const fwdZ = Math.cos(car.heading);
+  const rightVel = car.vx * fwdZ - car.vz * fwdX;
+  car.lateralSlip = Math.min(
+    1,
+    (Math.abs(rightVel) / 7.5 + car.understeerFactor * 0.72) * (car.speed > 5 ? 1 : 0),
+  );
 
   car.x += car.vx * dt;
   car.z += car.vz * dt;
@@ -564,8 +580,18 @@ export function stepCarPhysics(
   car.y = proj.sample.y + car.lateralOffset * Math.sin(bank);
   car.lateralOffset = proj.lateralOffset;
 
-  // Guardrail outer containment so cars bounce gently rather than leaving the world
+  // Kerb contact detection on curved apexes
   const sampleHalfW = (proj.sample.width ? proj.sample.width : compiledTrack.spec.trackWidth) * 0.5;
+  car.onKerb =
+    !isInPitCorridor &&
+    car.speed > 4 &&
+    Math.abs(proj.sample.curvature) > 0.008 &&
+    Math.abs(car.lateralOffset) >= sampleHalfW - 0.65 &&
+    Math.abs(car.lateralOffset) <= sampleHalfW + 1.8 &&
+    ((proj.sample.curvature > 0 && car.lateralOffset > 0) ||
+      (proj.sample.curvature < 0 && car.lateralOffset < 0));
+
+  // Guardrail outer containment so cars bounce gently rather than leaving the world
   const maxLeftLat = sampleHalfW + (inPitProgress && pitSideSign === -1 ? 16.5 : 7.5);
   const maxRightLat = sampleHalfW + (inPitProgress && pitSideSign === 1 ? 16.5 : 7.5);
   if (car.lateralOffset > maxRightLat) {
@@ -654,17 +680,17 @@ export function stepCarPhysics(
   const targetTemp = compoundMod.optimalTemp + cornerLoad * 24 + car.understeerFactor * 16 - opts.trackWetness * 14;
   car.tireTemp += (targetTemp - car.tireTemp) * Math.min(1, dt * 1.4);
 
-  // Recalibrated fuel consumption: ~6.5% - 7.5% per race lap at full push -> ~12-16 laps on full tank
+  // Recalibrated fuel consumption: ~6.5% - 7.8% per race lap at full push -> ~12-16 laps on full tank
   const lapProgressDelta = (car.speed * dt) / Math.max(400, compiledTrack.totalLength);
   const throttleLoad = 0.40 + 0.60 * throttle;
   let overboostFuelMult = 1.0;
-  if (car.specialActive && classMeta.specialType === 'v10-overboost') {
-    overboostFuelMult = 1.35; // +35% fuel burn while V10 Overboost active!
+  if (car.specialActive && (specialType === 'v10-overboost' || specialType === 'rich-fuel-overboost')) {
+    overboostFuelMult = 1.35; // +35% fuel burn while overboost active!
   }
-  const fuelBurn = 14.5 * lapProgressDelta * throttleLoad * efficiencyFactor * overboostFuelMult;
+  const fuelBurn = 9.5 * lapProgressDelta * throttleLoad * efficiencyFactor * overboostFuelMult;
   car.fuel = Math.max(0, car.fuel - fuelBurn);
 
-  const avgBurnRatePerLap = Math.max(4.5, 14.5 * efficiencyFactor * 0.55 * overboostFuelMult);
+  const avgBurnRatePerLap = Math.max(4.5, 9.5 * efficiencyFactor * 0.78 * overboostFuelMult);
   car.fuelLapsRemaining = Number((car.fuel / avgBurnRatePerLap).toFixed(1));
 
   // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 2.0s outside pit box, smoothly reset to nearest spline point at rolling speed
@@ -857,8 +883,8 @@ export function computeAIControl(
   const bankingGripBonus = 1.0 + Math.sin(bankAngle) * 0.35;
   const effectiveGrip = gripBase * compoundMod.grip * personalityBrakeMult * bankingGripBonus;
   const cornerTargetSpeed =
-    maxCurvature > 0.003
-      ? Math.max(13, Math.sqrt((effectiveGrip * 9.5) / Math.max(0.0001, maxCurvature)))
+    maxCurvature > 0.006
+      ? Math.max(13, Math.sqrt((effectiveGrip * 14.2) / Math.max(0.0001, maxCurvature)))
       : 999;
 
   // Anticipatory braking before hairpins and chicanes
@@ -888,13 +914,14 @@ export function computeAIControl(
     throttle = 0.88;
   }
 
-  // Trigger Class Special on straights
-  const onStraight = maxCurvature < 0.004 && Math.abs(steer) < 0.18;
+  // Trigger Class / Car Special on straights
+  const resolvedSpecial = resolveCarSpecial(car.carSpec);
+  const onStraight = maxCurvature < 0.01 && Math.abs(steer) < 0.18;
   let specialPressed = false;
-  if (classMeta.specialType === 'active-aero') {
+  if (resolvedSpecial.specialType === 'active-aero') {
     if (onStraight && !car.specialActive && car.speed > 26) specialPressed = true;
     if (!onStraight && car.specialActive) specialPressed = true;
-  } else if (classMeta.specialType === 'attack-mode') {
+  } else if (resolvedSpecial.specialType === 'attack-mode') {
     if (onStraight && !car.specialActive && car.attackModeUsesRemaining > 0 && car.speed > 25) {
       specialPressed = true;
     }

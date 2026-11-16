@@ -39,7 +39,7 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
     targetYaw: number;
     pitch: number;
     targetPitch: number;
-    requestRender: () => void;
+    requestRender: (immediate?: boolean) => void;
   } | null>(null);
 
   useEffect(() => {
@@ -138,7 +138,8 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
     const carAnchor = new THREE.Group();
     scene.add(carAnchor);
 
-    let frameId = 0;
+    let rafId = 0;
+    let timerId = 0;
     let renderBusy = false;
     let renderDirty = false;
     let disposed = false;
@@ -151,50 +152,56 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
         if (disposed) return;
         const status = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
         if (status === gl.UNSIGNALED) {
-          frameId = window.setTimeout(poll, 5);
+          timerId = window.setTimeout(poll, 4);
         } else {
           if (sync) gl.deleteSync(sync);
-          frameId = window.setTimeout(cb, 80);
+          timerId = window.setTimeout(cb, 8);
         }
       };
-      frameId = window.setTimeout(poll, 5);
+      timerId = window.setTimeout(poll, 4);
     }
 
-    const requestRender = () => {
+    const drawFrame = () => {
+      if (disposed) return;
+      renderDirty = false;
+      const s = stateRef.current;
+      if (s) {
+        const factor = isSoftwareGl ? 1 : 0.22;
+        s.yaw += (s.targetYaw - s.yaw) * factor;
+        s.pitch += (s.targetPitch - s.pitch) * factor;
+        const dist = 6.2;
+        camera.position.set(
+          Math.sin(s.yaw) * Math.cos(s.pitch) * dist,
+          Math.sin(s.pitch) * dist + 0.72,
+          Math.cos(s.yaw) * Math.cos(s.pitch) * dist,
+        );
+        camera.lookAt(0, 0.48, 0);
+        renderer.render(scene, camera);
+
+        if (Math.abs(s.targetYaw - s.yaw) > 0.004 || Math.abs(s.targetPitch - s.pitch) > 0.004) {
+          renderDirty = true;
+        }
+      }
+      const done = () => {
+        renderBusy = false;
+        if (renderDirty && !disposed) requestRender();
+      };
+      if (isSoftwareGl) afterDraw(done);
+      else done();
+    };
+
+    const requestRender = (immediate = false) => {
       if (disposed) return;
       if (renderBusy) {
         renderDirty = true;
         return;
       }
       renderBusy = true;
-      frameId = requestAnimationFrame(() => {
-        if (disposed) return;
-        renderDirty = false;
-        const s = stateRef.current;
-        if (s) {
-          const factor = isSoftwareGl ? 1 : 0.22;
-          s.yaw += (s.targetYaw - s.yaw) * factor;
-          s.pitch += (s.targetPitch - s.pitch) * factor;
-          const dist = 6.2;
-          camera.position.set(
-            Math.sin(s.yaw) * Math.cos(s.pitch) * dist,
-            Math.sin(s.pitch) * dist + 0.72,
-            Math.cos(s.yaw) * Math.cos(s.pitch) * dist,
-          );
-          camera.lookAt(0, 0.48, 0);
-          renderer.render(scene, camera);
-
-          if (Math.abs(s.targetYaw - s.yaw) > 0.004 || Math.abs(s.targetPitch - s.pitch) > 0.004) {
-            renderDirty = true;
-          }
-        }
-        const done = () => {
-          renderBusy = false;
-          if (renderDirty && !disposed) requestRender();
-        };
-        if (isSoftwareGl) afterDraw(done);
-        else done();
-      });
+      if (immediate) {
+        drawFrame();
+      } else {
+        rafId = requestAnimationFrame(drawFrame);
+      }
     };
 
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
@@ -257,8 +264,8 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
 
     return () => {
       disposed = true;
-      cancelAnimationFrame(frameId);
-      clearTimeout(frameId);
+      cancelAnimationFrame(rafId);
+      clearTimeout(timerId);
       ro.disconnect();
       dom.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
@@ -289,7 +296,7 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
     const built = buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, s.maxAniso, carSpec.id);
     s.carRig = built;
     s.carAnchor.add(built.root);
-    s.requestRender();
+    s.requestRender(true);
   }, [carSpec, livery]);
 
   // Update preset camera angle

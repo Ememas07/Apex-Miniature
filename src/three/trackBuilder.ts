@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { CompiledTrack, sampleTrackAtT } from '../game/tracks';
 import { SceneryTheme } from '../game/types';
-import { createAsphaltTexture, createKerbTexture, createStartLineTexture } from './proceduralTextures';
+import {
+  createAsphaltTexture,
+  createBrakingBoardTexture,
+  createKerbTexture,
+  createStartLineTexture,
+} from './proceduralTextures';
 
 export interface BuiltTrackScene {
   group: THREE.Group;
@@ -250,7 +255,7 @@ export function buildTrackEnvironment(
 
   for (let i = 0; i < compiled.samples.length; i++) {
     const s = compiled.samples[i];
-    if (Math.abs(s.curvature) > 0.0038) {
+    if (Math.abs(s.curvature) > 0.0115) {
       // Place kerb on inside of corner
       const side = s.curvature > 0 ? 1 : -1;
       const bank = s.banking || 0;
@@ -318,6 +323,122 @@ export function buildTrackEnvironment(
   barrierInst.computeBoundingSphere();
   barrierInst.castShadow = true;
   group.add(barrierInst);
+
+  // 6b. Concrete Overpass Support Piers on Elevated Sections (e.g., Suzuka Figure-8 Bridge)
+  const pierGeo = track(new THREE.BoxGeometry(1.4, 1.0, 1.4));
+  const pierMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0x64748b,
+      roughness: 0.85,
+      metalness: 0.1,
+    }),
+  );
+  const pierStep = Math.max(8, Math.floor(compiled.samples.length / 40));
+  for (let i = 0; i < compiled.samples.length; i += pierStep) {
+    const s = compiled.samples[i];
+    if (s.y > 4.2) {
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      for (const side of [-1, 1]) {
+        const pier = new THREE.Mesh(pierGeo, pierMat);
+        const offset = curHalfW + 2.4;
+        pier.scale.y = Math.max(1, s.y - 0.1);
+        pier.position.set(
+          s.x + s.nx * side * offset,
+          (s.y - 0.1) * 0.5,
+          s.z + s.nz * side * offset,
+        );
+        pier.rotation.y = Math.atan2(s.tx, s.tz);
+        pier.castShadow = true;
+        pier.receiveShadow = true;
+        group.add(pier);
+      }
+    }
+  }
+
+  // 6c. 200m / 150m / 100m / 50m Braking Distance Boards before Heavy Braking Zones
+  const boardDists = [200, 150, 100, 50];
+  const boardGeo = track(new THREE.BoxGeometry(2.6, 1.75, 0.24));
+  const postGeo = track(new THREE.BoxGeometry(0.22, 2.2, 0.22));
+  const postMat = track(new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6, metalness: 0.5 }));
+  const boardFaceMats = boardDists.map((dist) => {
+    const tex = track(createBrakingBoardTexture(dist, maxAniso));
+    return track(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4, metalness: 0.05 }));
+  });
+
+  const sampleCount = compiled.samples.length;
+  const distScale = compiled.totalLength / sampleCount;
+  // Identify heavy braking corners (|curvature| > 0.022 preceded by straight approach < 0.011)
+  const zoneEntries: Array<{ index: number; side: number }> = [];
+  let cooldownSamples = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    if (cooldownSamples > 0) {
+      cooldownSamples--;
+      continue;
+    }
+    const cur = compiled.samples[i];
+    if (Math.abs(cur.curvature) > 0.022) {
+      // Check preceding ~90m..180m has smoother approach
+      const backCheck = Math.max(4, Math.round(70 / distScale));
+      let approachClear = true;
+      for (let b = 2; b <= backCheck; b++) {
+        const prev = compiled.samples[(i - b + sampleCount) % sampleCount];
+        if (Math.abs(prev.curvature) > 0.013) {
+          approachClear = false;
+          break;
+        }
+      }
+      if (approachClear) {
+        // Outside of the corner is opposite the inside turn direction
+        const outsideSide = cur.curvature > 0 ? -1 : 1;
+        zoneEntries.push({ index: i, side: outsideSide });
+        cooldownSamples = Math.max(12, Math.round(110 / distScale));
+      }
+    }
+  }
+
+  // Scale board spacing proportionally to scaled track length so 200/150/100/50 feel authentic on ~2km circuits
+  const worldSpacingRatio = Math.min(0.85, Math.max(0.45, compiled.totalLength / 3200));
+  for (const zone of zoneEntries) {
+    for (let bIdx = 0; bIdx < boardDists.length; bIdx++) {
+      const metersBefore = boardDists[bIdx] * worldSpacingRatio;
+      const offsetSamples = Math.round(metersBefore / distScale);
+      const si = (zone.index - offsetSamples + sampleCount) % sampleCount;
+      const s = compiled.samples[si];
+      const inPitWindow = s.t >= 0.89 || s.t <= 0.09;
+      if (inPitWindow && zone.side === pitSideSign) continue;
+      if (s.y > 4.2) continue; // avoid floating boards beside elevated overpasses
+
+      const bank = s.banking || 0;
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const latDist = curHalfW + 3.4;
+      const bx = s.x + s.nx * zone.side * latDist * Math.cos(bank);
+      const by = s.y + zone.side * latDist * Math.sin(bank);
+      const bz = s.z + s.nz * zone.side * latDist * Math.cos(bank);
+
+      const boardGroup = new THREE.Group();
+      boardGroup.position.set(bx, by, bz);
+      // Face oncoming drivers (-tangent direction)
+      boardGroup.rotation.y = Math.atan2(-s.tx, -s.tz);
+
+      const post = new THREE.Mesh(postGeo, postMat);
+      post.position.y = 1.1;
+      boardGroup.add(post);
+
+      const signMesh = new THREE.Mesh(boardGeo, [
+        postMat,
+        postMat,
+        postMat,
+        postMat,
+        boardFaceMats[bIdx],
+        boardFaceMats[bIdx],
+      ]);
+      signMesh.position.y = 2.1;
+      signMesh.castShadow = true;
+      boardGroup.add(signMesh);
+
+      group.add(boardGroup);
+    }
+  }
 
   // 7. Start / Finish Line & Checkered Gantry Arch + Starting Lights
   const sf = sampleTrackAtT(compiled, 0);

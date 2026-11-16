@@ -5,6 +5,7 @@ import {
   CAR_CLASSES,
   computeBoPEquilibriumScore,
   getCarsByClass,
+  resolveCarSpecial,
   validateDriverNumber,
 } from './cars';
 import { CarClassId, TrackSpec, TrackWaypoint } from './types';
@@ -51,18 +52,30 @@ test('Asymmetric intra-class BoP keeps overall class scores balanced while prese
   assert.ok(peugeot.attributes.corneringGrip > aston.attributes.corneringGrip);
 });
 
-test('Track catalog has all 43 circuits including 10 flagship circuits with valid closed splines', () => {
+test('Track catalog has all 43 circuits including 10 flagship circuits with valid closed splines and ZERO ribbon folds', () => {
   assert.equal(TRACKS.length, 43);
   const flagships = TRACKS.filter((t) => t.flagship);
   assert.equal(flagships.length, 10);
 
   for (const t of TRACKS) {
-    const compiled = compileTrack(t, 120);
+    const compiled = compileTrack(t, 480);
     assert.ok(compiled.totalLength > 500, `Track ${t.id} too short`);
     const p0 = sampleTrackAtT(compiled, 0);
     const p1 = sampleTrackAtT(compiled, 0.9999);
     const gap = Math.hypot(p0.x - p1.x, p0.z - p1.z);
     assert.ok(gap < 15, `Track ${t.id} spline did not close smoothly`);
+
+    // Ensure minimum turn radius > half track width (0 road ribbon folds!)
+    const halfW = t.trackWidth * 0.5;
+    let maxCurv = 0;
+    for (const s of compiled.samples) {
+      maxCurv = Math.max(maxCurv, Math.abs(s.curvature));
+    }
+    const minRadius = maxCurv > 1e-6 ? 1 / maxCurv : 9999;
+    assert.ok(
+      minRadius >= halfW,
+      `Track ${t.id} folded: minRadius=${minRadius.toFixed(1)}m < halfW=${halfW.toFixed(1)}m`,
+    );
   }
 });
 
@@ -285,7 +298,7 @@ test('Issue 2: Fuel consumption calibrated so full tank lasts 12-16 laps at full
   assert.ok(car.fuelLapsRemaining >= 11 && car.fuelLapsRemaining <= 18, `Expected estimated fuel laps remaining around 12-16, got ${car.fuelLapsRemaining}`);
 });
 
-test('Issue 3: Class Special Abilities function across all distinct classes', () => {
+test('Issue 3: Class Special Abilities function across all distinct classes including Valkyrie Rich Fuel Overboost', () => {
   const spa = compileTrack(TRACKS[0]);
 
   // 1. Formula E: Attack Mode AWD
@@ -335,7 +348,15 @@ test('Issue 3: Class Special Abilities function across all distinct classes', ()
   );
   assert.equal(f105Car.specialActive, true);
 
-  // 3. GT3: High-Beam Flash
+  // 3. Aston Martin Valkyrie & Glickenhaus SCG 007: Non-hybrid Rich Fuel Overboost + Temerario V10
+  const valkyrie = CARS.find((c) => c.id === 'aston-valkyrie-lmh')!;
+  assert.equal(resolveCarSpecial(valkyrie).specialType, 'rich-fuel-overboost');
+  const scg = CARS.find((c) => c.id === 'glickenhaus-scg-007')!;
+  assert.equal(resolveCarSpecial(scg).specialType, 'rich-fuel-overboost');
+  const temerario = CARS.find((c) => c.id === 'lamborghini-temerario-gt3')!;
+  assert.equal(temerario.engineType, 'v10');
+
+  // 4. GT3: High-Beam Flash
   const gt3Spec = CARS.find((c) => c.id === 'ferrari-296-gt3')!;
   const gt3Car = createCarSimState({
     id: 'gt3',
@@ -407,6 +428,74 @@ test('Issue 9: Flagship circuits scaled to 35â€“55s for standard tracks and 65â€
   }
 });
 
+test('Authentic Track Directions & Heavy Braking: flat-out hairpin entry understeers wide off-track', () => {
+  // Verify CW / CCW / Figure-8 directions against RacingCircuits.info
+  const wind = (t: TrackSpec) => {
+    const c = compileTrack(t, 240);
+    let area = 0;
+    for (let i = 0; i < c.samples.length; i++) {
+      const p1 = c.samples[i];
+      const p2 = c.samples[(i + 1) % c.samples.length];
+      area += p1.x * p2.z - p2.x * p1.z;
+    }
+    return area;
+  };
+  const ccwIds = ['laguna-seca', 'imola', 'interlagos', 'baku', 'yas-marina', 'cota', 'jeddah', 'miami', 'las-vegas', 'singapore', 'detroit-street'];
+  for (const id of ccwIds) {
+    const t = TRACKS.find((trk) => trk.id === id)!;
+    assert.ok(wind(t) < 0, `Expected CCW track ${id} to have negative signed area, got ${wind(t)}`);
+  }
+  const spaTrack = TRACKS.find((trk) => trk.id === 'spa-francorchamps')!;
+  assert.ok(wind(spaTrack) > 0, 'Expected Spa to be Clockwise (positive XZ area)');
+  const suzuka = TRACKS.find((trk) => trk.id === 'suzuka')!;
+  const maxY = Math.max(...suzuka.waypoints.map((w) => w.y));
+  assert.ok(maxY >= 9.5, `Expected Suzuka figure-8 overpass height >= 9.5m, got ${maxY}`);
+
+  // Heavy braking test on Spa La Source / steep hairpin: entering flat-out pushes car wide!
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  // Find sharpest corner in Monza (Rettifilo chicane)
+  let sharpest = monza.samples[0];
+  for (const s of monza.samples) {
+    if (Math.abs(s.curvature) > Math.abs(sharpest.curvature)) sharpest = s;
+  }
+  const entryT = (sharpest.t - 0.04 + 1) % 1;
+  const entrySample = sampleTrackAtT(monza, entryT);
+  const gtp = CARS.find((c) => c.id === 'ferrari-499p')!;
+  const flatOutCar = createCarSimState({
+    id: 'flatout',
+    name: 'Flat Out',
+    isPlayer: true,
+    carId: gtp.id,
+    livery: gtp.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'medium',
+  });
+  flatOutCar.x = entrySample.x;
+  flatOutCar.y = entrySample.y;
+  flatOutCar.z = entrySample.z;
+  flatOutCar.trackT = entryT;
+  flatOutCar.heading = Math.atan2(entrySample.tx, entrySample.tz);
+  flatOutCar.speed = 54; // Top speed without braking!
+
+  const turnSteer = sharpest.curvature > 0 ? 1 : -1;
+  let maxLatOffset = 0;
+  for (let i = 0; i < 150; i++) {
+    stepCarPhysics(
+      flatOutCar,
+      { throttle: 1, brake: 0, steer: turnSteer, specialPressed: false },
+      monza,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [flatOutCar] },
+    );
+    maxLatOffset = Math.max(maxLatOffset, Math.abs(flatOutCar.lateralOffset));
+  }
+  assert.ok(
+    maxLatOffset > monza.spec.trackWidth * 0.45,
+    `Expected flat-out hairpin entry to understeer wide off line (> ${monza.spec.trackWidth * 0.45}m), got ${maxLatOffset.toFixed(2)}m`,
+  );
+});
+
 test('Custom Track Studio: geometry analysis calculates 35-55s lap, validates 3D bridge clearance, and flags tight turns', () => {
   const fig8 = CUSTOM_TRACK_TEMPLATES.find((t) => t.id === 'template-figure8')!;
   const analysis = analyzeTrackGeometry(fig8.waypoints);
@@ -472,7 +561,7 @@ test('Custom Track Compilation: handles startNodeIndex rotation, banking, variab
   assert.ok(bankedSample, 'Expected to find banked spline samples on banked oval');
 });
 
-test('Custom Track Persistence & Import/Export: round-trips JSON and compact share codes cleanly', () => {
+test('Custom Track Persistence & Import/Export: round-trips JSON, degree banking, tension, and compact share codes cleanly', () => {
   const template = CUSTOM_TRACK_TEMPLATES[0];
   const custom: TrackSpec = {
     ...template,
@@ -483,7 +572,8 @@ test('Custom Track Persistence & Import/Export: round-trips JSON and compact sha
       ...wp,
       y: i % 2 === 0 ? 8 : 0,
       width: 18,
-      banking: 0.15,
+      banking: 10,
+      tension: i % 2 === 0 ? 0.25 : 0.7,
     })),
   };
 
@@ -496,6 +586,8 @@ test('Custom Track Persistence & Import/Export: round-trips JSON and compact sha
   assert.equal(importedFromJson.track?.waypoints.length, custom.waypoints.length);
   assert.equal(importedFromJson.track?.waypoints[0].width, 18);
   assert.equal(importedFromJson.track?.waypoints[0].y, 8);
+  assert.equal(importedFromJson.track?.waypoints[0].banking, 10);
+  assert.equal(importedFromJson.track?.waypoints[0].tension, 0.25);
 
   // 2. Compact Share Code (APXTRK:...) Export / Import
   const shareCode = exportTrackToShareCode(custom);
@@ -505,6 +597,8 @@ test('Custom Track Persistence & Import/Export: round-trips JSON and compact sha
   assert.equal(importedFromCode.track?.name, 'Monza Junior Apex');
   assert.equal(importedFromCode.track?.pitSide, 'right');
   assert.equal(importedFromCode.track?.waypoints.length, custom.waypoints.length);
+  assert.equal(importedFromCode.track?.waypoints[0].banking, 10);
+  assert.equal(importedFromCode.track?.waypoints[0].tension, 0.25);
 
   // 3. Schema validation rejection
   const invalidResult = importTrackFromString('not-valid-json-or-sharecode');

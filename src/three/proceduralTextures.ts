@@ -315,3 +315,33 @@ export function createContactShadowTexture(): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+export function createBrakingBoardTexture(meters: number, maxAniso = 4): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 192;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, 192, 128);
+
+  // Red motorsport outer frame + top/bottom stripes
+  ctx.strokeStyle = '#dc2626';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(5, 5, 182, 118);
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = '900 72px "Oxanium", "Arial Black", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(meters), 96, 60);
+
+  ctx.fillStyle = '#dc2626';
+  ctx.font = '800 18px "Oxanium", sans-serif';
+  ctx.fillText('METERS', 96, 104);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAniso;
+  return tex;
+}

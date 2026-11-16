@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { CAR_CLASSES, CARS, getCarById } from '../game/cars';
+import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from '../game/cars';
 import { MultiplayerClient } from '../game/multiplayer';
 import {
   CarSimState,
@@ -723,6 +723,9 @@ export function RaceViewport(props: RaceViewportProps) {
             playerCar.carSpec.classId,
             brake > 0,
             liveSpeedKmh,
+            playerCar.carSpec.id,
+            playerCar.lateralSlip,
+            playerCar.onKerb,
           );
         }
       } else {
@@ -750,10 +753,16 @@ export function RaceViewport(props: RaceViewportProps) {
           fw.rotation.y = -c.steerAngle;
         }
 
-        // Active Aero Wing Flap
-        if (rig.rearWingFlap && CAR_CLASSES[c.carSpec.classId].specialType === 'active-aero') {
-          const targetRot = c.specialActive ? 0.02 : 0.42;
-          rig.rearWingFlap.rotation.x += (targetRot - rig.rearWingFlap.rotation.x) * Math.min(1, dt * 14);
+        // Active Aero Wing Flaps (F1 2026 Front + Rear Wing Articulation)
+        if (resolveCarSpecial(c.carSpec).specialType === 'active-aero') {
+          if (rig.rearWingFlap) {
+            const targetRear = c.specialActive ? 0.02 : 0.42;
+            rig.rearWingFlap.rotation.x += (targetRear - rig.rearWingFlap.rotation.x) * Math.min(1, dt * 14);
+          }
+          if (rig.frontWingFlap) {
+            const targetFront = c.specialActive ? 0.02 : 0.28;
+            rig.frontWingFlap.rotation.x += (targetFront - rig.frontWingFlap.rotation.x) * Math.min(1, dt * 14);
+          }
         }
 
         // Prototype Headlight Flashing
@@ -931,11 +940,13 @@ export function RaceViewport(props: RaceViewportProps) {
     if (!simRef.current) return;
     if (props.phase === 'paused' || props.phase === 'gameover') return;
     const sessionPhase = props.phase === 'title' ? 'title' : props.phase === 'qualifying' ? 'qualifying' : 'race';
-    const key = `${sessionPhase}:${props.raceConfig.trackId}:${props.runNonce}`;
+    const ct = props.raceConfig.customTrack;
+    const ctSig = ct ? `${ct.waypoints.length}:${ct.createdAt ?? 0}` : '';
+    const key = `${sessionPhase}:${props.raceConfig.trackId}:${ctSig}:${props.runNonce}`;
     if (key === lastRebuildKeyRef.current) return;
     lastRebuildKeyRef.current = key;
     simRef.current.rebuildWorld();
-  }, [props.raceConfig.trackId, props.runNonce, props.phase]);
+  }, [props.raceConfig.trackId, props.raceConfig.customTrack, props.runNonce, props.phase]);
 
   return (
     <div

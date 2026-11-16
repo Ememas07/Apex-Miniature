@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   CUSTOM_TRACK_TEMPLATES,
   TrackGeometryAnalysis,
@@ -12,6 +13,20 @@ import {
 import { CompiledTrack, compileTrack } from '../game/tracks';
 import { SceneryTheme, TrackSpec, TrackWaypoint } from '../game/types';
 import { BuiltTrackScene, buildTrackEnvironment } from '../three/trackBuilder';
+
+function detectSoftwareGl(): boolean {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) return true;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
+    const gpu = String(gl.getParameter(param));
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+  } catch {
+    return true;
+  }
+}
 
 interface TrackStudioModalProps {
   initialTrack?: TrackSpec;
@@ -98,7 +113,8 @@ export function TrackStudioModal({
         y: Math.round(((cur.y ?? 0) + (next.y ?? 0)) * 0.5 * 10) / 10,
         z: Math.round((cur.z + next.z) * 0.5),
         width: Math.round(((cur.width ?? prev.trackWidth) + (next.width ?? prev.trackWidth)) * 0.5),
-        banking: Math.round((((cur.banking ?? 0) + (next.banking ?? 0)) * 0.5 * 180) / Math.PI),
+        banking: Math.round(((cur.banking ?? 0) + (next.banking ?? 0)) * 0.5),
+        tension: Math.round((((cur.tension ?? 0.5) + (next.tension ?? 0.5)) * 0.5) * 100) / 100,
       };
 
       const newWps = [...prev.waypoints];
@@ -128,18 +144,45 @@ export function TrackStudioModal({
     setZoom(1.0);
   };
 
+  const buildFinalizedTrack = useCallback((): TrackSpec => {
+    const isTemplateId = !trackSpec.id || trackSpec.id.startsWith('template-');
+    const cleanName = trackSpec.name.trim() || 'Custom Circuit';
+    const shortName =
+      cleanName
+        .replace(/[^A-Za-z0-9 ]/g, '')
+        .trim()
+        .slice(0, 8)
+        .toUpperCase() || 'CUSTOM';
+    return {
+      ...trackSpec,
+      id: isTemplateId
+        ? `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        : trackSpec.id,
+      name: cleanName,
+      shortName,
+      isCustom: true,
+      targetLapSeconds: analysis.estimatedLapSeconds,
+      corners: analysis.cornerCount,
+      createdAt: Date.now(),
+    };
+  }, [trackSpec, analysis.estimatedLapSeconds, analysis.cornerCount]);
+
   // Save track handler
   const handleSave = () => {
-    saveCustomTrack(trackSpec);
-    onSaveTrack(trackSpec);
+    const finalized = buildFinalizedTrack();
+    setTrackSpec(finalized);
+    saveCustomTrack(finalized);
+    onSaveTrack(finalized);
     setSaveSuccessNotice(true);
     setTimeout(() => setSaveSuccessNotice(false), 2400);
   };
 
   // Test drive handler
   const handleTestDrive = () => {
-    saveCustomTrack(trackSpec);
-    onTestDrive(trackSpec);
+    const finalized = buildFinalizedTrack();
+    setTrackSpec(finalized);
+    saveCustomTrack(finalized);
+    onTestDrive(finalized);
   };
 
   // Import handler
@@ -433,55 +476,53 @@ export function TrackStudioModal({
   };
 
   // ----------------------------------------------------
-  // 3D Three.js Live Environment Preview
+  // 3D Three.js Persistent Live Environment Preview
   // ----------------------------------------------------
+  const preview3dRef = useRef<{
+    renderer: THREE.WebGLRenderer;
+    scene: THREE.Scene;
+    hemiLight: THREE.HemisphereLight;
+    dirLight: THREE.DirectionalLight;
+    builtScene: BuiltTrackScene | null;
+    updateCameraExtent: (totalLength: number) => void;
+  } | null>(null);
+
   useEffect(() => {
     const canvas = canvas3dRef.current;
     if (!canvas) return;
 
+    const isSoftwareGl = detectSoftwareGl();
     const renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: !isSoftwareGl,
       powerPreference: 'high-performance',
+      preserveDrawingBuffer: isSoftwareGl,
     });
-    renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setSize(canvas.clientWidth || 420, canvas.clientHeight || 240, false);
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = trackSpec.scenery === 'street-night' ? 1.25 : 1.05;
+    renderer.toneMappingExposure = 1.05;
 
     const scene = new THREE.Scene();
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+
     const camera = new THREE.PerspectiveCamera(
       45,
-      canvas.clientWidth / Math.max(1, canvas.clientHeight),
+      (canvas.clientWidth || 420) / Math.max(1, canvas.clientHeight || 240),
       1,
       2500,
     );
 
-    // Track bounding center
-    let builtScene: BuiltTrackScene | null = null;
-    try {
-      builtScene = buildTrackEnvironment(compiledTrack, 2);
-      scene.add(builtScene.group);
-      scene.background = new THREE.Color(builtScene.skyColor);
-      scene.fog = new THREE.FogExp2(builtScene.fogColor, 0.0016);
-    } catch (err) {
-      console.warn('TrackStudio 3D preview build warning:', err);
-    }
-
-    // Directional sunlight / night moon
-    const isNight = trackSpec.scenery === 'street-night';
-    const hemiLight = new THREE.HemisphereLight(
-      isNight ? 0x223355 : 0xffffff,
-      isNight ? 0x0a101d : 0x444444,
-      isNight ? 0.7 : 0.85,
-    );
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.85);
     scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(isNight ? 0x60a5fa : 0xfffaed, isNight ? 0.8 : 1.4);
+    const dirLight = new THREE.DirectionalLight(0xfffaed, 1.4);
     dirLight.position.set(220, 340, 180);
     scene.add(dirLight);
 
-    // Camera orbit parameters
     let orbitAngle = 0.5;
     let cameraDist = Math.max(380, compiledTrack.totalLength * 0.22);
     let cameraHeight = Math.max(140, compiledTrack.totalLength * 0.12);
@@ -516,10 +557,30 @@ export function TrackStudioModal({
     window.addEventListener('mouseup', onPointerUp3d);
     canvas.addEventListener('wheel', onWheel3d, { passive: false });
 
-    let animFrame: number;
+    let disposed = false;
+    let animFrame = 0;
+
+    function afterDraw(cb: () => void) {
+      const gl = renderer.getContext() as WebGL2RenderingContext;
+      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.flush();
+      const poll = () => {
+        if (disposed) return;
+        const status = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
+        if (status === gl.UNSIGNALED) {
+          animFrame = window.setTimeout(poll, 5);
+        } else {
+          if (sync) gl.deleteSync(sync);
+          animFrame = window.setTimeout(cb, 85);
+        }
+      };
+      animFrame = window.setTimeout(poll, 5);
+    }
+
     const animate = () => {
+      if (disposed) return;
       if (!isUserDragging) {
-        orbitAngle += 0.0025; // Gentle auto-turntable
+        orbitAngle += 0.003;
       }
       camera.position.x = Math.sin(orbitAngle) * cameraDist;
       camera.position.y = cameraHeight;
@@ -527,33 +588,84 @@ export function TrackStudioModal({
       camera.lookAt(0, 8, 0);
 
       renderer.render(scene, camera);
-      animFrame = requestAnimationFrame(animate);
+      if (isSoftwareGl) afterDraw(animate);
+      else animFrame = requestAnimationFrame(animate);
     };
-    animFrame = requestAnimationFrame(animate);
+
+    preview3dRef.current = {
+      renderer,
+      scene,
+      hemiLight,
+      dirLight,
+      builtScene: null,
+      updateCameraExtent: (totalLength: number) => {
+        cameraDist = Math.max(360, totalLength * 0.22);
+        cameraHeight = Math.max(130, totalLength * 0.11);
+      },
+    };
+
+    if (isSoftwareGl) afterDraw(animate);
+    else animFrame = requestAnimationFrame(animate);
 
     const handleResize = () => {
       if (!canvas) return;
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      camera.aspect = w / Math.max(1, h);
+      if (w <= 0 || h <= 0) return;
+      camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(animFrame);
+      clearTimeout(animFrame);
       window.removeEventListener('resize', handleResize);
       canvas.removeEventListener('mousedown', onPointerDown3d);
       window.removeEventListener('mousemove', onPointerMove3d);
       window.removeEventListener('mouseup', onPointerUp3d);
       canvas.removeEventListener('wheel', onWheel3d);
-      if (builtScene) {
-        scene.remove(builtScene.group);
-        builtScene.dispose();
+      const p = preview3dRef.current;
+      if (p?.builtScene) {
+        scene.remove(p.builtScene.group);
+        p.builtScene.dispose();
       }
+      preview3dRef.current = null;
       renderer.dispose();
     };
+  }, []);
+
+  // Swap only the 3D track geometry/lighting when splines or scenery change
+  useEffect(() => {
+    const p = preview3dRef.current;
+    if (!p) return;
+
+    if (p.builtScene) {
+      p.scene.remove(p.builtScene.group);
+      p.builtScene.dispose();
+      p.builtScene = null;
+    }
+
+    const isNight = trackSpec.scenery === 'street-night';
+    p.renderer.toneMappingExposure = isNight ? 1.25 : 1.05;
+    p.hemiLight.color.setHex(isNight ? 0x223355 : 0xffffff);
+    p.hemiLight.groundColor.setHex(isNight ? 0x0a101d : 0x444444);
+    p.hemiLight.intensity = isNight ? 0.7 : 0.85;
+    p.dirLight.color.setHex(isNight ? 0x60a5fa : 0xfffaed);
+    p.dirLight.intensity = isNight ? 0.8 : 1.4;
+
+    try {
+      const built = buildTrackEnvironment(compiledTrack, 2);
+      p.scene.add(built.group);
+      p.scene.background = new THREE.Color(built.skyColor);
+      p.scene.fog = new THREE.FogExp2(built.fogColor, 0.0016);
+      p.builtScene = built;
+      p.updateCameraExtent(compiledTrack.totalLength);
+    } catch (err) {
+      console.warn('TrackStudio 3D preview build warning:', err);
+    }
   }, [compiledTrack, trackSpec.scenery]);
 
   const selectedWp = trackSpec.waypoints[selectedNodeIndex] ?? trackSpec.waypoints[0];
@@ -570,7 +682,7 @@ export function TrackStudioModal({
       <header className="h-14 px-4 sm:px-6 bg-[#0d121b] border-b border-white/10 flex items-center justify-between shrink-0 gap-4">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse" />
+            <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
             <span className="font-display font-extrabold text-sm md:text-base tracking-wider text-white">
               TRACK STUDIO
             </span>
@@ -658,7 +770,7 @@ export function TrackStudioModal({
         {/* Left: 2D Interactive CAD Canvas */}
         <div className="flex-1 relative flex flex-col bg-[#0b0f16] border-r border-white/10 min-h-[300px]">
           {/* Canvas Floating Toolbar */}
-          <div className="absolute top-3 left-3 z-10 flex items-center gap-2 bg-[#121824]/90 backdrop-blur border border-white/15 px-3 py-1.5 rounded-lg text-xs shadow-lg">
+          <div className="absolute top-3 left-3 z-10 flex items-center gap-2 bg-[#121824]/95 border border-white/15 px-3 py-1.5 rounded-lg text-xs shadow-lg">
             <span className="text-slate-400">View:</span>
             <button
               type="button"
@@ -829,23 +941,24 @@ export function TrackStudioModal({
                   />
                 </div>
 
-                {/* Corner Banking */}
+                {/* Corner Banking Angle (Stored Directly in Degrees) */}
                 <div>
                   <div className="flex justify-between text-slate-300 mb-1">
                     <span>Corner Banking Angle</span>
                     <span className="font-mono text-amber-300 font-bold">
-                      {Math.round((((selectedWp.banking ?? 0) * 180) / Math.PI) * 10) / 10}°
+                      {Math.round(selectedWp.banking ?? 0)}°
                     </span>
                   </div>
                   <input
                     type="range"
+                    aria-label="Corner Banking Angle"
                     min="-15"
                     max="20"
                     step="1"
-                    value={Math.round(((selectedWp.banking ?? 0) * 180) / Math.PI)}
+                    value={Math.round(selectedWp.banking ?? 0)}
                     onChange={(e) =>
                       updateWaypoint(selectedNodeIndex, {
-                        banking: (parseFloat(e.target.value) * Math.PI) / 180,
+                        banking: parseFloat(e.target.value),
                       })
                     }
                     className="w-full accent-amber-500 cursor-pointer"
@@ -854,6 +967,35 @@ export function TrackStudioModal({
                     <span>-15° (Off-Camber)</span>
                     <span>0° (Flat)</span>
                     <span>+14° (Daytona Bank)</span>
+                  </div>
+                </div>
+
+                {/* Corner Tightness (Catmull-Rom Spline Tension) */}
+                <div>
+                  <div className="flex justify-between text-slate-300 mb-1">
+                    <span>Corner Tightness (Spline Tension)</span>
+                    <span className="font-mono text-emerald-300 font-bold">
+                      {(selectedWp.tension ?? 0.5).toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    aria-label="Corner Tightness"
+                    min="0.15"
+                    max="0.85"
+                    step="0.05"
+                    value={selectedWp.tension ?? 0.5}
+                    onChange={(e) =>
+                      updateWaypoint(selectedNodeIndex, {
+                        tension: parseFloat(e.target.value),
+                      })
+                    }
+                    className="w-full accent-emerald-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>0.15 (Sharp Hairpin)</span>
+                    <span>0.50 (Standard)</span>
+                    <span>0.85 (Sweeping)</span>
                   </div>
                 </div>
 

@@ -473,13 +473,19 @@ export function exportTrackToShareCode(track: TrackSpec): string {
     kp: track.kerbPrimary,
     ks: track.kerbSecondary,
     ps: track.pitSide,
-    pts: track.waypoints.map((p) => [
-      Math.round(p.x * 10) / 10,
-      Math.round((p.y || 0) * 10) / 10,
-      Math.round(p.z * 10) / 10,
-      p.banking ? Math.round(p.banking * 10) / 10 : 0,
-      p.width ? Math.round(p.width * 10) / 10 : 0,
-    ]),
+    pts: track.waypoints.map((p) => {
+      const row = [
+        Math.round(p.x * 10) / 10,
+        Math.round((p.y || 0) * 10) / 10,
+        Math.round(p.z * 10) / 10,
+        p.banking ? Math.round(p.banking * 10) / 10 : 0,
+        p.width ? Math.round(p.width * 10) / 10 : 0,
+      ];
+      if (p.tension !== undefined && Math.abs(p.tension - 0.5) > 0.01) {
+        row.push(Math.round(p.tension * 100) / 100);
+      }
+      return row;
+    }),
   };
   const jsonStr = JSON.stringify(minimal);
   try {
@@ -518,6 +524,7 @@ export function importTrackFromString(inputStr: string): { success: boolean; tra
         z: row[2],
         banking: row[3] || undefined,
         width: row[4] || undefined,
+        tension: typeof row[5] === 'number' ? row[5] : undefined,
       }));
       const spec = createCustomTrackSpec({
         id: data.id || `custom-${Date.now().toString(36)}`,

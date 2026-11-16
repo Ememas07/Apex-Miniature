@@ -75,6 +75,9 @@ export default function App() {
   }
   const [room, setRoom] = useState<RoomState | null>(null);
   const [mpError, setMpError] = useState<string | null>(null);
+  const [customTracksNonce, setCustomTracksNonce] = useState(0);
+  const qualifyingEnabledRef = useRef(raceConfig.qualifyingEnabled);
+  qualifyingEnabledRef.current = raceConfig.qualifyingEnabled;
 
   // Sync document.body.dataset.state
   useEffect(() => {
@@ -96,16 +99,23 @@ export default function App() {
     };
     mp.onRaceStart = (startedRoom) => {
       setRoom(startedRoom);
+      if (startedRoom?.config?.customTrack) {
+        registerCustomTrackInMemory(startedRoom.config.customTrack);
+      }
+      if (startedRoom?.config) {
+        setRaceConfig((prev) => ({ ...prev, ...startedRoom.config }));
+      }
       setSetupOpen(false);
       setGarageOpen(false);
       setTrackStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
       setRunNonce((n) => n + 1);
-      setPhase(raceConfig.qualifyingEnabled ? 'qualifying' : 'playing');
+      const useQuali = startedRoom?.config?.qualifyingEnabled ?? qualifyingEnabledRef.current;
+      setPhase(useQuali ? 'qualifying' : 'playing');
     };
     mp.onError = (msg) => setMpError(msg);
-  }, [raceConfig.qualifyingEnabled]);
+  }, []);
 
   const handleStartSession = useCallback(() => {
     if (document.activeElement instanceof HTMLElement) {
@@ -229,6 +239,7 @@ export default function App() {
 
   const handleStudioSaveTrack = (saved: TrackSpec) => {
     registerCustomTrackInMemory(saved);
+    setCustomTracksNonce((n) => n + 1);
     if (raceConfig.trackId === saved.id) {
       handleUpdateConfig({ customTrack: saved });
     }
@@ -236,6 +247,7 @@ export default function App() {
 
   const handleStudioTestDrive = (saved: TrackSpec) => {
     registerCustomTrackInMemory(saved);
+    setCustomTracksNonce((n) => n + 1);
     handleUpdateConfig({ trackId: saved.id, customTrack: saved });
     setTrackStudioOpen(false);
     setSetupOpen(false);
@@ -297,6 +309,8 @@ export default function App() {
         <RaceSetupModal
           config={raceConfig}
           room={room}
+          myPeerId={mpClientRef.current.peerId}
+          customTracksNonce={customTracksNonce}
           mpError={mpError}
           onUpdateConfig={handleUpdateConfig}
           onUpdatePeer={(payload) => mpClientRef.current?.updatePeer(payload)}
@@ -340,12 +354,18 @@ export default function App() {
         <RaceHUD
           hud={hud}
           trackId={raceConfig.trackId}
+          customTrack={raceConfig.customTrack}
           playerCarId={raceConfig.playerCarId}
           muted={muted}
           onChangePitStrategy={setPitStrategy}
           onCycleCamera={handleCycleCamera}
           onToggleMute={handleToggleMute}
           onTogglePause={handleTogglePause}
+          onReturnToTitle={() => {
+            setFinalSnapshot(null);
+            setQualiBanner(null);
+            setPhase('title');
+          }}
         />
       )}
 

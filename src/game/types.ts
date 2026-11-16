@@ -18,6 +18,7 @@ export type ClassSpecialType =
   | 'attack-mode'
   | 'ers-overtake'
   | 'v10-overboost'
+  | 'rich-fuel-overboost'
   | 'high-beam-flash'
   | 'hybrid-deploy';
 
@@ -84,6 +85,8 @@ export interface CarSpec {
   attributes: BoPAttributes;
   tradeoffNote: string;
   engineType: 'v6-hybrid' | 'v8-hybrid' | 'v10' | 'v12' | 'flat6' | 'electric' | 'turbo-i6';
+  specialTypeOverride?: ClassSpecialType;
+  specialLabelOverride?: string;
   defaultLivery: LiveryConfig;
 }
 
@@ -97,6 +100,7 @@ export interface TrackWaypoint {
   z: number;
   width?: number; // per-node width override
   banking?: number; // per-node banking in degrees
+  tension?: number; // per-node Catmull-Rom tension (0.15 tight .. 0.85 sweeping, default 0.5)
 }
 
 export interface TrackSpec {

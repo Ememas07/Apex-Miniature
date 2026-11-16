@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Users, Flag, CloudRain, Sun, CheckCircle, Clock, Plus, Edit3, Trash2, Share2, Upload } from 'lucide-react';
 import { CAR_CLASSES, CARS, getCarById } from '../game/cars';
 import { TRACKS, compileTrack, getTrackById } from '../game/tracks';
@@ -22,6 +22,8 @@ import {
 interface RaceSetupModalProps {
   config: RaceConfig;
   room: RoomState | null;
+  myPeerId?: string;
+  customTracksNonce?: number;
   mpError: string | null;
   onUpdateConfig: (patch: Partial<RaceConfig>) => void;
   onCreateRoom: (driverName: string) => void;
@@ -76,6 +78,8 @@ function TrackOutlineSvg({ track }: { track: TrackSpec }) {
 export function RaceSetupModal({
   config,
   room,
+  myPeerId,
+  customTracksNonce,
   mpError,
   onUpdateConfig,
   onCreateRoom,
@@ -103,6 +107,10 @@ export function RaceSetupModal({
   const refreshCustomTracks = () => {
     setCustomTracks(getSavedCustomTracks());
   };
+
+  useEffect(() => {
+    refreshCustomTracks();
+  }, [customTracksNonce]);
 
   const filteredTracks = TRACKS.filter((t) => {
     if (regionFilter === 'Flagship') return t.flagship;
@@ -564,9 +572,10 @@ export function RaceSetupModal({
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
+                    data-testid="btn-weather-toggle"
                     onClick={() =>
                       onUpdateConfig({
-                        weather: config.weather === 'dynamic-rain' ? 'dynamic-rain' : 'dynamic-rain',
+                        weather: config.weather === 'dynamic-rain' ? 'dry' : 'dynamic-rain',
                       })
                     }
                     className="flex items-center justify-center gap-2 py-2.5 px-3 rounded border border-white/15 bg-[#151a23] hover:bg-[#1b222e] text-xs font-semibold text-slate-200 cursor-pointer"
@@ -769,9 +778,8 @@ export function RaceSetupModal({
                     </div>
 
                     {/* Host Controls: AI Opponent Management in Multiplayer */}
-                    {room.hostId === room.peers.find((p) => p.name === driverName)?.peerId ||
-                    room.peers[0]?.name === driverName ? (
-                      <div className="p-3 rounded bg-[#131822] border border-white/10 space-y-2">
+                    {room.hostId === myPeerId ? (
+                      <div className="p-3 rounded bg-[#131822] border border-white/10 space-y-2.5">
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-semibold text-slate-200">Host Lobby AI Settings</span>
                           <span className="text-amber-300 font-bold">
@@ -797,6 +805,31 @@ export function RaceSetupModal({
                           >
                             {config.noAi ? 'No AI (Humans Only) [ON]' : 'No AI (Humans Only) [OFF]'}
                           </button>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+                            <span>AI Bot Fill Count (0–23)</span>
+                            <span className="font-telemetry text-slate-200">
+                              {config.noAi ? 0 : config.aiBotCount ?? 11}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            aria-label="Host AI Bot Count"
+                            min={0}
+                            max={23}
+                            disabled={config.noAi}
+                            value={config.noAi ? 0 : config.aiBotCount ?? 11}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              onUpdateConfig({
+                                aiBotCount: val,
+                                noAi: val === 0,
+                                gridSize: room.peers.length + val,
+                              });
+                            }}
+                            className="w-full accent-red-600 cursor-pointer disabled:opacity-40"
+                          />
                         </div>
                       </div>
                     ) : null}

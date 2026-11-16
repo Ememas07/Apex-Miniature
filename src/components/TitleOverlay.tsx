@@ -45,17 +45,6 @@ export function TitleOverlay({
               Room {roomCode}
             </div>
           )}
-          <a
-            href="/"
-            title="Return to Main Hub"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 hover:bg-slate-800 text-sky-400 hover:text-sky-300 border border-sky-500/30 hover:border-sky-400 font-semibold text-xs transition-all shadow-sm cursor-pointer"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-              <polyline points="9 22 9 12 15 12 15 22"></polyline>
-            </svg>
-            Back to Hub
-          </a>
         </div>
       </div>
 
@@ -168,11 +157,11 @@ export function TitleOverlay({
       </div>
 
       {/* Bottom flat borderless control hint */}
-      <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-400">
+      <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
         <span>
           WASD / Arrows Drive · Space Class Special · C Camera · M Mute · P Pause
         </span>
-        <span className="text-slate-500">Press Enter or Space to start</span>
+        <span className="text-slate-200/90">Press Enter or Space to start</span>
       </div>
     </div>
   );
