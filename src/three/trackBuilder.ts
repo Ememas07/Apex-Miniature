@@ -376,13 +376,20 @@ export function buildTrackEnvironment(
       continue;
     }
     const cur = compiled.samples[i];
-    if (Math.abs(cur.curvature) > 0.025) {
+    // Check direction change angle over the corner entry (25m) or heavy curvature
+    const upcomingSamples = Math.max(3, Math.round(25 / distScale));
+    const nextSamp = compiled.samples[(i + upcomingSamples) % sampleCount];
+    const dotTangent = Math.max(-1, Math.min(1, cur.tx * nextSamp.tx + cur.tz * nextSamp.tz));
+    const turnAngleDeg = Math.acos(dotTangent) * (180 / Math.PI);
+    const isHeavyBraking = Math.abs(cur.curvature) > 0.022 || turnAngleDeg > 35;
+
+    if (isHeavyBraking) {
       // Check preceding ~50m has a genuine straight/braking approach
       const backCheck = Math.max(4, Math.round(50 / distScale));
       let approachClear = true;
       for (let b = 2; b <= backCheck; b++) {
         const prev = compiled.samples[(i - b + sampleCount) % sampleCount];
-        if (Math.abs(prev.curvature) > 0.015) {
+        if (Math.abs(prev.curvature) > 0.016) {
           approachClear = false;
           break;
         }

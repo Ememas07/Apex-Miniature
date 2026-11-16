@@ -567,7 +567,7 @@ export function importTrackFromString(inputStr: string): { success: boolean; tra
   }
 }
 
-export const NODE_HIT_RADIUS_PX = 16;
+export const NODE_HIT_RADIUS_PX = 26;
 export const NODE_COLLIDER_RADIUS_MULTIPLIER = 2.0;
 
 /**

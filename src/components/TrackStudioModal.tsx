@@ -527,7 +527,35 @@ export function TrackStudioModal({
     const centerY = canvas.height * 0.5 + pan.y;
     const scale = zoom * 1.35;
 
-    // 1. Check hit test against existing waypoint handles (>= 16px generous radius)
+    const startWindowDrag = (nodeIdx: number) => {
+      draggingNodeRef.current = nodeIdx;
+      setCursor2d('grabbing');
+      const onWinMove = (ev: PointerEvent) => {
+        const c = canvas2dRef.current;
+        if (!c || draggingNodeRef.current === null) return;
+        const rect = c.getBoundingClientRect();
+        const scaleX = c.width / rect.width;
+        const scaleY = c.height / rect.height;
+        const mX = (ev.clientX - rect.left) * scaleX;
+        const mY = (ev.clientY - rect.top) * scaleY;
+        const cX = c.width * 0.5 + pan.x;
+        const cY = c.height * 0.5 + pan.y;
+        const sc = zoom * 1.35;
+        const tX = Math.round((mX - cX) / sc);
+        const tZ = Math.round((mY - cY) / sc);
+        updateWaypoint(draggingNodeRef.current, { x: tX, z: tZ });
+      };
+      const onWinUp = () => {
+        window.removeEventListener('pointermove', onWinMove);
+        window.removeEventListener('pointerup', onWinUp);
+        draggingNodeRef.current = null;
+        setCursor2d('default');
+      };
+      window.addEventListener('pointermove', onWinMove);
+      window.addEventListener('pointerup', onWinUp);
+    };
+
+    // 1. Check hit test against existing waypoint handles (>= 26px generous radius)
     const clickedIndex = findClosestWaypointHit2D(
       trackSpec.waypoints,
       mouseX,
@@ -541,9 +569,7 @@ export function TrackStudioModal({
     if (clickedIndex !== -1) {
       e.stopPropagation();
       setSelectedNodeIndex(clickedIndex);
-      draggingNodeRef.current = clickedIndex;
-      canvas.setPointerCapture(e.pointerId);
-      setCursor2d('grabbing');
+      startWindowDrag(clickedIndex);
       return;
     }
 
@@ -556,9 +582,7 @@ export function TrackStudioModal({
     if (e.shiftKey || segHit.distance <= ribbonHitDist) {
       e.stopPropagation();
       insertWaypointAt(segHit.insertIndex, segHit.waypoint);
-      draggingNodeRef.current = segHit.insertIndex;
-      canvas.setPointerCapture(e.pointerId);
-      setCursor2d('grabbing');
+      startWindowDrag(segHit.insertIndex);
       return;
     }
 
@@ -573,9 +597,7 @@ export function TrackStudioModal({
         width: trackSpec.trackWidth,
         banking: 0,
       });
-      draggingNodeRef.current = nextIdx;
-      canvas.setPointerCapture(e.pointerId);
-      setCursor2d('grabbing');
+      startWindowDrag(nextIdx);
     }
   };
 
@@ -781,7 +803,7 @@ export function TrackStudioModal({
     controls.maxDistance = 1200;
     controls.maxPolarAngle = Math.PI * 0.48;
     controls.mouseButtons = {
-      LEFT: null as unknown as THREE.MOUSE,
+      LEFT: THREE.MOUSE.ROTATE,
       MIDDLE: THREE.MOUSE.PAN,
       RIGHT: THREE.MOUSE.PAN,
     };
@@ -817,21 +839,45 @@ export function TrackStudioModal({
       raycaster.setFromCamera(getNdc(e), camera);
       const hits = raycaster.intersectObjects(pState.colliderMeshes, false);
 
+      const start3dDrag = (dragInfo: { index: number; plane: THREE.Plane }) => {
+        dragging3dNode = dragInfo;
+        controls.enabled = false;
+        setCursor3dRef.current('grabbing');
+
+        const onWinMove3d = (ev: PointerEvent) => {
+          if (!dragging3dNode) return;
+          raycaster.setFromCamera(getNdc(ev), camera);
+          if (raycaster.ray.intersectPlane(dragging3dNode.plane, dragIntersectPt)) {
+            updateWaypointRef.current(dragging3dNode.index, {
+              x: Math.round(dragIntersectPt.x),
+              z: Math.round(dragIntersectPt.z),
+            });
+          }
+        };
+
+        const onWinUp3d = () => {
+          window.removeEventListener('pointermove', onWinMove3d);
+          window.removeEventListener('pointerup', onWinUp3d);
+          dragging3dNode = null;
+          isPanning3d = false;
+          controls.enabled = true;
+          setCursor3dRef.current('default');
+        };
+
+        window.addEventListener('pointermove', onWinMove3d);
+        window.addEventListener('pointerup', onWinUp3d);
+      };
+
       if (hits.length > 0) {
         const nodeIdx = hits[0].object.userData.nodeIndex as number;
         const wp = waypointsRef.current[nodeIdx];
         if (wp) {
           e.stopPropagation();
-          controls.enabled = false;
-          dragging3dNode = {
+          setSelectedNodeIndexRef.current(nodeIdx);
+          start3dDrag({
             index: nodeIdx,
             plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -(wp.y ?? 0)),
-          };
-          setSelectedNodeIndexRef.current(nodeIdx);
-          try {
-            canvas.setPointerCapture(e.pointerId);
-          } catch {}
-          setCursor3dRef.current('grabbing');
+          });
           return;
         }
       }
@@ -852,23 +898,17 @@ export function TrackStudioModal({
 
       if (e.shiftKey || onRibbon) {
         e.stopPropagation();
-        controls.enabled = false;
         const insertedIdx = segHit.insertIndex;
         insertWaypointAtRef.current(insertedIdx, segHit.waypoint);
-        dragging3dNode = {
+        start3dDrag({
           index: insertedIdx,
           plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -(segHit.waypoint.y ?? 0)),
-        };
-        try {
-          canvas.setPointerCapture(e.pointerId);
-        } catch {}
-        setCursor3dRef.current('grabbing');
+        });
         return;
       }
 
       if (editorModeRef.current === 'add') {
         e.stopPropagation();
-        controls.enabled = false;
         const newIdx = wps.length;
         appendWaypointRef.current({
           x: Math.round(groundHit.x),
@@ -877,14 +917,10 @@ export function TrackStudioModal({
           width: trackW,
           banking: 0,
         });
-        dragging3dNode = {
+        start3dDrag({
           index: newIdx,
           plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
-        };
-        try {
-          canvas.setPointerCapture(e.pointerId);
-        } catch {}
-        setCursor3dRef.current('grabbing');
+        });
       }
     };
 
@@ -1091,6 +1127,7 @@ export function TrackStudioModal({
 
       const visMesh = new THREE.Mesh(visGeo.clone(), visMat);
       visMesh.position.set(wp.x, yPos, wp.z);
+      visMesh.userData = { nodeIndex: i };
       if (isHovered) {
         visMesh.scale.setScalar(1.25);
       }
@@ -1102,6 +1139,7 @@ export function TrackStudioModal({
       hitMesh.userData = { nodeIndex: i };
       p.nodesGroup.add(hitMesh);
       p.colliderMeshes.push(hitMesh);
+      p.colliderMeshes.push(visMesh);
     });
 
     hitGeo.dispose();
@@ -1111,38 +1149,43 @@ export function TrackStudioModal({
   }, [trackSpec.waypoints, trackSpec.trackWidth, trackSpec.startNodeIndex, selectedNodeIndex, hoveredNode3d]);
 
   // Swap only the 3D track geometry/lighting when splines or scenery change (never reset camera during edits!)
+  // Debounce rebuilding heavy environment meshes (trees, lights, grandstands) during active node dragging
   useEffect(() => {
     const p = preview3dRef.current;
     if (!p) return;
 
-    if (p.builtScene) {
-      p.scene.remove(p.builtScene.group);
-      p.builtScene.dispose();
-      p.builtScene = null;
-    }
-
-    const isNight = trackSpec.scenery === 'street-night';
-    p.renderer.toneMappingExposure = isNight ? 1.25 : 1.05;
-    p.hemiLight.color.setHex(isNight ? 0x223355 : 0xffffff);
-    p.hemiLight.groundColor.setHex(isNight ? 0x0a101d : 0x444444);
-    p.hemiLight.intensity = isNight ? 0.7 : 0.85;
-    p.dirLight.color.setHex(isNight ? 0x60a5fa : 0xfffaed);
-    p.dirLight.intensity = isNight ? 0.8 : 1.4;
-
-    try {
-      const built = buildTrackEnvironment(compiledTrack, 2);
-      p.scene.add(built.group);
-      p.scene.background = new THREE.Color(built.skyColor);
-      p.scene.fog = new THREE.FogExp2(built.fogColor, 0.0016);
-      p.builtScene = built;
-      if (!p.cameraInitialized) {
-        p.cameraInitialized = true;
-        p.resetCamera(compiledTrack.totalLength, cameraView3d);
+    const timer = setTimeout(() => {
+      if (p.builtScene) {
+        p.scene.remove(p.builtScene.group);
+        p.builtScene.dispose();
+        p.builtScene = null;
       }
-      p.renderer.render(p.scene, p.camera);
-    } catch (err) {
-      console.warn('TrackStudio 3D preview build warning:', err);
-    }
+
+      const isNight = trackSpec.scenery === 'street-night';
+      p.renderer.toneMappingExposure = isNight ? 1.25 : 1.05;
+      p.hemiLight.color.setHex(isNight ? 0x223355 : 0xffffff);
+      p.hemiLight.groundColor.setHex(isNight ? 0x0a101d : 0x444444);
+      p.hemiLight.intensity = isNight ? 0.7 : 0.85;
+      p.dirLight.color.setHex(isNight ? 0x60a5fa : 0xfffaed);
+      p.dirLight.intensity = isNight ? 0.8 : 1.4;
+
+      try {
+        const built = buildTrackEnvironment(compiledTrack, 2);
+        p.scene.add(built.group);
+        p.scene.background = new THREE.Color(built.skyColor);
+        p.scene.fog = new THREE.FogExp2(built.fogColor, 0.0016);
+        p.builtScene = built;
+        if (!p.cameraInitialized) {
+          p.cameraInitialized = true;
+          p.resetCamera(compiledTrack.totalLength, cameraView3d);
+        }
+        p.renderer.render(p.scene, p.camera);
+      } catch (err) {
+        console.warn('TrackStudio 3D preview build warning:', err);
+      }
+    }, p.builtScene ? 70 : 0);
+
+    return () => clearTimeout(timer);
   }, [compiledTrack, trackSpec.scenery]);
 
   const selectedWp = trackSpec.waypoints[selectedNodeIndex] ?? trackSpec.waypoints[0];
