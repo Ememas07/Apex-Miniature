@@ -48,7 +48,11 @@ export default function App() {
     return params.get('autostart') === '1' ? 'playing' : 'title';
   });
   const [activePrePausePhase, setActivePrePausePhase] = useState<'playing' | 'qualifying'>('playing');
-  const [raceConfig, setRaceConfig] = useState<RaceConfig>(INITIAL_CONFIG);
+  const [raceConfig, setRaceConfig] = useState<RaceConfig>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const trackParam = params.get('track') || params.get('trackId');
+    return trackParam ? { ...INITIAL_CONFIG, trackId: trackParam } : INITIAL_CONFIG;
+  });
   const [runNonce, setRunNonce] = useState<number>(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('autostart') === '1' ? 1 : 0;
@@ -58,7 +62,11 @@ export default function App() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [trackStudioOpen, setTrackStudioOpen] = useState(false);
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
-  const [cameraMode, setCameraMode] = useState<CameraMode>('chase-34');
+  const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cam = params.get('camera') as CameraMode;
+    return cam === 'isometric' || cam === 'high-chase' || cam === 'chase-34' ? cam : 'chase-34';
+  });
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
     serviceType: 'full-service',

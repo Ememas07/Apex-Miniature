@@ -2,6 +2,7 @@ export enum CarClassId {
   HYPERCAR_GTP = 'HYPERCAR_GTP',
   LMP2 = 'LMP2',
   GT3 = 'GT3',
+  GT4 = 'GT4',
   F1_2026 = 'F1_2026',
   F1_2021 = 'F1_2021',
   F1_2005 = 'F1_2005',
@@ -57,6 +58,7 @@ export type NumberPlateStyle =
   | 'gtp-red'
   | 'lmp2-blue'
   | 'gt3-green'
+  | 'gt4-cyan'
   | 'gtd-amber'
   | 'formula-white';
 
@@ -85,7 +87,7 @@ export interface CarSpec {
   silhouette: BodySilhouette;
   attributes: BoPAttributes;
   tradeoffNote: string;
-  engineType: 'v6-hybrid' | 'v8-hybrid' | 'v10' | 'v12' | 'flat6' | 'electric' | 'turbo-i6';
+  engineType: 'v6-hybrid' | 'v8-hybrid' | 'v10' | 'v12' | 'flat6' | 'electric' | 'turbo-i6' | 'turbo-i4';
   gears?: number; // per-car transmission gear override (e.g. Cadillac GTP = 6 gears)
   specialTypeOverride?: ClassSpecialType;
   specialLabelOverride?: string;

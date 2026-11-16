@@ -478,20 +478,35 @@ export function stepCarPhysics(
 
   // Compute physical performance scalars
   const paceScale = classMeta.basePaceIndex;
+  const isGTP = car.carSpec.classId === CarClassId.HYPERCAR_GTP;
+  const isSupercar = car.carSpec.classId === CarClassId.SUPERCAR;
+  const isCoupe = car.carSpec.classId === CarClassId.TRACK_COUPE;
+  const isGT4 = car.carSpec.classId === CarClassId.GT4;
+  const isGT3 = car.carSpec.classId === CarClassId.GT3;
+
   // 1:1 Metric Scale: Realistic Top Speeds and Gearing per Class
-  // F1: 320-355 km/h, Hypercar/GTP: 318-342 km/h, LMP2: 315-325 km/h, GT3: 275-290 km/h, FE: 285-322 km/h, Supercar: 330-355 km/h, Coupe: 285-312 km/h
+  // F1: 320-355 km/h, Hypercar/GTP: 318-342 km/h, LMP2: 315-325 km/h, GT3: 275-290 km/h, GT4: 260-275 km/h, FE: 285-322 km/h, Supercar: 330-400+ km/h, Coupe: 245-312 km/h
   const classPaceBonus =
-    classMeta.id === CarClassId.SUPERCAR
+    isSupercar
       ? 1.08
-      : classMeta.id === CarClassId.TRACK_COUPE
+      : isCoupe
       ? 1.04
       : classMeta.id === CarClassId.FORMULA_E
       ? 0.98
       : (0.70 + 0.30 * paceScale);
-  const maxSpeedBase = (68 + (attrs.topSpeed / 100) * 18) * classPaceBonus;
+
+  const maxSpeedBase = isSupercar
+    ? (90 + (attrs.topSpeed - 83) * 1.35)
+    : isCoupe
+    ? (68 + (attrs.topSpeed - 64) * 1.80)
+    : isGT4
+    ? (72 + (attrs.topSpeed - 67) * 0.80)
+    : (68 + (attrs.topSpeed / 100) * 18) * classPaceBonus;
+
   const accelBase = (20 + (attrs.acceleration / 100) * 16) * (0.60 + 0.40 * paceScale);
   const gripBase = (1.42 + (attrs.corneringGrip / 100) * 1.15) * (0.75 + paceScale * 0.25);
-  const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35);
+  const brakeMultiplier = isSupercar ? 0.85 : isCoupe ? 0.85 : isGT4 ? 0.88 : 1.0;
+  const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35) * brakeMultiplier;
 
   const compoundMod = getCompoundModifiers(car.compound, opts.trackWetness);
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
@@ -577,7 +592,6 @@ export function stepCarPhysics(
   // Longitudinal acceleration & braking
   const throttle = Math.max(0, Math.min(1, input.throttle));
   const brake = Math.max(0, Math.min(1, input.brake));
-  const isGTP = car.carSpec.classId === CarClassId.HYPERCAR_GTP;
 
   if (throttle > 0 && brake < 0.1) {
     if (car.pitLimiterActive && car.speed >= PIT_LIMIT_SPEED - 0.05) {
@@ -592,6 +606,15 @@ export function stepCarPhysics(
         // while climbing steadily to 320-340 km/h on straights
         classAccelMult = 0.26 * (1 - speedRatio) + 0.28 * speedRatio;
         torqueCurve = Math.max(0.18, 1.15 - speedRatio * 0.65);
+      } else if (isGT4) {
+        // GT4 BoP: ~1,380-1,480 kg, 0-100 in ~3.8-4.2s
+        classAccelMult = 0.22 + ((attrs.acceleration - 70) / 10) * 0.04;
+      } else if (isCoupe) {
+        // Track Coupe: hot hatches (Clio V6, Civic FL5, GR Yaris) 0-100 in ~5.4-5.8s, performance coupes 0-100 in ~3.2-3.9s
+        classAccelMult = 0.165 + Math.max(0, (attrs.acceleration - 64) / 12) * 0.08;
+      } else if (isSupercar) {
+        // Supercar / Hypercar: explosive straight-line acceleration (Jesko, F80, W1 0-100 in ~2.5-2.8s)
+        classAccelMult = 0.31 + ((attrs.acceleration - 83) / 15) * 0.08;
       }
       car.speed += accelBase * specialAccelMult * classAccelMult * fuelFactor * throttle * torqueCurve * dt;
       if (car.pitLimiterActive && car.speed > PIT_LIMIT_SPEED) {
@@ -647,13 +670,17 @@ export function stepCarPhysics(
   const trailBrakeBonus = brake > 0.08 && brake < 0.7 && Math.abs(steerInput) > 0.25 ? 1.14 : 1.0;
   const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
   const bankingGripBonus = 1.0 + Math.sin(Math.abs(sampleBank)) * 0.35;
-  const gtpGripMult = isGTP ? 0.78 : 1.0; // 22% lower lateral grip multiplier
-  const gtpDownforceBonus = isGTP
+  const classGripMult = isGTP ? 0.78 : isSupercar ? 0.86 : isCoupe ? 0.88 : isGT4 ? 0.90 : 1.0;
+  const classDownforceBonus = isGTP
     ? 1.0 + Math.min(0.18, car.speed / 85.0) // Lower aerodynamic downforce coefficient
+    : isGT4
+    ? 1.0 + Math.min(0.20, car.speed / 80.0) // Noticeably lower downforce than GT3
+    : isSupercar || isCoupe
+    ? 1.0 + Math.min(0.16, car.speed / 85.0) // Road tire / street aero downforce
     : 1.0 + Math.min(0.38, car.speed / 62.0);
   const availableGrip =
     gripBase *
-    gtpGripMult *
+    classGripMult *
     compoundMod.grip *
     wearGripFactor *
     specialGripMult *
@@ -661,7 +688,7 @@ export function stepCarPhysics(
     damageFactor *
     trailBrakeBonus *
     bankingGripBonus *
-    gtpDownforceBonus;
+    classDownforceBonus;
 
   // Centripetal lateral physics cap: realistic centripetal limit matching physical Gs
   const maxTurnRate = Math.min(
@@ -1032,13 +1059,17 @@ export function computeAIControl(
   // Physical performance estimation matching stepCarPhysics
   const paceScale = classMeta.basePaceIndex;
   const isGTP = car.carSpec.classId === CarClassId.HYPERCAR_GTP;
-  const gtpGripMult = isGTP ? 0.78 : 1.0;
+  const isSupercar = car.carSpec.classId === CarClassId.SUPERCAR;
+  const isCoupe = car.carSpec.classId === CarClassId.TRACK_COUPE;
+  const isGT4 = car.carSpec.classId === CarClassId.GT4;
+  const classGripMult = isGTP ? 0.78 : isSupercar ? 0.86 : isCoupe ? 0.88 : isGT4 ? 0.90 : 1.0;
+  const classBrakeMult = isSupercar ? 0.85 : isCoupe ? 0.85 : isGT4 ? 0.88 : 1.0;
   const compoundMod = getCompoundModifiers(car.compound, trackWetness);
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
   const damageFactor = 1 - (car.aeroDamage / 100) * 0.18;
 
-  const gripBase = (1.35 + (attrs.corneringGrip / 100) * 1.15) * (0.85 + paceScale * 0.15);
-  const brakeBase = (24 + (attrs.braking / 100) * 18) * paceScale;
+  const gripBase = (1.35 + (attrs.corneringGrip / 100) * 1.15) * (0.85 + paceScale * 0.15) * classGripMult;
+  const brakeBase = (24 + (attrs.braking / 100) * 18) * paceScale * classBrakeMult;
   const personalityBrakeFactor =
     personality === 'Late-Braker' ? 0.94 : personality === 'Tire-Saver' ? 0.82 : 0.88;
   const brakeDecel = Math.max(10, brakeBase * compoundMod.grip * personalityBrakeFactor);
@@ -1183,7 +1214,7 @@ export function computeAIControl(
   let immediateCornerSpeed = 999;
 
   const effectiveLatGripBase =
-    gripBase * compoundMod.grip * wearGripFactor * damageFactor * gtpGripMult;
+    gripBase * compoundMod.grip * wearGripFactor * damageFactor;
 
   for (let sIdx = 0; sIdx <= scanSteps; sIdx++) {
     const dMeters = 2.5 + (sIdx / scanSteps) * scanDist;
@@ -1197,6 +1228,10 @@ export function computeAIControl(
     const bankBonus = 1.0 + Math.sin(Math.abs(sample.banking || 0)) * 0.35;
     const aeroDownforceBonus = isGTP
       ? 1.0 + Math.min(0.18, car.speed / 85.0)
+      : isGT4
+      ? 1.0 + Math.min(0.20, car.speed / 80.0)
+      : isSupercar || isCoupe
+      ? 1.0 + Math.min(0.16, car.speed / 85.0)
       : 1.0 + Math.min(0.38, car.speed / 62.0);
     const sampleGrip = effectiveLatGripBase * bankBonus * aeroDownforceBonus;
     // Calibrated centripetal safe cornering speed at 1:1 metric scale

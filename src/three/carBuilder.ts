@@ -20,7 +20,16 @@ export interface BuiltCarRig {
   dispose: () => void;
 }
 
+export type CabinStyle =
+  | 'proto-teardrop'
+  | 'porsche-911'
+  | 'mid-engine-buttress'
+  | 'grand-tourer'
+  | 'hatchback-clio'
+  | 'lmp-gt3-hybrid';
+
 interface ClosedWheelDesign {
+  cabinStyle?: CabinStyle;
   cabinOffsetZ: number;
   cabinScaleW: number;
   cabinScaleH: number;
@@ -29,9 +38,12 @@ interface ClosedWheelDesign {
   tailHeightRatio: number;
   widthScale: number;
   lengthScale: number;
+  hoodStyle?: 'power-dome' | 'pontoon-channel' | 'standard';
+  haunchScale?: number;
   grilleStyle:
     | 'none'
     | 'bmw-kidney'
+    | 'bentley-matrix'
     | 'aston-wings'
     | 'mustang-pony'
     | 'merc-panamericana'
@@ -41,9 +53,31 @@ interface ClosedWheelDesign {
     | 'ferrari-split'
     | 'mclaren-eye'
     | 'gtr-v'
+    | 'audi-singleframe'
+    | 'clio-hatch'
+    | 'civic-fl5'
+    | 'supra-nose'
+    | 'alpine-arrow'
+    | 'jesko-aero'
+    | 'f80-blade'
+    | 'w1-aero'
     | 'lmp-intake';
-  headlightStyle: 'blade' | 'vertical-stack' | 'round-911' | 'c-clamp' | 'fang' | 'twin-pod';
-  sidepodStyle: 'undercut' | 'venturi-tunnel' | 'louvered' | 'sculpted-intake' | 'clean-street';
+  headlightStyle:
+    | 'blade'
+    | 'vertical-stack'
+    | 'round-911'
+    | 'bentley-quad'
+    | 'c-clamp'
+    | 'fang'
+    | 'twin-pod'
+    | 'c-blade-rs01';
+  sidepodStyle:
+    | 'undercut'
+    | 'venturi-tunnel'
+    | 'louvered'
+    | 'sculpted-intake'
+    | 'clio-side-scoop'
+    | 'clean-street';
   rearDeckStyle:
     | 'wingless-9x8'
     | 'split-499p'
@@ -51,14 +85,19 @@ interface ClosedWheelDesign {
     | 'strut-race'
     | 'ducktail-rs'
     | 'active-lip'
-    | 'deck-tunnel';
-  exhaustStyle: 'rear-dual' | 'rear-center' | 'top-exit' | 'side-exit';
+    | 'deck-tunnel'
+    | 'roof-spoiler-hatch'
+    | 'jesko-boomerang'
+    | 'w1-longtail';
+  exhaustStyle: 'rear-dual' | 'rear-center' | 'top-exit' | 'side-exit' | 'clio-center-twin';
   sharkFinStyle: 'none' | 'tall-proto' | 'curved-lmh' | 'roof-scoop';
+  caliperColor?: string;
 }
 
 const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
   // ================= WEC HYPERCAR / IMSA GTP (12 distinct chassis) =================
   'ferrari-499p': {
+    cabinStyle: 'proto-teardrop',
     cabinOffsetZ: 0.06,
     cabinScaleW: 0.94,
     cabinScaleH: 0.96,
@@ -67,14 +106,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.80,
     widthScale: 1.0,
     lengthScale: 1.02,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'lmp-intake',
     headlightStyle: 'blade',
     sidepodStyle: 'undercut',
     rearDeckStyle: 'split-499p',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'curved-lmh',
+    caliperColor: '#ef4444',
   },
   'toyota-gr010': {
+    cabinStyle: 'proto-teardrop',
     cabinOffsetZ: 0.04,
     cabinScaleW: 1.0,
     cabinScaleH: 1.02,
@@ -83,14 +125,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.84,
     widthScale: 1.02,
     lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'lmp-intake',
     headlightStyle: 'twin-pod',
     sidepodStyle: 'sculpted-intake',
     rearDeckStyle: 'strut-race',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'tall-proto',
+    caliperColor: '#facc15',
   },
   'porsche-963': {
+    cabinStyle: 'proto-teardrop',
     cabinOffsetZ: 0.05,
     cabinScaleW: 0.96,
     cabinScaleH: 0.98,
@@ -99,14 +144,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.82,
     widthScale: 1.0,
     lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'porsche-992',
     headlightStyle: 'twin-pod',
     sidepodStyle: 'undercut',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'tall-proto',
+    caliperColor: '#84cc16',
   },
   'cadillac-vseries-r': {
+    cabinStyle: 'proto-teardrop',
     cabinOffsetZ: 0.02,
     cabinScaleW: 0.98,
     cabinScaleH: 1.0,
@@ -115,160 +163,268 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.82,
     widthScale: 1.01,
     lengthScale: 1.02,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'lmp-intake',
     headlightStyle: 'vertical-stack',
     sidepodStyle: 'sculpted-intake',
     rearDeckStyle: 'strut-race',
     exhaustStyle: 'top-exit',
-    sharkFinStyle: 'curved-lmh',
+    sharkFinStyle: 'tall-proto',
+    caliperColor: '#38bdf8',
   },
   'bmw-m-hybrid-v8': {
-    cabinOffsetZ: 0.02,
-    cabinScaleW: 0.98,
-    cabinScaleH: 1.0,
-    cabinScaleL: 0.98,
-    noseHeightRatio: 0.60,
-    tailHeightRatio: 0.84,
-    widthScale: 1.02,
-    lengthScale: 1.0,
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.04,
+    cabinScaleW: 0.96,
+    cabinScaleH: 0.98,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.58,
+    tailHeightRatio: 0.82,
+    widthScale: 1.0,
+    lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'bmw-kidney',
     headlightStyle: 'fang',
     sidepodStyle: 'undercut',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'tall-proto',
+    caliperColor: '#2563eb',
   },
   'acura-arx-06': {
-    cabinOffsetZ: 0.08,
-    cabinScaleW: 0.90,
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.06,
+    cabinScaleW: 0.94,
     cabinScaleH: 0.96,
     cabinScaleL: 0.98,
-    noseHeightRatio: 0.50,
-    tailHeightRatio: 0.78,
-    widthScale: 0.98,
-    lengthScale: 1.01,
-    grilleStyle: 'lmp-intake',
-    headlightStyle: 'c-clamp',
-    sidepodStyle: 'louvered',
+    noseHeightRatio: 0.54,
+    tailHeightRatio: 0.82,
+    widthScale: 1.01,
+    lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'corvette-wedge',
+    headlightStyle: 'blade',
+    sidepodStyle: 'undercut',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'top-exit',
-    sharkFinStyle: 'tall-proto',
+    sharkFinStyle: 'curved-lmh',
+    caliperColor: '#ef4444',
   },
   'alpine-a424': {
-    cabinOffsetZ: 0.05,
-    cabinScaleW: 0.95,
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.04,
+    cabinScaleW: 0.96,
     cabinScaleH: 0.98,
     cabinScaleL: 1.0,
-    noseHeightRatio: 0.55,
-    tailHeightRatio: 0.78,
-    widthScale: 0.99,
-    lengthScale: 1.03,
+    noseHeightRatio: 0.56,
+    tailHeightRatio: 0.80,
+    widthScale: 1.0,
+    lengthScale: 1.02,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'lmp-intake',
     headlightStyle: 'blade',
     sidepodStyle: 'undercut',
-    rearDeckStyle: 'strut-race',
-    exhaustStyle: 'top-exit',
-    sharkFinStyle: 'tall-proto',
-  },
-  'peugeot-9x8': {
-    cabinOffsetZ: 0.07,
-    cabinScaleW: 0.92,
-    cabinScaleH: 0.92,
-    cabinScaleL: 1.02,
-    noseHeightRatio: 0.52,
-    tailHeightRatio: 0.70,
-    widthScale: 1.02,
-    lengthScale: 1.02,
-    grilleStyle: 'lmp-intake',
-    headlightStyle: 'fang',
-    sidepodStyle: 'sculpted-intake',
-    rearDeckStyle: 'wingless-9x8',
+    rearDeckStyle: 'swan-neck',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'curved-lmh',
+    caliperColor: '#38bdf8',
+  },
+  'peugeot-9x8': {
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.08,
+    cabinScaleW: 0.98,
+    cabinScaleH: 0.92,
+    cabinScaleL: 1.02,
+    noseHeightRatio: 0.50,
+    tailHeightRatio: 0.76,
+    widthScale: 1.03,
+    lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'corvette-wedge',
+    headlightStyle: 'fang',
+    sidepodStyle: 'venturi-tunnel',
+    rearDeckStyle: 'wingless-9x8',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'none',
+    caliperColor: '#84cc16',
   },
   'aston-valkyrie-lmh': {
-    cabinOffsetZ: 0.09,
-    cabinScaleW: 0.84,
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.08,
+    cabinScaleW: 0.88,
     cabinScaleH: 0.90,
     cabinScaleL: 0.96,
     noseHeightRatio: 0.48,
-    tailHeightRatio: 0.68,
-    widthScale: 0.96,
+    tailHeightRatio: 0.74,
+    widthScale: 0.98,
     lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'aston-wings',
     headlightStyle: 'blade',
     sidepodStyle: 'venturi-tunnel',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'roof-scoop',
+    caliperColor: '#a3e635',
   },
   'lamborghini-sc63': {
-    cabinOffsetZ: 0.06,
-    cabinScaleW: 0.94,
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.04,
+    cabinScaleW: 0.98,
     cabinScaleH: 0.96,
     cabinScaleL: 1.0,
-    noseHeightRatio: 0.50,
-    tailHeightRatio: 0.80,
+    noseHeightRatio: 0.54,
+    tailHeightRatio: 0.82,
     widthScale: 1.01,
-    lengthScale: 1.02,
-    grilleStyle: 'lmp-intake',
+    lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'corvette-wedge',
     headlightStyle: 'fang',
-    sidepodStyle: 'louvered',
+    sidepodStyle: 'undercut',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'top-exit',
-    sharkFinStyle: 'roof-scoop',
+    sharkFinStyle: 'curved-lmh',
+    caliperColor: '#84cc16',
   },
   'genesis-gmr-001': {
+    cabinStyle: 'proto-teardrop',
     cabinOffsetZ: 0.05,
     cabinScaleW: 0.96,
     cabinScaleH: 0.98,
-    cabinScaleL: 1.02,
-    noseHeightRatio: 0.54,
-    tailHeightRatio: 0.78,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.56,
+    tailHeightRatio: 0.82,
     widthScale: 1.0,
-    lengthScale: 1.03,
+    lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'lmp-intake',
     headlightStyle: 'blade',
-    sidepodStyle: 'sculpted-intake',
-    rearDeckStyle: 'strut-race',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'swan-neck',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'curved-lmh',
+    caliperColor: '#ea580c',
   },
   'glickenhaus-scg-007': {
-    cabinOffsetZ: 0.03,
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.06,
     cabinScaleW: 0.92,
-    cabinScaleH: 1.02,
-    cabinScaleL: 0.96,
-    noseHeightRatio: 0.56,
-    tailHeightRatio: 0.76,
-    widthScale: 0.98,
-    lengthScale: 0.99,
+    cabinScaleH: 0.98,
+    cabinScaleL: 1.02,
+    noseHeightRatio: 0.58,
+    tailHeightRatio: 0.86,
+    widthScale: 1.0,
+    lengthScale: 1.02,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'lmp-intake',
-    headlightStyle: 'round-911',
-    sidepodStyle: 'louvered',
+    headlightStyle: 'twin-pod',
+    sidepodStyle: 'undercut',
     rearDeckStyle: 'strut-race',
-    exhaustStyle: 'side-exit',
-    sharkFinStyle: 'roof-scoop',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'tall-proto',
+    caliperColor: '#dc2626',
   },
 
-  // ================= GTD Pro / LMGT3 (10 distinct chassis) =================
+  // ================= LMP2 (Oreca 07 + Ligier JS P217) =================
+  'oreca-07-united': {
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.03,
+    cabinScaleW: 0.92,
+    cabinScaleH: 0.96,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.52,
+    tailHeightRatio: 0.82,
+    widthScale: 1.0,
+    lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'lmp-intake',
+    headlightStyle: 'vertical-stack',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'strut-race',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'tall-proto',
+    caliperColor: '#f97316',
+  },
+  'oreca-07-europol': {
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.03,
+    cabinScaleW: 0.92,
+    cabinScaleH: 0.96,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.52,
+    tailHeightRatio: 0.82,
+    widthScale: 1.0,
+    lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'lmp-intake',
+    headlightStyle: 'vertical-stack',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'strut-race',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'tall-proto',
+    caliperColor: '#eab308',
+  },
+  'oreca-07-ao': {
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.03,
+    cabinScaleW: 0.92,
+    cabinScaleH: 0.96,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.52,
+    tailHeightRatio: 0.82,
+    widthScale: 1.0,
+    lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'lmp-intake',
+    headlightStyle: 'vertical-stack',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'strut-race',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'tall-proto',
+    caliperColor: '#7c3aed',
+  },
+  'ligier-js-p217': {
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.04,
+    cabinScaleW: 0.92,
+    cabinScaleH: 0.96,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.54,
+    tailHeightRatio: 0.82,
+    widthScale: 1.0,
+    lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'lmp-intake',
+    headlightStyle: 'vertical-stack',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'strut-race',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'tall-proto',
+    caliperColor: '#2563eb',
+  },
+
+  // ================= GTD Pro / LMGT3 (14 cars) =================
   'porsche-911-gt3-r': {
-    cabinOffsetZ: -0.18,
-    cabinScaleW: 0.96,
-    cabinScaleH: 1.04,
-    cabinScaleL: 1.02,
+    cabinStyle: 'porsche-911',
+    cabinOffsetZ: -0.16,
+    cabinScaleW: 0.98,
+    cabinScaleH: 1.0,
+    cabinScaleL: 0.98,
     noseHeightRatio: 0.58,
     tailHeightRatio: 0.90,
     widthScale: 0.98,
     lengthScale: 0.96,
+    haunchScale: 1.08,
     grilleStyle: 'porsche-992',
     headlightStyle: 'round-911',
     sidepodStyle: 'louvered',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'rear-center',
     sharkFinStyle: 'none',
+    caliperColor: '#facc15',
   },
   'ferrari-296-gt3': {
+    cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.08,
     cabinScaleW: 0.98,
     cabinScaleH: 0.92,
@@ -277,14 +433,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.84,
     widthScale: 1.02,
     lengthScale: 0.98,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'ferrari-split',
     headlightStyle: 'blade',
     sidepodStyle: 'sculpted-intake',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'rear-dual',
     sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
   },
   'corvette-z06-gt3r': {
+    cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.12,
     cabinScaleW: 0.96,
     cabinScaleH: 0.90,
@@ -293,14 +452,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.86,
     widthScale: 1.03,
     lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'corvette-wedge',
     headlightStyle: 'blade',
     sidepodStyle: 'sculpted-intake',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'rear-dual',
     sharkFinStyle: 'none',
+    caliperColor: '#facc15',
   },
   'bmw-m4-gt3': {
+    cabinStyle: 'grand-tourer',
     cabinOffsetZ: -0.24,
     cabinScaleW: 1.02,
     cabinScaleH: 1.06,
@@ -309,14 +471,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.94,
     widthScale: 1.02,
     lengthScale: 1.03,
+    hoodStyle: 'power-dome',
     grilleStyle: 'bmw-kidney',
     headlightStyle: 'fang',
     sidepodStyle: 'louvered',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'side-exit',
     sharkFinStyle: 'none',
+    caliperColor: '#2563eb',
   },
   'ford-mustang-gt3': {
+    cabinStyle: 'grand-tourer',
     cabinOffsetZ: -0.26,
     cabinScaleW: 1.02,
     cabinScaleH: 1.06,
@@ -325,14 +490,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.94,
     widthScale: 1.01,
     lengthScale: 1.03,
+    hoodStyle: 'power-dome',
     grilleStyle: 'mustang-pony',
     headlightStyle: 'fang',
     sidepodStyle: 'louvered',
     rearDeckStyle: 'strut-race',
     exhaustStyle: 'side-exit',
     sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
   },
   'aston-vantage-gt3': {
+    cabinStyle: 'grand-tourer',
     cabinOffsetZ: -0.22,
     cabinScaleW: 1.0,
     cabinScaleH: 0.98,
@@ -341,14 +509,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.88,
     widthScale: 1.02,
     lengthScale: 1.0,
+    hoodStyle: 'power-dome',
     grilleStyle: 'aston-wings',
     headlightStyle: 'blade',
     sidepodStyle: 'undercut',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'rear-dual',
     sharkFinStyle: 'none',
+    caliperColor: '#a3e635',
   },
   'lamborghini-temerario-gt3': {
+    cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.14,
     cabinScaleW: 0.98,
     cabinScaleH: 0.88,
@@ -357,80 +528,325 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.84,
     widthScale: 1.03,
     lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'corvette-wedge',
-    headlightStyle: 'fang',
-    sidepodStyle: 'sculpted-intake',
+    headlightStyle: 'blade',
+    sidepodStyle: 'undercut',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'rear-center',
-    sharkFinStyle: 'roof-scoop',
+    sharkFinStyle: 'none',
+    caliperColor: '#84cc16',
   },
   'mercedes-amg-gt3': {
-    cabinOffsetZ: -0.30,
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.26,
     cabinScaleW: 1.0,
-    cabinScaleH: 0.98,
-    cabinScaleL: 0.94,
-    noseHeightRatio: 0.68,
-    tailHeightRatio: 0.86,
-    widthScale: 1.03,
-    lengthScale: 1.04,
-    grilleStyle: 'merc-panamericana',
-    headlightStyle: 'twin-pod',
-    sidepodStyle: 'louvered',
-    rearDeckStyle: 'strut-race',
-    exhaustStyle: 'side-exit',
-    sharkFinStyle: 'none',
-  },
-  'lexus-rcf-gt3': {
-    cabinOffsetZ: -0.22,
-    cabinScaleW: 1.02,
-    cabinScaleH: 1.04,
+    cabinScaleH: 1.02,
     cabinScaleL: 1.0,
     noseHeightRatio: 0.70,
     tailHeightRatio: 0.92,
-    widthScale: 1.0,
+    widthScale: 1.03,
     lengthScale: 1.02,
+    hoodStyle: 'power-dome',
+    grilleStyle: 'merc-panamericana',
+    headlightStyle: 'blade',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'side-exit',
+    sharkFinStyle: 'none',
+    caliperColor: '#eab308',
+  },
+  'lexus-rcf-gt3': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.22,
+    cabinScaleW: 1.02,
+    cabinScaleH: 1.06,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.72,
+    tailHeightRatio: 0.94,
+    widthScale: 1.01,
+    lengthScale: 1.02,
+    hoodStyle: 'power-dome',
     grilleStyle: 'lexus-spindle',
-    headlightStyle: 'c-clamp',
+    headlightStyle: 'fang',
     sidepodStyle: 'louvered',
     rearDeckStyle: 'strut-race',
     exhaustStyle: 'side-exit',
     sharkFinStyle: 'none',
+    caliperColor: '#f97316',
   },
   'mclaren-720s-gt3': {
-    cabinOffsetZ: 0.14,
-    cabinScaleW: 0.94,
-    cabinScaleH: 0.90,
-    cabinScaleL: 0.98,
-    noseHeightRatio: 0.50,
-    tailHeightRatio: 0.82,
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.12,
+    cabinScaleW: 0.96,
+    cabinScaleH: 0.88,
+    cabinScaleL: 0.96,
+    noseHeightRatio: 0.48,
+    tailHeightRatio: 0.84,
     widthScale: 1.02,
-    lengthScale: 0.99,
+    lengthScale: 0.98,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'mclaren-eye',
     headlightStyle: 'c-clamp',
     sidepodStyle: 'undercut',
     rearDeckStyle: 'swan-neck',
     exhaustStyle: 'rear-center',
     sharkFinStyle: 'none',
+    caliperColor: '#f97316',
+  },
+  'renault-rs01-gt3': {
+    cabinStyle: 'lmp-gt3-hybrid',
+    cabinOffsetZ: 0.02,
+    cabinScaleW: 0.94,
+    cabinScaleH: 0.88,
+    cabinScaleL: 1.02,
+    noseHeightRatio: 0.46,
+    tailHeightRatio: 0.82,
+    widthScale: 1.04,
+    lengthScale: 1.02,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'none',
+    headlightStyle: 'c-blade-rs01',
+    sidepodStyle: 'sculpted-intake',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#facc15',
+  },
+  'bentley-continental-gt3': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.22,
+    cabinScaleW: 1.04,
+    cabinScaleH: 1.06,
+    cabinScaleL: 1.02,
+    noseHeightRatio: 0.76,
+    tailHeightRatio: 0.95,
+    widthScale: 1.04,
+    lengthScale: 1.04,
+    hoodStyle: 'power-dome',
+    haunchScale: 1.08,
+    grilleStyle: 'bentley-matrix',
+    headlightStyle: 'bentley-quad',
+    sidepodStyle: 'louvered',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'side-exit',
+    sharkFinStyle: 'none',
+    caliperColor: '#22c55e',
+  },
+  'audi-r8-lms-gt3': {
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.06,
+    cabinScaleW: 0.98,
+    cabinScaleH: 0.90,
+    cabinScaleL: 0.96,
+    noseHeightRatio: 0.52,
+    tailHeightRatio: 0.84,
+    widthScale: 1.02,
+    lengthScale: 0.98,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'audi-singleframe',
+    headlightStyle: 'blade',
+    sidepodStyle: 'sculpted-intake',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
+  },
+  'acura-nsx-gt3': {
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.08,
+    cabinScaleW: 0.98,
+    cabinScaleH: 0.90,
+    cabinScaleL: 0.98,
+    noseHeightRatio: 0.50,
+    tailHeightRatio: 0.84,
+    widthScale: 1.02,
+    lengthScale: 0.99,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'corvette-wedge',
+    headlightStyle: 'blade',
+    sidepodStyle: 'sculpted-intake',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
   },
 
-  // ================= PRODUCTION TRACK COUPES (4 distinct street silhouettes) =================
-  'bmw-m2-cs': {
-    cabinOffsetZ: -0.18,
-    cabinScaleW: 1.04,
-    cabinScaleH: 1.12,
-    cabinScaleL: 1.04,
-    noseHeightRatio: 0.74,
-    tailHeightRatio: 0.96,
+  // ================= GT4 EUROPEAN / IMSA GS (8 cars) =================
+  'porsche-cayman-gt4-rs': {
+    cabinStyle: 'porsche-911',
+    cabinOffsetZ: 0.02,
+    cabinScaleW: 0.96,
+    cabinScaleH: 0.94,
+    cabinScaleL: 0.94,
+    noseHeightRatio: 0.56,
+    tailHeightRatio: 0.88,
     widthScale: 0.98,
     lengthScale: 0.95,
+    haunchScale: 1.06,
+    grilleStyle: 'porsche-992',
+    headlightStyle: 'round-911',
+    sidepodStyle: 'sculpted-intake',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'roof-scoop',
+    caliperColor: '#0284c7',
+  },
+  'bmw-m4-gt4': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.22,
+    cabinScaleW: 1.02,
+    cabinScaleH: 1.05,
+    cabinScaleL: 1.02,
+    noseHeightRatio: 0.72,
+    tailHeightRatio: 0.94,
+    widthScale: 1.01,
+    lengthScale: 1.02,
+    hoodStyle: 'power-dome',
     grilleStyle: 'bmw-kidney',
     headlightStyle: 'fang',
     sidepodStyle: 'clean-street',
-    rearDeckStyle: 'active-lip',
+    rearDeckStyle: 'swan-neck',
     exhaustStyle: 'rear-dual',
     sharkFinStyle: 'none',
+    caliperColor: '#0284c7',
+  },
+  'aston-vantage-gt4': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.20,
+    cabinScaleW: 1.0,
+    cabinScaleH: 0.98,
+    cabinScaleL: 0.96,
+    noseHeightRatio: 0.64,
+    tailHeightRatio: 0.88,
+    widthScale: 1.01,
+    lengthScale: 1.0,
+    hoodStyle: 'power-dome',
+    grilleStyle: 'aston-wings',
+    headlightStyle: 'blade',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#eab308',
+  },
+  'toyota-supra-gt4': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.16,
+    cabinScaleW: 0.96,
+    cabinScaleH: 0.96,
+    cabinScaleL: 0.92,
+    noseHeightRatio: 0.60,
+    tailHeightRatio: 0.90,
+    widthScale: 0.99,
+    lengthScale: 0.96,
+    grilleStyle: 'supra-nose',
+    headlightStyle: 'blade',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
+  },
+  'mclaren-artura-gt4': {
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.10,
+    cabinScaleW: 0.96,
+    cabinScaleH: 0.88,
+    cabinScaleL: 0.96,
+    noseHeightRatio: 0.50,
+    tailHeightRatio: 0.84,
+    widthScale: 1.01,
+    lengthScale: 0.98,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'mclaren-eye',
+    headlightStyle: 'c-clamp',
+    sidepodStyle: 'sculpted-intake',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-center',
+    sharkFinStyle: 'none',
+    caliperColor: '#ea580c',
+  },
+  'mercedes-amg-gt4': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.24,
+    cabinScaleW: 1.0,
+    cabinScaleH: 1.0,
+    cabinScaleL: 0.98,
+    noseHeightRatio: 0.68,
+    tailHeightRatio: 0.92,
+    widthScale: 1.02,
+    lengthScale: 1.01,
+    hoodStyle: 'power-dome',
+    grilleStyle: 'merc-panamericana',
+    headlightStyle: 'blade',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#eab308',
+  },
+  'alpine-a110-gt4': {
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.04,
+    cabinScaleW: 0.94,
+    cabinScaleH: 0.92,
+    cabinScaleL: 0.92,
+    noseHeightRatio: 0.54,
+    tailHeightRatio: 0.86,
+    widthScale: 0.96,
+    lengthScale: 0.94,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'alpine-arrow',
+    headlightStyle: 'twin-pod',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'swan-neck',
+    exhaustStyle: 'rear-center',
+    sharkFinStyle: 'none',
+    caliperColor: '#2563eb',
+  },
+  'ford-mustang-gt4': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.24,
+    cabinScaleW: 1.02,
+    cabinScaleH: 1.06,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.74,
+    tailHeightRatio: 0.94,
+    widthScale: 1.01,
+    lengthScale: 1.02,
+    hoodStyle: 'power-dome',
+    grilleStyle: 'mustang-pony',
+    headlightStyle: 'fang',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'strut-race',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
+  },
+
+  // ================= PRODUCTION TRACK COUPES (7 cars) =================
+  'bmw-m2-cs': {
+    cabinStyle: 'grand-tourer',
+    cabinOffsetZ: -0.16,
+    cabinScaleW: 1.0,
+    cabinScaleH: 1.06,
+    cabinScaleL: 0.96,
+    noseHeightRatio: 0.70,
+    tailHeightRatio: 0.92,
+    widthScale: 0.98,
+    lengthScale: 0.96,
+    hoodStyle: 'power-dome',
+    grilleStyle: 'bmw-kidney',
+    headlightStyle: 'fang',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'ducktail-rs',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#2563eb',
   },
   'porsche-911-gt3-rs': {
+    cabinStyle: 'porsche-911',
     cabinOffsetZ: -0.18,
     cabinScaleW: 0.96,
     cabinScaleH: 1.02,
@@ -439,14 +855,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.90,
     widthScale: 0.99,
     lengthScale: 0.96,
+    haunchScale: 1.10,
     grilleStyle: 'porsche-992',
     headlightStyle: 'round-911',
     sidepodStyle: 'louvered',
     rearDeckStyle: 'ducktail-rs',
     exhaustStyle: 'rear-center',
     sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
   },
   'corvette-z06-coupe': {
+    cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.12,
     cabinScaleW: 0.96,
     cabinScaleH: 0.90,
@@ -455,14 +874,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.88,
     widthScale: 1.01,
     lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'corvette-wedge',
     headlightStyle: 'blade',
     sidepodStyle: 'sculpted-intake',
     rearDeckStyle: 'ducktail-rs',
     exhaustStyle: 'rear-center',
     sharkFinStyle: 'none',
+    caliperColor: '#facc15',
   },
   'nissan-gtr-nismo': {
+    cabinStyle: 'grand-tourer',
     cabinOffsetZ: -0.18,
     cabinScaleW: 1.04,
     cabinScaleH: 1.12,
@@ -471,16 +893,76 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.98,
     widthScale: 0.99,
     lengthScale: 1.01,
+    hoodStyle: 'power-dome',
     grilleStyle: 'gtr-v',
     headlightStyle: 'blade',
     sidepodStyle: 'clean-street',
     rearDeckStyle: 'strut-race',
     exhaustStyle: 'rear-dual',
     sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
+  },
+  'renault-clio-v6': {
+    cabinStyle: 'hatchback-clio',
+    cabinOffsetZ: -0.06,
+    cabinScaleW: 1.02,
+    cabinScaleH: 1.08,
+    cabinScaleL: 0.94,
+    noseHeightRatio: 0.65,
+    tailHeightRatio: 0.94,
+    widthScale: 1.02,
+    lengthScale: 0.90,
+    haunchScale: 1.18,
+    grilleStyle: 'clio-hatch',
+    headlightStyle: 'twin-pod',
+    sidepodStyle: 'clio-side-scoop',
+    rearDeckStyle: 'roof-spoiler-hatch',
+    exhaustStyle: 'clio-center-twin',
+    sharkFinStyle: 'none',
+    caliperColor: '#cbd5e1',
+  },
+  'honda-civic-type-r': {
+    cabinStyle: 'hatchback-clio',
+    cabinOffsetZ: -0.10,
+    cabinScaleW: 1.0,
+    cabinScaleH: 1.04,
+    cabinScaleL: 1.02,
+    noseHeightRatio: 0.66,
+    tailHeightRatio: 0.92,
+    widthScale: 1.0,
+    lengthScale: 0.98,
+    haunchScale: 1.06,
+    grilleStyle: 'civic-fl5',
+    headlightStyle: 'blade',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'strut-race',
+    exhaustStyle: 'rear-center',
+    sharkFinStyle: 'none',
+    caliperColor: '#dc2626',
+  },
+  'toyota-gr-yaris': {
+    cabinStyle: 'hatchback-clio',
+    cabinOffsetZ: -0.08,
+    cabinScaleW: 1.02,
+    cabinScaleH: 1.04,
+    cabinScaleL: 0.92,
+    noseHeightRatio: 0.64,
+    tailHeightRatio: 0.92,
+    widthScale: 1.01,
+    lengthScale: 0.91,
+    haunchScale: 1.14,
+    grilleStyle: 'clio-hatch',
+    headlightStyle: 'blade',
+    sidepodStyle: 'clean-street',
+    rearDeckStyle: 'roof-spoiler-hatch',
+    exhaustStyle: 'rear-dual',
+    sharkFinStyle: 'none',
+    caliperColor: '#dc2626',
   },
 
-  // ================= PRODUCTION SUPERCARS & HYPERCARS (5 distinct street silhouettes) =================
+  // ================= PRODUCTION SUPERCARS & HYPERCARS (8 cars) =================
   'ferrari-296-gtb': {
+    cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.09,
     cabinScaleW: 0.96,
     cabinScaleH: 0.90,
@@ -489,14 +971,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.86,
     widthScale: 1.0,
     lengthScale: 0.96,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'ferrari-split',
     headlightStyle: 'blade',
     sidepodStyle: 'sculpted-intake',
     rearDeckStyle: 'active-lip',
     exhaustStyle: 'rear-center',
     sharkFinStyle: 'none',
+    caliperColor: '#facc15',
   },
   'mclaren-750s': {
+    cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.14,
     cabinScaleW: 0.94,
     cabinScaleH: 0.88,
@@ -505,14 +990,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.84,
     widthScale: 1.01,
     lengthScale: 0.98,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'mclaren-eye',
     headlightStyle: 'c-clamp',
     sidepodStyle: 'undercut',
     rearDeckStyle: 'active-lip',
     exhaustStyle: 'rear-center',
     sharkFinStyle: 'none',
+    caliperColor: '#ea580c',
   },
   'ferrari-sf90': {
+    cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.08,
     cabinScaleW: 0.98,
     cabinScaleH: 0.90,
@@ -521,14 +1009,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.88,
     widthScale: 1.02,
     lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'ferrari-split',
     headlightStyle: 'c-clamp',
     sidepodStyle: 'sculpted-intake',
     rearDeckStyle: 'deck-tunnel',
     exhaustStyle: 'rear-center',
     sharkFinStyle: 'none',
+    caliperColor: '#facc15',
   },
   'porsche-918-spyder': {
+    cabinStyle: 'porsche-911',
     cabinOffsetZ: 0.08,
     cabinScaleW: 0.96,
     cabinScaleH: 0.86,
@@ -537,14 +1028,17 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.84,
     widthScale: 1.0,
     lengthScale: 0.99,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'porsche-992',
     headlightStyle: 'twin-pod',
     sidepodStyle: 'undercut',
     rearDeckStyle: 'active-lip',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'none',
+    caliperColor: '#84cc16',
   },
   'aston-valkyrie-road': {
+    cabinStyle: 'proto-teardrop',
     cabinOffsetZ: 0.10,
     cabinScaleW: 0.82,
     cabinScaleH: 0.88,
@@ -553,12 +1047,72 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     tailHeightRatio: 0.68,
     widthScale: 0.95,
     lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
     grilleStyle: 'aston-wings',
     headlightStyle: 'blade',
     sidepodStyle: 'venturi-tunnel',
     rearDeckStyle: 'active-lip',
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'roof-scoop',
+    caliperColor: '#a3e635',
+  },
+  'koenigsegg-jesko': {
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.12,
+    cabinScaleW: 0.92,
+    cabinScaleH: 0.88,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.48,
+    tailHeightRatio: 0.82,
+    widthScale: 1.03,
+    lengthScale: 1.02,
+    hoodStyle: 'pontoon-channel',
+    haunchScale: 1.10,
+    grilleStyle: 'jesko-aero',
+    headlightStyle: 'blade',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'jesko-boomerang',
+    exhaustStyle: 'rear-center',
+    sharkFinStyle: 'none',
+    caliperColor: '#16a34a',
+  },
+  'ferrari-f80': {
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.08,
+    cabinScaleW: 0.94,
+    cabinScaleH: 0.86,
+    cabinScaleL: 0.98,
+    noseHeightRatio: 0.46,
+    tailHeightRatio: 0.82,
+    widthScale: 1.04,
+    lengthScale: 1.01,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'f80-blade',
+    headlightStyle: 'blade',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'active-lip',
+    exhaustStyle: 'rear-center',
+    sharkFinStyle: 'none',
+    caliperColor: '#ef4444',
+  },
+  'mclaren-w1': {
+    cabinStyle: 'mid-engine-buttress',
+    cabinOffsetZ: 0.10,
+    cabinScaleW: 0.94,
+    cabinScaleH: 0.86,
+    cabinScaleL: 0.98,
+    noseHeightRatio: 0.46,
+    tailHeightRatio: 0.82,
+    widthScale: 1.04,
+    lengthScale: 1.02,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'w1-aero',
+    headlightStyle: 'c-clamp',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'w1-longtail',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'roof-scoop',
+    caliperColor: '#ea580c',
   },
 };
 
@@ -602,11 +1156,357 @@ function getHeadlightHex(tint: HeadlightTint, classId: CarClassId): number {
   }
 }
 
+export interface HullStationSpec {
+  z: number;
+  halfW: number;
+  yFloor: number;
+  ySill: number;
+  yBelt: number;
+  wBelt: number;
+  yCrown: number;
+  wCrown: number;
+}
+
+export function createLoftedHullGeometry(
+  stations: HullStationSpec[],
+  uvWidth: number,
+  uvLength: number,
+): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  const nStations = stations.length;
+  const nPoints = 9;
+  const totalVerts = nStations * nPoints;
+
+  const positions = new Float32Array(totalVerts * 3);
+  const uvs = new Float32Array(totalVerts * 2);
+  const indices: number[] = [];
+
+  for (let i = 0; i < nStations; i++) {
+    const st = stations[i];
+    const z = st.z;
+
+    const pts: [number, number, number][] = [
+      [-st.halfW, st.yFloor, z],
+      [-st.halfW * 1.02, st.ySill, z],
+      [-st.wBelt, st.yBelt, z],
+      [-st.wCrown, (st.yBelt + st.yCrown) * 0.5, z],
+      [0, st.yCrown, z],
+      [st.wCrown, (st.yBelt + st.yCrown) * 0.5, z],
+      [st.wBelt, st.yBelt, z],
+      [st.halfW * 1.02, st.ySill, z],
+      [st.halfW, st.yFloor, z],
+    ];
+
+    const baseIdx = i * nPoints;
+    for (let p = 0; p < nPoints; p++) {
+      const vIdx = baseIdx + p;
+      const [px, py, pz] = pts[p];
+      positions[vIdx * 3] = px;
+      positions[vIdx * 3 + 1] = py;
+      positions[vIdx * 3 + 2] = pz;
+
+      const u = Math.max(0, Math.min(1, (px + uvWidth * 0.5) / uvWidth));
+      const v = Math.max(0, Math.min(1, 1 - (pz + uvLength * 0.5) / uvLength));
+      uvs[vIdx * 2] = u;
+      uvs[vIdx * 2 + 1] = v;
+    }
+  }
+
+  for (let i = 0; i < nStations - 1; i++) {
+    const r0 = i * nPoints;
+    const r1 = (i + 1) * nPoints;
+
+    for (let k = 0; k < 8; k++) {
+      const a = r0 + k;
+      const b = r1 + k;
+      const c = r1 + k + 1;
+      const d = r0 + k + 1;
+      indices.push(a, b, c);
+      indices.push(a, c, d);
+    }
+
+    const aFloor = r0 + 8;
+    const bFloor = r1 + 8;
+    const cFloor = r1 + 0;
+    const dFloor = r0 + 0;
+    indices.push(aFloor, bFloor, cFloor);
+    indices.push(aFloor, cFloor, dFloor);
+  }
+
+  // End cap: Rear
+  const r0 = 0;
+  for (let k = 1; k < 4; k++) {
+    indices.push(r0 + 0, r0 + k, r0 + 8 - k);
+    indices.push(r0 + k, r0 + k + 1, r0 + 8 - k);
+  }
+  indices.push(r0 + 3, r0 + 4, r0 + 5);
+
+  // End cap: Front
+  const rf = (nStations - 1) * nPoints;
+  for (let k = 1; k < 4; k++) {
+    indices.push(rf + 0, rf + 8 - k, rf + k);
+    indices.push(rf + k, rf + 8 - k, rf + 7 - k);
+  }
+  indices.push(rf + 3, rf + 5, rf + 4);
+
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  return geo;
+}
+
+export function buildHullStations(
+  length: number,
+  width: number,
+  design: {
+    noseHeightRatio: number;
+    tailHeightRatio: number;
+    haunchScale?: number;
+    hoodStyle?: 'power-dome' | 'pontoon-channel' | 'standard';
+  },
+  isProto: boolean,
+  isStreetCar: boolean,
+): HullStationSpec[] {
+  const zRear = -length * 0.5;
+  const tPoints = [0.0, 0.07, 0.14, 0.20, 0.28, 0.36, 0.44, 0.52, 0.60, 0.68, 0.76, 0.84, 0.91, 0.96, 1.0];
+  const stations: HullStationSpec[] = [];
+
+  const hScale = design.haunchScale ?? (isStreetCar ? 1.03 : 1.0);
+  const isPowerDome = design.hoodStyle === 'power-dome';
+  const isPontoon = design.hoodStyle === 'pontoon-channel' || isProto;
+
+  for (const t of tPoints) {
+    const z = zRear + t * length;
+    let halfW = width * 0.45;
+    const yFloor = 0.18;
+    let ySill = 0.24;
+    let yBelt = 0.46;
+    let yCrown = 0.48;
+
+    if (t <= 0.07) {
+      halfW = width * (0.43 + t * 0.4);
+      yBelt = 0.44 * design.tailHeightRatio;
+      yCrown = yBelt + 0.04;
+    } else if (t <= 0.22) {
+      const env = Math.sin(((t - 0.07) / 0.15) * Math.PI);
+      halfW = width * (0.46 + env * 0.065) * hScale;
+      ySill = 0.26;
+      yBelt = 0.48 + env * 0.03;
+      yCrown = 0.50 + env * 0.02;
+    } else if (t <= 0.52) {
+      const pinch = Math.sin(((t - 0.22) / 0.30) * Math.PI);
+      const minWFactor = isProto ? 0.40 : isStreetCar ? 0.44 : 0.42;
+      halfW = width * (0.47 - pinch * (0.47 - minWFactor));
+      ySill = 0.24;
+      yBelt = 0.46;
+      yCrown = 0.49;
+    } else if (t <= 0.80) {
+      const arch = Math.sin(((t - 0.52) / 0.28) * Math.PI);
+      halfW = width * (0.46 + arch * 0.045);
+      ySill = 0.25;
+      yBelt = 0.48 + arch * 0.02;
+      if (isPowerDome) {
+        yCrown = 0.51 + arch * 0.04;
+      } else if (isPontoon) {
+        yCrown = 0.44 - arch * 0.03;
+      } else {
+        yCrown = 0.49;
+      }
+    } else {
+      const frac = (t - 0.80) / 0.20;
+      halfW = width * (0.48 - frac * 0.13);
+      yBelt = (0.48 - frac * 0.18) * design.noseHeightRatio;
+      if (isPowerDome) {
+        yCrown = (0.52 - frac * 0.20) * design.noseHeightRatio;
+      } else if (isPontoon) {
+        yCrown = (0.42 - frac * 0.16) * design.noseHeightRatio;
+      } else {
+        yCrown = (0.48 - frac * 0.18) * design.noseHeightRatio;
+      }
+    }
+
+    const wBelt = halfW * 0.90;
+    const wCrown = halfW * 0.45;
+    stations.push({ z, halfW, yFloor, ySill, yBelt, wBelt, yCrown, wCrown });
+  }
+
+  return stations;
+}
+
+export interface GreenhouseStationSpec {
+  z: number;
+  wBase: number;
+  wRoof: number;
+  yBase: number;
+  yRoof: number;
+}
+
+export function createLoftedGreenhouseGeometry(
+  stations: GreenhouseStationSpec[],
+  uvWidth: number,
+  uvLength: number,
+): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  const nStations = stations.length;
+  const nPoints = 5;
+  const totalVerts = nStations * nPoints;
+
+  const positions = new Float32Array(totalVerts * 3);
+  const uvs = new Float32Array(totalVerts * 2);
+  const indices: number[] = [];
+
+  for (let i = 0; i < nStations; i++) {
+    const st = stations[i];
+    const z = st.z;
+    const pts: [number, number, number][] = [
+      [-st.wBase, st.yBase, z],
+      [-st.wRoof, st.yRoof, z],
+      [0, st.yRoof + 0.025, z],
+      [st.wRoof, st.yRoof, z],
+      [st.wBase, st.yBase, z],
+    ];
+
+    const baseIdx = i * nPoints;
+    for (let p = 0; p < nPoints; p++) {
+      const vIdx = baseIdx + p;
+      const [px, py, pz] = pts[p];
+      positions[vIdx * 3] = px;
+      positions[vIdx * 3 + 1] = py;
+      positions[vIdx * 3 + 2] = pz;
+
+      const u = Math.max(0, Math.min(1, (px + uvWidth * 0.5) / uvWidth));
+      const v = Math.max(0, Math.min(1, 1 - (pz + uvLength * 0.5) / uvLength));
+      uvs[vIdx * 2] = u;
+      uvs[vIdx * 2 + 1] = v;
+    }
+  }
+
+  for (let i = 0; i < nStations - 1; i++) {
+    const r0 = i * nPoints;
+    const r1 = (i + 1) * nPoints;
+    for (let k = 0; k < 4; k++) {
+      const a = r0 + k;
+      const b = r1 + k;
+      const c = r1 + k + 1;
+      const d = r0 + k + 1;
+      indices.push(a, b, c);
+      indices.push(a, c, d);
+    }
+  }
+
+  // Rear cap
+  indices.push(0, 1, 4);
+  indices.push(1, 2, 3);
+  indices.push(1, 3, 4);
+
+  // Front cap
+  const rf = (nStations - 1) * nPoints;
+  indices.push(rf + 0, rf + 4, rf + 1);
+  indices.push(rf + 1, rf + 3, rf + 2);
+  indices.push(rf + 1, rf + 4, rf + 3);
+
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  return geo;
+}
+
+export function buildCabinStations(
+  style: CabinStyle,
+  cabinOffsetZ: number,
+  cabinScaleW: number,
+  cabinScaleH: number,
+  cabinScaleL: number,
+  isProto: boolean,
+): GreenhouseStationSpec[] {
+  const baseW = (isProto ? 0.44 : 0.56) * cabinScaleW;
+  const roofH = (isProto ? 0.88 : 0.94) * cabinScaleH;
+  const beltY = isProto ? 0.52 : 0.50;
+  const len = (isProto ? 1.70 : 1.78) * cabinScaleL;
+  const zRear = cabinOffsetZ - len * 0.5;
+  const zFront = cabinOffsetZ + len * 0.5;
+
+  if (style === 'hatchback-clio') {
+    return [
+      { z: zRear, wBase: baseW * 0.88, wRoof: baseW * 0.72, yBase: beltY + 0.04, yRoof: beltY + 0.12 },
+      { z: zRear + 0.08, wBase: baseW * 0.92, wRoof: baseW * 0.78, yBase: beltY + 0.06, yRoof: roofH * 0.98 },
+      { z: zRear + len * 0.25, wBase: baseW * 0.96, wRoof: baseW * 0.82, yBase: beltY + 0.02, yRoof: roofH * 1.01 },
+      { z: zRear + len * 0.50, wBase: baseW * 0.98, wRoof: baseW * 0.84, yBase: beltY, yRoof: roofH * 1.01 },
+      { z: zRear + len * 0.75, wBase: baseW * 0.96, wRoof: baseW * 0.82, yBase: beltY, yRoof: roofH * 0.99 },
+      { z: zFront - 0.20, wBase: baseW * 0.92, wRoof: baseW * 0.76, yBase: beltY, yRoof: roofH * 0.94 },
+      { z: zFront, wBase: baseW * 0.84, wRoof: baseW * 0.64, yBase: beltY - 0.02, yRoof: beltY + 0.04 },
+    ];
+  }
+
+  if (style === 'porsche-911') {
+    return [
+      { z: zRear - 0.15, wBase: baseW * 0.65, wRoof: baseW * 0.35, yBase: beltY + 0.05, yRoof: beltY + 0.09 },
+      { z: zRear + len * 0.15, wBase: baseW * 0.80, wRoof: baseW * 0.58, yBase: beltY + 0.04, yRoof: roofH * 0.85 },
+      { z: zRear + len * 0.35, wBase: baseW * 0.92, wRoof: baseW * 0.74, yBase: beltY + 0.02, yRoof: roofH * 0.97 },
+      { z: zRear + len * 0.55, wBase: baseW * 0.98, wRoof: baseW * 0.80, yBase: beltY, yRoof: roofH * 1.02 },
+      { z: zRear + len * 0.75, wBase: baseW * 0.95, wRoof: baseW * 0.78, yBase: beltY, yRoof: roofH * 0.98 },
+      { z: zFront - 0.22, wBase: baseW * 0.90, wRoof: baseW * 0.72, yBase: beltY, yRoof: roofH * 0.90 },
+      { z: zFront, wBase: baseW * 0.80, wRoof: baseW * 0.60, yBase: beltY - 0.02, yRoof: beltY + 0.04 },
+    ];
+  }
+
+  if (style === 'grand-tourer') {
+    return [
+      { z: zRear, wBase: baseW * 0.80, wRoof: baseW * 0.52, yBase: beltY + 0.04, yRoof: beltY + 0.08 },
+      { z: zRear + len * 0.20, wBase: baseW * 0.90, wRoof: baseW * 0.70, yBase: beltY + 0.03, yRoof: roofH * 0.90 },
+      { z: zRear + len * 0.40, wBase: baseW * 0.98, wRoof: baseW * 0.82, yBase: beltY + 0.01, yRoof: roofH * 1.01 },
+      { z: zRear + len * 0.60, wBase: baseW * 0.98, wRoof: baseW * 0.82, yBase: beltY, yRoof: roofH * 1.01 },
+      { z: zRear + len * 0.80, wBase: baseW * 0.94, wRoof: baseW * 0.78, yBase: beltY, yRoof: roofH * 0.96 },
+      { z: zFront - 0.20, wBase: baseW * 0.88, wRoof: baseW * 0.70, yBase: beltY, yRoof: roofH * 0.88 },
+      { z: zFront, wBase: baseW * 0.80, wRoof: baseW * 0.58, yBase: beltY - 0.02, yRoof: beltY + 0.04 },
+    ];
+  }
+
+  if (style === 'mid-engine-buttress') {
+    return [
+      { z: zRear, wBase: baseW * 0.86, wRoof: baseW * 0.55, yBase: beltY + 0.04, yRoof: beltY + 0.08 },
+      { z: zRear + len * 0.18, wBase: baseW * 0.92, wRoof: baseW * 0.68, yBase: beltY + 0.03, yRoof: roofH * 0.90 },
+      { z: zRear + len * 0.38, wBase: baseW * 0.98, wRoof: baseW * 0.78, yBase: beltY + 0.01, yRoof: roofH * 1.00 },
+      { z: zRear + len * 0.58, wBase: baseW * 0.98, wRoof: baseW * 0.78, yBase: beltY, yRoof: roofH * 1.00 },
+      { z: zRear + len * 0.78, wBase: baseW * 0.94, wRoof: baseW * 0.74, yBase: beltY, yRoof: roofH * 0.94 },
+      { z: zFront - 0.20, wBase: baseW * 0.88, wRoof: baseW * 0.66, yBase: beltY, yRoof: roofH * 0.86 },
+      { z: zFront, wBase: baseW * 0.78, wRoof: baseW * 0.54, yBase: beltY - 0.02, yRoof: beltY + 0.04 },
+    ];
+  }
+
+  if (style === 'lmp-gt3-hybrid') {
+    return [
+      { z: zRear, wBase: baseW * 0.78, wRoof: baseW * 0.44, yBase: beltY + 0.04, yRoof: beltY + 0.08 },
+      { z: zRear + len * 0.20, wBase: baseW * 0.88, wRoof: baseW * 0.62, yBase: beltY + 0.02, yRoof: roofH * 0.88 },
+      { z: zRear + len * 0.45, wBase: baseW * 0.96, wRoof: baseW * 0.74, yBase: beltY, yRoof: roofH * 0.98 },
+      { z: zRear + len * 0.70, wBase: baseW * 0.96, wRoof: baseW * 0.74, yBase: beltY, yRoof: roofH * 0.98 },
+      { z: zFront - 0.24, wBase: baseW * 0.88, wRoof: baseW * 0.64, yBase: beltY, yRoof: roofH * 0.86 },
+      { z: zFront, wBase: baseW * 0.76, wRoof: baseW * 0.48, yBase: beltY - 0.02, yRoof: beltY + 0.04 },
+    ];
+  }
+
+  // Default 'proto-teardrop'
+  return [
+    { z: zRear, wBase: baseW * 0.50, wRoof: baseW * 0.25, yBase: beltY + 0.05, yRoof: beltY + 0.08 },
+    { z: zRear + len * 0.20, wBase: baseW * 0.75, wRoof: baseW * 0.50, yBase: beltY + 0.03, yRoof: roofH * 0.86 },
+    { z: zRear + len * 0.45, wBase: baseW * 0.95, wRoof: baseW * 0.68, yBase: beltY + 0.01, yRoof: roofH * 1.00 },
+    { z: zRear + len * 0.70, wBase: baseW * 0.95, wRoof: baseW * 0.68, yBase: beltY, yRoof: roofH * 1.00 },
+    { z: zFront - 0.22, wBase: baseW * 0.84, wRoof: baseW * 0.56, yBase: beltY, yRoof: roofH * 0.88 },
+    { z: zFront, wBase: baseW * 0.68, wRoof: baseW * 0.40, yBase: beltY - 0.02, yRoof: beltY + 0.04 },
+  ];
+}
+
 function createDiecastWheel(
   radius: number,
   width: number,
   rimMat: THREE.Material,
   tireMat: THREE.Material,
+  caliperMat: THREE.Material,
+  rotorMat: THREE.Material,
   grooveMat?: THREE.Material,
   isGrooved = false,
 ): THREE.Group {
@@ -629,17 +1529,44 @@ function createDiecastWheel(
     }
   }
 
-  const rimGeo = new THREE.CylinderGeometry(radius * 0.62, radius * 0.62, width + 0.02, 16);
+  const rimRadius = radius * 0.65;
+  const rimGeo = new THREE.CylinderGeometry(rimRadius, rimRadius, width + 0.02, 18, 1, true);
   rimGeo.rotateZ(Math.PI / 2);
   const rimMesh = new THREE.Mesh(rimGeo, rimMat);
   wheelGroup.add(rimMesh);
 
-  const spokeGeo = new THREE.BoxGeometry(width + 0.04, radius * 1.12, radius * 0.14);
-  for (let s = 0; s < 3; s++) {
+  const lipGeo = new THREE.TorusGeometry(rimRadius, 0.016, 8, 20);
+  lipGeo.rotateY(Math.PI / 2);
+  const lipMesh = new THREE.Mesh(lipGeo, rimMat);
+  lipMesh.position.x = (width + 0.02) * 0.5;
+  wheelGroup.add(lipMesh);
+
+  const spokeGroup = new THREE.Group();
+  spokeGroup.position.x = width * 0.38;
+  const spokeGeo = new THREE.BoxGeometry(width * 0.22, rimRadius * 0.95, rimRadius * 0.14);
+  for (let s = 0; s < 5; s++) {
     const spoke = new THREE.Mesh(spokeGeo, rimMat);
-    spoke.rotation.x = (s * Math.PI) / 3;
-    wheelGroup.add(spoke);
+    spoke.rotation.x = (s * 2 * Math.PI) / 5;
+    spokeGroup.add(spoke);
   }
+  const hubGeo = new THREE.CylinderGeometry(rimRadius * 0.22, rimRadius * 0.22, width * 0.26, 12);
+  hubGeo.rotateZ(Math.PI / 2);
+  const hubMesh = new THREE.Mesh(hubGeo, rimMat);
+  spokeGroup.add(hubMesh);
+  wheelGroup.add(spokeGroup);
+
+  const rotorRadius = rimRadius * 0.85;
+  const rotorGeo = new THREE.CylinderGeometry(rotorRadius, rotorRadius, width * 0.12, 16);
+  rotorGeo.rotateZ(Math.PI / 2);
+  const rotorMesh = new THREE.Mesh(rotorGeo, rotorMat);
+  rotorMesh.position.x = width * 0.08;
+  wheelGroup.add(rotorMesh);
+
+  const caliperGeo = new THREE.BoxGeometry(width * 0.28, rotorRadius * 0.44, rotorRadius * 0.36);
+  const caliperMesh = new THREE.Mesh(caliperGeo, caliperMat);
+  caliperMesh.position.set(width * 0.08, rotorRadius * 0.72, rotorRadius * 0.28);
+  caliperMesh.rotation.x = -0.42;
+  wheelGroup.add(caliperMesh);
 
   return wheelGroup;
 }
@@ -679,7 +1606,7 @@ function createSuspensionArms(
 
 /**
  * Builds a composite procedural 3D miniature car rig grounded at y = 0.
- * Spec/era-accurate shared open-wheel & LMP2 chassis + 31 distinct sculpted manufacturer silhouettes.
+ * Spec/era-accurate shared open-wheel & LMP2 chassis + 53 distinct sculpted manufacturer silhouettes.
  */
 export function buildDiecastCar(
   silhouette: BodySilhouette,
@@ -780,6 +1707,14 @@ export function buildDiecastCar(
     }),
   );
 
+  const rotorMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0x3a3f48,
+      metalness: 0.92,
+      roughness: 0.25,
+    }),
+  );
+
   const rimInfo = getRimColorAndMetalness(livery.rimFinish, livery.primaryColor);
   const rimMat = track(
     new THREE.MeshStandardMaterial({
@@ -855,9 +1790,21 @@ export function buildDiecastCar(
   const isLmp2 = classId === CarClassId.LMP2 || silhouette === 'lmp2';
   const isProto = isHypercar || isLmp2;
   const isGT3 = classId === CarClassId.GT3 || silhouette === 'gt';
-  const isStreetCar = classId === CarClassId.TRACK_COUPE || classId === CarClassId.SUPERCAR || silhouette === 'coupe' || silhouette === 'supercar';
+  const isGT4 = classId === CarClassId.GT4;
+  const isStreetCar =
+    classId === CarClassId.TRACK_COUPE ||
+    classId === CarClassId.SUPERCAR ||
+    silhouette === 'coupe' ||
+    silhouette === 'supercar';
 
   const design: ClosedWheelDesign = CLOSED_WHEEL_DESIGNS[carId ?? ''] ?? {
+    cabinStyle: isProto
+      ? 'proto-teardrop'
+      : isGT3 || isGT4
+      ? 'grand-tourer'
+      : isStreetCar
+      ? 'mid-engine-buttress'
+      : 'grand-tourer',
     cabinOffsetZ: isProto ? 0.04 : -0.1,
     cabinScaleW: 0.96,
     cabinScaleH: 0.96,
@@ -874,11 +1821,20 @@ export function buildDiecastCar(
     sharkFinStyle: isProto ? 'tall-proto' : 'none',
   };
 
+  const caliperColorHex = design.caliperColor ?? (isGT4 ? '#0284c7' : isGT3 ? '#ef4444' : isProto ? '#facc15' : '#dc2626');
+  const caliperMat = track(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color(caliperColorHex),
+      roughness: 0.32,
+      metalness: 0.45,
+    }),
+  );
+
   const length = (isFormula ? (isFormulaE ? 3.7 : 3.92) : isProto ? 3.76 : 3.66) * (isFormula ? 1 : design.lengthScale);
   const width = (isFormula ? 1.88 : isGT3 ? 1.95 : 1.90) * (isFormula ? 1 : design.widthScale);
   const wheelRadius = isFormula ? 0.36 : 0.35;
   const wheelWidth = isFormula ? 0.38 : 0.30;
-  const wheelBaseZ = isFormula ? 1.26 : 1.18;
+  const wheelBaseZ = (isFormula ? 1.26 : 1.18) * (isFormula ? 1 : Math.min(1.05, Math.max(0.92, design.lengthScale)));
   const trackHalfX = isFormula ? 0.86 : 0.82;
 
   const floorGeo = track(new THREE.BoxGeometry(width * 0.92, 0.12, length * 0.94));
@@ -951,7 +1907,7 @@ export function buildDiecastCar(
       helmet.position.set(0, 0.74, 0.12);
       bodyGroup.add(helmet);
 
-      // Twin rear winglets over rear wheels (NO central beam wing)
+      // Twin rear winglets over rear wheels
       const wingletGeo = track(new THREE.BoxGeometry(0.42, 0.28, 0.48));
       for (const sx of [-0.68, 0.68]) {
         const winglet = new THREE.Mesh(wingletGeo, secondaryMat);
@@ -1019,7 +1975,6 @@ export function buildDiecastCar(
       bodyGroup.add(helmet);
 
       if (isF1_2005) {
-        // 2005 F1: NO Halo, raised headrest coaming, V10 sidepod chimneys + flip-ups
         const coamingGeo = track(new THREE.BoxGeometry(0.38, 0.16, 0.52));
         const coaming = new THREE.Mesh(coamingGeo, secondaryMat);
         coaming.position.set(0, 0.75, -0.08);
@@ -1032,7 +1987,6 @@ export function buildDiecastCar(
           bodyGroup.add(chimney);
         }
       } else {
-        // 2021 & 2026 F1: Titanium Halo
         const haloCurve = new THREE.CatmullRomCurve3([
           new THREE.Vector3(-0.24, 0.72, -0.05),
           new THREE.Vector3(-0.18, 0.85, 0.25),
@@ -1046,7 +2000,6 @@ export function buildDiecastCar(
       }
 
       if (isF1_2021) {
-        // 2021 F1: Intricate multi-vane bargeboards + sidepod boomerang vanes + floor winglets
         const bbGeo = track(new THREE.BoxGeometry(0.05, 0.34, 0.62));
         const floorWingGeo = track(new THREE.BoxGeometry(0.18, 0.04, 1.35));
         for (const sx of [-0.66, 0.66]) {
@@ -1071,7 +2024,6 @@ export function buildDiecastCar(
       bodyGroup.add(fwMesh);
 
       if (isF1_2026) {
-        // 2026 F1: Articulating Active Aero Front Wing Upper Flap
         const fwFlapGeo = track(new THREE.BoxGeometry(fwWidth * 0.92, 0.045, 0.18));
         frontWingFlap = new THREE.Mesh(fwFlapGeo, tertiaryMat);
         frontWingFlap.position.set(0, 0.28, 1.66);
@@ -1136,47 +2088,32 @@ export function buildDiecastCar(
       });
     }
   } else {
-    // ================= 31 SCULPTED CLOSED-WHEEL MODELS + LMP2 SPEC =================
+    // ================= BESPOKE LOFTED 3D CLOSED-WHEEL CARS (53 CHASSIS) =================
     const bodyWidth = width * 0.96;
     const bodyLen = length * 0.94;
-    const bodyHeight = isProto ? 0.38 : 0.48;
 
-    const profile = new THREE.Shape();
-    profile.moveTo(-bodyLen * 0.5, 0);
-    profile.lineTo(-bodyLen * 0.49, bodyHeight * design.tailHeightRatio);
-    profile.lineTo(-bodyLen * 0.24, bodyHeight);
-    profile.lineTo(bodyLen * 0.24, bodyHeight);
-    profile.lineTo(bodyLen * 0.47, bodyHeight * design.noseHeightRatio);
-    profile.lineTo(bodyLen * 0.5, 0.06);
-    profile.lineTo(bodyLen * 0.5, 0);
-    profile.closePath();
-
-    const bodyGeo = track(
-      new THREE.ExtrudeGeometry(profile, {
-        depth: bodyWidth,
-        bevelEnabled: true,
-        bevelThickness: 0.08,
-        bevelSize: 0.06,
-        bevelSegments: 2,
-      }),
-    );
-    bodyGeo.rotateY(-Math.PI / 2);
-    bodyGeo.translate(bodyWidth * 0.5, 0.24, 0);
-
-    const posAttr = bodyGeo.attributes.position;
-    const uvAttr = bodyGeo.attributes.uv;
-    for (let i = 0; i < posAttr.count; i++) {
-      uvAttr.setXY(
-        i,
-        (posAttr.getX(i) + bodyWidth * 0.55) / (bodyWidth * 1.1),
-        1 - (posAttr.getZ(i) + bodyLen * 0.52) / (bodyLen * 1.04),
-      );
-    }
-
+    // 1. Parametric Lofted Hull Geometry with Coke-Bottle Waist, Flared Haunches & Pontoon Channels
+    const hullStations = buildHullStations(bodyLen, bodyWidth, design, isProto, isStreetCar);
+    const bodyGeo = track(createLoftedHullGeometry(hullStations, bodyWidth, bodyLen));
     const mainBody = new THREE.Mesh(bodyGeo, bodyMat);
     mainBody.castShadow = true;
     mainBody.receiveShadow = true;
     bodyGroup.add(mainBody);
+
+    // 2. Parametric Lofted Cabin / Greenhouse Geometry
+    const cabinStyle = design.cabinStyle ?? (isProto ? 'proto-teardrop' : isStreetCar ? 'grand-tourer' : 'mid-engine-buttress');
+    const cabinStations = buildCabinStations(
+      cabinStyle,
+      design.cabinOffsetZ,
+      design.cabinScaleW,
+      design.cabinScaleH,
+      design.cabinScaleL,
+      isProto,
+    );
+    const cabinGeo = track(createLoftedGreenhouseGeometry(cabinStations, bodyWidth, bodyLen));
+    const cabin = new THREE.Mesh(cabinGeo, canopyMat);
+    cabin.castShadow = true;
+    bodyGroup.add(cabin);
 
     // Sculpted Wheel Arch Flares
     const archRadius = isStreetCar ? 0.40 : 0.44;
@@ -1191,7 +2128,7 @@ export function buildDiecastCar(
       }
     }
 
-    // LMP2 Twin-Keel Stepped Nose Cone
+    // LMP2 Stepped Nose
     if (isLmp2) {
       const noseGeo = track(new THREE.BoxGeometry(0.68, 0.24, 0.72));
       const noseMesh = new THREE.Mesh(noseGeo, secondaryMat);
@@ -1200,9 +2137,20 @@ export function buildDiecastCar(
       bodyGroup.add(noseMesh);
     }
 
-    // Signature Manufacturer Nose & Front Grille Sculpting
-    const frontZ = bodyLen * 0.5 + 0.05;
-    if (design.grilleStyle === 'bmw-kidney') {
+    // Signature Manufacturer Front Grille Sculpting
+    const frontZ = bodyLen * 0.5 + 0.03;
+    if (design.grilleStyle === 'bentley-matrix') {
+      // Bentley Continental GT3 Matrix Grille
+      const frame = new THREE.Mesh(track(new THREE.BoxGeometry(1.04, 0.30, 0.06)), chromeMat);
+      frame.position.set(0, 0.38, frontZ);
+      bodyGroup.add(frame);
+      const innerMesh = new THREE.Mesh(track(new THREE.BoxGeometry(0.96, 0.24, 0.07)), matteTrimMat);
+      innerMesh.position.set(0, 0.38, frontZ + 0.01);
+      bodyGroup.add(innerMesh);
+      const spine = new THREE.Mesh(track(new THREE.BoxGeometry(0.04, 0.28, 0.08)), chromeMat);
+      spine.position.set(0, 0.38, frontZ + 0.02);
+      bodyGroup.add(spine);
+    } else if (design.grilleStyle === 'bmw-kidney') {
       const kidneyGeo = track(new THREE.BoxGeometry(0.24, 0.24, 0.06));
       for (const gx of [-0.17, 0.17]) {
         const k = new THREE.Mesh(kidneyGeo, matteTrimMat);
@@ -1221,6 +2169,13 @@ export function buildDiecastCar(
         slat.position.set(gx, 0.36, frontZ + 0.01);
         bodyGroup.add(slat);
       }
+    } else if (design.grilleStyle === 'audi-singleframe') {
+      const frame = new THREE.Mesh(track(new THREE.BoxGeometry(0.88, 0.28, 0.06)), matteTrimMat);
+      frame.position.set(0, 0.36, frontZ);
+      bodyGroup.add(frame);
+      const ringBar = new THREE.Mesh(track(new THREE.BoxGeometry(0.42, 0.04, 0.08)), chromeMat);
+      ringBar.position.set(0, 0.44, frontZ + 0.01);
+      bodyGroup.add(ringBar);
     } else if (design.grilleStyle === 'aston-wings') {
       const mesh = new THREE.Mesh(track(new THREE.BoxGeometry(0.96, 0.18, 0.06)), matteTrimMat);
       mesh.position.set(0, 0.32, frontZ);
@@ -1233,7 +2188,7 @@ export function buildDiecastCar(
       hex.position.set(0, 0.38, frontZ);
       bodyGroup.add(hex);
       const hoodVent = new THREE.Mesh(track(new THREE.BoxGeometry(0.68, 0.04, 0.42)), carbonMat);
-      hoodVent.position.set(0, bodyHeight + 0.24, bodyLen * 0.24);
+      hoodVent.position.set(0, 0.55, bodyLen * 0.24);
       bodyGroup.add(hoodVent);
     } else if (design.grilleStyle === 'lexus-spindle') {
       const topSpindle = new THREE.Mesh(track(new THREE.BoxGeometry(0.62, 0.16, 0.06)), matteTrimMat);
@@ -1253,7 +2208,31 @@ export function buildDiecastCar(
       const intake = new THREE.Mesh(track(new THREE.BoxGeometry(1.12, 0.13, 0.06)), matteTrimMat);
       intake.position.set(0, 0.27, frontZ);
       bodyGroup.add(intake);
-    } else if (design.grilleStyle === 'ferrari-split' || design.grilleStyle === 'mclaren-eye' || design.grilleStyle === 'corvette-wedge') {
+    } else if (design.grilleStyle === 'clio-hatch' || design.grilleStyle === 'civic-fl5') {
+      const mesh = new THREE.Mesh(track(new THREE.BoxGeometry(0.82, 0.18, 0.06)), matteTrimMat);
+      mesh.position.set(0, 0.33, frontZ);
+      bodyGroup.add(mesh);
+    } else if (design.grilleStyle === 'supra-nose') {
+      const noseBeak = new THREE.Mesh(track(new THREE.BoxGeometry(0.32, 0.18, 0.12)), bodyMat);
+      noseBeak.position.set(0, 0.36, frontZ + 0.03);
+      bodyGroup.add(noseBeak);
+      for (const gx of [-0.42, 0.42]) {
+        const intake = new THREE.Mesh(track(new THREE.BoxGeometry(0.36, 0.14, 0.06)), matteTrimMat);
+        intake.position.set(gx, 0.30, frontZ);
+        bodyGroup.add(intake);
+      }
+    } else if (design.grilleStyle === 'alpine-arrow') {
+      const arrowNose = new THREE.Mesh(track(new THREE.BoxGeometry(0.24, 0.14, 0.10)), bodyMat);
+      arrowNose.position.set(0, 0.36, frontZ + 0.02);
+      bodyGroup.add(arrowNose);
+    } else if (
+      design.grilleStyle === 'ferrari-split' ||
+      design.grilleStyle === 'mclaren-eye' ||
+      design.grilleStyle === 'corvette-wedge' ||
+      design.grilleStyle === 'jesko-aero' ||
+      design.grilleStyle === 'f80-blade' ||
+      design.grilleStyle === 'w1-aero'
+    ) {
       for (const gx of [-0.46, 0.46]) {
         const intake = new THREE.Mesh(track(new THREE.BoxGeometry(0.42, 0.14, 0.06)), matteTrimMat);
         intake.position.set(gx, 0.30, frontZ);
@@ -1261,36 +2240,22 @@ export function buildDiecastCar(
       }
     }
 
-    // Cockpit Canopy / Greenhouse positioned dynamically per engine layout (FR vs MR vs RR)
-    const cabinW = (isProto ? (isLmp2 ? 0.88 : 0.94) : isStreetCar ? 1.24 : 1.18) * design.cabinScaleW;
-    const cabinH = (isProto ? 0.36 : 0.42) * design.cabinScaleH;
-    const cabinL = (isProto ? 1.66 : isStreetCar ? 1.82 : 1.70) * design.cabinScaleL;
-    const cabinShape = new THREE.Shape();
-    cabinShape.moveTo(-cabinL * 0.5, 0);
-    cabinShape.lineTo(-cabinL * 0.42, cabinH * 0.72);
-    cabinShape.lineTo(-cabinL * 0.12, cabinH);
-    cabinShape.lineTo(cabinL * 0.22, cabinH);
-    cabinShape.lineTo(cabinL * 0.5, 0.04);
-    cabinShape.lineTo(cabinL * 0.5, 0);
-    cabinShape.closePath();
-
-    const cabinGeo = track(
-      new THREE.ExtrudeGeometry(cabinShape, {
-        depth: cabinW,
-        bevelEnabled: true,
-        bevelThickness: 0.06,
-        bevelSize: 0.05,
-        bevelSegments: 2,
-      }),
-    );
-    cabinGeo.rotateY(-Math.PI / 2);
-    cabinGeo.translate(cabinW * 0.5, isProto ? 0.56 : 0.64, design.cabinOffsetZ);
-    const cabin = new THREE.Mesh(cabinGeo, canopyMat);
-    cabin.castShadow = true;
-    bodyGroup.add(cabin);
-
     // Sidepod / Venturi / Louver Sculpting
-    if (design.sidepodStyle === 'venturi-tunnel') {
+    if (design.sidepodStyle === 'clio-side-scoop') {
+      // Renault Clio V6 Phase 2 Massive Haunch Cooling Intakes
+      const scoopGeo = track(new THREE.BoxGeometry(0.18, 0.26, 0.52));
+      for (const sx of [-bodyWidth * 0.54, bodyWidth * 0.54]) {
+        const scoop = new THREE.Mesh(scoopGeo, secondaryMat);
+        scoop.position.set(sx, 0.44, -wheelBaseZ * 0.45);
+        scoop.rotation.y = sx < 0 ? -0.15 : 0.15;
+        scoop.castShadow = true;
+        bodyGroup.add(scoop);
+
+        const duct = new THREE.Mesh(track(new THREE.BoxGeometry(0.12, 0.20, 0.16)), matteTrimMat);
+        duct.position.set(sx * 1.02, 0.44, -wheelBaseZ * 0.45 + 0.18);
+        bodyGroup.add(duct);
+      }
+    } else if (design.sidepodStyle === 'venturi-tunnel') {
       const tunnelGeo = track(new THREE.BoxGeometry(0.24, 0.26, 1.4));
       for (const sx of [-0.62, 0.62]) {
         const tunnel = new THREE.Mesh(tunnelGeo, matteTrimMat);
@@ -1308,7 +2273,7 @@ export function buildDiecastCar(
       const louverGeo = track(new THREE.BoxGeometry(0.26, 0.04, 0.44));
       for (const sx of [-bodyWidth * 0.36, bodyWidth * 0.36]) {
         const louver = new THREE.Mesh(louverGeo, matteTrimMat);
-        louver.position.set(sx, bodyHeight + 0.25, wheelBaseZ);
+        louver.position.set(sx, 0.52, wheelBaseZ);
         bodyGroup.add(louver);
       }
     }
@@ -1331,11 +2296,11 @@ export function buildDiecastCar(
       }
     }
 
-    // GT3 Aerodynamic Dive-Plane Canards
-    if (isGT3) {
+    // GT3 / GT4 Aerodynamic Dive-Plane Canards
+    if (isGT3 || isGT4) {
       const canardGeo = track(new THREE.BoxGeometry(0.24, 0.04, 0.14));
       for (const sx of [-bodyWidth * 0.48, bodyWidth * 0.48]) {
-        for (const cy of [0.34, 0.46]) {
+        for (const cy of isGT3 ? [0.34, 0.46] : [0.38]) {
           const canard = new THREE.Mesh(canardGeo, carbonMat);
           canard.position.set(sx, cy, bodyLen * 0.48);
           canard.rotation.z = sx < 0 ? 0.18 : -0.18;
@@ -1347,20 +2312,24 @@ export function buildDiecastCar(
 
     // Windshield Banner
     if (!isStreetCar) {
-      const bannerGeo = track(new THREE.PlaneGeometry(cabinW * 0.92, 0.14));
+      const bannerGeo = track(new THREE.PlaneGeometry(bodyWidth * 0.62, 0.14));
       bannerGeo.rotateX(-0.62);
       const bannerMesh = new THREE.Mesh(bannerGeo, bannerMat);
-      bannerMesh.position.set(0, isProto ? 0.84 : 0.94, design.cabinOffsetZ + cabinL * 0.34);
+      bannerMesh.position.set(0, isProto ? 0.84 : 0.94, design.cabinOffsetZ + 0.58);
       bodyGroup.add(bannerMesh);
     }
 
     // Front Splitter
     const splitterGeo = track(
-      new THREE.BoxGeometry(bodyWidth * (isGT3 ? 1.08 : isStreetCar ? 1.01 : 1.04), 0.06, isGT3 ? 0.38 : isStreetCar ? 0.20 : 0.32),
+      new THREE.BoxGeometry(
+        bodyWidth * (isGT3 ? 1.08 : isGT4 ? 1.04 : isStreetCar ? 1.01 : 1.04),
+        0.06,
+        isGT3 ? 0.38 : isGT4 ? 0.28 : isStreetCar ? 0.20 : 0.32,
+      ),
     );
     const splitterMesh = new THREE.Mesh(
       splitterGeo,
-      livery.carbonSplitter || isGT3 ? carbonMat : tertiaryMat,
+      livery.carbonSplitter || isGT3 || isGT4 ? carbonMat : tertiaryMat,
     );
     splitterMesh.position.set(0, 0.18, bodyLen * 0.5 + 0.04);
     bodyGroup.add(splitterMesh);
@@ -1371,8 +2340,16 @@ export function buildDiecastCar(
     diffMesh.position.set(0, 0.22, -bodyLen * 0.5);
     bodyGroup.add(diffMesh);
 
-    // Exhaust Placement per Manufacturer Architecture
-    if (design.exhaustStyle === 'rear-dual') {
+    // Exhaust Placement per Architecture
+    if (design.exhaustStyle === 'clio-center-twin') {
+      const exGeo = track(new THREE.CylinderGeometry(0.045, 0.045, 0.12, 12));
+      exGeo.rotateX(Math.PI / 2);
+      for (const ex of [-0.07, 0.07]) {
+        const exhaust = new THREE.Mesh(exGeo, chromeMat);
+        exhaust.position.set(ex, 0.26, -bodyLen * 0.52);
+        bodyGroup.add(exhaust);
+      }
+    } else if (design.exhaustStyle === 'rear-dual') {
       const exGeo = track(new THREE.CylinderGeometry(0.045, 0.045, 0.14, 10));
       exGeo.rotateX(Math.PI / 2);
       for (const ex of [-0.36, -0.25, 0.25, 0.36]) {
@@ -1405,9 +2382,37 @@ export function buildDiecastCar(
       }
     }
 
-    // Rear Wing / Spoiler per Model
+    // Rear Wing / Spoiler
     const wingMat = livery.carbonWing ? carbonMat : secondaryMat;
-    if (design.rearDeckStyle === 'wingless-9x8') {
+    if (design.rearDeckStyle === 'roof-spoiler-hatch') {
+      // Clio V6 & GR Yaris integrated hatchback roof spoiler
+      const spoilerGeo = track(new THREE.BoxGeometry(bodyWidth * 0.88, 0.045, 0.24));
+      const spoiler = new THREE.Mesh(spoilerGeo, wingMat);
+      spoiler.position.set(0, 0.98, design.cabinOffsetZ - 0.72);
+      spoiler.castShadow = true;
+      bodyGroup.add(spoiler);
+    } else if (design.rearDeckStyle === 'jesko-boomerang') {
+      // Koenigsegg Jesko Attack Active Top-Mount Boomerang Wing
+      for (const sx of [-0.38, 0.38]) {
+        const pylon = new THREE.Mesh(track(new THREE.BoxGeometry(0.06, 0.44, 0.28)), matteTrimMat);
+        pylon.position.set(sx, 0.86, -bodyLen * 0.38);
+        pylon.rotation.x = 0.22;
+        bodyGroup.add(pylon);
+      }
+      const bWingGeo = track(new THREE.BoxGeometry(bodyWidth * 1.05, 0.06, 0.36));
+      const bWing = new THREE.Mesh(bWingGeo, wingMat);
+      bWing.position.set(0, 1.05, -bodyLen * 0.46);
+      bWing.castShadow = true;
+      bodyGroup.add(bWing);
+      rearWingFlap = bWing;
+    } else if (design.rearDeckStyle === 'w1-longtail') {
+      // McLaren W1 Active Longtail Wing
+      const w1Wing = new THREE.Mesh(track(new THREE.BoxGeometry(bodyWidth * 0.98, 0.06, 0.34)), wingMat);
+      w1Wing.position.set(0, 0.88, -bodyLen * 0.54);
+      w1Wing.castShadow = true;
+      bodyGroup.add(w1Wing);
+      rearWingFlap = w1Wing;
+    } else if (design.rearDeckStyle === 'wingless-9x8') {
       const lowLip = new THREE.Mesh(track(new THREE.BoxGeometry(bodyWidth * 0.94, 0.06, 0.20)), carbonMat);
       lowLip.position.set(0, 0.68, -bodyLen * 0.48);
       bodyGroup.add(lowLip);
@@ -1461,7 +2466,7 @@ export function buildDiecastCar(
         strut.position.set(sx, isSwan ? 0.82 : 0.76, isSwan ? -bodyLen * 0.41 : -bodyLen * 0.44);
         bodyGroup.add(strut);
       }
-      const wingWidth = bodyWidth * (isGT3 ? 1.03 : 0.96);
+      const wingWidth = bodyWidth * (isGT3 ? 1.03 : isGT4 ? 0.98 : 0.96);
       const wingMesh = new THREE.Mesh(track(new THREE.BoxGeometry(wingWidth, 0.07, 0.34)), wingMat);
       wingMesh.position.set(0, 0.98, -bodyLen * 0.46);
       wingMesh.castShadow = true;
@@ -1476,24 +2481,56 @@ export function buildDiecastCar(
       }
     }
 
-    // Door Number Plates (race cars only)
+    // Door Number Plates
     if (!isStreetCar) {
       const doorPlateGeo = track(new THREE.PlaneGeometry(0.62, 0.44));
       const leftPlate = new THREE.Mesh(doorPlateGeo, plateMat);
       leftPlate.rotation.y = -Math.PI / 2;
-      leftPlate.position.set(-bodyWidth * 0.555, 0.48, 0.05);
+      leftPlate.position.set(-bodyWidth * 0.51, 0.48, 0.05);
       bodyGroup.add(leftPlate);
 
       const rightPlate = new THREE.Mesh(doorPlateGeo, plateMat);
       rightPlate.rotation.y = Math.PI / 2;
-      rightPlate.position.set(bodyWidth * 0.555, 0.48, 0.05);
+      rightPlate.position.set(bodyWidth * 0.51, 0.48, 0.05);
       bodyGroup.add(rightPlate);
     }
 
     // Distinct Signature Headlights per Model
     const hlZ = bodyLen * 0.5 + 0.02;
     [-0.64, 0.64].forEach((hx, idx) => {
-      if (design.headlightStyle === 'vertical-stack') {
+      if (design.headlightStyle === 'bentley-quad') {
+        // Bentley Continental GT3 signature dual round lamps
+        const outerLamp = new THREE.Mesh(
+          track(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 14)),
+          headlightMats[idx],
+        );
+        outerLamp.rotation.x = Math.PI / 2;
+        outerLamp.position.set(hx * 1.04, 0.48, hlZ - 0.01);
+        bodyGroup.add(outerLamp);
+
+        const innerLamp = new THREE.Mesh(
+          track(new THREE.CylinderGeometry(0.085, 0.085, 0.08, 14)),
+          headlightMats[idx],
+        );
+        innerLamp.rotation.x = Math.PI / 2;
+        innerLamp.position.set(hx * 0.72, 0.46, hlZ - 0.01);
+        bodyGroup.add(innerLamp);
+      } else if (design.headlightStyle === 'c-blade-rs01') {
+        // Renault Sport R.S. 01 C-shaped DRL light blade
+        const upperBlade = new THREE.Mesh(
+          track(new THREE.BoxGeometry(0.24, 0.06, 0.08)),
+          headlightMats[idx],
+        );
+        upperBlade.position.set(hx * 0.98, 0.48, hlZ);
+        bodyGroup.add(upperBlade);
+
+        const dropBlade = new THREE.Mesh(
+          track(new THREE.BoxGeometry(0.06, 0.20, 0.08)),
+          headlightMats[idx],
+        );
+        dropBlade.position.set(hx * 1.08, 0.40, hlZ);
+        bodyGroup.add(dropBlade);
+      } else if (design.headlightStyle === 'vertical-stack') {
         const hl = new THREE.Mesh(track(new THREE.BoxGeometry(0.11, 0.26, 0.08)), headlightMats[idx]);
         hl.position.set(hx * 1.06, 0.44, hlZ);
         bodyGroup.add(hl);
@@ -1540,6 +2577,8 @@ export function buildDiecastCar(
       wheelWidth,
       rimMat,
       tireMat,
+      caliperMat,
+      rotorMat,
       tireGrooveMat,
       isF1_2005,
     );

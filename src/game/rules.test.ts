@@ -34,15 +34,16 @@ import { isPositionSafeFromTrack } from '../three/trackBuilder';
 
 test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.HYPERCAR_GTP).length, 12);
-  assert.equal(getCarsByClass(CarClassId.LMP2).length, 3);
-  assert.equal(getCarsByClass(CarClassId.GT3).length, 10);
+  assert.equal(getCarsByClass(CarClassId.LMP2).length, 4);
+  assert.equal(getCarsByClass(CarClassId.GT3).length, 14);
+  assert.equal(getCarsByClass(CarClassId.GT4).length, 8);
   assert.equal(getCarsByClass(CarClassId.F1_2026).length, 11);
   assert.equal(getCarsByClass(CarClassId.F1_2021).length, 4);
   assert.equal(getCarsByClass(CarClassId.F1_2005).length, 4);
   assert.equal(getCarsByClass(CarClassId.FORMULA_E).length, 4);
-  assert.equal(getCarsByClass(CarClassId.TRACK_COUPE).length, 4);
-  assert.equal(getCarsByClass(CarClassId.SUPERCAR).length, 5);
-  assert.ok(CARS.length >= 57);
+  assert.equal(getCarsByClass(CarClassId.TRACK_COUPE).length, 7);
+  assert.equal(getCarsByClass(CarClassId.SUPERCAR).length, 8);
+  assert.ok(CARS.length >= 76);
 });
 
 test('Asymmetric intra-class BoP keeps overall class scores balanced while preserving trade-offs', () => {
@@ -1096,8 +1097,8 @@ test('Gold-Standard SVGs & Gentle Banking: Le Mans, Silverstone, Portimao, Spa, 
   assert.ok(maxPortimaoY >= 18.0, `Portimao rollercoaster elevation peak must be >= 18m, got ${maxPortimaoY}m`);
 
   const interlagos = TRACKS.find((t) => t.id === 'interlagos')!;
-  const maxInterlagosY = Math.max(...interlagos.waypoints.map((w) => w.y));
-  assert.ok(maxInterlagosY >= 14.0, `Interlagos Arquibancadas climb must be >= 14m, got ${maxInterlagosY}m`);
+  const interlagosSpan = Math.max(...interlagos.waypoints.map((w) => w.y)) - Math.min(...interlagos.waypoints.map((w) => w.y));
+  assert.ok(interlagosSpan >= 35.0, `Interlagos elevation span must be >= 35m, got ${interlagosSpan}m`);
 
   const spa = TRACKS.find((t) => t.id === 'spa-francorchamps')!;
   const maxSpaY = Math.max(...spa.waypoints.map((w) => w.y));

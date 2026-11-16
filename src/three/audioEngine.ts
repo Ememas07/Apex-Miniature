@@ -240,7 +240,7 @@ export class MotorsportAudioEngine {
     const isF1Modern = classId === CarClassId.F1_2026 || classId === CarClassId.F1_2021;
     const isFormulaE = classId === CarClassId.FORMULA_E || engineType === 'electric';
     const isHypercar = classId === CarClassId.HYPERCAR_GTP;
-    const isGT3 = classId === CarClassId.GT3;
+    const isGT = classId === CarClassId.GT3 || classId === CarClassId.GT4;
     const isRoadCar = classId === CarClassId.TRACK_COUPE || classId === CarClassId.SUPERCAR;
 
     let baseHz = 75;
@@ -305,8 +305,8 @@ export class MotorsportAudioEngine {
       inverterHz = 900 + rpmNorm * 1400;
       gearHz = 1800 + rpmNorm * 1600;
       this.electricFilter.frequency.setTargetAtTime(inverterHz, now, 0.03);
-    } else if (isGT3) {
-      // === GT3: DISTINCT ENGINE CHARACTER (FLAT-6, V8, V10) ===
+    } else if (isGT) {
+      // === GT3 / GT4: DISTINCT ENGINE CHARACTER (FLAT-6, V8, V10, TURBO-I4/I6) ===
       if (engineType === 'flat6') {
         // Porsche flat-6 rasp
         this.oscCombustion.type = 'sawtooth';
@@ -317,13 +317,21 @@ export class MotorsportAudioEngine {
         filterCutoff = 1600;
         this.combustionFilter.Q.setTargetAtTime(3.2, now, 0.03);
       } else if (engineType === 'v10') {
-        // Lamborghini V10 howl
+        // Audi / Lamborghini V10 howl
         this.oscCombustion.type = 'sawtooth';
         this.oscHarmonic.type = 'sawtooth';
         baseHz = 110;
         spanHz = 360;
         harmRatio = 2.5;
         filterCutoff = 2200;
+      } else if (engineType === 'turbo-i4') {
+        // Inline-4 turbo (Alpine A110, FL5 Civic)
+        this.oscCombustion.type = 'sawtooth';
+        this.oscHarmonic.type = 'triangle';
+        baseHz = 66;
+        spanHz = 220;
+        harmRatio = 2.0;
+        filterCutoff = 1350;
       } else {
         // Cross-plane V8 rumble (AMG, Corvette, Mustang)
         this.oscCombustion.type = 'sawtooth';
@@ -392,7 +400,7 @@ export class MotorsportAudioEngine {
       this.lastCrackleTime = now;
       if (isF1Modern) {
         this.triggerWastegateFlutter();
-      } else if (isF1_2005 || isGT3 || isHypercar) {
+      } else if (isF1_2005 || isGT || isHypercar) {
         this.triggerExhaustCrackles();
       }
     }

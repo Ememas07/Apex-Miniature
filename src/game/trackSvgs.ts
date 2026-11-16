@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TrackWaypoint } from './types';
+import { REAL_DEM_ELEVATIONS } from './trackElevations';
 
 export interface SvgTrackOptions {
   trackId?: string;
@@ -453,151 +454,15 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
     let y = 0;
     let banking = 0;
 
-    // 1:1 Metric Elevation Profiles in true meters
-    if (trackId === 'spa-francorchamps') {
-      // Descent from La Source into Eau Rouge (-8m) -> steep Raidillon climb (+38m) -> Les Combes peak (+48m) -> Pouhon plunge (-12m) -> Blanchimont climb
-      if (t >= 0.0 && t <= 0.07) {
-        const u = t / 0.07;
-        y = -8 * Math.sin(u * Math.PI * 0.5);
-      } else if (t > 0.07 && t <= 0.17) {
-        const u = (t - 0.07) / 0.10;
-        y = -8 + (1 - Math.cos(u * Math.PI)) * 0.5 * 46;
-      } else if (t > 0.17 && t <= 0.26) {
-        const u = (t - 0.17) / 0.09;
-        y = 38 + Math.sin(u * Math.PI * 0.5) * 10;
-      } else if (t > 0.26 && t <= 0.62) {
-        const u = (t - 0.26) / 0.36;
-        y = 48 - (1 - Math.cos(u * Math.PI)) * 0.5 * 60;
-      } else if (t > 0.62 && t <= 0.96) {
-        const u = (t - 0.62) / 0.34;
-        y = -12 + (1 - Math.cos(u * Math.PI)) * 0.5 * 14;
-      }
-    } else if (trackId === 'le-mans') {
-      // Start/Finish -> Dunlop crest (+15m) -> Esses drop (-2m) -> Mulsanne undulations -> Porsche Curves (+14m)
-      if (t >= 0.02 && t <= 0.14) {
-        const u = (t - 0.02) / 0.12;
-        y = Math.sin(u * Math.PI) * 15;
-      } else if (t > 0.14 && t <= 0.52) {
-        const u = (t - 0.14) / 0.38;
-        y = Math.sin(u * Math.PI * 3) * 3.5 - 1.5;
-      } else if (t > 0.52 && t <= 0.72) {
-        const u = (t - 0.52) / 0.20;
-        y = Math.sin(u * Math.PI) * 8;
-      } else if (t > 0.72 && t <= 0.94) {
-        const u = (t - 0.72) / 0.22;
-        y = (1 - Math.cos(u * Math.PI * 2)) * 0.5 * 14;
-      }
-    } else if (trackId === 'silverstone') {
-      // Village dip (-3.5m) -> Wellington/Brooklands rise (+4.5m) -> Hangar Straight up to Stowe crest (+6.2m) -> Vale dip (-3.0m)
-      if (t >= 0.06 && t <= 0.22) {
-        const u = (t - 0.06) / 0.16;
-        y = -3.5 * Math.sin(u * Math.PI);
-      } else if (t > 0.22 && t <= 0.45) {
-        const u = (t - 0.22) / 0.23;
-        y = 4.5 * Math.sin(u * Math.PI);
-      } else if (t > 0.58 && t <= 0.80) {
-        const u = (t - 0.58) / 0.22;
-        y = 6.2 * Math.sin(u * Math.PI);
-      } else if (t > 0.80 && t <= 0.94) {
-        const u = (t - 0.80) / 0.14;
-        y = -3.0 * Math.sin(u * Math.PI);
-      }
-    } else if (trackId === 'laguna-seca') {
-      // Laguna Seca Corkscrew: climb Rahal straight up to Corkscrew crest (+18m), then plunge 18m down turns 8 & 8A
-      if (t >= 0.46 && t <= 0.58) {
-        const u = (t - 0.46) / 0.12;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 18;
-      } else if (t > 0.58 && t <= 0.68) {
-        const u = (t - 0.58) / 0.10;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 18;
-      }
-    } else if (trackId === 'suzuka') {
-      // Smooth cosine figure-8 bridge overpass (+10.5m deck clearing lower track at 0m)
-      if (t >= 0.24 && t <= 0.32) {
-        y = 10.5;
-      } else if (t >= 0.16 && t < 0.24) {
-        const u = (t - 0.16) / 0.08;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 10.5;
-      } else if (t > 0.32 && t <= 0.40) {
-        const u = (t - 0.32) / 0.08;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 10.5;
-      }
-    } else if (trackId === 'red-bull-ring') {
-      if (t >= 0.10 && t <= 0.24) {
-        const u = (t - 0.10) / 0.14;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 24;
-      } else if (t > 0.24 && t <= 0.45) {
-        const u = (t - 0.24) / 0.21;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 24;
-      }
-    } else if (trackId === 'cota') {
-      if (t >= 0.03 && t <= 0.12) {
-        const u = (t - 0.03) / 0.09;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 28;
-      } else if (t > 0.12 && t <= 0.22) {
-        const u = (t - 0.12) / 0.10;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 28;
-      }
-    } else if (trackId === 'portimao') {
-      // Plunge into T1 (-12m) -> climb to Lagos (+8m) -> drop & climb to Craig Jones crest (+20m) -> Portimão peak (+24m) -> steep drop into Sagres (-8m)
-      if (t >= 0.03 && t <= 0.16) {
-        const u = (t - 0.03) / 0.13;
-        y = -12 * Math.sin(u * Math.PI);
-      } else if (t > 0.16 && t <= 0.34) {
-        const u = (t - 0.16) / 0.18;
-        y = 10 * Math.sin(u * Math.PI);
-      } else if (t > 0.42 && t <= 0.66) {
-        const u = (t - 0.42) / 0.24;
-        y = (1 - Math.cos(u * Math.PI * 0.5)) * 24;
-      } else if (t > 0.66 && t <= 0.84) {
-        const u = (t - 0.66) / 0.18;
-        y = 24 - (1 - Math.cos(u * Math.PI)) * 0.5 * 32;
-      } else if (t > 0.84 && t <= 0.98) {
-        const u = (t - 0.84) / 0.14;
-        y = -8 + (1 - Math.cos(u * Math.PI * 0.5)) * 8;
-      }
-    } else if (trackId === 'interlagos') {
-      // Interlagos: steep climb up Arquibancadas into Subida dos Boxes (+16m), plunge through Senna S
-      if (t >= 0.78 && t <= 0.98) {
-        const u = (t - 0.78) / 0.20;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 16;
-      } else if (t >= 0.0 && t <= 0.16) {
-        const u = t / 0.16;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 16;
-      }
-    } else if (trackId === 'road-atlanta') {
-      // Road Atlanta: climb Turn 1 to Esses crest (+18m), undulating dip, dramatic downhill plunge into Turn 12
-      if (t >= 0.05 && t <= 0.25) {
-        const u = (t - 0.05) / 0.20;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 18;
-      } else if (t > 0.25 && t <= 0.60) {
-        const u = (t - 0.25) / 0.35;
-        y = 18 - Math.sin(u * Math.PI) * 12;
-      } else if (t > 0.82 && t <= 0.96) {
-        const u = (t - 0.82) / 0.14;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 10;
-      }
-    } else if (trackId === 'watkins-glen') {
-      // Watkins Glen: uphill charge through the Esses (+18m), rolling boot section
-      if (t >= 0.08 && t <= 0.28) {
-        const u = (t - 0.08) / 0.20;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 18;
-      } else if (t > 0.28 && t <= 0.65) {
-        const u = (t - 0.28) / 0.37;
-        y = 18 - Math.sin(u * Math.PI * 0.5) * 8;
-      } else if (t > 0.65 && t <= 0.90) {
-        const u = (t - 0.65) / 0.25;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 10;
-      }
-    } else if (trackId === 'monaco') {
-      // Monaco: uphill climb Beau Rivage to Casino Square (+24m), plunge down Mirabeau and Fairmont Hairpin to Portier
-      if (t >= 0.08 && t <= 0.28) {
-        const u = (t - 0.08) / 0.20;
-        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 24;
-      } else if (t > 0.28 && t <= 0.55) {
-        const u = (t - 0.28) / 0.27;
-        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 24;
-      }
+    // Real-World Satellite Digital Elevation Model (DEM) Interpolation
+    const demProfile = trackId ? REAL_DEM_ELEVATIONS[trackId] : undefined;
+    if (demProfile && demProfile.length > 0) {
+      const N = demProfile.length;
+      const pos = t * N;
+      const i0 = Math.floor(pos) % N;
+      const i1 = (i0 + 1) % N;
+      const frac = pos - Math.floor(pos);
+      y = demProfile[i0] * (1 - frac) + demProfile[i1] * frac;
     }
 
     // Gentle Banking Profiles: smooth 8°-10° max for Daytona, 10°-12° max for Zandvoort/Indy, 0°-3° standard
