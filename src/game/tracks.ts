@@ -765,6 +765,7 @@ export interface SampledSplinePoint {
   curvature: number; // signed 1/R in 1/m (+ = right turn, - = left turn)
   banking?: number; // radians
   width?: number; // track width in meters
+  racingLineOffset?: number; // precomputed optimal geometric lateral racing line offset
 }
 
 export interface CompiledTrack {
@@ -974,6 +975,54 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
     });
   }
 
+  // Precompute Dynamic Geometric Racing Line (Wide Entry -> Apex -> Track-Out)
+  const lineOffsets = new Float32Array(sampleCount);
+  const lookAheadStep = Math.max(3, Math.round(sampleCount * (32.0 / Math.max(500, totalLength))));
+  for (let i = 0; i < sampleCount; i++) {
+    const s = samples[i];
+    const hw = (s.width ? s.width * 0.5 : spec.trackWidth * 0.5);
+    const maxSafe = Math.max(1.5, hw - 1.25);
+    const currK = s.curvature;
+    const aheadK = samples[(i + lookAheadStep) % sampleCount].curvature;
+    const pastK = samples[(i - lookAheadStep + sampleCount) % sampleCount].curvature;
+
+    if (Math.abs(currK) > 0.009) {
+      // Clipping apex inside kerb at peak curvature
+      const intensity = Math.min(1.0, Math.abs(currK) / 0.022);
+      lineOffsets[i] = Math.sign(currK) * maxSafe * intensity;
+    } else if (Math.abs(aheadK) > 0.0075) {
+      // Wide entry on outside edge before braking/turn-in
+      const intensity = Math.min(1.0, Math.abs(aheadK) / 0.020);
+      lineOffsets[i] = -Math.sign(aheadK) * maxSafe * intensity;
+    } else if (Math.abs(pastK) > 0.0075) {
+      // Smoothly unwind to outside exit kerb
+      const intensity = Math.min(1.0, Math.abs(pastK) / 0.020);
+      lineOffsets[i] = -Math.sign(pastK) * maxSafe * intensity;
+    } else {
+      lineOffsets[i] = 0;
+    }
+  }
+
+  // Smooth the racing line with iterative Laplacian smoothing
+  let smoothedLine = lineOffsets;
+  for (let pass = 0; pass < 6; pass++) {
+    const nextLine = new Float32Array(sampleCount);
+    for (let i = 0; i < sampleCount; i++) {
+      const p = smoothedLine[(i - 1 + sampleCount) % sampleCount];
+      const c = smoothedLine[i];
+      const n = smoothedLine[(i + 1) % sampleCount];
+      const s = samples[i];
+      const hw = (s && s.width ? s.width * 0.5 : spec.trackWidth * 0.5);
+      const maxSafe = Math.max(1.5, hw - 1.25);
+      nextLine[i] = Math.max(-maxSafe, Math.min(maxSafe, 0.25 * p + 0.5 * c + 0.25 * n));
+    }
+    smoothedLine = nextLine;
+  }
+
+  for (let i = 0; i < sampleCount; i++) {
+    samples[i].racingLineOffset = Math.round(smoothedLine[i] * 100) / 100;
+  }
+
   const pitSign = spec.pitSide === 'right' ? 1 : -1;
   const pitOffset = pitSign * (spec.trackWidth * 0.5 + 8.5);
 
@@ -1022,6 +1071,7 @@ export function sampleTrackAtT(compiled: CompiledTrack, tRaw: number): SampledSp
     curvature: a.curvature + (b.curvature - a.curvature) * alpha,
     banking,
     width,
+    racingLineOffset: (a.racingLineOffset || 0) + ((b.racingLineOffset || 0) - (a.racingLineOffset || 0)) * alpha,
   };
 }
 
