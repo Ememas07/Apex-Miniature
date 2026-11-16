@@ -470,11 +470,10 @@ test('Authentic Track Directions & Heavy Braking: flat-out hairpin entry underst
     'imola',
     'interlagos',
     'jeddah',
-    'laguna-seca',
     'las-vegas',
     'miami',
     'singapore',
-    'yas-marina',
+    'detroit-street',
   ];
   for (const id of ccwIds) {
     const t = TRACKS.find((trk) => trk.id === id)!;
@@ -488,7 +487,8 @@ test('Authentic Track Directions & Heavy Braking: flat-out hairpin entry underst
     'montreal',
     'mexico-city',
     'long-beach',
-    'detroit-street',
+    'laguna-seca',
+    'yas-marina',
   ];
   for (const id of cwSampleIds) {
     const t = TRACKS.find((trk) => trk.id === id)!;

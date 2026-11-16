@@ -278,13 +278,8 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
   let rawVerts = parseSvgVertices(svgPathD);
   if (rawVerts.length < 3) return [];
 
-  // Enforce correct physical driving winding
-  const curArea = calculateSvgPathArea(rawVerts.map((v) => ({ x: v[0], y: v[1] })));
-  if (isCCW && curArea > 0) {
-    rawVerts.reverse();
-  } else if (!isCCW && trackId !== 'suzuka' && curArea < 0) {
-    rawVerts.reverse();
-  }
+  // All 43 TRACK_SVG_PATHS are already strictly ordered in true racing direction starting from M x0 y0
+  // Never reverse or re-index vertices so points[0] aligns strictly with Start/Finish line straight
 
   // Remove duplicate/near-coincident adjacent vertices
   const filtered: Array<[number, number]> = [];
@@ -482,26 +477,28 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
         banking = 6.5 * factor;
       }
     } else if (trackId === 'zandvoort') {
+      // Clockwise right-handers: Hugenholtzbocht & Arie Luyendijkbocht must tilt down on inside (right) & up on outside (left)
       if (t >= 0.14 && t <= 0.24) {
         const ease = 0.025;
         let factor = 1.0;
         if (t < 0.14 + ease) factor = (1 - Math.cos(((t - 0.14) / ease) * Math.PI)) * 0.5;
         else if (t > 0.24 - ease) factor = (1 - Math.cos(((0.24 - t) / ease) * Math.PI)) * 0.5;
-        banking = 11.0 * factor;
+        banking = -11.0 * factor;
       } else if (t >= 0.88 && t <= 0.98) {
         const ease = 0.025;
         let factor = 1.0;
         if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
         else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
-        banking = 11.0 * factor;
+        banking = -11.0 * factor;
       }
     } else if (trackId === 'indianapolis-road') {
+      // Oval Turn 1 / final road course right-hander onto frontstretch: 9.2° tilt down on right (inside) & up on left (outside)
       if (t >= 0.88 && t <= 0.98) {
         const ease = 0.025;
         let factor = 1.0;
         if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
         else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
-        banking = 9.5 * factor;
+        banking = -9.2 * factor;
       }
     }
 

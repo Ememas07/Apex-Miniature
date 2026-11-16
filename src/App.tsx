@@ -8,7 +8,7 @@ import { TitleOverlay } from './components/TitleOverlay';
 import { TrackStudioModal } from './components/TrackStudioModal';
 import { CAR_CLASSES, CARS, getCarById } from './game/cars';
 import { registerCustomTrackInMemory } from './game/customTracks';
-import { MultiplayerClient } from './game/multiplayer';
+import { ConnectionMode, MultiplayerClient } from './game/multiplayer';
 import { computeUpdatedAdaptiveBoost, formatLapTime } from './game/physics';
 import { getTrackById } from './game/tracks';
 import {
@@ -82,6 +82,9 @@ export default function App() {
     mpClientRef.current = new MultiplayerClient();
   }
   const [room, setRoom] = useState<RoomState | null>(null);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>(
+    mpClientRef.current?.connectionMode || 'disconnected',
+  );
   const [mpError, setMpError] = useState<string | null>(null);
   const [customTracksNonce, setCustomTracksNonce] = useState(0);
   const qualifyingEnabledRef = useRef(raceConfig.qualifyingEnabled);
@@ -123,6 +126,7 @@ export default function App() {
       setPhase(useQuali ? 'qualifying' : 'playing');
     };
     mp.onError = (msg) => setMpError(msg);
+    mp.onConnectionModeChange = (mode) => setConnectionMode(mode);
   }, []);
 
   const handleStartSession = useCallback(() => {
@@ -318,29 +322,47 @@ export default function App() {
           config={raceConfig}
           room={room}
           myPeerId={mpClientRef.current.peerId}
+          connectionMode={connectionMode}
           customTracksNonce={customTracksNonce}
           mpError={mpError}
           onUpdateConfig={handleUpdateConfig}
           onUpdatePeer={(payload) => mpClientRef.current?.updatePeer(payload)}
-          onCreateRoom={(name) =>
-            mpClientRef.current?.createRoom(
-              name,
-              raceConfig.playerCarId,
-              raceConfig.playerLivery,
-              raceConfig,
-              getCarById(raceConfig.playerCarId).classId,
-            )
-          }
-          onJoinRoom={(code, name) =>
-            mpClientRef.current?.joinRoom(
-              code,
-              name,
-              raceConfig.playerCarId,
-              raceConfig.playerLivery,
-              getCarById(raceConfig.playerCarId).classId,
-            )
-          }
-          onLeaveRoom={() => mpClientRef.current?.leaveRoom()}
+          onCreateRoom={async (name) => {
+            try {
+              setMpError(null);
+              await mpClientRef.current?.createRoom(
+                name,
+                raceConfig.playerCarId,
+                raceConfig.playerLivery,
+                raceConfig,
+                getCarById(raceConfig.playerCarId).classId,
+              );
+            } catch (err: unknown) {
+              setMpError(err instanceof Error ? err.message : 'Failed to create room');
+            }
+          }}
+          onJoinRoom={async (code, name) => {
+            try {
+              setMpError(null);
+              await mpClientRef.current?.joinRoom(
+                code,
+                name,
+                raceConfig.playerCarId,
+                raceConfig.playerLivery,
+                getCarById(raceConfig.playerCarId).classId,
+              );
+            } catch (err: unknown) {
+              setMpError(err instanceof Error ? err.message : 'Failed to join room');
+            }
+          }}
+          onLeaveRoom={() => {
+            try {
+              mpClientRef.current?.leaveRoom();
+              setRoom(null);
+            } catch (err: unknown) {
+              setMpError(err instanceof Error ? err.message : 'Error leaving room');
+            }
+          }}
           onStartFromLobby={handleStartSession}
           onClose={() => setSetupOpen(false)}
           onOpenStudio={(trackToEdit) => handleOpenStudio(trackToEdit)}

@@ -8,6 +8,7 @@ import {
   getSavedCustomTracks,
   importTrackFromString,
 } from '../game/customTracks';
+import { ConnectionMode } from '../game/multiplayer';
 import {
   AIDifficulty,
   CarClassId,
@@ -23,6 +24,7 @@ interface RaceSetupModalProps {
   config: RaceConfig;
   room: RoomState | null;
   myPeerId?: string;
+  connectionMode?: ConnectionMode;
   customTracksNonce?: number;
   mpError: string | null;
   onUpdateConfig: (patch: Partial<RaceConfig>) => void;
@@ -79,6 +81,7 @@ export function RaceSetupModal({
   config,
   room,
   myPeerId,
+  connectionMode = 'disconnected',
   customTracksNonce,
   mpError,
   onUpdateConfig,
@@ -95,11 +98,20 @@ export function RaceSetupModal({
   const [driverName, setDriverName] = useState('Player 1');
   const [joinCode, setJoinCode] = useState('');
   const [isReady, setIsReady] = useState(false);
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [joiningRoom, setJoiningRoom] = useState(false);
   const [customTracks, setCustomTracks] = useState<TrackSpec[]>(() => getSavedCustomTracks());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importCodeInput, setImportCodeInput] = useState('');
   const [importErr, setImportErr] = useState<string | null>(null);
   const [copiedTrackId, setCopiedTrackId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (room || mpError) {
+      setCreatingRoom(false);
+      setJoiningRoom(false);
+    }
+  }, [room, mpError]);
 
   const selectedTrack = config.customTrack || getTrackById(config.trackId);
   const playerCar = getCarById(config.playerCarId);
@@ -646,6 +658,31 @@ export function RaceSetupModal({
                   </p>
                 </div>
 
+                {/* Connection Status Indicator */}
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#101520] border border-white/10 text-[11px]">
+                  {connectionMode === 'server' ? (
+                    <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      🟢 WebSocket Server Connected
+                    </span>
+                  ) : connectionMode === 'local-relay' ? (
+                    <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
+                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                      ⚡ Multi-Tab Signaling Active (Local Broadcast)
+                    </span>
+                  ) : connectionMode === 'connecting' ? (
+                    <span className="flex items-center gap-1.5 text-blue-400 font-semibold">
+                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                      Connecting to Signaling Relay...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-slate-400">
+                      <span className="w-2 h-2 rounded-full bg-slate-500" />
+                      Ready to Connect
+                    </span>
+                  )}
+                </div>
+
                 <div>
                   <label htmlFor="driver-name-input" className="block text-xs font-semibold text-slate-300 mb-1.5">
                     Your Driver Name
@@ -664,15 +701,21 @@ export function RaceSetupModal({
                   <div className="space-y-3 pt-2">
                     <button
                       type="button"
-                      onClick={() => onCreateRoom(driverName || 'Host Driver')}
-                      className="w-full py-2.5 px-4 rounded bg-red-600 hover:bg-red-500 text-xs font-display font-bold text-white cursor-pointer"
+                      data-testid="btn-create-room"
+                      onClick={() => {
+                        setCreatingRoom(true);
+                        onCreateRoom(driverName || 'Host Driver');
+                      }}
+                      disabled={creatingRoom}
+                      className="w-full py-2.5 px-4 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50 text-xs font-display font-bold text-white cursor-pointer transition-colors"
                     >
-                      Host New Multiplayer Room
+                      {creatingRoom ? 'Creating Room...' : 'Host New Multiplayer Room'}
                     </button>
 
                     <div className="flex gap-2">
                       <input
                         type="text"
+                        data-testid="input-join-code"
                         placeholder="Room Code (e.g. APX42)"
                         maxLength={6}
                         value={joinCode}
@@ -681,11 +724,15 @@ export function RaceSetupModal({
                       />
                       <button
                         type="button"
-                        onClick={() => onJoinRoom(joinCode, driverName || 'Guest Driver')}
-                        disabled={joinCode.trim().length < 4}
-                        className="px-4 py-2 rounded bg-[#1d2534] hover:bg-[#263144] disabled:opacity-40 border border-white/15 text-xs font-semibold text-white cursor-pointer"
+                        data-testid="btn-join-room"
+                        onClick={() => {
+                          setJoiningRoom(true);
+                          onJoinRoom(joinCode, driverName || 'Guest Driver');
+                        }}
+                        disabled={joiningRoom || joinCode.trim().length < 4}
+                        className="px-4 py-2 rounded bg-[#1d2534] hover:bg-[#263144] disabled:opacity-40 border border-white/15 text-xs font-semibold text-white cursor-pointer transition-colors"
                       >
-                        Join Room
+                        {joiningRoom ? 'Joining...' : 'Join Room'}
                       </button>
                     </div>
                   </div>
@@ -694,7 +741,10 @@ export function RaceSetupModal({
                     <div className="p-4 rounded bg-[#0d1118] border border-white/10 flex items-center justify-between">
                       <div>
                         <div className="text-xs text-slate-400">Active Room Code</div>
-                        <div className="text-2xl font-display font-extrabold text-amber-400 tracking-widest">
+                        <div
+                          data-testid="active-room-code"
+                          className="text-2xl font-display font-extrabold text-amber-400 tracking-widest"
+                        >
                           {room.code}
                         </div>
                       </div>
@@ -861,7 +911,10 @@ export function RaceSetupModal({
                   {room ? (
                     room.peers.map((p) => {
                       const peerCar = getCarById(p.carId || 'ferrari-499p');
-                      const peerClass = CAR_CLASSES[p.classId || peerCar.classId];
+                      const peerClass =
+                        CAR_CLASSES[p.classId as CarClassId] ||
+                        CAR_CLASSES[peerCar.classId] ||
+                        CAR_CLASSES[CarClassId.HYPERCAR_GTP];
                       return (
                         <div
                           key={p.peerId}

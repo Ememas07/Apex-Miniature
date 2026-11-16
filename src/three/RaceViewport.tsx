@@ -736,8 +736,15 @@ export function RaceViewport(props: RaceViewportProps) {
         const rig = sim.carRigs.get(c.id);
         if (!rig) continue;
 
+        const trkSample = sampleTrackAtT(sim.compiledTrack, c.trackT);
+        const roadBank = trkSample.banking || 0;
+        const roadPitch = Math.asin(Math.max(-0.99, Math.min(0.99, trkSample.ty || 0)));
+
         rig.root.position.set(c.x, c.y, c.z);
+        rig.root.rotation.order = 'YXZ';
         rig.root.rotation.y = c.heading;
+        rig.root.rotation.x = -roadPitch;
+        rig.root.rotation.z = roadBank;
 
         // Subtle die-cast body roll & pitch
         rig.bodyGroup.rotation.z = -c.steerAngle * Math.min(1, c.speed / 30) * 0.09;
