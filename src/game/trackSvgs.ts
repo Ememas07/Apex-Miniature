@@ -14,17 +14,19 @@ export interface SvgTrackOptions {
  * Counter-Clockwise (CCW) circuit IDs in official racing direction
  */
 export const CCW_CIRCUIT_IDS = new Set([
+  'daytona-road',
   'laguna-seca',
-  'imola',
-  'interlagos',
-  'baku',
-  'yas-marina',
   'cota',
-  'jeddah',
-  'miami',
+  'interlagos',
+  'montreal',
+  'mexico-city',
   'las-vegas',
+  'long-beach',
+  'imola',
+  'baku',
+  'jeddah',
   'singapore',
-  'detroit-street',
+  'yas-marina',
 ]);
 
 /**
@@ -35,16 +37,16 @@ export const CCW_CIRCUIT_IDS = new Set([
 export const TRACK_SVG_REGISTRY: Record<string, string> = {
   // ==================== 10 REFERENCE PACK CIRCUITS ====================
   'spa-francorchamps':
-    'M 275,280 L 310,330 L 335,345 L 360,315 L 395,250 L 630,130 L 665,135 L 675,115 L 715,130 L 760,180 C 775,215 755,255 715,255 L 640,235 L 600,265 L 615,320 C 665,375 695,435 635,480 L 560,460 L 520,490 L 495,465 L 455,515 C 475,555 495,585 445,620 L 320,540 L 230,455 L 185,375 L 215,345 L 195,310 L 240,230 Z',
+    'M 238,398 L 124,480 C 112,488 108,482 114,468 L 164,364 C 180,334 204,312 236,286 C 254,270 262,250 276,238 C 292,226 312,228 330,216 C 356,196 384,166 426,146 L 708,44 C 722,40 730,46 736,56 C 742,66 752,66 768,58 L 788,50 C 800,48 808,54 818,68 L 880,148 C 892,164 882,182 862,178 C 846,174 836,154 824,134 C 816,122 806,122 790,128 L 636,176 C 614,184 608,204 610,232 C 612,262 630,280 666,292 L 764,322 C 782,328 788,342 780,362 C 772,382 774,398 792,410 L 854,448 C 866,456 866,468 856,484 L 836,514 C 822,534 798,536 770,524 C 724,504 692,468 656,412 C 632,374 604,352 558,334 L 522,322 C 508,318 496,322 480,330 L 396,368 L 316,384 C 306,384 306,374 306,362 C 304,352 296,352 284,362 Z',
 
   'monza':
     'M 680,820 L 680,260 L 715,245 L 685,205 L 715,175 C 690,125 600,95 500,105 L 470,130 L 440,90 L 400,130 L 355,195 L 375,245 L 395,285 L 340,335 L 265,485 L 235,515 L 265,550 L 245,595 L 255,785 C 295,885 520,910 645,860 Z',
 
   'le-mans':
-    'M 240,650 L 240,380 L 255,320 L 240,295 L 265,270 L 310,245 L 295,205 L 350,165 L 420,155 L 605,165 L 625,190 L 650,165 L 670,175 L 790,185 L 810,160 L 835,185 L 855,185 L 920,190 L 935,210 L 885,260 L 665,485 L 645,515 L 675,550 L 685,610 L 615,635 L 465,645 L 415,615 L 365,645 L 325,625 L 295,665 L 265,680 L 245,675 Z',
+    'M 266,516 L 215,513 L 180,505 L 158,490 L 146,464 L 138,443 L 132,442 L 123,448 L 116,444 L 110,425 L 100,395 L 98,372 L 94,360 L 78,348 L 64,326 L 52,296 L 53,282 L 66,268 L 95,250 L 146,222 L 260,188 L 355,160 L 364,168 L 371,173 L 378,167 L 383,154 L 395,149 L 520,113 L 642,78 L 651,74 L 656,61 L 662,57 L 669,64 L 675,68 L 718,56 L 820,48 L 912,42 L 921,45 L 920,56 L 892,165 L 862,265 L 838,332 L 812,344 L 775,349 L 760,353 L 759,360 L 766,372 L 778,405 L 776,412 L 765,415 L 685,434 L 645,449 L 605,472 L 582,487 L 562,484 L 542,469 L 522,463 L 504,471 L 486,487 L 468,486 L 454,474 L 442,466 L 428,468 L 395,473 L 362,479 L 336,491 L 327,498 L 318,496 L 311,504 L 303,511 L 296,517 L 288,514 L 281,517 Z',
 
   'daytona-road':
-    'M 780,760 Q 500,730 220,760 C 125,705 105,575 150,455 L 215,475 L 255,545 C 295,615 355,605 340,540 L 370,490 L 430,510 C 485,530 545,510 565,455 C 575,395 525,370 460,370 L 440,345 L 480,315 L 620,315 L 650,293 L 680,315 L 710,299 L 740,315 C 875,380 915,545 865,695 Z',
+    'M 502,86 C 440,86 385,102 336,128 C 304,148 292,174 300,192 C 308,208 328,212 356,214 C 376,216 390,232 412,234 L 512,236 C 536,236 538,278 510,282 L 304,284 C 288,284 276,290 264,302 L 162,368 C 146,378 144,352 158,334 L 262,226 C 276,212 268,196 248,184 C 228,174 210,174 188,184 C 112,222 76,282 78,348 C 80,418 122,474 202,494 C 234,500 268,502 310,502 L 554,502 C 568,502 574,480 588,478 L 620,476 C 632,476 638,494 656,500 C 720,506 785,504 832,484 C 896,456 926,404 922,334 C 918,266 878,218 802,184 C 712,144 606,86 502,86 Z',
 
   'suzuka':
     'M 785,580 L 635,745 L 590,780 L 545,735 L 570,685 L 535,645 L 565,600 L 530,555 C 505,485 465,465 445,455 L 415,410 L 465,385 L 485,345 L 425,275 C 395,245 375,255 365,275 L 310,365 L 225,415 C 125,435 115,505 175,540 L 495,490 L 615,470 C 695,460 745,480 775,505 L 810,515 L 780,545 L 790,570 Z',
@@ -53,7 +55,7 @@ export const TRACK_SVG_REGISTRY: Record<string, string> = {
     'M 680,730 L 360,730 L 250,710 C 160,690 140,590 220,560 L 320,560 L 380,530 L 515,485 L 575,455 L 545,385 L 465,305 L 425,235 L 385,185 L 425,155 L 475,185 C 565,215 635,255 675,295 L 735,385 L 715,475 L 765,575 L 735,650 Z',
 
   'silverstone':
-    'M 340,720 L 510,635 L 565,625 L 585,595 L 645,595 L 635,545 L 585,545 L 555,515 L 375,425 L 315,385 C 325,325 405,315 415,315 L 465,285 L 545,235 L 615,255 L 675,235 L 715,275 L 765,255 L 805,305 L 665,675 L 615,745 L 535,755 L 445,735 L 405,775 Z',
+    'M 644,492 L 535,416 L 522,398 L 518,375 L 517,322 L 502,286 L 462,244 C 452,232 454,220 468,214 L 498,205 C 508,198 506,186 490,182 L 448,176 C 430,175 418,182 406,196 L 265,368 C 250,388 250,410 265,418 L 296,422 C 318,425 324,452 308,464 C 292,474 268,462 246,448 C 212,428 194,404 186,368 L 164,225 C 162,196 176,180 206,172 L 365,146 C 385,142 396,130 408,126 C 424,122 442,138 464,138 C 486,138 502,114 522,112 C 542,112 552,132 564,152 C 574,166 588,174 606,182 L 848,294 C 872,308 876,338 856,356 L 794,404 L 752,442 C 742,452 742,462 752,472 C 760,482 756,496 738,508 L 712,522 C 698,528 686,522 672,512 Z',
 
   'cota':
     'M 680,740 L 390,580 L 345,555 L 345,605 L 365,665 L 315,705 L 335,755 L 275,785 L 285,835 L 215,845 L 195,795 L 145,805 L 105,775 L 135,725 L 565,235 L 615,195 L 655,245 L 625,295 L 675,335 C 775,365 835,445 805,535 L 745,585 L 775,665 Z',
@@ -135,7 +137,7 @@ export const TRACK_SVG_REGISTRY: Record<string, string> = {
     'M 275,785 L 275,345 L 375,345 L 375,265 L 475,265 L 475,345 L 535,345 L 565,415 L 535,485 L 585,545 L 645,515 L 695,575 L 765,575 L 765,675 L 585,675 L 485,745 L 385,745 L 345,785 Z',
 
   'portimao':
-    'M 345,795 L 345,465 L 425,395 L 385,325 L 465,275 L 565,315 L 525,395 L 615,435 L 585,515 L 675,545 L 755,495 L 815,565 L 745,645 L 645,635 L 575,715 L 465,715 L 415,795 Z',
+    'M 588,462 L 105,461 C 86,461 80,452 74,432 L 48,358 C 44,344 46,332 54,320 L 96,252 C 106,240 120,240 126,256 L 142,318 C 148,338 162,348 186,348 L 566,350 C 584,350 588,332 572,322 L 456,274 C 436,266 416,266 392,270 L 278,288 C 258,290 246,282 236,266 L 202,212 C 194,196 202,180 222,182 L 442,214 C 464,216 482,210 498,194 L 578,108 C 594,92 614,88 642,90 C 660,92 666,102 666,122 L 668,224 C 670,256 692,278 726,294 L 796,324 C 818,332 830,318 818,300 L 762,206 C 750,186 762,162 790,154 C 818,148 842,162 862,190 L 924,284 C 942,322 944,376 920,414 C 896,446 862,462 818,462 Z',
 
   'fuji':
     'M 245,745 L 245,315 L 345,245 L 445,295 L 565,275 L 675,335 L 625,415 L 715,465 L 785,425 L 825,495 L 755,575 L 695,545 L 645,625 L 535,625 L 465,715 L 345,715 L 315,745 Z',
@@ -492,22 +494,76 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
         const u = (t - 0.12) / 0.10;
         y = (1 + Math.cos(u * Math.PI)) * 0.5 * 28;
       }
+    } else if (trackId === 'portimao') {
+      // Autódromo Internacional do Algarve rollercoaster elevation: crests and blind dips
+      if (t >= 0.08 && t <= 0.28) {
+        const u = (t - 0.08) / 0.20;
+        y = (1 - Math.cos(u * Math.PI * 2)) * 0.5 * 18;
+      } else if (t > 0.45 && t <= 0.70) {
+        const u = (t - 0.45) / 0.25;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 22;
+      } else if (t > 0.70 && t <= 0.90) {
+        const u = (t - 0.70) / 0.20;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 22;
+      }
+    } else if (trackId === 'interlagos') {
+      // Interlagos: steep climb up Arquibancadas into Subida dos Boxes (+16m), plunge through Senna S
+      if (t >= 0.78 && t <= 0.98) {
+        const u = (t - 0.78) / 0.20;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 16;
+      } else if (t >= 0.0 && t <= 0.16) {
+        const u = t / 0.16;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 16;
+      }
+    } else if (trackId === 'road-atlanta') {
+      // Road Atlanta: climb Turn 1 to Esses crest (+18m), undulating dip, dramatic downhill plunge into Turn 12
+      if (t >= 0.05 && t <= 0.25) {
+        const u = (t - 0.05) / 0.20;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 18;
+      } else if (t > 0.25 && t <= 0.60) {
+        const u = (t - 0.25) / 0.35;
+        y = 18 - Math.sin(u * Math.PI) * 12;
+      } else if (t > 0.82 && t <= 0.96) {
+        const u = (t - 0.82) / 0.14;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 10;
+      }
+    } else if (trackId === 'watkins-glen') {
+      // Watkins Glen: uphill charge through the Esses (+18m), rolling boot section
+      if (t >= 0.08 && t <= 0.28) {
+        const u = (t - 0.08) / 0.20;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 18;
+      } else if (t > 0.28 && t <= 0.65) {
+        const u = (t - 0.28) / 0.37;
+        y = 18 - Math.sin(u * Math.PI * 0.5) * 8;
+      } else if (t > 0.65 && t <= 0.90) {
+        const u = (t - 0.65) / 0.25;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 10;
+      }
+    } else if (trackId === 'monaco') {
+      // Monaco: uphill climb Beau Rivage to Casino Square (+24m), plunge down Mirabeau and Fairmont Hairpin to Portier
+      if (t >= 0.08 && t <= 0.28) {
+        const u = (t - 0.08) / 0.20;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 24;
+      } else if (t > 0.28 && t <= 0.55) {
+        const u = (t - 0.28) / 0.27;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 24;
+      }
     }
 
-    // Realistic Banking Profiles: Banked ovals capped at 18 deg with smooth cosine ease curves
+    // Gentle Banking Profiles: smooth 8°-10° max for Daytona, 10°-12° max for Zandvoort/Indy, 0°-3° standard
     if (trackId === 'daytona-road') {
       if (t >= 0.20 && t <= 0.42) {
         const ease = 0.035;
         let factor = 1.0;
         if (t < 0.20 + ease) factor = (1 - Math.cos(((t - 0.20) / ease) * Math.PI)) * 0.5;
         else if (t > 0.42 - ease) factor = (1 - Math.cos(((0.42 - t) / ease) * Math.PI)) * 0.5;
-        banking = 18 * factor;
+        banking = 9.5 * factor;
       } else if (t >= 0.75 && t <= 0.95) {
         const ease = 0.035;
         let factor = 1.0;
         if (t < 0.75 + ease) factor = (1 - Math.cos(((t - 0.75) / ease) * Math.PI)) * 0.5;
         else if (t > 0.95 - ease) factor = (1 - Math.cos(((0.95 - t) / ease) * Math.PI)) * 0.5;
-        banking = 18 * factor;
+        banking = 9.5 * factor;
       }
     } else if (trackId === 'zandvoort') {
       if (t >= 0.14 && t <= 0.24) {
@@ -515,13 +571,13 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
         let factor = 1.0;
         if (t < 0.14 + ease) factor = (1 - Math.cos(((t - 0.14) / ease) * Math.PI)) * 0.5;
         else if (t > 0.24 - ease) factor = (1 - Math.cos(((0.24 - t) / ease) * Math.PI)) * 0.5;
-        banking = 18 * factor;
+        banking = 11.0 * factor;
       } else if (t >= 0.88 && t <= 0.98) {
         const ease = 0.025;
         let factor = 1.0;
         if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
         else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
-        banking = 18 * factor;
+        banking = 11.0 * factor;
       }
     } else if (trackId === 'indianapolis-road') {
       if (t >= 0.88 && t <= 0.98) {
@@ -529,7 +585,7 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
         let factor = 1.0;
         if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
         else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
-        banking = 9.0 * factor;
+        banking = 9.5 * factor;
       }
     }
 

@@ -136,10 +136,122 @@ export function buildTrackEnvironment(
 
   const group = new THREE.Group();
   const palette = getSceneryPalette(compiled.spec.scenery);
+  const halfW = compiled.spec.trackWidth * 0.5;
 
-  // 1. Expansive Ground Terrain Plane
-  const groundGeo = track(new THREE.CircleGeometry(720, 48));
+  // 1. Pit Lane Bypass Corridor + Speed Limit Line (computed early so ground terrain & clearance verify both splines)
+  const pitSamples: Array<{ x: number; y: number; z: number; nx: number; nz: number; banking?: number; width?: number }> = [];
+  const pitSteps = 44;
+  for (let i = 0; i <= pitSteps; i++) {
+    const u = i / pitSteps;
+    // t spans from 0.89 -> 1.0 -> 0.09
+    const t = (0.89 + u * 0.2) % 1;
+    const sp = sampleTrackAtT(compiled, t);
+    const blend = Math.sin(u * Math.PI); // smoothly pulls away from track to pitOffset
+    const lat = compiled.pitOffset * Math.min(1, blend * 1.45);
+    pitSamples.push({
+      x: sp.x + sp.nx * lat,
+      y: sp.y,
+      z: sp.z + sp.nz * lat,
+      nx: sp.nx,
+      nz: sp.nz,
+      banking: 0,
+      width: 7.6,
+    });
+  }
+  const pitRoadGeo = track(buildRibbonGeometry(pitSamples, 3.8, 0.08, 12, false, 7.6));
+  const pitRoadMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0x333944,
+      roughness: 0.82,
+      metalness: 0.05,
+    }),
+  );
+  const pitMesh = new THREE.Mesh(pitRoadGeo, pitRoadMat);
+  pitMesh.receiveShadow = true;
+  group.add(pitMesh);
+
+  // Pit Entry Speed Limit Line (White + Amber)
+  const pitEntrySp = pitSamples[7];
+  const limitGeo = track(new THREE.BoxGeometry(7.6, 0.08, 0.7));
+  const limitMat = track(new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 }));
+  const limitLine = new THREE.Mesh(limitGeo, limitMat);
+  limitLine.position.set(pitEntrySp.x, pitEntrySp.y + 0.08, pitEntrySp.z);
+  limitLine.rotation.y = Math.atan2(-pitEntrySp.nz, pitEntrySp.nx);
+  group.add(limitLine);
+
+  // 2. Expansive Contoured Ground Terrain Grid with Strict Road Surface Clearance
+  // (within trackWidth / 2 + kerbWidth + runoffWidth + 6.0m, terrainY <= nearestRoadY - 0.35m)
+  let minTrackX = Infinity, maxTrackX = -Infinity, minTrackZ = Infinity, maxTrackZ = -Infinity;
+  for (let i = 0; i < compiled.samples.length; i++) {
+    const s = compiled.samples[i];
+    if (s.x < minTrackX) minTrackX = s.x;
+    if (s.x > maxTrackX) maxTrackX = s.x;
+    if (s.z < minTrackZ) minTrackZ = s.z;
+    if (s.z > maxTrackZ) maxTrackZ = s.z;
+  }
+  const gridSpanX = Math.max(1600, (maxTrackX - minTrackX) + 500);
+  const gridSpanZ = Math.max(1600, (maxTrackZ - minTrackZ) + 500);
+  const centerTrackX = (minTrackX + maxTrackX) * 0.5;
+  const centerTrackZ = (minTrackZ + maxTrackZ) * 0.5;
+
+  const groundGeo = track(new THREE.PlaneGeometry(gridSpanX, gridSpanZ, 96, 96));
   groundGeo.rotateX(-Math.PI / 2);
+  groundGeo.translate(centerTrackX, 0, centerTrackZ);
+
+  const posAttr = groundGeo.attributes.position;
+  const sampleCount = compiled.samples.length;
+  const KERB_WIDTH = 1.8;
+  const RUNOFF_MARGIN = 4.2;
+  const EXTRA_CLEARANCE = 6.0;
+
+  for (let k = 0; k < posAttr.count; k++) {
+    const vx = posAttr.getX(k);
+    const vz = posAttr.getZ(k);
+    let minDistSq = Infinity;
+    let nearestY = 0;
+    let nearestHalfW = halfW;
+
+    for (let s = 0; s < sampleCount; s++) {
+      const sp = compiled.samples[s];
+      const dx = vx - sp.x;
+      const dz = vz - sp.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < minDistSq) {
+        minDistSq = dSq;
+        nearestY = sp.y;
+        nearestHalfW = sp.width ? sp.width * 0.5 : halfW;
+      }
+    }
+    for (let p = 0; p < pitSamples.length; p++) {
+      const ps = pitSamples[p];
+      const dx = vx - ps.x;
+      const dz = vz - ps.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < minDistSq) {
+        minDistSq = dSq;
+        nearestY = ps.y;
+        nearestHalfW = 3.8;
+      }
+    }
+
+    const dist = Math.sqrt(minDistSq);
+    const clearanceThreshold = nearestHalfW + KERB_WIDTH + RUNOFF_MARGIN + EXTRA_CLEARANCE;
+
+    let vy = -0.25;
+    if (dist < clearanceThreshold) {
+      vy = Math.min(vy, nearestY - 0.35);
+    } else {
+      const falloff = Math.max(0, 1 - (dist - clearanceThreshold) / 95);
+      const targetH = (nearestY - 0.35) * falloff - 0.25 * (1 - falloff);
+      vy = Math.max(-0.25, targetH);
+      if (dist < clearanceThreshold + 4.0) {
+        vy = Math.min(vy, nearestY - 0.35);
+      }
+    }
+    posAttr.setY(k, vy);
+  }
+  groundGeo.computeVertexNormals();
+
   const groundMat = track(
     new THREE.MeshStandardMaterial({
       color: palette.ground,
@@ -148,7 +260,6 @@ export function buildTrackEnvironment(
     }),
   );
   const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.position.y = -0.25;
   ground.receiveShadow = true;
   group.add(ground);
 
@@ -169,10 +280,9 @@ export function buildTrackEnvironment(
     group.add(water);
   }
 
-  // 2. Main Track Asphalt Ribbon
-  const halfW = compiled.spec.trackWidth * 0.5;
+  // 3. Main Track Asphalt Ribbon (offset +0.08m above spline Y)
   const asphaltTex = track(createAsphaltTexture(compiled.spec.asphaltColor, maxAniso));
-  const roadGeo = track(buildRibbonGeometry(compiled.samples, halfW, 0.05, 16, true, compiled.spec.trackWidth));
+  const roadGeo = track(buildRibbonGeometry(compiled.samples, halfW, 0.08, 16, true, compiled.spec.trackWidth));
   const roadMat = track(
     new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -185,8 +295,8 @@ export function buildTrackEnvironment(
   roadMesh.receiveShadow = true;
   group.add(roadMesh);
 
-  // 3. Gravel / Turf Runoff Apron under Track
-  const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, -0.04, 24, true, compiled.spec.trackWidth));
+  // 4. Gravel / Turf Runoff Apron under Track
+  const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, 0.00, 24, true, compiled.spec.trackWidth));
   const apronMat = track(
     new THREE.MeshStandardMaterial({
       color: compiled.spec.scenery === 'desert' ? 0xc49c6e : 0x3b483d,
@@ -197,47 +307,6 @@ export function buildTrackEnvironment(
   const apronMesh = new THREE.Mesh(apronGeo, apronMat);
   apronMesh.receiveShadow = true;
   group.add(apronMesh);
-
-  // 4. Pit Lane Bypass Corridor + Speed Limit Line
-  const pitSamples: Array<{ x: number; y: number; z: number; nx: number; nz: number; banking?: number; width?: number }> = [];
-  const pitSteps = 44;
-  for (let i = 0; i <= pitSteps; i++) {
-    const u = i / pitSteps;
-    // t spans from 0.89 -> 1.0 -> 0.09
-    const t = (0.89 + u * 0.2) % 1;
-    const sp = sampleTrackAtT(compiled, t);
-    const blend = Math.sin(u * Math.PI); // smoothly pulls away from track to pitOffset
-    const lat = compiled.pitOffset * Math.min(1, blend * 1.45);
-    pitSamples.push({
-      x: sp.x + sp.nx * lat,
-      y: sp.y,
-      z: sp.z + sp.nz * lat,
-      nx: sp.nx,
-      nz: sp.nz,
-      banking: 0,
-      width: 7.6,
-    });
-  }
-  const pitRoadGeo = track(buildRibbonGeometry(pitSamples, 3.8, 0.03, 12, false, 7.6));
-  const pitRoadMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x333944,
-      roughness: 0.82,
-      metalness: 0.05,
-    }),
-  );
-  const pitMesh = new THREE.Mesh(pitRoadGeo, pitRoadMat);
-  pitMesh.receiveShadow = true;
-  group.add(pitMesh);
-
-  // Pit Entry Speed Limit Line (White + Amber)
-  const pitEntrySp = pitSamples[7];
-  const limitGeo = track(new THREE.BoxGeometry(7.6, 0.08, 0.7));
-  const limitMat = track(new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 }));
-  const limitLine = new THREE.Mesh(limitGeo, limitMat);
-  limitLine.position.set(pitEntrySp.x, pitEntrySp.y + 0.08, pitEntrySp.z);
-  limitLine.rotation.y = Math.atan2(-pitEntrySp.nz, pitEntrySp.nx);
-  group.add(limitLine);
 
   // 5. Stylized Oversized Die-Cast Apex Kerbs (InstancedMesh on curved sections)
   const kerbTex = track(createKerbTexture(compiled.spec.kerbPrimary, compiled.spec.kerbSecondary, maxAniso));
@@ -397,7 +466,6 @@ export function buildTrackEnvironment(
     return track(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4, metalness: 0.05 }));
   });
 
-  const sampleCount = compiled.samples.length;
   const distScale = compiled.totalLength / sampleCount;
   // Corners where target apex speed drops below 65% of straight-line top speed (|curvature| > 0.025, R < 40m)
   const zoneEntries: Array<{ index: number; side: number }> = [];

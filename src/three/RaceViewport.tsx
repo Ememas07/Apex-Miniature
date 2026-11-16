@@ -711,12 +711,9 @@ export function RaceViewport(props: RaceViewportProps) {
           }
 
           // Engine audio synthesis
-          const speedRatio = Math.min(1, playerCar.speed / 52);
-          const gear = Math.max(1, Math.min(8, Math.ceil(speedRatio * 7.8) || 1));
-          const rpmNorm = ((speedRatio * 7.8) % 1) * 0.65 + 0.28;
           const liveSpeedKmh = Math.round(playerCar.speed * SPEED_KMH_FACTOR);
           sim.audio.updateEngine(
-            rpmNorm,
+            playerCar.rpmNormalized,
             throttle,
             playerCar.carSpec.engineType,
             sim.countdown <= 0,
@@ -828,16 +825,13 @@ export function RaceViewport(props: RaceViewportProps) {
         const classCars = standings.filter((s) => s.classId === playerCar.carSpec.classId).length;
 
         const speedKmh = Math.round(playerCar.speed * SPEED_KMH_FACTOR);
-        const speedRatio = Math.min(1, playerCar.speed / 52);
-        const gear = playerCar.speed < 1.5 ? 1 : Math.min(8, Math.max(1, Math.ceil(speedRatio * 7.9)));
-        const rpmNormalized = playerCar.speed < 1 ? 0.18 : ((speedRatio * 7.9) % 1) * 0.65 + 0.3;
 
         const snapshot: HudSnapshot = {
           phase: activePhase,
           countdown: sim.countdown,
           speedKmh,
-          gear,
-          rpmNormalized,
+          gear: playerCar.gear,
+          rpmNormalized: playerCar.rpmNormalized,
           lap: playerCar.lap,
           totalLaps: activePhase === 'qualifying' ? 1 : p.raceConfig.totalLaps,
           position: playerStanding.position,

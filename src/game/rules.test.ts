@@ -462,13 +462,30 @@ test('Authentic Track Directions & Heavy Braking: flat-out hairpin entry underst
     }
     return area;
   };
-  const ccwIds = ['laguna-seca', 'imola', 'interlagos', 'baku', 'yas-marina', 'cota', 'jeddah', 'miami', 'las-vegas', 'singapore', 'detroit-street'];
+  const ccwIds = [
+    'daytona-road',
+    'laguna-seca',
+    'cota',
+    'interlagos',
+    'montreal',
+    'mexico-city',
+    'las-vegas',
+    'long-beach',
+    'imola',
+    'baku',
+    'jeddah',
+    'singapore',
+    'yas-marina',
+  ];
   for (const id of ccwIds) {
     const t = TRACKS.find((trk) => trk.id === id)!;
     assert.ok(wind(t) < 0, `Expected CCW track ${id} to have negative signed area, got ${wind(t)}`);
   }
-  const spaTrack = TRACKS.find((trk) => trk.id === 'spa-francorchamps')!;
-  assert.ok(wind(spaTrack) > 0, 'Expected Spa to be Clockwise (positive XZ area)');
+  const cwSampleIds = ['spa-francorchamps', 'le-mans', 'silverstone', 'portimao', 'miami', 'detroit-street'];
+  for (const id of cwSampleIds) {
+    const t = TRACKS.find((trk) => trk.id === id)!;
+    assert.ok(wind(t) > 0, `Expected CW track ${id} to be Clockwise (positive area), got ${wind(t)}`);
+  }
   const suzuka = TRACKS.find((trk) => trk.id === 'suzuka')!;
   const maxY = Math.max(...suzuka.waypoints.map((w) => w.y));
   assert.ok(maxY >= 9.5, `Expected Suzuka figure-8 overpass height >= 9.5m, got ${maxY}`);
@@ -1018,6 +1035,220 @@ test('All 43 Circuits: Zero 2D self-intersections or pinch points (< trackWidth 
       );
     }
   }
+});
+
+test('Gold-Standard SVGs & Gentle Banking: Le Mans, Silverstone, Portimao, Spa, Daytona Road', () => {
+  const goldTracks = ['le-mans', 'silverstone', 'portimao', 'spa-francorchamps', 'daytona-road'];
+  for (const id of goldTracks) {
+    const trk = TRACKS.find((t) => t.id === id);
+    assert.ok(trk, `Track ${id} must exist in registry`);
+    const compiled = compileTrack(trk);
+    assert.ok(compiled.totalLength > 4000, `Track ${id} length must be > 4000m, got ${compiled.totalLength}`);
+
+    // Direction verification
+    const n = compiled.samples.length;
+    let area = 0;
+    for (let i = 0; i < n; i++) {
+      const p1 = compiled.samples[i];
+      const p2 = compiled.samples[(i + 1) % n];
+      area += p1.x * p2.z - p2.x * p1.z;
+    }
+    if (id === 'daytona-road') {
+      assert.ok(area < 0, `Daytona Road Course must be Counter-Clockwise (area < 0), got ${area}`);
+    } else {
+      assert.ok(area > 0, `Track ${id} must be Clockwise (area > 0), got ${area}`);
+    }
+
+    // Zero non-adjacent self-intersections
+    let minNonAdjDist = Infinity;
+    for (let i = 0; i < n; i++) {
+      const p1 = compiled.samples[i];
+      for (let j = i + 1; j < n; j++) {
+        const stepDist = Math.min(j - i, n - (j - i));
+        if (stepDist < 24) continue;
+        const p2 = compiled.samples[j];
+        const dist = Math.hypot(p1.x - p2.x, p1.z - p2.z);
+        if (dist < minNonAdjDist) minNonAdjDist = dist;
+      }
+    }
+    assert.ok(
+      minNonAdjDist >= trk.trackWidth * 2.0,
+      `Track ${id} pinch point: ${minNonAdjDist.toFixed(1)}m < ${(trk.trackWidth * 2).toFixed(1)}m`,
+    );
+  }
+
+  // Gentle Banking Verification: Daytona <= 10 deg, Zandvoort <= 12 deg, Indy <= 12 deg
+  const daytona = TRACKS.find((t) => t.id === 'daytona-road')!;
+  const maxDaytonaBank = Math.max(...daytona.waypoints.map((w) => w.banking || 0));
+  assert.ok(maxDaytonaBank <= 10.0, `Daytona banking must be gentle (<= 10 deg), got ${maxDaytonaBank} deg`);
+
+  const zandvoort = TRACKS.find((t) => t.id === 'zandvoort')!;
+  const maxZandvoortBank = Math.max(...zandvoort.waypoints.map((w) => w.banking || 0));
+  assert.ok(maxZandvoortBank <= 12.0, `Zandvoort banking must be <= 12 deg, got ${maxZandvoortBank} deg`);
+
+  const indy = TRACKS.find((t) => t.id === 'indianapolis-road')!;
+  const maxIndyBank = Math.max(...indy.waypoints.map((w) => w.banking || 0));
+  assert.ok(maxIndyBank <= 12.0, `Indianapolis banking must be <= 12 deg, got ${maxIndyBank} deg`);
+
+  // Elevation Profiles in True Meters
+  const portimao = TRACKS.find((t) => t.id === 'portimao')!;
+  const maxPortimaoY = Math.max(...portimao.waypoints.map((w) => w.y));
+  assert.ok(maxPortimaoY >= 18.0, `Portimao rollercoaster elevation peak must be >= 18m, got ${maxPortimaoY}m`);
+
+  const interlagos = TRACKS.find((t) => t.id === 'interlagos')!;
+  const maxInterlagosY = Math.max(...interlagos.waypoints.map((w) => w.y));
+  assert.ok(maxInterlagosY >= 14.0, `Interlagos Arquibancadas climb must be >= 14m, got ${maxInterlagosY}m`);
+
+  const spa = TRACKS.find((t) => t.id === 'spa-francorchamps')!;
+  const maxSpaY = Math.max(...spa.waypoints.map((w) => w.y));
+  assert.ok(maxSpaY >= 40.0, `Spa Les Combes elevation peak must be >= 40m, got ${maxSpaY}m`);
+});
+
+test('Authentic Transmission Gearing & Powertrains per Class: F1, GTP, LMP2, GT3, FE, Supercars', () => {
+  // Class metadata forward gear counts
+  assert.equal(CAR_CLASSES[CarClassId.F1_2026].forwardGears, 8);
+  assert.equal(CAR_CLASSES[CarClassId.F1_2021].forwardGears, 8);
+  assert.equal(CAR_CLASSES[CarClassId.F1_2005].forwardGears, 7);
+  assert.equal(CAR_CLASSES[CarClassId.HYPERCAR_GTP].forwardGears, 7);
+  assert.equal(CAR_CLASSES[CarClassId.LMP2].forwardGears, 6);
+  assert.equal(CAR_CLASSES[CarClassId.GT3].forwardGears, 6);
+  assert.equal(CAR_CLASSES[CarClassId.FORMULA_E].forwardGears, 1);
+  assert.equal(CAR_CLASSES[CarClassId.SUPERCAR].forwardGears, 7);
+  assert.equal(CAR_CLASSES[CarClassId.TRACK_COUPE].forwardGears, 6);
+
+  // Per-car override: Cadillac V-Series.R has 6 gears
+  const cadillac = CARS.find((c) => c.id === 'cadillac-vseries-r')!;
+  assert.equal(cadillac.gears, 6, 'Cadillac V-Series.R must have 6 gears');
+
+  // Gearing in physics step
+  const spa = compileTrack(TRACKS[0]);
+  const feSpec = CARS.find((c) => c.classId === CarClassId.FORMULA_E)!;
+  const feCar = createCarSimState({
+    id: 'fe1',
+    name: 'FE Driver',
+    isPlayer: true,
+    carId: feSpec.id,
+    livery: feSpec.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+
+  // Test Formula E stays in gear 1 across entire acceleration range
+  stepCarPhysics(feCar, { throttle: 1, brake: 0, steer: 0, specialPressed: false }, spa, 3.0, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [feCar],
+  });
+  assert.equal(feCar.gear, 1, 'Formula E must remain in gear 1 (direct drive)');
+  assert.ok(feCar.rpmNormalized > 0.3, `Formula E motor RPM must increase with speed, got ${feCar.rpmNormalized}`);
+
+  // Test F1 shifts through gears as speed climbs
+  const f1Spec = CARS.find((c) => c.classId === CarClassId.F1_2026)!;
+  const f1Car = createCarSimState({
+    id: 'f1',
+    name: 'F1 Driver',
+    isPlayer: true,
+    carId: f1Spec.id,
+    livery: f1Spec.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  for (let i = 0; i < 360; i++) {
+    stepCarPhysics(f1Car, { throttle: 1, brake: 0, steer: 0, specialPressed: false }, spa, 1 / 60, {
+      trackWetness: 0,
+      totalLaps: 5,
+      isQualifying: false,
+      allCars: [f1Car],
+    });
+  }
+  assert.ok(f1Car.gear >= 5, `F1 car should reach high gears at high speed, got gear ${f1Car.gear}`);
+  assert.ok(f1Car.speed > 55, `F1 car should exceed 200 km/h in 6s acceleration, got ${(f1Car.speed * 3.6).toFixed(0)} km/h`);
+});
+
+test('Bouncy Car-to-Car Collisions: elastic normal bounce, tangential momentum preservation & damage threshold', () => {
+  const spa = compileTrack(TRACKS[0]);
+  const f1Spec = CARS.find((c) => c.classId === CarClassId.F1_2026)!;
+
+  const carA = createCarSimState({
+    id: 'carA',
+    name: 'Car A',
+    isPlayer: true,
+    carId: f1Spec.id,
+    livery: f1Spec.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  const carB = createCarSimState({
+    id: 'carB',
+    name: 'Car B',
+    isPlayer: false,
+    carId: f1Spec.id,
+    livery: f1Spec.defaultLivery,
+    gridSlot: 2,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+
+  // Position cars in overlapping contact
+  carA.x = 0;
+  carA.z = 0;
+  carA.vx = 0;
+  carA.vz = 50; // 180 km/h forward
+  carA.speed = 50;
+
+  carB.x = 1.5; // lateral offset within 2.65m contact distance
+  carB.z = 0;
+  carB.vx = -10; // closing into carA at 10 m/s
+  carB.vz = 50;
+  carB.speed = Math.hypot(carB.vx, carB.vz);
+
+  const initialDmgA = carA.aeroDamage;
+  resolveCarCollisions([carA, carB]);
+
+  // Cars must bounce apart along X (normal)
+  assert.ok(carA.vx < 0, `Car A should bounce left (-X), got vx=${carA.vx}`);
+  assert.ok(carB.vx > 0, `Car B should bounce right (+X), got vx=${carB.vx}`);
+
+  // Forward momentum must NOT be destroyed (speed must NOT halt to 0 or drop by massive amount)
+  assert.ok(carA.speed >= 40, `Car A forward speed preserved after side-bump: ${carA.speed} m/s`);
+  assert.ok(carB.speed >= 40, `Car B forward speed preserved after side-bump: ${carB.speed} m/s`);
+
+  // Low speed grazing contact (< 25 km/h = 6.94 m/s) should inflict 0 damage
+  const carC = createCarSimState({
+    id: 'carC',
+    name: 'Car C',
+    isPlayer: true,
+    carId: f1Spec.id,
+    livery: f1Spec.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  const carD = createCarSimState({
+    id: 'carD',
+    name: 'Car D',
+    isPlayer: false,
+    carId: f1Spec.id,
+    livery: f1Spec.defaultLivery,
+    gridSlot: 2,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  carC.x = 0;
+  carC.z = 0;
+  carC.vx = 2.0; // below 6.94 m/s
+  carC.vz = 30;
+  carD.x = 2.0;
+  carD.z = 0;
+  carD.vx = -2.0;
+  carD.vz = 30;
+  resolveCarCollisions([carC, carD]);
+  assert.equal(carC.aeroDamage, 0, 'Grazing contact below 25 km/h must inflict 0 damage');
+  assert.equal(carD.aeroDamage, 0, 'Grazing contact below 25 km/h must inflict 0 damage');
 });
 
 

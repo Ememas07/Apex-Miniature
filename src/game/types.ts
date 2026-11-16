@@ -38,6 +38,7 @@ export interface CarClassMeta {
   plateColor: string;
   badgeTextColor: string;
   basePaceIndex: number; // Class speed tier (higher = faster overall lap)
+  forwardGears: number; // Standard forward gear count for this class
   specialType: ClassSpecialType;
   specialLabel: string;
   defaultHeadlightTint: HeadlightTint;
@@ -85,6 +86,7 @@ export interface CarSpec {
   attributes: BoPAttributes;
   tradeoffNote: string;
   engineType: 'v6-hybrid' | 'v8-hybrid' | 'v10' | 'v12' | 'flat6' | 'electric' | 'turbo-i6';
+  gears?: number; // per-car transmission gear override (e.g. Cadillac GTP = 6 gears)
   specialTypeOverride?: ClassSpecialType;
   specialLabelOverride?: string;
   defaultLivery: LiveryConfig;

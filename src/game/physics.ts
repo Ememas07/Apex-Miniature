@@ -75,6 +75,8 @@ export interface CarSimState {
   pitStrategy: PitStrategy;
   flashingHeadlights: boolean;
   finished: boolean;
+  gear: number;
+  rpmNormalized: number;
   aiTargetOffset: number;
   aiPassTimer: number;
   aiPaceMultiplier: number;
@@ -163,6 +165,8 @@ export function createCarSimState(params: {
     },
     flashingHeadlights: false,
     finished: false,
+    gear: 1,
+    rpmNormalized: 0.18,
     aiTargetOffset: lat * 0.4,
     aiPassTimer: 0,
     aiPaceMultiplier: params.aiPaceMultiplier ?? 1.0,
@@ -474,10 +478,18 @@ export function stepCarPhysics(
 
   // Compute physical performance scalars
   const paceScale = classMeta.basePaceIndex;
-  // 1:1 Metric Scale (1 unit = 1 meter):
-  // Top speeds reach 315-350 km/h (87-97 m/s) for F1/Hypercar, and 270-292 km/h (75-81 m/s) for GT3
-  const maxSpeedBase = (63 + (attrs.topSpeed / 100) * 19) * (0.64 + 0.36 * paceScale);
-  const accelBase = (18 + (attrs.acceleration / 100) * 14) * (0.62 + 0.38 * paceScale);
+  // 1:1 Metric Scale: Realistic Top Speeds and Gearing per Class
+  // F1: 320-355 km/h, Hypercar/GTP: 318-342 km/h, LMP2: 315-325 km/h, GT3: 275-290 km/h, FE: 285-322 km/h, Supercar: 330-355 km/h, Coupe: 285-312 km/h
+  const classPaceBonus =
+    classMeta.id === CarClassId.SUPERCAR
+      ? 1.08
+      : classMeta.id === CarClassId.TRACK_COUPE
+      ? 1.04
+      : classMeta.id === CarClassId.FORMULA_E
+      ? 0.98
+      : (0.70 + 0.30 * paceScale);
+  const maxSpeedBase = (68 + (attrs.topSpeed / 100) * 18) * classPaceBonus;
+  const accelBase = (20 + (attrs.acceleration / 100) * 16) * (0.60 + 0.40 * paceScale);
   const gripBase = (1.42 + (attrs.corneringGrip / 100) * 1.15) * (0.75 + paceScale * 0.25);
   const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35);
 
@@ -580,6 +592,30 @@ export function stepCarPhysics(
     car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
   } else if (throttle < 0.05 && brake < 0.05) {
     car.speed = Math.max(0, car.speed - car.speed * dragCoeff * dt);
+  }
+
+  // Authentic Powertrain & Gearing Simulation per Class / Car Spec:
+  const totalGears = car.carSpec.gears ?? classMeta.forwardGears ?? 6;
+  if (totalGears === 1) {
+    // Formula E: direct-drive single reduction gear
+    car.gear = 1;
+    const motorRatio = Math.min(1.0, car.speed / Math.max(1, maxSpeedBase));
+    car.rpmNormalized = car.speed < 1.0 ? 0.15 : Math.min(1.0, 0.15 + motorRatio * 0.85);
+  } else {
+    // Multi-gear transmission (6-8 forward gears)
+    if (car.speed < 1.0) {
+      car.gear = 1;
+      car.rpmNormalized = 0.18;
+    } else {
+      const topSpeedRef = Math.max(45, maxSpeedBase * specialSpeedMult);
+      const speedRatio = Math.min(0.999, car.speed / topSpeedRef);
+      const gearProgress = Math.pow(speedRatio, 0.74) * totalGears;
+      const currentGear = Math.max(1, Math.min(totalGears, Math.floor(gearProgress) + 1));
+      const inGearFraction = gearProgress - (currentGear - 1);
+      const gearRpm = 0.38 + 0.58 * Math.max(0, Math.min(1.0, inGearFraction));
+      car.gear = currentGear;
+      car.rpmNormalized = Math.round(gearRpm * 100) / 100;
+    }
   }
 
   // Sim-Cade Steering, Centripetal Cornering Limit, Trail-Braking & Understeer Scrub
@@ -839,12 +875,17 @@ export function stepCarPhysics(
 }
 
 /**
- * Resolves car-to-car collisions with elastic separation and mild aero/suspension wear.
+ * Resolves car-to-car collisions with elastic bounce, non-zeroing momentum transfer, and reduced damage:
+ * 1. Horizontal separation: normal * (overlap * 0.5 + 0.05m)
+ * 2. Elastic normal bounce: restitution = 0.50
+ * 3. Tangential momentum preservation: transfer 20% relative tangential velocity without zeroing forward speed
+ * 4. Damage: ignore contacts below 25 km/h (0 damage), 75% damage reduction (0.25x rate), max penalty capped at 10%-12%
  */
 export function resolveCarCollisions(cars: CarSimState[]): number {
   let maxImpact = 0;
   const minDist = 2.65;
   const minDistSq = minDist * minDist;
+  const DAMAGE_THRESHOLD_SPEED = 25 / SPEED_KMH_FACTOR; // 6.944 m/s (25 km/h)
 
   for (let i = 0; i < cars.length; i++) {
     for (let j = i + 1; j < cars.length; j++) {
@@ -858,22 +899,50 @@ export function resolveCarCollisions(cars: CarSimState[]): number {
         const d = Math.sqrt(dSq);
         const nx = dx / d;
         const nz = dz / d;
-        const overlap = (minDist - d) * 0.5;
-        a.x -= nx * overlap;
-        a.z -= nz * overlap;
-        b.x += nx * overlap;
-        b.z += nz * overlap;
+        const pushDist = (minDist - d) * 0.5 + 0.05;
+        a.x -= nx * pushDist;
+        a.z -= nz * pushDist;
+        b.x += nx * pushDist;
+        b.z += nz * pushDist;
 
         const relVx = b.vx - a.vx;
         const relVz = b.vz - a.vz;
-        const impactSpeed = Math.abs(relVx * nx + relVz * nz);
-        if (impactSpeed > 4.5) {
+        const relVNorm = relVx * nx + relVz * nz;
+
+        // Elastic normal bounce (restitution = 0.50)
+        if (relVNorm < 0) {
+          const restitution = 0.50;
+          const bounceSpeed = Math.max(1.5, Math.abs(relVNorm) * restitution);
+          // Zero inward normal velocity and apply outward restitution bounce
+          const normA = a.vx * nx + a.vz * nz;
+          const normB = b.vx * nx + b.vz * nz;
+          a.vx = (a.vx - normA * nx) - nx * bounceSpeed;
+          a.vz = (a.vz - normA * nz) - nz * bounceSpeed;
+          b.vx = (b.vx - normB * nx) + nx * bounceSpeed;
+          b.vz = (b.vz - normB * nz) + nz * bounceSpeed;
+        }
+
+        // Tangent momentum preservation: transfer 20% relative tangential closing speed without zeroing forward velocity
+        const tx = -nz;
+        const tz = nx;
+        const relVTan = relVx * tx + relVz * tz;
+        const tanTransfer = relVTan * 0.20 * 0.5;
+        a.vx += tanTransfer * tx;
+        a.vz += tanTransfer * tz;
+        b.vx -= tanTransfer * tx;
+        b.vz -= tanTransfer * tz;
+
+        // Recompute speed scalar preserving forward momentum
+        a.speed = Math.hypot(a.vx, a.vz);
+        b.speed = Math.hypot(b.vx, b.vz);
+
+        const impactSpeed = Math.abs(relVNorm);
+        if (impactSpeed >= DAMAGE_THRESHOLD_SPEED) {
           maxImpact = Math.max(maxImpact, impactSpeed);
-          const dmg = Math.min(14, (impactSpeed - 4) * 0.85);
+          // 75% damage reduction (0.25x rate), capped at 3.5% per contact
+          const dmg = Math.min(3.5, (impactSpeed - DAMAGE_THRESHOLD_SPEED) * 0.25);
           a.aeroDamage = Math.min(100, a.aeroDamage + dmg);
           b.aeroDamage = Math.min(100, b.aeroDamage + dmg);
-          a.speed *= 0.92;
-          b.speed *= 0.92;
         }
       }
     }
