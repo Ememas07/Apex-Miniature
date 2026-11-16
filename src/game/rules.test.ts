@@ -12,9 +12,13 @@ import { CarClassId, TrackSpec, TrackWaypoint } from './types';
 import { TRACKS, compileTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
 import {
   CUSTOM_TRACK_TEMPLATES,
+  NODE_COLLIDER_RADIUS_MULTIPLIER,
+  NODE_HIT_RADIUS_PX,
   analyzeTrackGeometry,
   exportTrackToJson,
   exportTrackToShareCode,
+  findClosestWaypointHit2D,
+  findTrackSegmentInsertIndex,
   importTrackFromString,
 } from './customTracks';
 import {
@@ -22,6 +26,7 @@ import {
   computeStandings,
   createCarSimState,
   getCompoundModifiers,
+  resolveCarCollisions,
   stepCarPhysics,
 } from './physics';
 
@@ -378,7 +383,7 @@ test('Issue 3: Class Special Abilities function across all distinct classes incl
   assert.equal(gt3Car.flashingHeadlights, true);
 });
 
-test('Issue 6: AI Anti-Stuck Watchdog resets car if stationary for > 2.0s', () => {
+test('Issue 6: AI Anti-Stuck Watchdog resets car aligned at 35 km/h if stationary for > 1.5s', () => {
   const spa = compileTrack(TRACKS[0]);
   const gtp = CARS.find((c) => c.id === 'toyota-gr010')!;
   const aiCar = createCarSimState({
@@ -397,8 +402,8 @@ test('Issue 6: AI Anti-Stuck Watchdog resets car if stationary for > 2.0s', () =
   aiCar.x = 999;
   aiCar.z = 999;
 
-  // Run for 2.2 seconds
-  for (let i = 0; i < 135; i++) {
+  // Run for 1.6 seconds (> 1.5s watchdog threshold)
+  for (let i = 0; i < 98; i++) {
     stepCarPhysics(
       aiCar,
       { throttle: 0, brake: 0, steer: 0, specialPressed: false },
@@ -408,8 +413,8 @@ test('Issue 6: AI Anti-Stuck Watchdog resets car if stationary for > 2.0s', () =
     );
   }
 
-  // Watchdog should have triggered and reset the car back onto the spline at rolling speed
-  assert.ok(aiCar.speed >= 12, `Expected reset car speed >= 12 m/s, got ${aiCar.speed}`);
+  // Watchdog should have triggered at 1.5s and reset the car at 35 km/h (~9.72 m/s) in an unoccupied lane
+  assert.ok(aiCar.speed >= 9.0 && aiCar.speed <= 12.5, `Expected reset car speed ~35 km/h (9.72 m/s), got ${aiCar.speed}`);
   assert.ok(Math.hypot(aiCar.x, aiCar.z) < 2000, 'Expected car to be placed back near track coordinates');
 });
 
@@ -647,5 +652,188 @@ test('AI Pathfinding & Control on Custom Track: navigates, brakes for corners, a
     `AI went excessively off-track: lateralOffset ${aiCar.lateralOffset}`,
   );
 });
+
+test('All 43 Circuits: high-density waypoints (>=50), zero 3D ribbon folds, minR >= halfW, and dead-straight corridors', () => {
+  assert.equal(TRACKS.length, 43);
+  for (const t of TRACKS) {
+    assert.ok(t.waypoints.length >= 50, `${t.id} expected >= 50 waypoints, got ${t.waypoints.length}`);
+    const compiled = compileTrack(t);
+    const hw = t.trackWidth * 0.5;
+    const n = compiled.samples.length;
+    let minR = Infinity;
+    let straightCount = 0;
+
+    for (let i = 0; i < n; i++) {
+      const p1 = compiled.samples[i];
+      const p2 = compiled.samples[(i + 1) % n];
+      if (Math.abs(p1.curvature) > 1e-4) {
+        minR = Math.min(minR, 1 / Math.abs(p1.curvature));
+      } else {
+        straightCount++;
+      }
+      const utx = p2.x - p1.x;
+      const utz = p2.z - p1.z;
+      const dlx = (p2.x - p2.nx * hw) - (p1.x - p1.nx * hw);
+      const dlz = (p2.z - p2.nz * hw) - (p1.z - p1.nz * hw);
+      const drx = (p2.x + p2.nx * hw) - (p1.x + p1.nx * hw);
+      const drz = (p2.z + p2.nz * hw) - (p1.z + p1.nz * hw);
+      assert.ok(
+        dlx * utx + dlz * utz > 0 && drx * utx + drz * utz > 0,
+        `${t.id} inverted 3D ribbon edge at sample ${i}`,
+      );
+    }
+
+    assert.ok(minR >= hw, `${t.id} minR ${minR.toFixed(2)}m < halfW ${hw.toFixed(2)}m`);
+    assert.ok(straightCount > 20, `${t.id} missing straightaway segments`);
+  }
+});
+
+test('AI Spatial Avoidance & Strict Asphalt Containment: avoids braking player, respects side-by-side doors, stays on asphalt', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const monaco = compileTrack(TRACKS.find((t) => t.id === 'monaco')!);
+  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const gt3 = CARS.find((c) => c.id === 'ferrari-296-gt3')!;
+
+  // 1. Forward Braking Cone + Overtaking: Player brakes hard right ahead of F1 AI on Monza straight
+  const player = createCarSimState({
+    id: 'player',
+    name: 'Player',
+    isPlayer: true,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'medium',
+  });
+  const chaseAi = createCarSimState({
+    id: 'ai-chase',
+    name: 'Chase AI',
+    isPlayer: false,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 2,
+    compiledTrack: monza,
+    compound: 'medium',
+    personality: 'Late-Braker',
+  });
+
+  const sP = sampleTrackAtT(monza, 0.08);
+  const sA = sampleTrackAtT(monza, 0.08 - 18 / monza.totalLength);
+  player.x = sP.x; player.z = sP.z; player.trackT = sP.t; player.heading = Math.atan2(sP.tx, sP.tz);
+  player.speed = 42; player.vx = sP.tx * 42; player.vz = sP.tz * 42; player.lateralOffset = 0;
+  chaseAi.x = sA.x; chaseAi.z = sA.z; chaseAi.trackT = sA.t; chaseAi.heading = Math.atan2(sA.tx, sA.tz);
+  chaseAi.speed = 46; chaseAi.vx = sA.tx * 46; chaseAi.vz = sA.tz * 46; chaseAi.lateralOffset = 0;
+
+  let minGap = Infinity;
+  let hardImpacts = 0;
+  for (let i = 0; i < 180; i++) {
+    const aiInp = computeAIControl(chaseAi, monza, [player, chaseAi], 1 / 60, 0);
+    const pInp = {
+      throttle: player.speed < 12 ? 0.3 : 0,
+      brake: player.speed > 12 ? 0.9 : 0,
+      steer: 0,
+      specialPressed: false,
+    };
+    stepCarPhysics(player, pInp, monza, 1 / 60, { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [player, chaseAi] });
+    stepCarPhysics(chaseAi, aiInp, monza, 1 / 60, { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [player, chaseAi] });
+    minGap = Math.min(minGap, Math.hypot(player.x - chaseAi.x, player.z - chaseAi.z));
+    if (resolveCarCollisions([player, chaseAi]) > 4.5) hardImpacts++;
+  }
+  assert.equal(hardImpacts, 0, 'Expected AI to avoid rear-ending braking player');
+  assert.ok(minGap > 2.6, `Expected safe passing clearance > 2.6m, got ${minGap.toFixed(2)}m`);
+
+  // 2. Side-by-Side Door Awareness: Player alongside AI prevents inward target cut
+  const sidePlayer = createCarSimState({
+    id: 'side-player',
+    name: 'Side Player',
+    isPlayer: true,
+    carId: gt3.id,
+    livery: gt3.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monaco,
+    compound: 'medium',
+  });
+  const sideAi = createCarSimState({
+    id: 'side-ai',
+    name: 'Side AI',
+    isPlayer: false,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monaco,
+    compound: 'medium',
+  });
+  const sDoor = sampleTrackAtT(monaco, 0.25);
+  sidePlayer.trackT = sDoor.t;
+  sidePlayer.lateralOffset = -2.2;
+  sidePlayer.x = sDoor.x + sDoor.nx * -2.2;
+  sidePlayer.z = sDoor.z + sDoor.nz * -2.2;
+  sidePlayer.speed = 25;
+  sideAi.trackT = sDoor.t;
+  sideAi.lateralOffset = 0.8;
+  sideAi.x = sDoor.x + sDoor.nx * 0.8;
+  sideAi.z = sDoor.z + sDoor.nz * 0.8;
+  sideAi.heading = Math.atan2(sDoor.tx, sDoor.tz);
+  sideAi.speed = 25;
+
+  computeAIControl(sideAi, monaco, [sidePlayer, sideAi], 1 / 60, 0);
+  assert.ok(
+    sideAi.aiTargetOffset >= sidePlayer.lateralOffset + 2.1 * 1.4 - 0.05,
+    `Expected AI to hold side-by-side door clearance, got aiTargetOffset=${sideAi.aiTargetOffset.toFixed(2)} vs player=${sidePlayer.lateralOffset}`,
+  );
+
+  // 3. Tight Monaco 60s full-speed run: AI stays strictly on asphalt (|lat| <= halfW)
+  const monacoBot = createCarSimState({
+    id: 'monaco-bot',
+    name: 'Monaco Bot',
+    isPlayer: false,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monaco,
+    compound: 'medium',
+    personality: 'Late-Braker',
+  });
+  let maxLat = 0;
+  for (let i = 0; i < 3600; i++) {
+    const inp = computeAIControl(monacoBot, monaco, [monacoBot], 1 / 60, 0);
+    stepCarPhysics(monacoBot, inp, monaco, 1 / 60, { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [monacoBot] });
+    if (i > 60) maxLat = Math.max(maxLat, Math.abs(monacoBot.lateralOffset));
+  }
+  assert.ok(
+    maxLat <= monaco.spec.trackWidth * 0.5,
+    `Expected F1 AI to stay strictly on Monaco asphalt (<= ${monaco.spec.trackWidth * 0.5}m), reached ${maxLat.toFixed(2)}m`,
+  );
+});
+
+test('Track Studio Helpers: generous node hit-testing (>= 14px & >= 1.8x collider) and segment insertion ordering', () => {
+  assert.ok(NODE_HIT_RADIUS_PX >= 14, `Expected 2D hit radius >= 14px, got ${NODE_HIT_RADIUS_PX}`);
+  assert.ok(
+    NODE_COLLIDER_RADIUS_MULTIPLIER >= 1.8,
+    `Expected 3D hit-sphere collider >= 1.8x, got ${NODE_COLLIDER_RADIUS_MULTIPLIER}`,
+  );
+
+  const wps: TrackWaypoint[] = [
+    { x: -100, y: 0, z: -100 },
+    { x: 100, y: 0, z: -100 },
+    { x: 100, y: 10, z: 100 },
+    { x: -100, y: 0, z: 100 },
+  ];
+
+  // Screen center (600, 400), scale = 1.0 -> node 1 is at (700, 300)
+  const hitExact = findClosestWaypointHit2D(wps, 712, 305, 600, 400, 1.0);
+  assert.equal(hitExact, 1, 'Expected generous 16px grab radius to hit node #1');
+  const miss = findClosestWaypointHit2D(wps, 640, 300, 600, 400, 1.0);
+  assert.equal(miss, -1, 'Expected pointer well away from nodes to return -1');
+
+  // Segment insertion on Catmull-Rom curve between node 1 (100,-100) and node 2 (100,100) (bows to x=125)
+  const ins = findTrackSegmentInsertIndex(wps, 125, 0, 17);
+  assert.equal(ins.segmentIndex, 1);
+  assert.equal(ins.insertIndex, 2);
+  assert.ok(ins.distance < 2, `Expected point on spline segment to match tightly, dist=${ins.distance}`);
+  assert.equal(ins.waypoint.y, 5, 'Expected elevation Y to interpolate halfway between 0m and 10m');
+});
+
+
 
 

@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   CUSTOM_TRACK_TEMPLATES,
+  NODE_COLLIDER_RADIUS_MULTIPLIER,
+  NODE_HIT_RADIUS_PX,
   TrackGeometryAnalysis,
   analyzeTrackGeometry,
   exportTrackToJson,
   exportTrackToShareCode,
+  findClosestWaypointHit2D,
+  findTrackSegmentInsertIndex,
   importTrackFromString,
   saveCustomTrack,
 } from '../game/customTracks';
@@ -60,7 +65,12 @@ export function TrackStudioModal({
   });
 
   const [selectedNodeIndex, setSelectedNodeIndex] = useState<number>(0);
-  const [activeTab, setActiveTab] = useState<'editor' | 'preview'>('editor');
+  const [editorMode, setEditorMode] = useState<'select' | 'add'>('select');
+  const [hoveredNode2d, setHoveredNode2d] = useState<number | null>(null);
+  const [hoveredNode3d, setHoveredNode3d] = useState<number | null>(null);
+  const [cursor2d, setCursor2d] = useState<'default' | 'grab' | 'grabbing' | 'move' | 'crosshair'>('default');
+  const [cursor3d, setCursor3d] = useState<'default' | 'grab' | 'grabbing' | 'move' | 'crosshair'>('default');
+  const [cameraView3d, setCameraView3d] = useState<'angled' | 'top'>('angled');
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
@@ -69,7 +79,9 @@ export function TrackStudioModal({
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
 
   // 2D Canvas interaction state
+  const canvas2dContainerRef = useRef<HTMLDivElement | null>(null);
   const canvas2dRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvas2dSize, setCanvas2dSize] = useState({ width: 1200, height: 800 });
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1.0);
   const draggingNodeRef = useRef<number | null>(null);
@@ -92,6 +104,7 @@ export function TrackStudioModal({
   const updateWaypoint = useCallback(
     (index: number, patch: Partial<TrackWaypoint>) => {
       setTrackSpec((prev) => {
+        if (index < 0 || index >= prev.waypoints.length) return prev;
         const nextWps = [...prev.waypoints];
         nextWps[index] = { ...nextWps[index], ...patch };
         return { ...prev, waypoints: nextWps };
@@ -99,6 +112,32 @@ export function TrackStudioModal({
     },
     [],
   );
+
+  // Insert waypoint at an explicit index
+  const insertWaypointAt = useCallback((insertIndex: number, newPoint: TrackWaypoint) => {
+    setTrackSpec((prev) => {
+      const clampedIdx = Math.max(0, Math.min(prev.waypoints.length, insertIndex));
+      const hasPerNodeTension = prev.waypoints.some((w) => w.tension !== undefined);
+      const cleanPoint: TrackWaypoint = hasPerNodeTension
+        ? newPoint
+        : { x: newPoint.x, y: newPoint.y, z: newPoint.z, width: newPoint.width, banking: newPoint.banking };
+      const newWps = [...prev.waypoints];
+      newWps.splice(clampedIdx, 0, cleanPoint);
+      const curSf = prev.startNodeIndex ?? 0;
+      const nextSf = curSf >= clampedIdx ? curSf + 1 : curSf;
+      return { ...prev, waypoints: newWps, startNodeIndex: nextSf };
+    });
+    setSelectedNodeIndex(insertIndex);
+  }, []);
+
+  // Append waypoint at end of loop
+  const appendWaypoint = useCallback((newPoint: TrackWaypoint) => {
+    setTrackSpec((prev) => {
+      const nextIdx = prev.waypoints.length;
+      queueMicrotask(() => setSelectedNodeIndex(nextIdx));
+      return { ...prev, waypoints: [...prev.waypoints, newPoint] };
+    });
+  }, []);
 
   // Insert waypoint after selected
   const handleInsertWaypoint = useCallback(() => {
@@ -118,8 +157,11 @@ export function TrackStudioModal({
       };
 
       const newWps = [...prev.waypoints];
-      newWps.splice(idx + 1, 0, newPoint);
-      return { ...prev, waypoints: newWps };
+      const insertAt = idx + 1;
+      newWps.splice(insertAt, 0, newPoint);
+      const curSf = prev.startNodeIndex ?? 0;
+      const nextSf = curSf >= insertAt ? curSf + 1 : curSf;
+      return { ...prev, waypoints: newWps, startNodeIndex: nextSf };
     });
     setSelectedNodeIndex((prev) => prev + 1);
   }, [selectedNodeIndex]);
@@ -129,7 +171,9 @@ export function TrackStudioModal({
     if (trackSpec.waypoints.length <= 4) return;
     setTrackSpec((prev) => {
       const newWps = prev.waypoints.filter((_, i) => i !== selectedNodeIndex);
-      return { ...prev, waypoints: newWps };
+      const curSf = prev.startNodeIndex ?? 0;
+      const nextSf = curSf > selectedNodeIndex ? curSf - 1 : curSf === selectedNodeIndex ? 0 : curSf;
+      return { ...prev, waypoints: newWps, startNodeIndex: Math.min(nextSf, newWps.length - 1) };
     });
     setSelectedNodeIndex((prev) => Math.max(0, prev - 1));
   }, [selectedNodeIndex, trackSpec.waypoints.length]);
@@ -142,6 +186,7 @@ export function TrackStudioModal({
     setSelectedNodeIndex(0);
     setPan({ x: 0, y: 0 });
     setZoom(1.0);
+    preview3dRef.current?.resetCamera(compileTrack(tmpl).totalLength, cameraView3d);
   };
 
   const buildFinalizedTrack = useCallback((): TrackSpec => {
@@ -199,6 +244,39 @@ export function TrackStudioModal({
     setImportText('');
   };
 
+  // Keep default 2D cursor synchronized with editorMode when idle
+  useEffect(() => {
+    if (draggingNodeRef.current === null && !isPanningRef.current && hoveredNode2d === null) {
+      setCursor2d(editorMode === 'add' ? 'crosshair' : 'default');
+    }
+    if (hoveredNode3d === null) {
+      setCursor3d((prev) => (prev === 'grabbing' || prev === 'move' ? prev : editorMode === 'add' ? 'crosshair' : 'default'));
+    }
+  }, [editorMode, hoveredNode2d, hoveredNode3d]);
+
+  // Keep 2D backing buffer synchronized 1:1 with displayed CSS container dimensions
+  useEffect(() => {
+    const container = canvas2dContainerRef.current;
+    const canvas = canvas2dRef.current;
+    if (!container || !canvas) return;
+
+    const syncSize = () => {
+      const rect = container.getBoundingClientRect();
+      const w = Math.max(320, Math.round(rect.width));
+      const h = Math.max(240, Math.round(rect.height));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        setCanvas2dSize({ width: w, height: h });
+      }
+    };
+
+    syncSize();
+    const ro = new ResizeObserver(syncSize);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, []);
+
   // ----------------------------------------------------
   // 2D Canvas Editor Rendering & Pointer Events
   // ----------------------------------------------------
@@ -208,7 +286,6 @@ export function TrackStudioModal({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let animId: number;
     const render2d = () => {
       const width = canvas.width;
       const height = canvas.height;
@@ -306,20 +383,18 @@ export function TrackStudioModal({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Pit lane corridor line
+        // Pit lane corridor line (ordered smoothly across S/F t=0.88 -> 1.0 -> 0.10)
         const pitSideSign = trackSpec.pitSide === 'right' ? 1 : -1;
+        const nSamples = compiledTrack.samples.length;
+        const startIdx = Math.floor(nSamples * 0.88);
+        const endSpan = Math.floor(nSamples * 0.22);
         ctx.beginPath();
-        for (let i = 0; i < compiledTrack.samples.length; i += 2) {
-          const s = compiledTrack.samples[i];
-          if (s.t >= 0.88 || s.t <= 0.10) {
-            const pitLat = pitSideSign * (trackSpec.trackWidth * 0.5 + 5.2);
-            const pt = toScreen(s.x + s.nx * pitLat, s.z + s.nz * pitLat);
-            if (s.t >= 0.88 && i === Math.floor(compiledTrack.samples.length * 0.88)) {
-              ctx.moveTo(pt.sx, pt.sy);
-            } else {
-              ctx.lineTo(pt.sx, pt.sy);
-            }
-          }
+        for (let k = 0; k <= endSpan; k += 2) {
+          const s = compiledTrack.samples[(startIdx + k) % nSamples];
+          const pitLat = pitSideSign * (trackSpec.trackWidth * 0.5 + 5.2);
+          const pt = toScreen(s.x + s.nx * pitLat, s.z + s.nz * pitLat);
+          if (k === 0) ctx.moveTo(pt.sx, pt.sy);
+          else ctx.lineTo(pt.sx, pt.sy);
         }
         ctx.strokeStyle = '#facc15';
         ctx.lineWidth = 2.5;
@@ -349,30 +424,50 @@ export function TrackStudioModal({
       trackSpec.waypoints.forEach((wp, idx) => {
         const pt = toScreen(wp.x, wp.z);
         const isSelected = idx === selectedNodeIndex;
+        const isHovered = idx === hoveredNode2d;
         const isSF = idx === (trackSpec.startNodeIndex ?? 0);
         const elevation = wp.y ?? 0;
+        const baseRadius = isSelected ? 10 : 7;
+        const handleRadius = isHovered ? baseRadius * 1.25 : baseRadius;
 
         // Overpass badge if elevation > 4m
         if (elevation >= 4) {
           ctx.fillStyle = '#a855f7';
           ctx.beginPath();
-          ctx.arc(pt.sx, pt.sy, 14, 0, Math.PI * 2);
+          ctx.arc(pt.sx, pt.sy, isHovered ? 16 : 14, 0, Math.PI * 2);
           ctx.fill();
+        }
+
+        // Hovered halo highlight
+        if (isHovered) {
+          ctx.beginPath();
+          ctx.arc(pt.sx, pt.sy, handleRadius + 4, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(125, 211, 252, 0.85)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
         }
 
         // Handle outer ring
         ctx.beginPath();
-        ctx.arc(pt.sx, pt.sy, isSelected ? 10 : 7, 0, Math.PI * 2);
-        ctx.fillStyle = isSelected ? '#38bdf8' : isSF ? '#ef4444' : '#f8fafc';
+        ctx.arc(pt.sx, pt.sy, handleRadius, 0, Math.PI * 2);
+        ctx.fillStyle = isHovered
+          ? isSF
+            ? '#fca5a5'
+            : '#7dd3fc'
+          : isSelected
+            ? '#38bdf8'
+            : isSF
+              ? '#ef4444'
+              : '#f8fafc';
         ctx.fill();
-        ctx.strokeStyle = isSelected ? '#ffffff' : '#0b0f17';
+        ctx.strokeStyle = isSelected || isHovered ? '#ffffff' : '#0b0f17';
         ctx.lineWidth = 2;
         ctx.stroke();
 
         // Node index text label
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '10px Oxanium, sans-serif';
-        ctx.fillText(`${idx + 1}${elevation > 0 ? ` (+${elevation}m)` : ''}`, pt.sx + 12, pt.sy + 4);
+        ctx.fillStyle = isHovered ? '#e0f2fe' : '#94a3b8';
+        ctx.font = isHovered ? 'bold 11px Oxanium, sans-serif' : '10px Oxanium, sans-serif';
+        ctx.fillText(`${idx + 1}${elevation > 0 ? ` (+${elevation}m)` : ''}`, pt.sx + 13, pt.sy + 4);
       });
 
       // Direction chevrons along straight
@@ -396,50 +491,98 @@ export function TrackStudioModal({
     };
 
     render2d();
-  }, [trackSpec, compiledTrack, selectedNodeIndex, pan, zoom]);
+  }, [trackSpec, compiledTrack, selectedNodeIndex, hoveredNode2d, pan, zoom, canvas2dSize]);
+
+  const get2dPointerCoords = (e: React.PointerEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(1, rect.width);
+    const scaleY = canvas.height / Math.max(1, rect.height);
+    return {
+      mouseX: (e.clientX - rect.left) * scaleX,
+      mouseY: (e.clientY - rect.top) * scaleY,
+    };
+  };
 
   // Pointer event listeners for 2D canvas
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvas2dRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const { mouseX, mouseY } = get2dPointerCoords(e, canvas);
+
+    // Right-Click (2) or Middle-Click (1): Camera Pan only
+    if (e.button === 2 || e.button === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      isPanningRef.current = true;
+      panStartRef.current = { x: mouseX - pan.x, y: mouseY - pan.y };
+      canvas.setPointerCapture(e.pointerId);
+      setCursor2d('move');
+      return;
+    }
+
+    // Left-Click (0): Node Selection, Dragging & Placement Only (NEVER pans camera)
+    if (e.button !== 0) return;
 
     const centerX = canvas.width * 0.5 + pan.x;
     const centerY = canvas.height * 0.5 + pan.y;
     const scale = zoom * 1.35;
 
-    // Check hit test against waypoint handles
-    let clickedIndex = -1;
-    for (let i = 0; i < trackSpec.waypoints.length; i++) {
-      const wp = trackSpec.waypoints[i];
-      const sx = centerX + wp.x * scale;
-      const sy = centerY + wp.z * scale;
-      const dist = Math.hypot(mouseX - sx, mouseY - sy);
-      if (dist <= 16) {
-        clickedIndex = i;
-        break;
-      }
-    }
+    // 1. Check hit test against existing waypoint handles (>= 16px generous radius)
+    const clickedIndex = findClosestWaypointHit2D(
+      trackSpec.waypoints,
+      mouseX,
+      mouseY,
+      centerX,
+      centerY,
+      scale,
+      NODE_HIT_RADIUS_PX,
+    );
 
     if (clickedIndex !== -1) {
+      e.stopPropagation();
       setSelectedNodeIndex(clickedIndex);
       draggingNodeRef.current = clickedIndex;
       canvas.setPointerCapture(e.pointerId);
-    } else {
-      isPanningRef.current = true;
-      panStartRef.current = { x: mouseX - pan.x, y: mouseY - pan.y };
+      setCursor2d('grabbing');
+      return;
+    }
+
+    const worldX = (mouseX - centerX) / scale;
+    const worldZ = (mouseY - centerY) / scale;
+
+    // 2. Check clicking directly on track ribbon/spline OR Shift+Left-Click to insert a node on segment
+    const segHit = findTrackSegmentInsertIndex(trackSpec.waypoints, worldX, worldZ, trackSpec.trackWidth);
+    const ribbonHitDist = trackSpec.trackWidth * 0.5 + 8 / scale;
+    if (e.shiftKey || segHit.distance <= ribbonHitDist) {
+      e.stopPropagation();
+      insertWaypointAt(segHit.insertIndex, segHit.waypoint);
+      draggingNodeRef.current = segHit.insertIndex;
       canvas.setPointerCapture(e.pointerId);
+      setCursor2d('grabbing');
+      return;
+    }
+
+    // 3. Clicking empty ground in "Add Node" mode appends a new control point and drags it
+    if (editorMode === 'add') {
+      e.stopPropagation();
+      const nextIdx = trackSpec.waypoints.length;
+      appendWaypoint({
+        x: Math.round(worldX),
+        y: 0,
+        z: Math.round(worldZ),
+        width: trackSpec.trackWidth,
+        banking: 0,
+      });
+      draggingNodeRef.current = nextIdx;
+      canvas.setPointerCapture(e.pointerId);
+      setCursor2d('grabbing');
     }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvas2dRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const { mouseX, mouseY } = get2dPointerCoords(e, canvas);
 
     if (draggingNodeRef.current !== null) {
       const idx = draggingNodeRef.current;
@@ -449,12 +592,38 @@ export function TrackStudioModal({
       const trackX = Math.round((mouseX - centerX) / scale);
       const trackZ = Math.round((mouseY - centerY) / scale);
       updateWaypoint(idx, { x: trackX, z: trackZ });
-    } else if (isPanningRef.current) {
+      setCursor2d('grabbing');
+      return;
+    }
+
+    if (isPanningRef.current && ((e.buttons & 2) !== 0 || (e.buttons & 4) !== 0)) {
       setPan({
         x: mouseX - panStartRef.current.x,
         y: mouseY - panStartRef.current.y,
       });
+      setCursor2d('move');
+      return;
     }
+
+    if (isPanningRef.current) {
+      isPanningRef.current = false;
+    }
+
+    // Hover feedback against nodes
+    const centerX = canvas.width * 0.5 + pan.x;
+    const centerY = canvas.height * 0.5 + pan.y;
+    const scale = zoom * 1.35;
+    const hoverIdx = findClosestWaypointHit2D(
+      trackSpec.waypoints,
+      mouseX,
+      mouseY,
+      centerX,
+      centerY,
+      scale,
+      NODE_HIT_RADIUS_PX,
+    );
+    setHoveredNode2d(hoverIdx !== -1 ? hoverIdx : null);
+    setCursor2d(hoverIdx !== -1 ? 'grab' : editorMode === 'add' ? 'crosshair' : 'default');
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -467,6 +636,22 @@ export function TrackStudioModal({
     }
     draggingNodeRef.current = null;
     isPanningRef.current = false;
+
+    const { mouseX, mouseY } = get2dPointerCoords(e, canvas);
+    const centerX = canvas.width * 0.5 + pan.x;
+    const centerY = canvas.height * 0.5 + pan.y;
+    const scale = zoom * 1.35;
+    const hoverIdx = findClosestWaypointHit2D(
+      trackSpec.waypoints,
+      mouseX,
+      mouseY,
+      centerX,
+      centerY,
+      scale,
+      NODE_HIT_RADIUS_PX,
+    );
+    setHoveredNode2d(hoverIdx !== -1 ? hoverIdx : null);
+    setCursor2d(hoverIdx !== -1 ? 'grab' : editorMode === 'add' ? 'crosshair' : 'default');
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -476,15 +661,41 @@ export function TrackStudioModal({
   };
 
   // ----------------------------------------------------
-  // 3D Three.js Persistent Live Environment Preview
+  // 3D Three.js Persistent Live Environment & Node Editor
   // ----------------------------------------------------
+  const waypointsRef = useRef(trackSpec.waypoints);
+  const trackWidthRef = useRef(trackSpec.trackWidth);
+  const editorModeRef = useRef(editorMode);
+  const updateWaypointRef = useRef(updateWaypoint);
+  const insertWaypointAtRef = useRef(insertWaypointAt);
+  const appendWaypointRef = useRef(appendWaypoint);
+  const setSelectedNodeIndexRef = useRef(setSelectedNodeIndex);
+  const setHoveredNode3dRef = useRef(setHoveredNode3d);
+  const setCursor3dRef = useRef(setCursor3d);
+
+  waypointsRef.current = trackSpec.waypoints;
+  trackWidthRef.current = trackSpec.trackWidth;
+  editorModeRef.current = editorMode;
+  updateWaypointRef.current = updateWaypoint;
+  insertWaypointAtRef.current = insertWaypointAt;
+  appendWaypointRef.current = appendWaypoint;
+  setSelectedNodeIndexRef.current = setSelectedNodeIndex;
+  setHoveredNode3dRef.current = setHoveredNode3d;
+  setCursor3dRef.current = setCursor3d;
+
   const preview3dRef = useRef<{
     renderer: THREE.WebGLRenderer;
     scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    controls: OrbitControls;
     hemiLight: THREE.HemisphereLight;
     dirLight: THREE.DirectionalLight;
     builtScene: BuiltTrackScene | null;
-    updateCameraExtent: (totalLength: number) => void;
+    nodesGroup: THREE.Group;
+    colliderMeshes: THREE.Mesh[];
+    cameraInitialized: boolean;
+    resetCamera: (totalLength: number, viewMode?: 'angled' | 'top') => void;
+    setViewMode: (viewMode: 'angled' | 'top') => void;
   } | null>(null);
 
   useEffect(() => {
@@ -523,39 +734,228 @@ export function TrackStudioModal({
     dirLight.position.set(220, 340, 180);
     scene.add(dirLight);
 
-    let orbitAngle = 0.5;
-    let cameraDist = Math.max(380, compiledTrack.totalLength * 0.22);
-    let cameraHeight = Math.max(140, compiledTrack.totalLength * 0.12);
-    let isUserDragging = false;
-    let lastMouseX = 0;
-    let lastMouseY = 0;
+    const nodesGroup = new THREE.Group();
+    nodesGroup.renderOrder = 20;
+    scene.add(nodesGroup);
 
-    const onPointerDown3d = (e: MouseEvent) => {
-      isUserDragging = true;
-      lastMouseX = e.clientX;
-      lastMouseY = e.clientY;
-    };
-    const onPointerMove3d = (e: MouseEvent) => {
-      if (!isUserDragging) return;
-      const dx = e.clientX - lastMouseX;
-      const dy = e.clientY - lastMouseY;
-      lastMouseX = e.clientX;
-      lastMouseY = e.clientY;
-      orbitAngle += dx * 0.007;
-      cameraHeight = Math.max(30, Math.min(450, cameraHeight + dy * 0.6));
-    };
-    const onPointerUp3d = () => {
-      isUserDragging = false;
-    };
-    const onWheel3d = (e: WheelEvent) => {
-      e.preventDefault();
-      cameraDist = Math.max(120, Math.min(950, cameraDist + e.deltaY * 0.45));
+    const applyViewAngle = (dist: number, viewMode: 'angled' | 'top', controls: OrbitControls) => {
+      const target = controls.target.clone();
+      if (viewMode === 'top') {
+        camera.position.set(target.x, target.y + dist * 1.15, target.z + 18);
+      } else {
+        camera.position.set(
+          target.x + Math.sin(0.55) * dist * 0.85,
+          target.y + dist * 0.52,
+          target.z + Math.cos(0.55) * dist * 0.85,
+        );
+      }
+      camera.lookAt(target);
+      controls.update();
     };
 
-    canvas.addEventListener('mousedown', onPointerDown3d);
-    window.addEventListener('mousemove', onPointerMove3d);
-    window.addEventListener('mouseup', onPointerUp3d);
-    canvas.addEventListener('wheel', onWheel3d, { passive: false });
+    const initDist = Math.max(380, compiledTrack.totalLength * 0.22);
+    camera.position.set(Math.sin(0.55) * initDist * 0.85, initDist * 0.52, Math.cos(0.55) * initDist * 0.85);
+    camera.lookAt(0, 0, 0);
+
+    const raycaster = new THREE.Raycaster();
+    const ndcPointer = new THREE.Vector2();
+    const dragIntersectPt = new THREE.Vector3();
+    let dragging3dNode: { index: number; plane: THREE.Plane } | null = null;
+    let isPanning3d = false;
+
+    const getNdc = (e: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      ndcPointer.x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+      ndcPointer.y = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
+      return ndcPointer;
+    };
+
+    // Register node-interaction handlers in capture phase BEFORE OrbitControls receives pointer events
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = !isSoftwareGl;
+    controls.dampingFactor = 0.08;
+    controls.enablePan = true;
+    controls.screenSpacePanning = false; // horizontal XZ ground-plane panning
+    controls.enableZoom = true;
+    controls.minDistance = 70;
+    controls.maxDistance = 1200;
+    controls.maxPolarAngle = Math.PI * 0.48;
+    controls.mouseButtons = {
+      LEFT: null as unknown as THREE.MOUSE,
+      MIDDLE: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.PAN,
+    };
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    const syncAltRotateMode = (altHeld: boolean) => {
+      controls.mouseButtons.RIGHT = altHeld ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    };
+
+    const onKeyDown3d = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') syncAltRotateMode(true);
+    };
+    const onKeyUp3d = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') syncAltRotateMode(false);
+    };
+    const onWindowBlur = () => syncAltRotateMode(false);
+
+    const onPointerDown3d = (e: PointerEvent) => {
+      syncAltRotateMode(e.altKey);
+
+      if (e.button === 1 || e.button === 2) {
+        isPanning3d = true;
+        setCursor3dRef.current('move');
+        return;
+      }
+
+      if (e.button !== 0) return;
+
+      const pState = preview3dRef.current;
+      if (!pState) return;
+
+      raycaster.setFromCamera(getNdc(e), camera);
+      const hits = raycaster.intersectObjects(pState.colliderMeshes, false);
+
+      if (hits.length > 0) {
+        const nodeIdx = hits[0].object.userData.nodeIndex as number;
+        const wp = waypointsRef.current[nodeIdx];
+        if (wp) {
+          e.stopPropagation();
+          controls.enabled = false;
+          dragging3dNode = {
+            index: nodeIdx,
+            plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -(wp.y ?? 0)),
+          };
+          setSelectedNodeIndexRef.current(nodeIdx);
+          try {
+            canvas.setPointerCapture(e.pointerId);
+          } catch {}
+          setCursor3dRef.current('grabbing');
+          return;
+        }
+      }
+
+      // Check track ribbon / Shift+Left-Click / Add Node mode on XZ plane
+      const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const groundHit = raycaster.ray.intersectPlane(groundPlane, dragIntersectPt);
+      if (!groundHit) return;
+
+      const builtHits = pState.builtScene
+        ? raycaster.intersectObjects(pState.builtScene.group.children, true)
+        : [];
+      const exactWorldPt = builtHits.length > 0 ? builtHits[0].point : groundHit;
+      const wps = waypointsRef.current;
+      const trackW = trackWidthRef.current;
+      const segHit = findTrackSegmentInsertIndex(wps, exactWorldPt.x, exactWorldPt.z, trackW);
+      const onRibbon = segHit.distance <= trackW * 0.55;
+
+      if (e.shiftKey || onRibbon) {
+        e.stopPropagation();
+        controls.enabled = false;
+        const insertedIdx = segHit.insertIndex;
+        insertWaypointAtRef.current(insertedIdx, segHit.waypoint);
+        dragging3dNode = {
+          index: insertedIdx,
+          plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -(segHit.waypoint.y ?? 0)),
+        };
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {}
+        setCursor3dRef.current('grabbing');
+        return;
+      }
+
+      if (editorModeRef.current === 'add') {
+        e.stopPropagation();
+        controls.enabled = false;
+        const newIdx = wps.length;
+        appendWaypointRef.current({
+          x: Math.round(groundHit.x),
+          y: 0,
+          z: Math.round(groundHit.z),
+          width: trackW,
+          banking: 0,
+        });
+        dragging3dNode = {
+          index: newIdx,
+          plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+        };
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {}
+        setCursor3dRef.current('grabbing');
+      }
+    };
+
+    const onPointerMove3d = (e: PointerEvent) => {
+      syncAltRotateMode(e.altKey);
+
+      if (dragging3dNode) {
+        e.stopPropagation();
+        raycaster.setFromCamera(getNdc(e), camera);
+        if (raycaster.ray.intersectPlane(dragging3dNode.plane, dragIntersectPt)) {
+          updateWaypointRef.current(dragging3dNode.index, {
+            x: Math.round(dragIntersectPt.x),
+            z: Math.round(dragIntersectPt.z),
+          });
+        }
+        setCursor3dRef.current('grabbing');
+        return;
+      }
+
+      if (isPanning3d && ((e.buttons & 2) !== 0 || (e.buttons & 4) !== 0)) {
+        setCursor3dRef.current('move');
+        return;
+      }
+
+      isPanning3d = false;
+      const pState = preview3dRef.current;
+      if (!pState) return;
+      raycaster.setFromCamera(getNdc(e), camera);
+      const hits = raycaster.intersectObjects(pState.colliderMeshes, false);
+      if (hits.length > 0) {
+        const nodeIdx = hits[0].object.userData.nodeIndex as number;
+        setHoveredNode3dRef.current(nodeIdx);
+        setCursor3dRef.current('grab');
+      } else {
+        setHoveredNode3dRef.current(null);
+        setCursor3dRef.current(editorModeRef.current === 'add' ? 'crosshair' : 'default');
+      }
+    };
+
+    const onPointerUp3d = (e: PointerEvent) => {
+      if (dragging3dNode) {
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch {}
+      }
+      dragging3dNode = null;
+      isPanning3d = false;
+      controls.enabled = true;
+
+      const pState = preview3dRef.current;
+      if (pState) {
+        raycaster.setFromCamera(getNdc(e), camera);
+        const hits = raycaster.intersectObjects(pState.colliderMeshes, false);
+        if (hits.length > 0) {
+          const nodeIdx = hits[0].object.userData.nodeIndex as number;
+          setHoveredNode3dRef.current(nodeIdx);
+          setCursor3dRef.current('grab');
+          return;
+        }
+      }
+      setHoveredNode3dRef.current(null);
+      setCursor3dRef.current(editorModeRef.current === 'add' ? 'crosshair' : 'default');
+    };
+
+    canvas.addEventListener('pointerdown', onPointerDown3d, { capture: true });
+    window.addEventListener('pointermove', onPointerMove3d, { capture: true });
+    window.addEventListener('pointerup', onPointerUp3d, { capture: true });
+    window.addEventListener('pointercancel', onPointerUp3d, { capture: true });
+    window.addEventListener('keydown', onKeyDown3d);
+    window.addEventListener('keyup', onKeyUp3d);
+    window.addEventListener('blur', onWindowBlur);
 
     let disposed = false;
     let animFrame = 0;
@@ -579,14 +979,7 @@ export function TrackStudioModal({
 
     const animate = () => {
       if (disposed) return;
-      if (!isUserDragging) {
-        orbitAngle += 0.003;
-      }
-      camera.position.x = Math.sin(orbitAngle) * cameraDist;
-      camera.position.y = cameraHeight;
-      camera.position.z = Math.cos(orbitAngle) * cameraDist;
-      camera.lookAt(0, 8, 0);
-
+      controls.update();
       renderer.render(scene, camera);
       if (isSoftwareGl) afterDraw(animate);
       else animFrame = requestAnimationFrame(animate);
@@ -595,12 +988,22 @@ export function TrackStudioModal({
     preview3dRef.current = {
       renderer,
       scene,
+      camera,
+      controls,
       hemiLight,
       dirLight,
       builtScene: null,
-      updateCameraExtent: (totalLength: number) => {
-        cameraDist = Math.max(360, totalLength * 0.22);
-        cameraHeight = Math.max(130, totalLength * 0.11);
+      nodesGroup,
+      colliderMeshes: [],
+      cameraInitialized: false,
+      resetCamera: (totalLength: number, viewMode: 'angled' | 'top' = 'angled') => {
+        controls.target.set(0, 0, 0);
+        const dist = Math.max(360, totalLength * 0.22);
+        applyViewAngle(dist, viewMode, controls);
+      },
+      setViewMode: (viewMode: 'angled' | 'top') => {
+        const dist = camera.position.distanceTo(controls.target) || 400;
+        applyViewAngle(dist, viewMode, controls);
       },
     };
 
@@ -623,10 +1026,14 @@ export function TrackStudioModal({
       cancelAnimationFrame(animFrame);
       clearTimeout(animFrame);
       window.removeEventListener('resize', handleResize);
-      canvas.removeEventListener('mousedown', onPointerDown3d);
-      window.removeEventListener('mousemove', onPointerMove3d);
-      window.removeEventListener('mouseup', onPointerUp3d);
-      canvas.removeEventListener('wheel', onWheel3d);
+      canvas.removeEventListener('pointerdown', onPointerDown3d, { capture: true });
+      window.removeEventListener('pointermove', onPointerMove3d, { capture: true });
+      window.removeEventListener('pointerup', onPointerUp3d, { capture: true });
+      window.removeEventListener('pointercancel', onPointerUp3d, { capture: true });
+      window.removeEventListener('keydown', onKeyDown3d);
+      window.removeEventListener('keyup', onKeyUp3d);
+      window.removeEventListener('blur', onWindowBlur);
+      controls.dispose();
       const p = preview3dRef.current;
       if (p?.builtScene) {
         scene.remove(p.builtScene.group);
@@ -637,7 +1044,73 @@ export function TrackStudioModal({
     };
   }, []);
 
-  // Swap only the 3D track geometry/lighting when splines or scenery change
+  // Sync 3D visible node handles + invisible hit-sphere colliders (>= 1.8x visible radius)
+  useEffect(() => {
+    const p = preview3dRef.current;
+    if (!p) return;
+
+    // Dispose old node handle meshes cleanly
+    while (p.nodesGroup.children.length > 0) {
+      const child = p.nodesGroup.children.pop();
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+        else child.material.dispose();
+      }
+    }
+    p.colliderMeshes = [];
+
+    const visRadius = Math.max(4.5, trackSpec.trackWidth * 0.3);
+    const hitRadius = visRadius * NODE_COLLIDER_RADIUS_MULTIPLIER;
+    const hitGeo = new THREE.SphereGeometry(hitRadius, 12, 10);
+    const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+    const visGeo = new THREE.SphereGeometry(visRadius, 16, 12);
+
+    trackSpec.waypoints.forEach((wp, i) => {
+      const isSelected = i === selectedNodeIndex;
+      const isHovered = i === hoveredNode3d;
+      const isSF = i === (trackSpec.startNodeIndex ?? 0);
+      const yPos = (wp.y ?? 0) + visRadius * 0.55;
+
+      const colorHex = isHovered
+        ? isSF
+          ? 0xfca5a5
+          : 0x7dd3fc
+        : isSelected
+          ? 0x38bdf8
+          : isSF
+            ? 0xef4444
+            : 0xf8fafc;
+      const visMat = new THREE.MeshStandardMaterial({
+        color: colorHex,
+        emissive: isHovered ? 0x38bdf8 : isSelected ? 0x0284c7 : isSF ? 0x7f1d1d : 0x1e293b,
+        emissiveIntensity: isHovered ? 0.65 : isSelected ? 0.45 : 0.2,
+        roughness: 0.35,
+        metalness: 0.15,
+      });
+
+      const visMesh = new THREE.Mesh(visGeo.clone(), visMat);
+      visMesh.position.set(wp.x, yPos, wp.z);
+      if (isHovered) {
+        visMesh.scale.setScalar(1.25);
+      }
+      p.nodesGroup.add(visMesh);
+
+      // Dedicated invisible collider >= 1.8x visible radius (2.0x)
+      const hitMesh = new THREE.Mesh(hitGeo.clone(), hitMat.clone());
+      hitMesh.position.set(wp.x, yPos, wp.z);
+      hitMesh.userData = { nodeIndex: i };
+      p.nodesGroup.add(hitMesh);
+      p.colliderMeshes.push(hitMesh);
+    });
+
+    hitGeo.dispose();
+    hitMat.dispose();
+    visGeo.dispose();
+    p.renderer.render(p.scene, p.camera);
+  }, [trackSpec.waypoints, trackSpec.trackWidth, trackSpec.startNodeIndex, selectedNodeIndex, hoveredNode3d]);
+
+  // Swap only the 3D track geometry/lighting when splines or scenery change (never reset camera during edits!)
   useEffect(() => {
     const p = preview3dRef.current;
     if (!p) return;
@@ -662,7 +1135,11 @@ export function TrackStudioModal({
       p.scene.background = new THREE.Color(built.skyColor);
       p.scene.fog = new THREE.FogExp2(built.fogColor, 0.0016);
       p.builtScene = built;
-      p.updateCameraExtent(compiledTrack.totalLength);
+      if (!p.cameraInitialized) {
+        p.cameraInitialized = true;
+        p.resetCamera(compiledTrack.totalLength, cameraView3d);
+      }
+      p.renderer.render(p.scene, p.camera);
     } catch (err) {
       console.warn('TrackStudio 3D preview build warning:', err);
     }
@@ -768,50 +1245,87 @@ export function TrackStudioModal({
       {/* Main Studio Body: Left 2D CAD + Right 3D Viewport & Inspector */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
         {/* Left: 2D Interactive CAD Canvas */}
-        <div className="flex-1 relative flex flex-col bg-[#0b0f16] border-r border-white/10 min-h-[300px]">
+        <div
+          ref={canvas2dContainerRef}
+          onContextMenu={(e) => e.preventDefault()}
+          className="flex-1 relative flex flex-col bg-[#0b0f16] border-r border-white/10 min-h-[300px]"
+        >
           {/* Canvas Floating Toolbar */}
-          <div className="absolute top-3 left-3 z-10 flex items-center gap-2 bg-[#121824]/95 border border-white/15 px-3 py-1.5 rounded-lg text-xs shadow-lg">
-            <span className="text-slate-400">View:</span>
-            <button
-              type="button"
-              onClick={() => {
-                setPan({ x: 0, y: 0 });
-                setZoom(1.0);
-              }}
-              className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer"
-            >
-              Reset View
-            </button>
-            <button
-              type="button"
-              onClick={() => setZoom((z) => Math.min(3.0, z * 1.25))}
-              className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer font-bold"
-            >
-              +
-            </button>
-            <button
-              type="button"
-              onClick={() => setZoom((z) => Math.max(0.4, z * 0.8))}
-              className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer font-bold"
-            >
-              -
-            </button>
-            <span className="text-slate-500 font-mono">{Math.round(zoom * 100)}%</span>
-            <span aria-hidden="true" className="text-slate-600">|</span>
-            <span className="text-slate-400 hidden sm:inline">
-              Click & Drag Nodes · Scroll Zoom · Drag Canvas Pan
-            </span>
+          <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+            <div className="pointer-events-auto flex flex-wrap items-center gap-2 bg-[#121824]/95 border border-white/15 px-3 py-1.5 rounded-lg text-xs shadow-lg">
+              {/* Editor Interaction Mode */}
+              <div className="flex rounded bg-black/40 border border-white/10 p-0.5">
+                <button
+                  type="button"
+                  data-testid="btn-studio-mode-select"
+                  onClick={() => setEditorMode('select')}
+                  className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer transition-colors ${
+                    editorMode === 'select' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Select / Drag
+                </button>
+                <button
+                  type="button"
+                  data-testid="btn-studio-mode-add"
+                  onClick={() => setEditorMode('add')}
+                  className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer transition-colors ${
+                    editorMode === 'add' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  + Add Node
+                </button>
+              </div>
+
+              <span aria-hidden="true" className="text-slate-600">|</span>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPan({ x: 0, y: 0 });
+                  setZoom(1.0);
+                }}
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer"
+              >
+                Reset View
+              </button>
+              <button
+                type="button"
+                aria-label="Zoom In 2D Canvas"
+                onClick={() => setZoom((z) => Math.min(3.0, z * 1.25))}
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer font-bold"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                aria-label="Zoom Out 2D Canvas"
+                onClick={() => setZoom((z) => Math.max(0.4, z * 0.8))}
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer font-bold"
+              >
+                -
+              </button>
+              <span className="text-slate-500 font-mono">{Math.round(zoom * 100)}%</span>
+              <span aria-hidden="true" className="text-slate-600 hidden md:inline">|</span>
+              <span className="text-slate-400 hidden md:inline">
+                Left-Drag Nodes · Shift+Click Insert · Right-Drag Pan · Scroll Zoom
+              </span>
+            </div>
           </div>
 
           <canvas
             ref={canvas2dRef}
-            width={1200}
-            height={800}
+            data-testid="track-studio-2d-canvas"
+            width={canvas2dSize.width}
+            height={canvas2dSize.height}
+            style={{ cursor: cursor2d }}
+            onContextMenu={(e) => e.preventDefault()}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
             onWheel={handleWheel}
-            className="w-full h-full cursor-crosshair touch-none"
+            className="w-full h-full flex-1 touch-none"
           />
 
           {/* Bottom Telemetry Bar */}
@@ -855,11 +1369,42 @@ export function TrackStudioModal({
 
         {/* Right: Live 3D Preview & Inspector Controls */}
         <div className="w-full lg:w-[410px] xl:w-[460px] flex flex-col bg-[#0f141f] shrink-0 border-t lg:border-t-0 overflow-y-auto">
-          {/* Live 3D Orbiting Viewport */}
-          <div className="h-56 xl:h-64 relative bg-[#090d14] border-b border-white/10 shrink-0">
-            <canvas ref={canvas3dRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
-            <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/60 text-[10px] font-mono text-slate-400 pointer-events-none">
-              3D Live Preview · Drag to Orbit · Scroll to Zoom
+          {/* Live 3D Interactive Node Viewport */}
+          <div
+            onContextMenu={(e) => e.preventDefault()}
+            className="h-56 xl:h-64 relative bg-[#090d14] border-b border-white/10 shrink-0"
+          >
+            <canvas
+              ref={canvas3dRef}
+              data-testid="track-studio-3d-canvas"
+              style={{ cursor: cursor3d }}
+              onContextMenu={(e) => e.preventDefault()}
+              className="w-full h-full touch-none"
+            />
+            <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
+              <button
+                type="button"
+                data-testid="btn-studio-3d-view"
+                onClick={() => {
+                  const next = cameraView3d === 'angled' ? 'top' : 'angled';
+                  setCameraView3d(next);
+                  preview3dRef.current?.setViewMode(next);
+                }}
+                className="px-2 py-0.5 rounded bg-black/75 hover:bg-black/90 border border-white/15 text-[10px] font-semibold text-slate-200 cursor-pointer"
+              >
+                {cameraView3d === 'angled' ? 'Top-Down' : '3/4 View'}
+              </button>
+              <button
+                type="button"
+                data-testid="btn-studio-3d-reset"
+                onClick={() => preview3dRef.current?.resetCamera(compiledTrack.totalLength, cameraView3d)}
+                className="px-2 py-0.5 rounded bg-black/75 hover:bg-black/90 border border-white/15 text-[10px] font-semibold text-slate-200 cursor-pointer"
+              >
+                Reset
+              </button>
+            </div>
+            <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/70 text-[10px] font-mono text-slate-300 pointer-events-none">
+              3D · L-Drag Nodes · R-Drag Pan · Alt+R Tilt · Scroll Zoom
             </div>
           </div>
 

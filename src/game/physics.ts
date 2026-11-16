@@ -79,6 +79,7 @@ export interface CarSimState {
   aiPassTimer: number;
   aiPaceMultiplier: number;
   aiStuckTimer: number;
+  aiPrevHeadingErr: number;
 }
 
 export function createCarSimState(params: {
@@ -165,6 +166,7 @@ export function createCarSimState(params: {
     aiPassTimer: 0,
     aiPaceMultiplier: params.aiPaceMultiplier ?? 1.0,
     aiStuckTimer: 0,
+    aiPrevHeadingErr: 0,
   };
 }
 
@@ -381,18 +383,20 @@ export function stepCarPhysics(
     }
   }
 
-  // Prototype / GT High-Beam flash signals traffic ahead to yield
+  // Prototype / GT High-Beam flash signals slower traffic ahead to yield cleanly toward its nearest open edge
   if (car.flashingHeadlights) {
     for (let i = 0; i < opts.allCars.length; i++) {
       const other = opts.allCars[i];
-      if (other.id === car.id || other.inPitLane) continue;
+      if (other.id === car.id || other.inPitLane || other.isPlayer) continue;
       let dT = other.trackT - car.trackT;
-      if (dT < 0) dT += 1;
+      while (dT > 0.5) dT -= 1;
+      while (dT < -0.5) dT += 1;
       const distAhead = dT * compiledTrack.totalLength;
-      if (distAhead > 1.0 && distAhead < 32) {
-        const yieldSide = other.lateralOffset >= 0 ? -1 : 1;
-        other.aiTargetOffset = yieldSide * Math.min(compiledTrack.spec.trackWidth * 0.48, 4.5);
-        other.aiPassTimer = 2.0;
+      if (distAhead > 1.5 && distAhead < 28 && other.speed < car.speed + 2) {
+        const yieldSide = other.lateralOffset >= car.lateralOffset ? 1 : -1;
+        const maxYield = Math.max(2.0, halfW - 2.0);
+        other.aiTargetOffset = yieldSide * Math.min(maxYield, 4.2);
+        other.aiPassTimer = 1.6;
       }
     }
   }
@@ -693,21 +697,47 @@ export function stepCarPhysics(
   const avgBurnRatePerLap = Math.max(4.5, 9.5 * efficiencyFactor * 0.78 * overboostFuelMult);
   car.fuelLapsRemaining = Number((car.fuel / avgBurnRatePerLap).toFixed(1));
 
-  // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 2.0s outside pit box, smoothly reset to nearest spline point at rolling speed
+  // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 1.5s outside a pit stall,
+  // smoothly reset aligned with nearest spline point at 35 km/h (9.72 m/s) in an unoccupied lateral lane
   if (!car.isPlayer && !car.inPitLane && car.pitStopRemaining <= 0) {
     if (car.speed < 5 / SPEED_KMH_FACTOR) {
       car.aiStuckTimer = (car.aiStuckTimer || 0) + dt;
-      if (car.aiStuckTimer >= 2.0) {
+      if (car.aiStuckTimer >= 1.5) {
         const sp = sampleTrackAtT(compiledTrack, car.trackT);
-        car.x = sp.x + sp.nx * (car.aiTargetOffset || 0);
+        const safeMargin = 1.8;
+        const laneLimit = Math.max(1.5, halfW - safeMargin);
+        const candidates = [0, -laneLimit * 0.65, laneLimit * 0.65, -laneLimit * 0.35, laneLimit * 0.35];
+        let bestLane = 0;
+        let bestClearance = -1;
+        for (const cand of candidates) {
+          let minGap = Infinity;
+          for (const other of opts.allCars) {
+            if (other.id === car.id || other.inPitLane) continue;
+            let dT = other.trackT - car.trackT;
+            while (dT > 0.5) dT -= 1;
+            while (dT < -0.5) dT += 1;
+            const ds = Math.abs(dT * compiledTrack.totalLength);
+            if (ds < 14) {
+              minGap = Math.min(minGap, Math.hypot(ds, other.lateralOffset - cand));
+            }
+          }
+          if (minGap > bestClearance) {
+            bestClearance = minGap;
+            bestLane = cand;
+          }
+        }
+        car.x = sp.x + sp.nx * bestLane;
         car.y = sp.y;
-        car.z = sp.z + sp.nz * (car.aiTargetOffset || 0);
+        car.z = sp.z + sp.nz * bestLane;
+        car.lateralOffset = bestLane;
+        car.aiTargetOffset = bestLane;
         car.heading = Math.atan2(sp.tx, sp.tz);
-        car.speed = 16.0; // rolling speed ~58 km/h
+        car.speed = 35 / SPEED_KMH_FACTOR; // 35 km/h rolling speed (~9.72 m/s)
         car.vx = Math.sin(car.heading) * car.speed;
         car.vz = Math.cos(car.heading) * car.speed;
         car.steerAngle = 0;
         car.understeerFactor = 0;
+        car.aiPrevHeadingErr = 0;
         car.aiStuckTimer = 0;
       }
     } else {
@@ -760,7 +790,10 @@ export function resolveCarCollisions(cars: CarSimState[]): number {
 }
 
 /**
- * Computes AI control inputs based on track lookahead, class traffic awareness, and personality.
+ * Computes AI control inputs using:
+ * 1. Full track-relative (ds, dLat) 3-layer spatial avoidance (Forward Braking Cone, Dynamic Overtaking Lane, Side-by-Side Door Awareness)
+ * 2. Kinematic stopping-distance curvature scan across [0, v^2/(2*a_brake) + 15m]
+ * 3. Adaptive lookahead + damped PD steering + Off-Track Guardrail Override
  */
 export function computeAIControl(
   car: CarSimState,
@@ -771,8 +804,13 @@ export function computeAIControl(
 ): ControlInput {
   const personality = car.personality ?? 'Metronome';
   const classMeta = CAR_CLASSES[car.carSpec.classId];
+  const attrs = car.carSpec.attributes;
 
-  // Decide pit stop if tires worn (<26%), fuel low (<16%), or weather switched to rain on slicks
+  const CAR_WIDTH = 2.1;
+  const CAR_HALF_WIDTH = CAR_WIDTH * 0.5;
+  const CAR_LENGTH = 4.4;
+
+  // Pit decision
   const needsWetSwitch = trackWetness > 0.5 && car.compound !== 'wet';
   const needsDrySwitch = trackWetness < 0.15 && car.compound === 'wet';
   const wantsPit =
@@ -786,77 +824,254 @@ export function computeAIControl(
     };
   }
 
-  // Lookahead along spline: sample track curvature 20m–65m ahead based on AI speed
-  const lookAheadDist = Math.max(20, Math.min(65, 18 + car.speed * 0.95));
-  const tDist1 = (lookAheadDist * 0.35) / compiledTrack.totalLength;
-  const tDist2 = (lookAheadDist * 0.70) / compiledTrack.totalLength;
-  const tDist3 = (lookAheadDist * 1.05) / compiledTrack.totalLength;
+  // Physical performance estimation matching stepCarPhysics
+  const paceScale = classMeta.basePaceIndex;
+  const compoundMod = getCompoundModifiers(car.compound, trackWetness);
+  const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
+  const damageFactor = 1 - (car.aeroDamage / 100) * 0.18;
 
-  const target1 = sampleTrackAtT(compiledTrack, car.trackT + tDist1);
-  const target2 = sampleTrackAtT(compiledTrack, car.trackT + tDist2);
-  const target3 = sampleTrackAtT(compiledTrack, car.trackT + tDist3);
+  const gripBase = (1.35 + (attrs.corneringGrip / 100) * 1.15) * (0.85 + paceScale * 0.15);
+  const brakeBase = (24 + (attrs.braking / 100) * 18) * paceScale;
+  const personalityBrakeFactor =
+    personality === 'Late-Braker' ? 0.94 : personality === 'Tire-Saver' ? 0.82 : 0.88;
+  const brakeDecel = Math.max(10, brakeBase * compoundMod.grip * personalityBrakeFactor);
+  const skillFactor = Math.max(0.84, Math.min(0.98, 0.91 * (0.5 + 0.5 * car.aiPaceMultiplier)));
 
-  const maxCurvature = Math.max(
-    Math.abs(target1.curvature),
-    Math.abs(target2.curvature),
-    Math.abs(target3.curvature),
+  const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
+  const halfW = (currentSample.width || compiledTrack.spec.trackWidth) * 0.5;
+  const boundaryMargin = CAR_HALF_WIDTH + 0.75;
+  const minSafeLane = Math.min(-0.5, -halfW + boundaryMargin);
+  const maxSafeLane = Math.max(0.5, halfW - boundaryMargin);
+
+  // ==================== 1. FULL SPATIAL AWARENESS (ALL CARS INCLUDING PLAYER) ====================
+  car.aiPassTimer = Math.max(0, car.aiPassTimer - dt);
+
+  const dynamicBrakingDist = Math.max(
+    14,
+    (car.speed * car.speed) / (2 * Math.max(8, brakeDecel * 0.78)) + 9.0,
   );
 
-  // Dynamic lateral lane offset (-0.65 to +0.65 of track width)
-  const halfW = compiledTrack.spec.trackWidth * 0.5;
-  const maxLateralLane = halfW * 0.65;
-
-  // Traffic & overtaking logic
-  car.aiPassTimer = Math.max(0, car.aiPassTimer - dt);
-  let blockedAhead = false;
+  let leadCar: CarSimState | null = null;
+  let leadDs = Infinity;
   let slowerClassAhead = false;
+
+  // Side-by-side door awareness bounds
+  let sideCarLeftLat: number | null = null;
+  let sideCarRightLat: number | null = null;
 
   for (let i = 0; i < allCars.length; i++) {
     const other = allCars[i];
-    if (other.id === car.id || other.inPitLane) continue;
+    if (other.id === car.id || other.inPitLane || other.pitStopRemaining > 0) continue;
+
     let dT = other.trackT - car.trackT;
-    if (dT < 0) dT += 1;
-    const distAhead = dT * compiledTrack.totalLength;
-    if (distAhead > 1.2 && distAhead < 24) {
-      const latGap = Math.abs(other.lateralOffset - car.lateralOffset);
-      if (latGap < 3.2) {
-        blockedAhead = true;
+    while (dT > 0.5) dT -= 1;
+    while (dT < -0.5) dT += 1;
+    const ds = dT * compiledTrack.totalLength;
+    const dLat = other.lateralOffset;
+
+    // Layer 3: Side-by-Side Door Awareness (|ds| < carLength * 1.35)
+    if (Math.abs(ds) < CAR_LENGTH * 1.35 && Math.abs(dLat) <= halfW + 2.5) {
+      if (dLat < car.lateralOffset) {
+        if (sideCarLeftLat === null || dLat > sideCarLeftLat) {
+          sideCarLeftLat = dLat;
+        }
+      } else {
+        if (sideCarRightLat === null || dLat < sideCarRightLat) {
+          sideCarRightLat = dLat;
+        }
+      }
+    }
+
+    // Layer 1: Forward Braking Cone (0 < ds < dynamicBrakingDist and lateral overlap < carWidth * 1.45)
+    const aheadLatOverlap = Math.abs(dLat - car.lateralOffset) < CAR_WIDTH * 1.45;
+    if (ds > 0.4 && aheadLatOverlap) {
+      if (ds < dynamicBrakingDist && ds < leadDs) {
+        leadDs = ds;
+        leadCar = other;
+      }
+      if (ds < Math.max(28, dynamicBrakingDist)) {
         const otherClass = CAR_CLASSES[other.carSpec.classId];
         if (classMeta.basePaceIndex > otherClass.basePaceIndex + 0.04) {
           slowerClassAhead = true;
-        }
-        if (car.aiPassTimer <= 0) {
-          // Choose open lane (-0.65 to +0.65 of track width)
-          const dodgeSign = other.lateralOffset >= 0 ? -1 : 1;
-          car.aiTargetOffset = dodgeSign * Math.min(maxLateralLane, Math.max(2.5, halfW * 0.55));
-          car.aiPassTimer = 1.8;
         }
       }
     }
   }
 
-  // Traffic-Smart prototypes flash headlights at slower GT traffic
+  // Traffic-Smart prototypes flash headlights at slower GT traffic ahead
   car.flashingHeadlights =
     personality === 'Traffic-Smart' && slowerClassAhead && Math.floor(car.totalTime * 6) % 2 === 0;
 
-  if (!blockedAhead && car.aiPassTimer <= 0) {
-    // Return smoothly toward racing apex line (inside of upcoming corner)
-    const apexSign = target3.curvature > 0.005 ? 1 : target3.curvature < -0.005 ? -1 : 0;
-    const targetApexLat = apexSign * Math.min(maxLateralLane * 0.7, 2.8);
-    car.aiTargetOffset += (targetApexLat - car.aiTargetOffset) * Math.min(1, dt * 1.5);
+  // ==================== 2. DYNAMIC OVERTAKING LANE & RACING LINE ====================
+  // Check upcoming corner curvature at 25m for subtle apex line bias when track is clear
+  const apexLookSample = sampleTrackAtT(
+    compiledTrack,
+    car.trackT + 26 / Math.max(100, compiledTrack.totalLength),
+  );
+  const apexSign =
+    apexLookSample.curvature > 0.012 ? 1 : apexLookSample.curvature < -0.012 ? -1 : 0;
+  let desiredOffset = apexSign * Math.min(maxSafeLane * 0.55, 2.2);
+
+  // Layer 2: Dynamic Overtaking Lane Selection when closing on slower car ahead
+  if (leadCar && leadDs < Math.max(36, car.speed * 1.45) && car.speed > leadCar.speed - 2.0) {
+    const leftUpper = Math.min(maxSafeLane, leadCar.lateralOffset - CAR_WIDTH * 1.6);
+    const rightLower = Math.max(minSafeLane, leadCar.lateralOffset + CAR_WIDTH * 1.6);
+    const leftClearance = Math.max(0, leftUpper - minSafeLane);
+    const rightClearance = Math.max(0, maxSafeLane - rightLower);
+
+    // Prevent picking a lane that cuts into a side-by-side car
+    const canGoLeft =
+      leftClearance >= 0.4 &&
+      (sideCarLeftLat === null || leftUpper >= sideCarLeftLat + CAR_WIDTH * 1.4);
+    const canGoRight =
+      rightClearance >= 0.4 &&
+      (sideCarRightLat === null || rightLower <= sideCarRightLat - CAR_WIDTH * 1.4);
+
+    if (canGoLeft && (!canGoRight || leftClearance >= rightClearance)) {
+      desiredOffset = Math.min(leftUpper, (minSafeLane + leftUpper) * 0.55);
+      car.aiPassTimer = Math.max(car.aiPassTimer, 1.1);
+    } else if (canGoRight) {
+      desiredOffset = Math.max(rightLower, (rightLower + maxSafeLane) * 0.55);
+      car.aiPassTimer = Math.max(car.aiPassTimer, 1.1);
+    } else {
+      desiredOffset = car.lateralOffset;
+    }
+  } else if (car.aiPassTimer > 0) {
+    // Hold chosen passing lane smoothly until pass completes
+    desiredOffset = car.aiTargetOffset;
   }
 
-  // Strict clamp of dynamic lane offset to -0.65 .. +0.65 of track width
-  car.aiTargetOffset = Math.max(-maxLateralLane, Math.min(maxLateralLane, car.aiTargetOffset));
+  // Smooth lateral lane transition
+  const laneBlendRate = leadCar ? 4.2 : 2.2;
+  car.aiTargetOffset += (desiredOffset - car.aiTargetOffset) * Math.min(1, dt * laneBlendRate);
 
-  // Pit lane entry override
-  let targetOffset = car.aiTargetOffset;
-  if (wantsPit && (car.trackT >= 0.87 || car.trackT <= 0.04)) {
-    targetOffset = compiledTrack.pitOffset;
+  // Layer 3 Lockout: Hold parallel lateral spacing (|myLat - otherLat| >= carWidth * 1.4) when alongside
+  if (sideCarLeftLat !== null) {
+    car.aiTargetOffset = Math.max(car.aiTargetOffset, sideCarLeftLat + CAR_WIDTH * 1.4);
+  }
+  if (sideCarRightLat !== null) {
+    car.aiTargetOffset = Math.min(car.aiTargetOffset, sideCarRightLat - CAR_WIDTH * 1.4);
   }
 
-  const targetX = target1.x + target1.nx * targetOffset;
-  const targetZ = target1.z + target1.nz * targetOffset;
+  // Hard Track-Boundary Containment: strictly clamp target offset inside safe asphalt bounds
+  car.aiTargetOffset = Math.max(minSafeLane, Math.min(maxSafeLane, car.aiTargetOffset));
+
+  // Pit lane entry override when boxing
+  let steerTargetOffset = car.aiTargetOffset;
+  const enteringPit = wantsPit && (car.trackT >= 0.87 || car.trackT <= 0.04);
+  if (enteringPit) {
+    steerTargetOffset = compiledTrack.pitOffset;
+  }
+
+  // ==================== 3. KINEMATIC STOPPING-DISTANCE CURVATURE SCAN ====================
+  const scanDist = Math.max(24, (car.speed * car.speed) / (2 * brakeDecel) + 15.0);
+  const scanSteps = 20;
+  let maxBrakeRatio = 0;
+  let immediateCornerSpeed = 999;
+
+  const effectiveLatGripBase =
+    gripBase * compoundMod.grip * wearGripFactor * damageFactor;
+
+  for (let sIdx = 0; sIdx <= scanSteps; sIdx++) {
+    const dMeters = 2.5 + (sIdx / scanSteps) * scanDist;
+    const sample = sampleTrackAtT(
+      compiledTrack,
+      car.trackT + dMeters / Math.max(100, compiledTrack.totalLength),
+    );
+    const absK = Math.abs(sample.curvature);
+    if (absK < 0.004) continue;
+
+    const bankBonus = 1.0 + Math.sin(Math.abs(sample.banking || 0)) * 0.35;
+    const sampleGrip = effectiveLatGripBase * bankBonus;
+    // Calibrated below stepCarPhysics centripetal ceiling (14.8) so AI holds clean apex without washing wide
+    const vSafe = Math.max(10.5, Math.sqrt((sampleGrip * 12.2) / absK) * skillFactor);
+
+    if (dMeters < 14) {
+      immediateCornerSpeed = Math.min(immediateCornerSpeed, vSafe);
+    }
+
+    if (car.speed > vSafe) {
+      const reqBrakeDist = (car.speed * car.speed - vSafe * vSafe) / (2 * brakeDecel);
+      // Ratio >= 1.0 means we must brake at full decel right now to reach vSafe by dMeters
+      const ratio = reqBrakeDist / Math.max(1.5, dMeters - 1.5);
+      if (ratio > maxBrakeRatio) {
+        maxBrakeRatio = ratio;
+      }
+    }
+  }
+
+  let cornerThrottle = 1.0;
+  let cornerBrake = 0.0;
+
+  if (car.speed > immediateCornerSpeed * 1.02) {
+    const over = (car.speed - immediateCornerSpeed) / 7.5;
+    cornerBrake = Math.min(1.0, 0.45 + over * 0.55);
+    cornerThrottle = 0.0;
+  } else if (maxBrakeRatio >= 0.84) {
+    cornerBrake = Math.min(1.0, 0.25 + (maxBrakeRatio - 0.84) * 2.4);
+    cornerThrottle = 0.0;
+  } else if (maxBrakeRatio >= 0.72) {
+    // Feather throttle slightly before braking threshold
+    cornerThrottle = Math.max(0.25, 1.0 - (maxBrakeRatio - 0.72) * 5.5);
+  }
+
+  // ==================== 4. COLLISION-AVOIDANCE BRAKING ====================
+  let avoidBrake = 0.0;
+  let avoidThrottleCap = 1.0;
+
+  if (leadCar) {
+    const closingSpeed = car.speed - leadCar.speed;
+    const pullingOutToPass =
+      Math.abs(car.aiTargetOffset - leadCar.lateralOffset) >= CAR_WIDTH * 1.45 &&
+      Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.45;
+    // If actively moving into an open overtaking lane with safe gap (> 6.5m), keep passing momentum;
+    // only match speed closely inside emergency tailgating gap or when boxed in.
+    const immediateDanger = !pullingOutToPass || leadDs < 6.8 || closingSpeed > 9.0;
+
+    if (immediateDanger) {
+      const gap = Math.max(0.5, leadDs - 4.6);
+      const desiredFollowSpeed =
+        leadDs < 9.0 ? Math.max(0, leadCar.speed * Math.max(0, (leadDs - 4.2) / 4.8)) : leadCar.speed;
+
+      if (car.speed > desiredFollowSpeed || closingSpeed > 0.35) {
+        const reqAvoidDecel =
+          (car.speed * car.speed - desiredFollowSpeed * desiredFollowSpeed) / (2 * gap) +
+          Math.max(0, closingSpeed) * (2.2 / gap);
+        if (reqAvoidDecel > 1.5) {
+          avoidBrake = Math.max(0, Math.min(1.0, reqAvoidDecel / brakeDecel));
+          avoidThrottleCap = avoidBrake > 0.08 ? 0.0 : 0.45;
+        }
+      } else if (leadDs < 10.5 && !pullingOutToPass) {
+        avoidThrottleCap = Math.min(avoidThrottleCap, 0.78);
+      }
+    }
+  }
+
+  // ==================== 5. ADAPTIVE LOOKAHEAD + DAMPED PD STEERING ====================
+  const ahead10 = sampleTrackAtT(
+    compiledTrack,
+    car.trackT + 10 / Math.max(100, compiledTrack.totalLength),
+  );
+  const ahead20 = sampleTrackAtT(
+    compiledTrack,
+    car.trackT + 20 / Math.max(100, compiledTrack.totalLength),
+  );
+  const nearCurv = Math.max(
+    Math.abs(currentSample.curvature),
+    Math.abs(ahead10.curvature),
+    Math.abs(ahead20.curvature),
+  );
+  const curvBlend = Math.min(1, nearCurv / 0.042);
+  const straightLook = Math.max(20, Math.min(32, 18 + car.speed * 0.30));
+  const tightLook = Math.max(8, Math.min(14, 8 + car.speed * 0.22));
+  const lookAheadDist = straightLook * (1 - curvBlend) + tightLook * curvBlend;
+
+  const targetSample = sampleTrackAtT(
+    compiledTrack,
+    car.trackT + lookAheadDist / Math.max(100, compiledTrack.totalLength),
+  );
+  const targetX = targetSample.x + targetSample.nx * steerTargetOffset;
+  const targetZ = targetSample.z + targetSample.nz * steerTargetOffset;
 
   const dx = targetX - car.x;
   const dz = targetZ - car.z;
@@ -865,58 +1080,40 @@ export function computeAIControl(
   while (headingErr > Math.PI) headingErr -= Math.PI * 2;
   while (headingErr < -Math.PI) headingErr += Math.PI * 2;
 
-  // Steering: heading increases left, decreases right -> steer > 0 means right
-  const steer = Math.max(-1, Math.min(1, -headingErr * 2.3));
+  const safeDt = Math.max(0.005, dt);
+  const errDeriv = Math.max(-8, Math.min(8, (headingErr - (car.aiPrevHeadingErr || 0)) / safeDt));
+  car.aiPrevHeadingErr = headingErr;
 
-  // Compute safe target corner speed v = sqrt(grip / curvature)
-  const attrs = car.carSpec.attributes;
-  const gripBase = (1.35 + (attrs.corneringGrip / 100) * 1.15) * classMeta.basePaceIndex;
-  const compoundMod = getCompoundModifiers(car.compound, trackWetness);
-  const personalityBrakeMult =
-    personality === 'Late-Braker'
-      ? 1.10
-      : personality === 'Tire-Saver'
-      ? 0.92
-      : 1.0;
+  // stepCarPhysics: heading -= steer * rate -> positive headingErr (target left) requires steer < 0
+  const kp = 2.45;
+  const kd = 0.14;
+  let steer = -(headingErr * kp + errDeriv * kd);
 
-  const bankAngle = Math.abs(target1.banking || 0);
-  const bankingGripBonus = 1.0 + Math.sin(bankAngle) * 0.35;
-  const effectiveGrip = gripBase * compoundMod.grip * personalityBrakeMult * bankingGripBonus;
-  const cornerTargetSpeed =
-    maxCurvature > 0.006
-      ? Math.max(13, Math.sqrt((effectiveGrip * 14.2) / Math.max(0.0001, maxCurvature)))
-      : 999;
+  let throttle = Math.min(cornerThrottle, avoidThrottleCap);
+  let brake = Math.max(cornerBrake, avoidBrake);
 
-  // Anticipatory braking before hairpins and chicanes
-  const brakeDecel = (24 + (attrs.braking / 100) * 18) * classMeta.basePaceIndex * 0.85;
-  const reqBrakeDist =
-    car.speed > cornerTargetSpeed
-      ? (car.speed * car.speed - cornerTargetSpeed * cornerTargetSpeed) / (2 * Math.max(1, brakeDecel))
-      : 0;
+  // ==================== 6. OFF-TRACK GUARDRAIL OVERRIDE ====================
+  if (!enteringPit && !car.inPitLane && Math.abs(car.lateralOffset) > halfW * 0.78) {
+    const excessRatio = (Math.abs(car.lateralOffset) - halfW * 0.78) / Math.max(1, halfW * 0.22);
+    // Lift throttle 30-50% to arrest drift velocity and stabilize front grip
+    throttle = Math.min(throttle, Math.max(0.50, 0.70 - Math.min(0.20, excessRatio * 0.15)));
+    // Corrective inward steering bias: lateralOffset > 0 (right) -> steer < 0 (left)
+    const inwardBias = Math.min(0.65, 0.25 + excessRatio * 0.45);
+    steer += -Math.sign(car.lateralOffset) * inwardBias;
+  }
 
-  let throttle = 1.0;
-  let brake = 0.0;
+  steer = Math.max(-1, Math.min(1, steer));
 
   if (car.inPitLane) {
     throttle = car.speed < 14.5 ? 0.55 : 0;
     brake = car.speed > 16.5 ? 0.85 : 0;
-  } else if (car.speed > cornerTargetSpeed && lookAheadDist <= reqBrakeDist * 1.25) {
-    const excess = (car.speed - cornerTargetSpeed) / 10;
-    brake = Math.min(1.0, 0.45 + excess * 0.55);
-    throttle = 0;
-  } else if (car.speed > cornerTargetSpeed) {
-    const excess = (car.speed - cornerTargetSpeed) / 12;
-    brake = Math.min(1.0, 0.3 + excess);
-    throttle = 0;
-  } else if (personality === 'Tire-Saver' && car.tireWear > 45 && Math.abs(steer) > 0.55) {
-    throttle = 0.82; // Conserves rubber early
-  } else if (blockedAhead && !slowerClassAhead && car.aiPassTimer < 0.3) {
-    throttle = 0.88;
+  } else if (personality === 'Tire-Saver' && car.tireWear > 45 && Math.abs(steer) > 0.55 && brake === 0) {
+    throttle = Math.min(throttle, 0.84);
   }
 
-  // Trigger Class / Car Special on straights
+  // Trigger Class / Car Special on straights when clear ahead
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
-  const onStraight = maxCurvature < 0.01 && Math.abs(steer) < 0.18;
+  const onStraight = nearCurv < 0.01 && Math.abs(steer) < 0.18 && maxBrakeRatio < 0.5;
   let specialPressed = false;
   if (resolvedSpecial.specialType === 'active-aero') {
     if (onStraight && !car.specialActive && car.speed > 26) specialPressed = true;
@@ -925,7 +1122,7 @@ export function computeAIControl(
     if (onStraight && !car.specialActive && car.attackModeUsesRemaining > 0 && car.speed > 25) {
       specialPressed = true;
     }
-  } else if (onStraight && !car.specialActive && car.specialCharge > 50 && car.speed > 24) {
+  } else if (onStraight && !car.specialActive && car.specialCharge > 50 && car.speed > 24 && !leadCar) {
     specialPressed = true;
   }
 

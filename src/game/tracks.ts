@@ -1,22 +1,234 @@
+import * as THREE from 'three';
 import { SceneryTheme, TrackRegion, TrackSpec, TrackWaypoint } from './types';
 import { getCustomTrackById } from './customTracks';
 
-type WaypointTuple = [
+/**
+ * Corner / anchor skeleton node used to generate high-density (50-100+) true-to-life
+ * waypoints with collinear straight anchors and sharp 3-5 point corner clusters:
+ * [x, z, y?, cornerRadius?, bankingDeg?]
+ * - cornerRadius === 0 -> collinear straight/elevation anchor (passes straight through)
+ * - cornerRadius > 0   -> sharp circular fillet arc cluster (braking entry -> apex(es) -> exit)
+ */
+type CircuitNode = [
   x: number,
   z: number,
   y?: number,
-  tension?: number,
-  banking?: number,
+  cornerRadius?: number,
+  bankingDeg?: number,
 ];
 
-function pts(coords: WaypointTuple[], scale = 1.0): TrackWaypoint[] {
-  return coords.map(([x, z, y = 0, tension, banking]) => ({
-    x: Math.round(x * scale * 10) / 10,
-    y: Math.round(y * 10) / 10,
-    z: Math.round(z * scale * 10) / 10,
-    ...(tension !== undefined ? { tension } : {}),
-    ...(banking !== undefined ? { banking } : {}),
-  }));
+function buildCircuitPoints(
+  nodes: CircuitNode[],
+  targetLengthMeters: number,
+  trackWidth: number,
+): TrackWaypoint[] {
+  const minSafeRadius = Math.max(12.0, trackWidth * 0.72);
+
+  const expandFromNodes = (input: CircuitNode[], minStraightGap: number): TrackWaypoint[] => {
+    const n = input.length;
+    const cornerExpanded: Array<{
+      x: number;
+      y: number;
+      z: number;
+      banking: number;
+      isCorner: boolean;
+    }> = [];
+
+    for (let i = 0; i < n; i++) {
+      const prev = input[(i - 1 + n) % n];
+      const curr = input[i];
+      const next = input[(i + 1) % n];
+
+      const p0x = prev[0], p0z = prev[1];
+      const p1x = curr[0], p1z = curr[1], p1y = curr[2] ?? 0;
+      const p2x = next[0], p2z = next[1];
+      const reqR = curr[3] ?? 18;
+      const bank = curr[4] ?? 0;
+
+      const inDx = p1x - p0x;
+      const inDz = p1z - p0z;
+      const inLen = Math.hypot(inDx, inDz) || 1;
+      const uInX = inDx / inLen;
+      const uInZ = inDz / inLen;
+
+      const outDx = p2x - p1x;
+      const outDz = p2z - p1z;
+      const outLen = Math.hypot(outDx, outDz) || 1;
+      const uOutX = outDx / outLen;
+      const uOutZ = outDz / outLen;
+
+      const dot = Math.max(-0.999, Math.min(0.999, uInX * uOutX + uInZ * uOutZ));
+      const phi = Math.acos(dot);
+
+      // Only pass straight through truly collinear vertices (< ~5 deg).
+      // Any sharper bend with reqR=0 gets a smooth safe fillet so no sharp vertex kink occurs.
+      if (phi < 0.085) {
+        cornerExpanded.push({ x: p1x, y: p1y, z: p1z, banking: bank, isCorner: false });
+        continue;
+      }
+
+      const r = reqR <= 0 ? Math.max(minSafeRadius, 18) : Math.max(minSafeRadius, reqR);
+      const tanHalf = Math.tan(phi * 0.5);
+      const maxTrim = 0.45 * Math.min(inLen, outLen);
+      const trim = Math.min(r * tanHalf, maxTrim);
+      const rEff = trim / Math.max(1e-4, tanHalf);
+
+      const ax = p1x - uInX * trim;
+      const az = p1z - uInZ * trim;
+      const bx = p1x + uOutX * trim;
+      const bz = p1z + uOutZ * trim;
+
+      const cross = uInX * uOutZ - uInZ * uOutX;
+      const sign = cross >= 0 ? 1 : -1;
+      // Inward normal from incoming tangent at entry A
+      const nAx = -sign * uInZ;
+      const nAz = sign * uInX;
+
+      const cx = ax + nAx * rEff;
+      const cz = az + nAz * rEff;
+
+      const angA = Math.atan2(az - cz, ax - cx);
+      const angB = Math.atan2(bz - cz, bx - cx);
+      let dAng = angB - angA;
+      while (dAng > Math.PI) dAng -= Math.PI * 2;
+      while (dAng < -Math.PI) dAng += Math.PI * 2;
+
+      const arcLen = Math.abs(dAng) * rEff;
+      const desiredArcChords = Math.max(2, Math.min(5, Math.round(arcLen / 9.5)));
+      const interiorPts = Math.max(1, desiredArcChords - 1);
+
+      cornerExpanded.push({ x: ax, y: p1y, z: az, banking: bank * 0.65, isCorner: true });
+      for (let k = 1; k <= interiorPts; k++) {
+        const frac = k / (interiorPts + 1);
+        const theta = angA + dAng * frac;
+        cornerExpanded.push({
+          x: cx + Math.cos(theta) * rEff,
+          y: p1y,
+          z: cz + Math.sin(theta) * rEff,
+          banking: bank,
+          isCorner: true,
+        });
+      }
+      cornerExpanded.push({ x: bx, y: p1y, z: bz, banking: bank * 0.65, isCorner: true });
+    }
+
+    // Remove near-coincident transition points (< 7.5m) that cause Catmull-Rom tangent overshoot
+    const cleaned: typeof cornerExpanded = [];
+    for (let i = 0; i < cornerExpanded.length; i++) {
+      const pt = cornerExpanded[i];
+      if (cleaned.length > 0) {
+        const prev = cleaned[cleaned.length - 1];
+        if (Math.hypot(pt.x - prev.x, pt.z - prev.z) < 7.2) {
+          // Average nearly coincident junction points cleanly
+          prev.x = (prev.x + pt.x) * 0.5;
+          prev.y = (prev.y + pt.y) * 0.5;
+          prev.z = (prev.z + pt.z) * 0.5;
+          prev.banking = (prev.banking + pt.banking) * 0.5;
+          continue;
+        }
+      }
+      cleaned.push({ ...pt });
+    }
+    if (cleaned.length > 2) {
+      const first = cleaned[0];
+      const last = cleaned[cleaned.length - 1];
+      if (Math.hypot(first.x - last.x, first.z - last.z) < 7.2) {
+        first.x = (first.x + last.x) * 0.5;
+        first.y = (first.y + last.y) * 0.5;
+        first.z = (first.z + last.z) * 0.5;
+        cleaned.pop();
+      }
+    }
+
+    // Insert collinear straightaway anchors (entry collar, mid-straight anchors, exit collar)
+    const dense: TrackWaypoint[] = [];
+    const m = cleaned.length;
+    for (let i = 0; i < m; i++) {
+      const a = cleaned[i];
+      const b = cleaned[(i + 1) % m];
+
+      dense.push({
+        x: Math.round(a.x * 10) / 10,
+        y: Math.round(a.y * 10) / 10,
+        z: Math.round(a.z * 10) / 10,
+        ...(Math.abs(a.banking) > 0.05 ? { banking: Math.round(a.banking * 10) / 10 } : {}),
+      });
+
+      const segLen = Math.hypot(b.x - a.x, b.z - a.z);
+      if (segLen > minStraightGap) {
+        const steps = Math.max(2, Math.round(segLen / minStraightGap));
+        // Add tight collinear entry/exit collar points ~12m inside corners so low-tension Catmull-Rom never bows
+        const collarTs: number[] = [];
+        if (segLen >= 34) {
+          collarTs.push(12 / segLen);
+          for (let s = 1; s < steps; s++) {
+            const tMid = s / steps;
+            if (tMid > 18 / segLen && tMid < 1 - 18 / segLen) {
+              collarTs.push(tMid);
+            }
+          }
+          collarTs.push(1 - 12 / segLen);
+        } else {
+          collarTs.push(0.5);
+        }
+        for (const frac of collarTs) {
+          const bankVal = a.banking + (b.banking - a.banking) * frac;
+          dense.push({
+            x: Math.round((a.x + (b.x - a.x) * frac) * 10) / 10,
+            y: Math.round((a.y + (b.y - a.y) * frac) * 10) / 10,
+            z: Math.round((a.z + (b.z - a.z) * frac) * 10) / 10,
+            ...(Math.abs(bankVal) > 0.05 ? { banking: Math.round(bankVal * 10) / 10 } : {}),
+          });
+        }
+      }
+    }
+    return dense;
+  };
+
+  // Pass 1: Measure initial polygon/spline length and re-center
+  let sumX = 0;
+  let sumZ = 0;
+  for (const nd of nodes) {
+    sumX += nd[0];
+    sumZ += nd[1];
+  }
+  const meanX = sumX / nodes.length;
+  const meanZ = sumZ / nodes.length;
+  const centered: CircuitNode[] = nodes.map((nd) => [
+    nd[0] - meanX,
+    nd[1] - meanZ,
+    nd[2] ?? 0,
+    nd[3],
+    nd[4],
+  ]);
+
+  const probe = expandFromNodes(centered, 30);
+  const probeCurve = new THREE.CatmullRomCurve3(
+    probe.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
+    true,
+    'centripetal',
+    0.5,
+  );
+  probeCurve.arcLengthDivisions = 1800;
+  const rawLength = probeCurve.getLength() || 1000;
+  const scale = targetLengthMeters / rawLength;
+
+  // Pass 2: Scale skeleton to exact world meters BEFORE corner filleting so minSafeRadius is guaranteed
+  const scaledNodes: CircuitNode[] = centered.map((nd) => [
+    nd[0] * scale,
+    nd[1] * scale,
+    nd[2] ?? 0,
+    nd[3] !== undefined ? (nd[3] > 0 ? Math.max(minSafeRadius, nd[3] * Math.sqrt(scale)) : 0) : undefined,
+    nd[4],
+  ]);
+
+  let gap = 28;
+  let result = expandFromNodes(scaledNodes, gap);
+  while (result.length < 56 && gap > 12) {
+    gap -= 4;
+    result = expandFromNodes(scaledNodes, gap);
+  }
+  return result;
 }
 
 export const TRACKS: TrackSpec[] = [
@@ -36,37 +248,40 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 18,
     targetLapSeconds: 70,
     corners: 19,
-    // Pit Straight -> La Source Hairpin -> Eau Rouge/Raidillon Climb -> Kemmel Straight -> Les Combes -> Malmedy -> Bruxelles -> Speaker's Corner -> Pouhon -> Fagnes -> Stavelot -> Blanchimont -> Bus Stop Chicane
-    waypoints: pts([
-      [-155, -420, 0, 0.35], // Start / Finish
-      [95, -420, 0, 0.3],    // Pit straight braking zone
-      [265, -402, 1, 0.25],   // La Source entry
-      [292, -352, 1.5, 0.3], // La Source tight hairpin apex
-      [252, -295, 2, 0.32],  // La Source exit
-      [345, -165, 5, 0.45],  // Downhill run to Eau Rouge
-      [390, -75, 4, 0.42],   // Eau Rouge compression dip
-      [425, 15, 20, 0.45],   // Raidillon uphill left-right
-      [475, 105, 30, 0.42],  // Raidillon crest (+30m)
-      [535, 295, 26, 0.35],  // Kemmel Straight end braking
-      [518, 392, 22, 0.32],  // Les Combes chicane entry (right)
-      [458, 385, 21, 0.32],  // Les Combes chicane apex (left)
-      [405, 435, 20, 0.35],  // Malmedy exit
-      [292, 355, 16, 0.42],  // Bruxelles hairpin entry
-      [218, 314, 15, 0.48],  // Bruxelles hairpin apex
-      [210, 400, 13, 0.42],  // Speaker's Corner
-      [140, 465, 10, 0.45],  // Pouhon entry
-      [10, 485, 8, 0.55],    // Pouhon double-left apex
-      [-125, 460, 7, 0.45],  // Pouhon exit
-      [-210, 395, 5, 0.32],  // Fagnes (Pif-Paf) chicane right
-      [-265, 415, 5, 0.32],  // Fagnes chicane left
-      [-325, 330, 4, 0.38],  // Stavelot
-      [-405, 145, 3, 0.5],   // Blanchimont 1
-      [-395, -95, 2, 0.45],  // Blanchimont 2 flat-out
-      [-335, -280, 0.5, 0.3], // Bus Stop braking zone
-      [-282, -335, 0, 0.28], // Bus Stop right
-      [-312, -395, 0, 0.28], // Bus Stop left
-      [-245, -420, 0, 0.32], // Pit straight entry
-    ]),
+    // CW: Pit Straight -> La Source hairpin -> downhill to Eau Rouge/Raidillon -> dead-straight Kemmel Straight -> Les Combes chicane -> Bruxelles -> Pouhon -> Fagnes -> Stavelot -> Blanchimont -> Bus Stop chicane
+    waypoints: buildCircuitPoints(
+      [
+        [-220, -395, 0, 0],
+        [85, -395, 0, 0],         // Main straight end
+        [245, -395, 1, 13.5],     // La Source entry turn
+        [270, -358, 1.5, 13.5],   // La Source exit turn
+        [200, -255, 3, 0],        // Downhill past old pits
+        [218, -165, 2, 42],       // Eau Rouge dip
+        [258, -85, 10, 48],       // Raidillon uphill bend
+        [285, -10, 26, 44],       // Raidillon crest
+        [405, 265, 22, 0],        // Kemmel Straight (dead straight!)
+        [435, 345, 21, 13.5],     // Les Combes right entry
+        [390, 365, 20, 13.5],     // Les Combes left
+        [365, 420, 19, 15],       // Malmedy right
+        [280, 355, 16, 22],       // Rivage / Bruxelles entry
+        [225, 318, 15, 14.5],     // Bruxelles hairpin apex
+        [235, 395, 13, 18],       // Speaker's Corner exit
+        [170, 475, 10, 34],       // Pouhon entry
+        [45, 505, 8, 46],         // Pouhon double-left apex
+        [-75, 475, 7, 38],        // Pouhon exit
+        [-165, 405, 5, 15],       // Fagnes right
+        [-220, 425, 5, 15],       // Fagnes left
+        [-295, 365, 4, 24],       // Stavelot entry
+        [-355, 285, 3, 28],       // Stavelot exit onto straight
+        [-395, 140, 2, 95],       // Paul Frere / Blanchimont 1
+        [-375, -105, 1, 95],      // Blanchimont 2
+        [-325, -285, 0.5, 13],    // Bus Stop braking left/right entry
+        [-272, -310, 0, 12.5],    // Bus Stop right apex
+        [-298, -385, 0, 13.5],    // Bus Stop left onto pit straight
+      ],
+      3320,
+      18,
+    ),
   },
   {
     id: 'daytona-road',
@@ -83,28 +298,33 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 19,
     targetLapSeconds: 46,
     corners: 12,
-    // Tri-oval Frontstretch -> T1 Infield Dive -> International Horseshoe -> West Horseshoe -> Oval Banking 1-2 -> Backstretch -> Le Mans Bus Stop Chicane -> Oval Banking 3-4
-    waypoints: pts([
-      [-120, -270, 0, 0.3],
-      [90, -270, 0, 0.3],
-      [230, -245, 3, 0.24, 10], // T1 entry braking
-      [265, -175, 1, 0.2, 4],   // T1 infield dive
-      [195, -130, 0, 0.24],     // T2 infield exit
-      [155, -75, 0, 0.18],      // International Horseshoe hairpin
-      [205, -20, 0, 0.25],      // Horseshoe exit
-      [180, 65, 0, 0.24],       // T5 kink
-      [105, 125, 0, 0.2],       // West Horseshoe entry
-      [50, 100, 0, 0.2],        // West Horseshoe exit
-      [-25, 65, 0, 0.25],       // Infield exit chute
-      [-95, 195, 5, 0.4, 15],   // Oval Banking T1
-      [-225, 225, 7, 0.5, 16],  // Oval Banking T2
-      [-310, 125, 6, 0.35, 6],  // Superstretch start
-      [-312, 30, 4, 0.44],      // Le Mans Bus Stop chicane entry
-      [-250, -22, 4, 0.46],     // Bus Stop apex 1
-      [-316, -82, 4, 0.44],     // Bus Stop apex 2
-      [-300, -160, 7, 0.45, 16],// Oval Banking T3-T4
-      [-225, -255, 3, 0.35, 10],// Tri-oval exit onto frontstretch
-    ]),
+    // CCW Oval wrapper + Infield Road Course: Tri-Oval Frontstretch -> T1 left into infield -> T2 -> International Horseshoe -> T5 Kink -> West Horseshoe -> Banked Oval T1-2 -> Backstretch + Bus Stop Chicane -> Banked Oval T3-4
+    waypoints: buildCircuitPoints(
+      [
+        [-110, 255, 0, 0, 5],
+        [45, 275, 0, 90, 6],       // Tri-Oval Start/Finish kink
+        [205, 255, 0, 0, 5],
+        [265, 245, 2, 13.5, 4],    // Turn 1 braking left into infield
+        [225, 145, 0, 26],         // T2 infield sweep
+        [155, 95, 0, 13.5],        // International Horseshoe entry
+        [170, 55, 0, 13.5],        // International Horseshoe exit
+        [235, -35, 0, 28],         // T5 infield kink
+        [120, -105, 0, 14],        // West Horseshoe entry
+        [85, -75, 0, 14],          // West Horseshoe exit
+        [-15, -35, 0, 22],         // Infield exit straight
+        [-95, -185, 4, 48, 15],    // Exit onto NASCAR Oval T1-T2
+        [-225, -235, 7, 56, 16],   // Oval Banking T2
+        [-315, -145, 6, 44, 10],   // Superstretch entry
+        [-315, -45, 4, 0, 0],      // Superstretch straight
+        [-315, 20, 4, 13],         // Le Mans Bus Stop entry (left)
+        [-260, 45, 4, 13],         // Bus Stop right apex
+        [-295, 95, 4, 13],         // Bus Stop exit
+        [-305, 175, 7, 48, 16],    // Oval Banking T3-T4
+        [-230, 245, 3, 44, 12],    // T4 exit onto tri-oval
+      ],
+      2120,
+      19,
+    ),
   },
   {
     id: 'laguna-seca',
@@ -121,28 +341,30 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 16.5,
     targetLapSeconds: 36,
     corners: 11,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Front Straight -> T1 Crest -> Andretti Hairpin (L) -> T3-T4 (R) -> T5-T6 Uphill (L) -> Rahal Crest -> CORKSCREW Plunge (L-R) -> Rainey (L) -> T10 (R) -> T11 (L)
-    waypoints: pts([
-      [-100, 230, 0, 0.35],
-      [85, 230, 0, 0.3],       // Pit straight braking zone
-      [205, 212, 2, 0.28],     // Andretti Hairpin entry (left)
-      [228, 162, 2.5, 0.3],    // Andretti Hairpin double apex
-      [155, 132, 3, 0.3],      // Andretti exit
-      [172, 58, 4.5, 0.32],    // Turn 3 right
-      [222, -20, 7.5, 0.35],   // Turn 4 right
-      [165, -130, 14, 0.35],   // Turn 5 uphill left
-      [85, -210, 19, 0.35],    // Turn 6 fast left
-      [15, -255, 24, 0.32],    // Rahal Straight steep crest (+24m)
-      [-65, -250, 23, 0.26],   // Corkscrew blind entry left (+23m)
-      [-98, -202, 14, 0.26],   // Corkscrew plunge drop right!
-      [-130, -152, 7, 0.32],   // Corkscrew bottom exit
-      [-215, -95, 5, 0.38],    // Rainey Curve left
-      [-255, 25, 3, 0.32],     // Turn 10 right
-      [-232, 152, 0.5, 0.28],  // Turn 11 braking zone
-      [-212, 212, 0, 0.28],    // Turn 11 sharp 90° left hairpin
-      [-160, 230, 0, 0.32],    // Front straight exit
-    ]),
+    // CCW: Front Straight -> T1 crest -> Andretti Hairpin (L) -> T3 -> T4 -> T5 uphill -> T6 -> Rahal Crest -> Corkscrew Plunge (L-R) -> Rainey -> T10 -> T11 hairpin (L)
+    waypoints: buildCircuitPoints(
+      [
+        [-115, 190, 0, 0],
+        [95, 190, 1.5, 0],         // Front straight T1 crest
+        [225, 185, 2, 14],         // Andretti Hairpin entry (double-apex left)
+        [235, 138, 2.5, 14],       // Andretti Hairpin exit
+        [155, 108, 3, 18],         // Transition toward T3
+        [185, 42, 4.5, 22],        // Turn 3 right
+        [238, -22, 7, 24],         // Turn 4 right
+        [178, -112, 13, 22],       // Turn 5 uphill left
+        [105, -172, 18, 28],       // Turn 6 fast left
+        [-15, -195, 23, 0],        // Rahal Straight steep climb
+        [-105, -195, 22, 13],      // Corkscrew top left
+        [-128, -142, 12, 13],      // Corkscrew steep S-plunge right!
+        [-198, -108, 8, 24],       // Rainey Curve fast left
+        [-188, -32, 5, 20],        // Turn 10 right
+        [-252, 42, 3, 22],         // Approach to T11
+        [-262, 152, 1, 13.5],      // Turn 11 tight hairpin entry
+        [-215, 188, 0, 13.5],      // Turn 11 exit onto straight
+      ],
+      1660,
+      16.5,
+    ),
   },
   {
     id: 'le-mans',
@@ -153,42 +375,55 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['WEC'],
     flagship: true,
     scenery: 'forest',
-    asphaltColor: '#242933',
-    kerbPrimary: '#2563eb',
-    kerbSecondary: '#facc15',
+    asphaltColor: '#252a32',
+    kerbPrimary: '#facc15',
+    kerbSecondary: '#1d4ed8',
     trackWidth: 18.5,
     targetLapSeconds: 72,
     corners: 21,
-    // Pit Straight -> Dunlop Curve & Chicane -> Tertre Rouge -> Mulsanne Straight (Forza & Michelin Chicanes) -> Mulsanne Corner -> Indianapolis -> Arnage -> Porsche Curves -> Ford Chicanes
-    waypoints: pts([
-      [-170, -475, 0, 0.3],
-      [155, -475, 0, 0.3],     // Pit straight
-      [310, -445, 4, 0.35],    // Dunlop Curve
-      [385, -365, 8, 0.22],    // Dunlop Chicane entry
-      [420, -320, 7, 0.22],    // Dunlop Chicane exit
-      [430, -165, 3, 0.25],    // Esses entry
-      [405, -75, 2, 0.22],     // Tertre Rouge right onto Mulsanne
-      [485, 75, 0, 0.35],       // Mulsanne Straight 1
-      [525, 225, 0, 0.28],     // Forza Chicane entry
-      [485, 255, 0, 0.28],     // Forza Chicane apex
-      [512, 315, 0, 0.32],     // Mulsanne Straight 2
-      [430, 440, 0, 0.28],     // Michelin Chicane entry
-      [402, 472, 0, 0.28],     // Michelin Chicane apex
-      [345, 520, 0, 0.32],     // Mulsanne Straight 3
-      [215, 575, 0, 0.28],     // Mulsanne Corner braking
-      [140, 560, 0, 0.28],     // Mulsanne Corner 90° right hairpin
-      [-30, 495, 1, 0.38],     // Blast to Indianapolis
-      [-195, 445, 2, 0.32, 7], // Indianapolis banked left
-      [-285, 395, 2, 0.28],    // Arnage 90° slow right
-      [-345, 295, 3, 0.38],    // Approach to Porsche Curves
-      [-415, 165, 5, 0.45],    // Porsche Curves right-left
-      [-465, 30, 5, 0.45],     // Porsche Curves fast sweep
-      [-425, -135, 3, 0.38],   // Maison Blanche / Karting
-      [-370, -305, 0.5, 0.28], // Ford Chicane 1
-      [-328, -338, 0, 0.28],   // Ford Chicane 2
-      [-345, -405, 0, 0.28],   // Ford Chicane 3
-      [-265, -465, 0, 0.32],   // Onto Pit Straight
-    ]),
+    // CW: Pit Straight -> Dunlop Curve & Chicane -> Forest Esses -> Tertre Rouge -> 3-Part Mulsanne Straight (2 sharp chicanes!) -> Mulsanne Hairpin -> Indianapolis -> Arnage -> Porsche Curves -> Ford Chicanes
+    waypoints: buildCircuitPoints(
+      [
+        [-210, -455, 0, 0],
+        [45, -455, 0, 0],          // Pit straight
+        [155, -430, 5, 32],        // Dunlop Curve
+        [210, -430, 6, 13],        // Dunlop Chicane left
+        [235, -385, 5, 13],        // Dunlop Chicane right
+        [285, -355, 3, 22],        // Esses 1
+        [255, -295, 2, 22],        // Esses 2
+        [305, -235, 1, 20],        // Esses 3
+        [395, -235, 1, 14],        // Tertre Rouge 90° right onto Mulsanne!
+        [400, -100, 1, 0],         // Mulsanne Straight Part 1
+        [405, 20, 1, 13],          // Mulsanne Chicane 1 (right-left-right)
+        [445, 45, 1, 13],
+        [410, 75, 1, 13],
+        [415, 215, 1, 0],          // Mulsanne Straight Part 2
+        [420, 290, 1, 13],         // Mulsanne Chicane 2 (left-right-left)
+        [378, 318, 1, 13],
+        [418, 348, 1, 13],
+        [425, 450, 2, 0],          // Mulsanne Straight Part 3 crest
+        [425, 505, 1, 13],         // Mulsanne Hairpin entry
+        [385, 520, 1, 13],         // Mulsanne Hairpin exit
+        [155, 495, 0, 0],          // Straight to Indianapolis
+        [55, 485, 0, 22],          // Indianapolis fast right
+        [15, 445, 0, 14],          // Indianapolis tight 90° left
+        [15, 345, 0, 0],           // Short straight to Arnage
+        [15, 305, 0, 13],          // Arnage 90° right!
+        [-145, 285, 0, 0],         // Straight to Porsche Curves
+        [-235, 245, 0, 32],        // Porsche Curve 1 right
+        [-275, 155, 0, 32],        // Porsche Curve 2 left
+        [-255, 65, 0, 34],         // Porsche Curve 3 left
+        [-315, -35, 0, 32],        // Karting / Corvette right
+        [-285, -185, 0, 0],        // Maison Blanche approach
+        [-290, -255, 0, 13],       // Ford Chicane 1 left
+        [-245, -280, 0, 13],       // Ford Chicane 1 right
+        [-285, -335, 0, 13],       // Ford Chicane 2 left
+        [-240, -370, 0, 13],       // Ford Chicane 2 right
+        [-260, -445, 0, 16],       // Pit straight entry
+      ],
+      3420,
+      18.5,
+    ),
   },
   {
     id: 'monza',
@@ -199,35 +434,40 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1', 'WEC'],
     flagship: true,
     scenery: 'parkland',
-    asphaltColor: '#252a32',
+    asphaltColor: '#252930',
     kerbPrimary: '#16a34a',
-    kerbSecondary: '#ffffff',
+    kerbSecondary: '#dc2626',
     trackWidth: 18,
     targetLapSeconds: 40,
     corners: 11,
-    // Rettifilo Straight -> T1 Rettifilo Chicane -> Curva Grande -> Roggia Chicane -> Lesmo 1 & 2 -> Serraglio -> Ascari Chicane -> Back Straight -> Parabolica
-    waypoints: pts([
-      [-145, -270, 0, 0.3],
-      [135, -270, 0, 0.3],     // Rettifilo main straight
-      [212, -268, 0, 0.28],    // Variante del Rettifilo brake zone
-      [238, -234, 0, 0.28],    // Rettifilo chicane right-left
-      [274, -225, 0, 0.32],    // Rettifilo exit
-      [295, -110, 0, 0.55],    // Curva Grande flat-out sweep
-      [255, 25, 0, 0.36],      // Variante della Roggia entry
-      [214, 56, 0, 0.36],      // Roggia chicane left-right
-      [235, 102, 0, 0.34],     // Roggia exit
-      [225, 195, 2, 0.3],      // Curva di Lesmo 1
-      [150, 235, 2, 0.3],      // Short chute
-      [85, 265, 2, 0.3],       // Curva di Lesmo 2
-      [-45, 215, 0, 0.35],     // Curva del Serraglio straight
-      [-155, 225, 0, 0.28],    // Variante Ascari left entry
-      [-190, 260, 0, 0.28],    // Ascari right mid
-      [-235, 230, 0, 0.32],    // Ascari left exit
-      [-285, 65, 0, 0.35],     // Back straight braking zone
-      [-300, -105, 0, 0.45],   // Parabolica / Alboreto entry
-      [-275, -225, 0, 0.45],   // Parabolica sweeping apex
-      [-205, -265, 0, 0.35],   // Parabolica exit onto main straight
-    ]),
+    // CW: Long straight -> Rettifilo Chicane (R-L) -> Curva Grande -> Roggia Chicane (L-R) -> Lesmo 1 (90° R) -> Lesmo 2 (90° R) -> Ascari Chicane (L-R-L) -> Back Straight -> Parabolica
+    waypoints: buildCircuitPoints(
+      [
+        [-185, -255, 0, 0],
+        [200, -255, 0, 0],         // Long main straight
+        [240, -255, 0, 12.5],      // Variante del Rettifilo right
+        [245, -222, 0, 12.5],      // Rettifilo left
+        [325, -205, 0, 44],        // Curva Grande sweeping right
+        [345, -75, 0, 46],         // Curva Grande exit
+        [265, 25, 0, 0],           // Approach to Roggia
+        [230, 55, 0, 13],          // Variante della Roggia left
+        [225, 92, 0, 13],          // Roggia right
+        [275, 165, 0, 15],         // Lesmo 1 (90° right)
+        [230, 215, 0, 0],          // Short chute
+        [205, 255, 0, 15],         // Lesmo 2 (90° right)
+        [65, 230, 0, 0],           // Straight downhill under Serraglio
+        [-45, 215, 0, 14],         // Variante Ascari entry left
+        [-95, 245, 0, 15],         // Ascari apex right
+        [-145, 210, 0, 15],        // Ascari exit left
+        [-285, 185, 0, 0],         // Dead-straight back straight
+        [-335, 175, 0, 22],        // Parabolica entry right
+        [-355, 65, 0, 38],         // Parabolica sweeping mid
+        [-305, -210, 0, 38],       // Parabolica exit onto main straight
+        [-265, -255, 0, 18],
+      ],
+      1980,
+      18,
+    ),
   },
   {
     id: 'silverstone',
@@ -237,38 +477,43 @@ export const TRACKS: TrackSpec[] = [
     region: 'Europe',
     seriesTags: ['F1'],
     flagship: true,
-    scenery: 'parkland',
-    asphaltColor: '#282d36',
+    scenery: 'stadium',
+    asphaltColor: '#2a2e36',
     kerbPrimary: '#dc2626',
-    kerbSecondary: '#f8fafc',
+    kerbSecondary: '#ffffff',
     trackWidth: 18.5,
     targetLapSeconds: 46,
     corners: 18,
-    // Hamilton Straight -> Abbey -> Farm -> Village -> The Loop -> Wellington Straight -> Brooklands -> Luffield -> Woodcote -> Copse -> Maggotts/Becketts/Chapel -> Hangar Straight -> Stowe -> Vale -> Club
-    waypoints: pts([
-      [-115, -275, 0, 0.3],
-      [95, -275, 0, 0.3],      // Hamilton straight
-      [205, -260, 0, 0.35],    // Abbey right
-      [255, -205, 0, 0.3],     // Farm left
-      [222, -148, 0, 0.38],    // Village right
-      [272, -102, 0, 0.42],    // The Loop tight hairpin entry
-      [228, -58, 0, 0.4],      // The Loop apex exit
-      [165, -45, 0, 0.35],     // Wellington straight
-      [215, 75, 0, 0.25],      // Brooklands left
-      [285, 110, 0, 0.35],     // Luffield long right
-      [255, 185, 1, 0.4],      // Woodcote
-      [175, 235, 2, 0.32],     // Copse high-speed 90° right
-      [85, 265, 3, 0.35],      // Maggotts left
-      [25, 215, 3, 0.3],       // Becketts right
-      [-35, 255, 3, 0.3],      // Becketts left
-      [-95, 210, 2, 0.32],     // Chapel curve
-      [-175, 275, 1, 0.3],     // Hangar Straight
-      [-265, 230, 0, 0.25],    // Stowe right braking
-      [-285, 105, 0, 0.3],     // Run down to Vale
-      [-245, 25, 0, 0.22],     // Vale chicane left
-      [-285, -45, 0, 0.24],    // Club right
-      [-225, -220, 0, 0.3],    // Club exit onto Hamilton straight
-    ]),
+    // CW: Hamilton Straight -> Abbey (R) -> Farm (L) -> Village (R) -> The Loop Hairpin (L) -> Aintree -> Wellington Straight -> Brooklands (L) -> Luffield (R) -> Woodcote -> Copse (90° R) -> Maggotts/Becketts -> Hangar Straight -> Stowe (R) -> Vale/Club
+    waypoints: buildCircuitPoints(
+      [
+        [-165, -295, 0, 0],
+        [45, -295, 0, 0],          // Hamilton Straight
+        [135, -270, 0, 26],        // Abbey fast right
+        [155, -215, 0, 22],        // Farm left
+        [205, -185, 0, 13.5],      // Village right
+        [170, -145, 0, 13],        // The Loop tight left hairpin
+        [225, -105, 0, 22],        // Aintree kink
+        [195, 45, 0, 0],           // Wellington Straight
+        [185, 105, 0, 15],         // Brooklands left
+        [115, 125, 0, 18],         // Luffield 180° right
+        [110, 75, 0, 18],          // Luffield exit
+        [45, 95, 0, 28],           // Woodcote onto National Straight
+        [-65, 195, 0, 0],          // National Pit Straight
+        [-115, 225, 0, 20],        // Copse 90° right!
+        [-215, 215, 0, 24],        // Maggotts left
+        [-255, 165, 0, 22],        // Becketts right
+        [-225, 115, 0, 22],        // Becketts left
+        [-275, 55, 0, 24],         // Chapel right onto Hangar Straight
+        [-290, -155, 0, 0],        // Dead-straight Hangar Straight
+        [-295, -215, 0, 18],       // Stowe 90° right!
+        [-225, -255, 0, 0],        // Approach Vale
+        [-215, -295, 0, 13.5],     // Vale left chicane
+        [-190, -325, 0, 18],       // Club double-right onto Hamilton Straight
+      ],
+      2150,
+      18.5,
+    ),
   },
   {
     id: 'suzuka',
@@ -279,48 +524,43 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: true,
     scenery: 'stadium',
-    asphaltColor: '#242931',
-    kerbPrimary: '#dc2626',
+    asphaltColor: '#262b33',
+    kerbPrimary: '#ef4444',
     kerbSecondary: '#f8fafc',
     trackWidth: 17.5,
     targetLapSeconds: 52,
     corners: 18,
-    // TRUE 3D FIGURE-8 CROSSOVER!
-    // Front Straight -> T1-2 -> Esses -> Dunlop -> Degner 1 -> Degner 2 -> Underpass (0m at -20, 65) -> Hairpin -> 200R -> Spoon -> Back Straight OVERPASS (10m at -20, 65) -> 130R -> Casio Triangle Chicane
-    waypoints: pts([
-      [-125, -210, 0, 0.32],   // Start / Finish line
-      [140, -210, 0, 0.32],    // Front straight
-      [255, -190, 2, 0.35],    // Turn 1 fast right
-      [290, -105, 2.5, 0.32],  // Turn 2 exit
-      [230, -45, 3.5, 0.35],   // Esses T3 left
-      [275, 20, 4.5, 0.35],    // Esses T4 right
-      [215, 75, 5.5, 0.35],    // Esses T5 left
-      [255, 145, 6.5, 0.35],   // Esses T6 right
-      [210, 225, 7, 0.4],      // Dunlop Curve climbing
-      [125, 235, 5, 0.28],     // Degner 1 right
-      [90, 165, 2, 0.28],      // Degner 2 tight right
-      [30, 95, 0, 0.35],       // Approach underpass
-      [-20, 65, 0, 0.35],      // UNDERPASS SPAN (0m) - crossed directly above by Back Straight!
-      [-75, 30, 0, 0.32],      // Hairpin approach
-      [-135, -10, 1, 0.28],    // Hairpin tight 180° entry
-      [-188, 22, 1.5, 0.28],   // Hairpin apex
-      [-155, 82, 2, 0.32],     // Hairpin exit
-      [-225, 140, 4, 0.42],    // 200R sweeping right
-      [-310, 195, 5.5, 0.35],  // Spoon Curve entry
-      [-362, 245, 6, 0.35],    // Spoon apex 1
-      [-335, 285, 6.5, 0.35],  // Spoon apex 2
-      [-265, 248, 7, 0.35],    // Spoon exit
-      [-130, 150, 9, 0.35],    // West Back Straight climbing
-      [-20, 65, 10, 0.35],     // OVERPASS BRIDGE (10m) directly over Degner-Hairpin underpass!
-      [60, 0, 8, 0.38],        // Back straight downhill blast
-      [95, -60, 4, 0.38],      // Approach to 130R
-      [75, -130, 2, 0.4],      // 130R legendary high-speed left
-      [-35, -165, 0.5, 0.42],   // Straight into Casio Triangle
-      [-142, -162, 0, 0.48],   // Casio Triangle chicane entry (right)
-      [-218, -172, 0, 0.5],    // Casio Triangle mid (left)
-      [-238, -222, 0, 0.5],    // Casio Triangle exit
-      [-175, -228, 0, 0.44],   // Final corner onto Front Straight
-    ], 0.85),
+    // Figure-8! Pit Straight -> T1/T2 (R) -> S-Curves -> Dunlop (L) -> Degner 1 (R) -> Degner 2 (90° R) -> UNDERPASS (y=0) -> Hairpin (L) -> 200R -> Spoon (L) -> OVERPASS (+11m across underpass!) -> 130R -> Casio Chicane
+    waypoints: buildCircuitPoints(
+      [
+        [-95, -265, 3, 0],
+        [115, -265, 0, 0],         // Pit Straight downhill
+        [245, -265, 0, 22],        // T1 fast right
+        [275, -210, 0, 18],        // T2 right
+        [225, -175, 1, 18],        // Esses 1 left
+        [255, -120, 2, 18],        // Esses 2 right
+        [195, -80, 3, 18],         // Esses 3 left
+        [210, -20, 4, 22],         // Esses 4 right
+        [120, 30, 5, 24],          // Dunlop curve uphill left
+        [35, 35, 3, 18],           // Degner 1 fast right
+        [-5, 65, 1, 13.5],         // Degner 2 90° right
+        [-25, 5, 0, 0],            // Straight UNDERPASS bridge (0m)!
+        [-75, -60, 0, 13],         // T11 Hairpin entry
+        [-115, -45, 0, 13],        // T11 Hairpin exit
+        [-145, 25, 1, 24],         // 200R fast sweep
+        [-255, 85, 2, 18],         // Spoon Curve entry left
+        [-295, 55, 3, 18],         // Spoon Curve exit left
+        [-265, -35, 5, 0],         // Back Straight climbing
+        [-145, -35, 11, 0],        // OVERPASS BRIDGE (+11m directly above underpass!)
+        [-15, -55, 9, 44],         // 130R ultra-fast left
+        [-20, -145, 6, 0],         // Approach to Casio
+        [-45, -195, 4, 13],        // Casio Triangle right
+        [-105, -205, 4, 13],       // Casio Triangle left
+        [-155, -255, 3, 16],       // Final kink onto Pit Straight
+      ],
+      2440,
+      17.5,
+    ),
   },
   {
     id: 'monaco',
@@ -331,38 +571,42 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: true,
     scenery: 'coastal',
-    asphaltColor: '#2a2f3a',
-    kerbPrimary: '#ef4444',
+    asphaltColor: '#2a2f38',
+    kerbPrimary: '#dc2626',
     kerbSecondary: '#ffffff',
     trackWidth: 14.5,
     targetLapSeconds: 38,
     corners: 19,
-    // Blvd Albert 1er -> Sainte-Devote -> Beau Rivage -> Casino -> Mirabeau -> Fairmont Hairpin -> Portier -> Tunnel -> Nouvelle Chicane -> Tabac -> Swimming Pool -> Rascasse -> Anthony Noghes
-    waypoints: pts([
-      [-85, -230, 0, 0.3],
-      [95, -230, 0, 0.25],     // Blvd Albert 1er
-      [185, -225, 2, 0.18],    // Sainte-Devote sharp 90° right
-      [215, -150, 8, 0.35],    // Beau Rivage uphill climb
-      [245, -35, 15, 0.3],     // Massenet left
-      [240, 35, 16, 0.25],     // Casino Square (+16m)
-      [185, 95, 12, 0.32],     // Mirabeau Haute downhill right
-      [238, 162, 7, 0.35],     // Fairmont Hairpin approach
-      [256, 208, 6, 0.36],     // Fairmont Hairpin slowest corner in F1!
-      [198, 222, 5, 0.36],     // Fairmont exit
-      [165, 202, 4, 0.32],     // Mirabeau Bas
-      [125, 240, 3, 0.3],      // Portier double-right into tunnel
-      [0, 235, 2, 0.45],       // Tunnel flat-out curve
-      [-115, 225, 0.5, 0.3],   // Nouvelle Chicane braking
-      [-145, 200, 0, 0.3],     // Nouvelle Chicane left-right
-      [-185, 215, 0, 0.32],    // Harbour straight
-      [-235, 145, 0, 0.3],     // Tabac left
-      [-240, 65, 0, 0.3],      // Swimming Pool entry
-      [-265, 20, 0, 0.3],      // Swimming Pool exit chicane
-      [-225, -70, 0, 0.32],    // Approach to Rascasse
-      [-242, -145, 0, 0.36],   // La Rascasse 160° hairpin
-      [-192, -180, 0, 0.34],   // Anthony Noghes 90° right
-      [-155, -225, 0, 0.3],    // Onto Pit Straight
-    ]),
+    // CW Harbor Loop: Start Straight -> Sainte Devote 90° R -> Beau Rivage climb -> Massenet -> Casino Square -> Mirabeau Haute -> Fairmont Hairpin -> Portier -> Tunnel -> Nouvelle Chicane -> Tabac -> Swimming Pool S-chicane -> Rascasse -> Noghes
+    waypoints: buildCircuitPoints(
+      [
+        [-95, -185, 0, 0],
+        [45, -185, 0, 0],          // Pit straight
+        [105, -210, 2, 11.5],      // Sainte-Devote 90° right uphill!
+        [135, -300, 9, 0],         // Beau Rivage hill climb
+        [195, -315, 15, 16],       // Massenet left
+        [240, -280, 16, 12],       // Casino Square right
+        [235, -205, 12, 11.5],     // Mirabeau Haute right
+        [295, -175, 8, 11],        // Fairmont Hairpin tightest 180° left!
+        [285, -140, 6, 11],        // Fairmont exit
+        [240, -110, 3, 12],        // Mirabeau Bas right
+        [295, -55, 1, 13],         // Portier double-right down to sea level
+        [245, 25, 0, 28],          // Tunnel entry sweep
+        [145, 40, 0, 0],           // Straight Tunnel blast
+        [75, 40, 0, 11],           // Nouvelle Chicane entry left
+        [55, 70, 0, 11],           // Nouvelle Chicane exit right
+        [-25, 55, 0, 0],           // Harbor straight
+        [-75, 55, 0, 12.5],        // Tabac 90° left
+        [-90, -15, 0, 12],         // Swimming Pool S-1 right
+        [-125, -25, 0, 12],        // Swimming Pool S-2 left
+        [-130, -85, 0, 11.5],      // Swimming Pool exit chicane
+        [-155, -115, 0, 11],       // La Rascasse 160° right!
+        [-125, -145, 0, 11],       // Rascasse exit
+        [-140, -185, 0, 11.5],     // Anthony Noghes 90° right onto start straight
+      ],
+      1660,
+      14.5,
+    ),
   },
   {
     id: 'cota',
@@ -372,37 +616,41 @@ export const TRACKS: TrackSpec[] = [
     region: 'Americas',
     seriesTags: ['F1', 'WEC'],
     flagship: true,
-    scenery: 'stadium',
-    asphaltColor: '#272c35',
-    kerbPrimary: '#ef4444',
-    kerbSecondary: '#2563eb',
+    scenery: 'desert',
+    asphaltColor: '#282d35',
+    kerbPrimary: '#dc2626',
+    kerbSecondary: '#f8fafc',
     trackWidth: 18,
     targetLapSeconds: 48,
     corners: 20,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Pit Straight -> Steep Uphill T1 Left Hairpin (+22m) -> Esses -> Hairpin T11 (L) -> 1km Back Straight -> T12 (L) -> Stadium -> Carousel (R) -> T19-20 (L)
-    waypoints: pts([
-      [-105, 270, 0, 0.32],
-      [95, 270, 2, 0.28],      // Uphill pit straight
-      [215, 265, 21, 0.26],    // Turn 1 steep blind uphill hairpin (+22m!)
-      [238, 218, 22, 0.28],    // Turn 1 exit
-      [270, 140, 15, 0.35],    // Turn 2 fast left
-      [210, 75, 12, 0.32],     // Esses T3-T4
-      [275, 15, 9, 0.32],      // Esses T5
-      [225, -55, 6, 0.32],     // Esses T6-T8
-      [270, -130, 4, 0.3],     // Turn 9-10 crest
-      [225, -200, 2, 0.26],    // Turn 11 tight left hairpin
-      [165, -225, 1, 0.3],     // T11 exit onto 1km straight
-      [-75, -270, 1, 0.3],     // 1km Back straight braking
-      [-125, -265, 1.5, 0.26], // Turn 12 sharp 90° left
-      [-145, -195, 2.5, 0.48], // Turn 13 right
-      [-198, -168, 3, 0.52],   // Turn 14-15 Stadium chicane
-      [-265, -215, 4, 0.42],   // Turn 16-18 triple-apex Carousel
-      [-295, -130, 4, 0.38],   // Carousel exit
-      [-285, -25, 3, 0.3],     // Turn 19 90° left
-      [-235, 135, 1, 0.3],     // Approach to T20
-      [-205, 235, 0, 0.28],    // Turn 20 90° left onto pit straight
-    ]),
+    // CCW: Steep uphill Main Straight -> T1 tight hairpin (L) -> downhill Esses (R-L-R-L-R) -> T11 tight hairpin (L) -> dead-straight 1.2km Back Straight -> T12 (90° L) -> T13-15 Stadium -> T16-18 triple right -> T19-20 (L)
+    waypoints: buildCircuitPoints(
+      [
+        [-95, 205, 0, 0],
+        [155, 205, 12, 0],         // Steep uphill Pit Straight
+        [305, 218, 19, 14],        // Iconic single steep uphill T1 peak hairpin!
+        [220, 115, 10, 22],        // T2 fast right downhill into Esses
+        [255, 58, 7, 19],          // T3 left
+        [215, 2, 5, 19],           // T4 right
+        [255, -54, 3, 19],         // T5 left
+        [220, -108, 2, 19],        // T6 right
+        [262, -162, 1, 18],        // T7-T8 S-bend
+        [195, -198, 0, 18],        // T9-T10
+        [268, -245, 0, 13.5],      // T11 sharp hairpin entry
+        [225, -275, 0, 13.5],      // T11 hairpin exit onto Back Straight
+        [-235, -225, 0, 0],        // Long dead-straight 1.2km Back Straight!
+        [-315, -212, 0, 13.5],     // T12 heavy braking 90° left!
+        [-295, -105, 0, 13.5],     // T13 Stadium right
+        [-235, -92, 0, 13.5],      // T14 hairpin
+        [-265, -28, 0, 13.5],      // T15 left
+        [-335, 25, 0, 28],         // T16-17-18 sweeping triple-apex right
+        [-320, 135, 0, 28],        // T18 exit
+        [-235, 175, 0, 14],        // T19 90° left
+        [-235, 205, 0, 14],        // T20 90° left onto Pit Straight
+      ],
+      2210,
+      18,
+    ),
   },
   {
     id: 'sebring',
@@ -413,100 +661,111 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['IMSA', 'WEC'],
     flagship: true,
     scenery: 'desert',
-    asphaltColor: '#363940',
-    kerbPrimary: '#facc15',
-    kerbSecondary: '#111827',
+    asphaltColor: '#373b42',
+    kerbPrimary: '#2563eb',
+    kerbSecondary: '#facc15',
     trackWidth: 18,
     targetLapSeconds: 45,
     corners: 17,
-    waypoints: pts([
-      [-115, -260, 0, 0.3],
-      [95, -260, 0, 0.3],      // Front concrete straight
-      [225, -235, 0, 0.35],    // Turn 1 fast sweeping left
-      [270, -140, 0, 0.28],    // Turn 3
-      [230, -65, 0, 0.24],     // Turn 4-5
-      [185, 5, 0, 0.28],       // Big Bend
-      [245, 85, 0, 0.25],      // Approach to Hairpin
-      [265, 150, 0, 0.18],     // Hairpin Turn 7!
-      [195, 175, 0, 0.24],     // Hairpin exit
-      [145, 235, 0, 0.22],     // Fangio Chicane entry
-      [85, 220, 0, 0.2],       // Fangio Chicane exit
-      [-15, 260, 0, 0.25],     // Tower Turn
-      [-165, 240, 0, 0.25],    // Ulmann Straight
-      [-265, 165, 0, 0.25],    // Bishop Bend
-      [-245, 20, 0, 0.3],      // Le Mans Straight
-      [-285, -135, 0, 0.35],   // Sunset Bend entry
-      [-255, -225, 0, 0.28],   // Sunset Bend bumpy concrete exit
-      [-185, -255, 0, 0.28],
-    ]),
+    // CW: Pit Straight -> T1 fast sweeping left? Look: North-up Sebring Pit Straight is West->East at bottom heading to T17 Sunset? Wait: Sunset Bend is at the South-East entering Pit Straight going West->East or East->West! Going East along top Pit Straight -> T1 left... wait: on Sebring CW overall: Sunset Bend (right) -> Pit Straight (+x) -> T1 sweeping right/left -> T3-5 chicane -> T7 Hairpin right -> T10-13 -> long Ulmann Straight (back bottom) -> T15-16 chicane -> Sunset Bend (180° right)!
+    waypoints: buildCircuitPoints(
+      [
+        [-155, -225, 0, 0],
+        [95, -225, 0, 0],          // Pit straight
+        [195, -205, 0, 28],        // Turn 1 fast sweep
+        [245, -255, 0, 14],        // Turn 3 right
+        [285, -225, 0, 14],        // Turn 4 left
+        [315, -155, 0, 22],        // Turn 5-6 sweep
+        [265, -75, 0, 0],          // Runway straight to Hairpin
+        [312, -15, 0, 16],         // T7 Hairpin tight right!
+        [235, 12, 0, 16],          // T7 Hairpin exit
+        [155, 55, 0, 16],          // Collier / Fangio chicane right
+        [195, 115, 0, 16],         // Tower turn left
+        [125, 185, 0, 14],         // Bishop Bend
+        [-145, 225, 0, 0],         // HUGE dead-straight Ulmann Runway Straight!
+        [-215, 225, 0, 13.5],      // T15 braking chicane right
+        [-245, 185, 0, 13.5],      // T16 left
+        [-295, 125, 0, 24],        // T17 Sunset Bend entry right!
+        [-295, -95, 0, 28],        // Sunset Bend bumpy exit sweep
+        [-245, -215, 0, 18],       // Pit wall entrance
+      ],
+      2050,
+      18,
+    ),
   },
 
   // ==================== REMAINING AMERICAS (15 tracks) ====================
   {
     id: 'long-beach',
-    name: 'Long Beach Street Circuit',
+    name: 'Streets of Long Beach',
     shortName: 'Long Beach',
     country: 'USA',
     region: 'Americas',
     seriesTags: ['IMSA'],
     flagship: false,
-    scenery: 'coastal',
-    asphaltColor: '#282d36',
-    kerbPrimary: '#2563eb',
-    kerbSecondary: '#ffffff',
+    scenery: 'street-night',
+    asphaltColor: '#252932',
+    kerbPrimary: '#ef4444',
+    kerbSecondary: '#facc15',
     trackWidth: 15.5,
     targetLapSeconds: 38,
     corners: 11,
-    // Shoreline Dr curved straight -> T1 90° left -> Fountain Roundabout -> Pine Ave 90° -> Aquarium -> Seaside Way -> Final Hairpin
-    waypoints: pts([
-      [-115, -225, 0, 0.32],
-      [95, -215, 0, 0.32],     // Curved Shoreline Drive straight
-      [215, -185, 0, 0.2],     // Turn 1 sharp 90° left
-      [225, -90, 0, 0.24],     // Fountain Roundabout entry
-      [175, -55, 0, 0.28],     // Roundabout right
-      [215, 25, 0, 0.22],      // Pine Ave 90° right
-      [175, 125, 0, 0.22],     // Turn 6 90° left
-      [60, 145, 0, 0.22],      // Aquarium right
-      [-45, 185, 0, 0.25],     // Seaside Way back straight
-      [-190, 165, 0, 0.22],    // Turn 9 right-left
-      [-245, 45, 0, 0.25],     // Turn 10
-      [-235, -145, 0, 0.18],   // Iconic Final Hairpin (Turn 11)
-      [-190, -190, 0, 0.18],   // Hairpin exit onto Shoreline Dr
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-165, -165, 0, 0],
+        [145, -195, 0, 95],        // Curved Shoreline Drive frontstretch
+        [215, -185, 0, 12],        // T1 sharp 90° right!
+        [235, -95, 0, 13],         // T2-T3 Fountain roundabout right
+        [195, -65, 0, 13],         // Fountain roundabout exit
+        [165, 15, 0, 12],          // T4 90° right
+        [85, 15, 0, 12],           // T5 90° left
+        [85, 115, 0, 12],          // T6 90° right onto Pine Ave
+        [-45, 115, 0, 12],         // T7 90° left
+        [-65, 185, 0, 12],         // T8 90° right onto Seaside Way
+        [-225, 185, 0, 0],         // Straight Seaside Way
+        [-245, 125, 0, 14],        // T9-T10 fast right kink
+        [-235, -85, 0, 0],         // Back approach
+        [-245, -145, 0, 11.5],     // T11 tight 180° hairpin!
+        [-205, -165, 0, 12],       // Exit onto Shoreline Drive
+      ],
+      1680,
+      15.5,
+    ),
   },
   {
     id: 'detroit-street',
-    name: 'Detroit Grand Prix (Street & Belle Isle)',
+    name: 'Detroit Street Circuit',
     shortName: 'Detroit',
     country: 'USA',
     region: 'Americas',
     seriesTags: ['IMSA'],
     flagship: false,
     scenery: 'street-night',
-    asphaltColor: '#262b33',
-    kerbPrimary: '#ef4444',
+    asphaltColor: '#242830',
+    kerbPrimary: '#2563eb',
     kerbSecondary: '#ffffff',
     trackWidth: 15,
     targetLapSeconds: 39,
     corners: 14,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Jefferson Ave Straight -> 90° Left Street Grid -> Tight Hairpin -> Riverfront Chicane -> 90° Left onto Jefferson
-    waypoints: pts([
-      [-120, 220, 0, 0.3],
-      [115, 220, 0, 0.28],     // Long Jefferson Ave straight
-      [215, 210, 0, 0.26],     // T1 90° left
-      [215, 80, 0, 0.26],      // T2 90° left
-      [115, 75, 0, 0.26],      // T3 90° right
-      [115, -45, 0, 0.26],     // T4 chicane
-      [205, -95, 0, 0.26],     // T5 left
-      [185, -195, 0, 0.26],    // T6 90° hairpin
-      [25, -195, 0, 0.3],      // Atwater Riverfront straight
-      [-85, -155, 0, 0.28],    // Riverfront chicane
-      [-175, -185, 0, 0.26],   // T9 right
-      [-225, -65, 0, 0.28],    // T10-11
-      [-215, 145, 0, 0.26],    // Final 90° left onto Jefferson
-      [-180, 210, 0, 0.28],
-    ]),
+    // CCW downtown Jefferson Ave -> T1-3 Hairpin -> Bates St downhill -> Atwater riverfront -> St. Antoine -> Franklin split pit -> Rivard back to Jefferson
+    waypoints: buildCircuitPoints(
+      [
+        [-155, 148, 0, 0],
+        [235, 148, 0, 0],          // Long dead-straight Jefferson Ave
+        [295, 132, 0, 14],         // T1-2 Hairpin entry
+        [295, 72, 0, 14],          // T3 Hairpin exit back onto Jefferson
+        [45, 72, 0, 0],            // Return along parallel Jefferson lane
+        [-25, 72, 0, 13],          // Sharp right downhill Bates St
+        [-35, -45, 2, 13],         // 90° left onto Atwater riverfront straight
+        [-145, -45, 0, 14],        // Atwater St west to St. Antoine
+        [-152, -148, 0, 15],       // St. Antoine north to Franklin St
+        [-255, -148, 0, 15],       // Franklin St west to Rivard
+        [-265, 128, 0, 15],        // Rivard St south to Jefferson Ave
+        [-215, 148, 0, 14],        // Final turn onto Jefferson Ave Pit Straight
+      ],
+      1700,
+      15,
+    ),
   },
   {
     id: 'mid-ohio',
@@ -517,62 +776,70 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['IMSA'],
     flagship: false,
     scenery: 'parkland',
-    asphaltColor: '#292e36',
-    kerbPrimary: '#2563eb',
+    asphaltColor: '#262b33',
+    kerbPrimary: '#dc2626',
     kerbSecondary: '#facc15',
     trackWidth: 16.5,
     targetLapSeconds: 38,
     corners: 13,
-    // Front Straight -> T1 Left -> Keyhole Hairpin -> Back Straight -> Madness -> Thunder Valley -> Carousel
-    waypoints: pts([
-      [-105, -210, 0, 0.3],
-      [85, -210, 1, 0.28],     // Pit straight
-      [195, -185, 3, 0.26],    // Turn 1 fast left
-      [245, -105, 5, 0.22],    // Keyhole entry
-      [220, -40, 4, 0.18],     // Keyhole tight hairpin
-      [120, -25, 2, 0.28],     // Back straight acceleration
-      [-65, 35, 1, 0.28],      // Back straight braking
-      [-165, 85, 6, 0.42],     // China Beach / Madness crest
-      [-92, 168, 8, 0.5],      // Turn 7-8
-      [-195, 195, 4, 0.42],    // Thunder Valley plunge
-      [-245, 85, 2, 0.3],      // Thunder Valley sweep
-      [-235, -65, 1, 0.32],    // The Carousel
-      [-195, -185, 0, 0.24],   // Final turn onto pit straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-125, -195, 0, 0],
+        [65, -195, 0, 0],          // Pit straight
+        [155, -185, 2, 18],        // Turn 1 fast left
+        [195, -245, 6, 12.5],      // Keyhole hairpin entry
+        [225, -210, 6, 12.5],      // Keyhole hairpin exit!
+        [195, -65, 4, 0],          // Long dead-straight Backstraight
+        [195, 65, 2, 13],          // T4 China Beach sharp right
+        [105, 85, 4, 15],          // T5 Madness crest
+        [135, 165, 6, 16],         // T7-T8 dip
+        [35, 185, 4, 15],          // T9 right
+        [-55, 145, 2, 15],         // T10 chicane
+        [-145, 185, 0, 22],        // T11 Thunder Valley
+        [-235, 125, 0, 20],        // T12 The Carousel 180° right
+        [-225, -25, 1, 20],        // Carousel exit
+        [-175, -185, 0, 15],       // T13 onto front straight
+      ],
+      1680,
+      16.5,
+    ),
   },
   {
     id: 'watkins-glen',
-    name: 'Watkins Glen International',
+    name: 'Watkins Glen International (Full Boot)',
     shortName: 'Watkins Glen',
     country: 'USA',
     region: 'Americas',
     seriesTags: ['IMSA'],
     flagship: false,
-    scenery: 'forest',
-    asphaltColor: '#252a33',
-    kerbPrimary: '#0284c7',
+    scenery: 'parkland',
+    asphaltColor: '#262a31',
+    kerbPrimary: '#2563eb',
     kerbSecondary: '#facc15',
     trackWidth: 18,
     targetLapSeconds: 36,
     corners: 11,
-    // Pit Straight -> Turn 1 90° -> Uphill Esses -> Back Straight -> Inner Loop Bus Stop -> Outer Loop Carousel -> The Boot -> Turn 10-11
-    waypoints: pts([
-      [-95, -220, 0, 0.3],
-      [85, -220, 0, 0.25],     // Front straight
-      [195, -205, 1, 0.18],    // Turn 1 (The 90)
-      [245, -105, 6, 0.38],    // Uphill Esses T2
-      [215, -15, 10, 0.35],    // Esses T3-4 crest
-      [235, 105, 11, 0.34],     // Back straight
-      [175, 165, 10, 0.36],    // Inner Loop (Bus Stop) chicane
-      [125, 145, 9, 0.36],     // Bus Stop exit
-      [75, 225, 8, 0.42],      // Outer Loop (Carousel)
-      [-45, 240, 5, 0.25],     // Turn 6 into The Boot
-      [-155, 255, 2, 0.2],     // The Toe hairpin
-      [-215, 175, 3, 0.22],    // The Heel
-      [-175, 85, 4, 0.25],     // Exiting The Boot
-      [-245, -15, 2, 0.26],    // Turn 10 left
-      [-215, -155, 0, 0.28],   // Turn 11 fast right onto front straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-135, -215, 0, 0],
+        [115, -215, 0, 0],         // Pit straight
+        [205, -215, 1, 13.5],      // T1 "The 90" sharp right!
+        [215, -125, 4, 34],        // Climbing Esses 1 (R)
+        [185, -45, 8, 34],         // Esses 2 (L)
+        [215, 65, 12, 0],          // Long dead-straight Backstraight
+        [205, 135, 12, 13],        // Inner Loop Bus Stop entry
+        [165, 155, 12, 13],        // Bus Stop exit
+        [145, 225, 10, 24],        // Outer Loop sweeping right
+        [25, 235, 8, 18],          // Chute left
+        [-45, 295, 4, 13.5],       // Heel of the Boot hairpin
+        [-115, 265, 2, 13.5],      // Toe of the Boot hairpin
+        [-115, 175, 4, 15],        // Sole climb right
+        [-205, 125, 5, 14],        // Turn 10 90° left
+        [-215, -155, 2, 16],       // Turn 11 sweeping right onto straight
+      ],
+      1680,
+      18,
+    ),
   },
   {
     id: 'mosport',
@@ -583,28 +850,30 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['IMSA'],
     flagship: false,
     scenery: 'forest',
-    asphaltColor: '#262b33',
-    kerbPrimary: '#dc2626',
+    asphaltColor: '#282c34',
+    kerbPrimary: '#ef4444',
     kerbSecondary: '#ffffff',
     trackWidth: 17,
     targetLapSeconds: 38,
     corners: 10,
-    // Pit Straight -> T1 Fast Right -> T2 Blind Downhill Left -> T3 -> Moss Corner Double Hairpin -> Mario Andretti Straight -> T8-9-10
-    waypoints: pts([
-      [-115, -220, 6, 0.3],
-      [95, -220, 7, 0.32],     // Front straight
-      [215, -195, 6, 0.38],    // Turn 1 fast right
-      [245, -85, 1, 0.4],      // Turn 2 steep blind downhill sweep
-      [175, 25, 0, 0.32],      // Turn 3
-      [125, 145, 2, 0.34],     // Turn 4 downhill plunge to Moss
-      [194, 198, 2, 0.36],     // Turn 5A Moss Corner hairpin
-      [162, 240, 2.5, 0.36],   // Turn 5A/B hairpin arc
-      [100, 232, 3, 0.34],     // Turn 5B Moss exit
-      [-95, 195, 7, 0.3],      // Andretti Back Straight uphill
-      [-235, 125, 10, 0.28],   // Turn 8 high-speed braking
-      [-245, -15, 8, 0.24],    // Turn 9
-      [-215, -165, 6, 0.24],   // Turn 10 uphill onto front straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-125, -205, 4, 0],
+        [105, -205, 8, 0],         // Pit straight crest
+        [215, -175, 10, 24],       // Turn 1 fast downhill right
+        [245, -75, 2, 22],         // Turn 2 blind plunging double-apex left!
+        [185, 25, 3, 22],          // Turn 3 right
+        [225, 115, 1, 24],         // Turn 4 sweeping uphill
+        [175, 195, 0, 13],         // T5A Moss Corner hairpin entry!
+        [125, 185, 0, 13],         // T5B Moss Corner hairpin exit
+        [-175, 195, 8, 0],         // Long uphill Mario Andretti Straight!
+        [-235, 145, 12, 18],       // Turn 8 fast right
+        [-205, -25, 11, 18],       // Turn 9 left
+        [-235, -155, 8, 16],       // Turn 10 right onto pit straight
+      ],
+      1720,
+      17,
+    ),
   },
   {
     id: 'lime-rock',
@@ -615,26 +884,28 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['IMSA'],
     flagship: false,
     scenery: 'parkland',
-    asphaltColor: '#2b3038',
-    kerbPrimary: '#dc2626',
-    kerbSecondary: '#ffffff',
+    asphaltColor: '#272b33',
+    kerbPrimary: '#16a34a',
+    kerbSecondary: '#facc15',
     trackWidth: 15.5,
     targetLapSeconds: 35,
     corners: 7,
-    // Sam Posey Straight -> Big Bend -> Left-Hander -> Right-Hander -> No-Name Straight -> Uphill Crest (+8m) -> West Bend -> Diving Turn
-    waypoints: pts([
-      [-125, -210, 0, 0.3],
-      [115, -210, 0, 0.28],    // Sam Posey Straight
-      [235, -175, 0, 0.35],    // Big Bend double-apex right
-      [225, -55, 0, 0.25],     // Big Bend exit
-      [115, -15, 0, 0.24],     // Left-Hander (T3)
-      [75, 75, 0, 0.24],       // Right-Hander (T4)
-      [-45, 135, 1, 0.3],      // No Name Straight
-      [-175, 185, 9, 0.26],    // The Uphill steep crest (+9m)
-      [-255, 95, 6, 0.28],     // West Bend downhill right
-      [-245, -85, 1, 0.32],    // The Diving Turn
-      [-195, -190, 0, 0.3],    // Onto Sam Posey Straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-145, -175, 0, 0],
+        [135, -175, 0, 0],         // Sam Posey Pit Straight
+        [225, -155, 0, 16],        // Big Bend entry
+        [235, -85, 0, 16],         // Big Bend exit (180° sweeping right)
+        [115, -65, 1, 13],         // Turn 3 Left-Hander!
+        [85, 25, 1, 13],           // Turn 4 Right-Hander onto No Name Straight
+        [-25, 115, 4, 0],          // No Name Straight
+        [-135, 155, 12, 22],       // The Uphill crest!
+        [-225, 95, 10, 18],        // West Bend
+        [-215, -95, 4, 22],        // The Downhill fast right onto Sam Posey Straight
+      ],
+      1540,
+      15.5,
+    ),
   },
   {
     id: 'road-america',
@@ -645,30 +916,35 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['IMSA'],
     flagship: false,
     scenery: 'forest',
-    asphaltColor: '#252a32',
-    kerbPrimary: '#ef4444',
-    kerbSecondary: '#facc15',
+    asphaltColor: '#272c34',
+    kerbPrimary: '#dc2626',
+    kerbSecondary: '#ffffff',
     trackWidth: 18,
     targetLapSeconds: 42,
     corners: 14,
-    // Pit Straight -> T1 90° -> T3 90° -> Moraine Sweep -> T5 Steep Downhill -> Hurry Downs -> T8 -> Carousel -> Kink -> Kettle Bottoms -> Canada Corner -> T14
-    waypoints: pts([
-      [-125, -265, 4, 0.3],
-      [115, -265, 4, 0.25],    // Main straight
-      [235, -245, 4, 0.2],     // Turn 1 90° right
-      [245, -135, 3, 0.2],     // Turn 3 90° right
-      [135, -110, 4, 0.3],     // Moraine Sweep
-      [115, 5, 0, 0.18],       // Turn 5 steep downhill hairpin
-      [195, 65, 5, 0.24],      // Turn 6 uphill crest
-      [225, 165, 6, 0.25],     // Hurry Downs -> Turn 8
-      [125, 245, 6, 0.45],     // The Carousel 180° sweeper
-      [5, 215, 5, 0.32],       // The Kink fast right
-      [-125, 255, 3, 0.3],     // Kettle Bottoms blast
-      [-245, 220, 2, 0.18],    // Canada Corner 90° right
-      [-265, 65, 4, 0.28],     // Thunder Valley
-      [-255, -95, 5, 0.22],    // Turn 14 right
-      [-215, -230, 4, 0.28],   // Uphill run to pit straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-145, -245, 0, 0],
+        [155, -245, 0, 0],         // Main Pit Straight
+        [245, -245, 2, 14],        // Turn 1 sharp 90° right!
+        [235, -125, 4, 14],        // Turn 3 90° right
+        [115, -105, 3, 28],        // Moraine Sweep straight
+        [52, -105, 0, 16.5],       // Turn 5 heavy braking 90° left!
+        [55, -28, 4, 16],          // Turn 6 uphill left under Corvette Bridge
+        [135, -5, 6, 16],          // Turn 7 right
+        [115, 75, 4, 14],          // Turn 8 left onto Kettle Bottoms
+        [155, 215, 2, 0],          // Kettle Bottoms straight
+        [85, 275, 2, 26],          // The Carousel long 180° right sweep!
+        [-35, 265, 3, 26],         // Carousel exit
+        [-115, 195, 4, 38],        // The Kink!
+        [-215, 145, 3, 0],         // Straight to Canada Corner
+        [-272, 145, 1, 16.5],      // Canada Corner 90° right!
+        [-248, -25, 2, 16],        // Turn 13-14 climbing onto Pit Straight
+        [-235, -225, 4, 16],
+      ],
+      1950,
+      18,
+    ),
   },
   {
     id: 'vir',
@@ -685,25 +961,29 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 16.5,
     targetLapSeconds: 38,
     corners: 17,
-    // Front Straight -> T1 Hairpin -> NASCAR Bend -> Snake -> Climbing Esses -> Oak Tree -> Long Back Straight -> Rollercoaster -> Hog Pen
-    waypoints: pts([
-      [-115, -230, 0, 0.3],
-      [95, -230, 0, 0.34],     // Front straight
-      [220, -214, 1, 0.44],    // Turn 1 hairpin entry
-      [222, -174, 1, 0.48],    // Turn 1 hairpin exit
-      [152, -112, 1, 0.56],    // Turn 3 Left Hook
-      [226, -54, 2, 0.48],     // NASCAR Bend
-      [165, -5, 3, 0.42],      // The Snake
-      [225, 75, 7, 0.3],       // Climbing Esses 1
-      [175, 145, 9, 0.3],      // Climbing Esses 2
-      [115, 215, 8, 0.2],      // Oak Tree slow hairpin!
-      [-55, 235, 5, 0.3],      // Long Back Straight
-      [-195, 215, 6, 0.22],    // Rollercoaster downhill chicane
-      [-245, 125, 2, 0.24],    // Hog Pen 1
-      [-215, 20, 3, 0.26],     // Hog Pen 2
-      [-255, -110, 2, 0.28],   // Fast approach
-      [-205, -210, 0, 0.25],
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-135, -225, 0, 0],
+        [95, -225, 0, 0],          // Front Straight
+        [225, -225, 1, 12.5],      // Turn 1 Horseshoe entry
+        [225, -165, 1, 12.5],      // Turn 1 Horseshoe exit
+        [145, -120, 1, 13],        // Turn 3 Left Hook!
+        [235, -65, 2, 16],         // NASCAR Bend
+        [165, 5, 3, 20],           // The Snake
+        [225, 85, 7, 22],          // Climbing Esses 1
+        [175, 165, 9, 22],         // Climbing Esses 2
+        [125, 225, 8, 12.5],       // Oak Tree slow hairpin!
+        [75, 215, 7, 13],          // Oak Tree exit
+        [-85, 235, 5, 0],          // Long Back Straight
+        [-195, 215, 6, 13.5],      // Rollercoaster downhill chicane
+        [-235, 165, 3, 13.5],      // Rollercoaster plunge
+        [-245, 65, 2, 18],         // Hog Pen 1
+        [-215, -55, 2, 22],        // Hog Pen 2
+        [-245, -195, 0, 15],       // Final turn onto front straight
+      ],
+      1780,
+      16.5,
+    ),
   },
   {
     id: 'indianapolis-road',
@@ -720,23 +1000,25 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 18,
     targetLapSeconds: 35,
     corners: 14,
-    // Brickyard Front Straight -> T1-2-3-4 Infield -> Hulman Blvd -> T7 -> T10 Hairpin -> T12-13-14 onto Oval T1 Banking!
-    waypoints: pts([
-      [-125, -220, 0, 0.3],
-      [115, -220, 0, 0.24],    // Brickyard frontstretch
-      [215, -205, 0, 0.18],    // T1 90° right braking
-      [215, -115, 0, 0.2],     // T2-T3 left-right
-      [125, -85, 0, 0.22],     // T4 right
-      [115, 25, 0, 0.22],      // T5-T6
-      [195, 115, 0, 0.2],      // Hulman Blvd straight -> T7 braking
-      [95, 195, 0, 0.22],      // T8-T9
-      [-45, 165, 0, 0.18],     // T10 hairpin
-      [-115, 115, 0, 0.24],    // T11
-      [-195, 165, 0, 0.24],    // T12-13 infield exit
-      [-265, 65, 2, 0.42, 9],  // Oval Turn 1 banking!
-      [-245, -135, 1, 0.35, 6],// Final chicane onto Brickyard
-      [-195, -210, 0, 0.28],
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-135, -220, 0, 0],
+        [145, -220, 0, 0],         // Brickyard frontstretch
+        [218, -220, 0, 16.5],      // T1 sharp 90° right braking!
+        [215, -130, 0, 16],        // T2-T3 left-right
+        [135, -105, 0, 14],        // T4 right
+        [135, 15, 0, 16],          // T5-T6 onto Hulman Blvd
+        [212, 125, 0, 16.5],       // Hulman Blvd -> T7 braking right
+        [105, 185, 0, 16],         // T8-T9
+        [-45, 165, 0, 13],         // T10 tight hairpin
+        [-115, 115, 0, 14],        // T11
+        [-195, 165, 0, 14],        // T12-T13 infield exit
+        [-265, 65, 2, 46, 11],     // Oval Turn 1 Banking!
+        [-245, -175, 2, 42, 10],   // Oval banking exit onto Brickyard
+      ],
+      1660,
+      18,
+    ),
   },
   {
     id: 'road-atlanta',
@@ -746,30 +1028,32 @@ export const TRACKS: TrackSpec[] = [
     region: 'Americas',
     seriesTags: ['IMSA'],
     flagship: false,
-    scenery: 'forest',
-    asphaltColor: '#262b33',
-    kerbPrimary: '#ef4444',
-    kerbSecondary: '#facc15',
+    scenery: 'parkland',
+    asphaltColor: '#2b2f38',
+    kerbPrimary: '#dc2626',
+    kerbSecondary: '#ffffff',
     trackWidth: 17,
     targetLapSeconds: 35,
     corners: 12,
-    // Pit Straight -> T1 Uphill -> T2-3-4 Esses -> T5 Uphill Crest -> T6-7 Hairpin -> Back Straight -> T10A/10B Chicane -> Gravity Dip under bridge T12
-    waypoints: pts([
-      [-110, -215, 2, 0.3],
-      [95, -215, 2, 0.28],     // Pit straight
-      [210, -185, 8, 0.28],    // T1 fast uphill right
-      [245, -95, 11, 0.28],    // T2 crest
-      [185, -20, 6, 0.28],     // T3-T4 downhill Esses
-      [235, 65, 4, 0.26],      // T5 uphill left
-      [175, 155, 7, 0.24],     // T6 right
-      [95, 205, 5, 0.18],      // T7 tight 90° right onto Back Straight
-      [-85, 215, 2, 0.3],      // Long downhill Back Straight
-      [-205, 185, 1, 0.2],     // T10A chicane left
-      [-235, 145, 1, 0.2],     // T10B chicane right
-      [-255, 25, 10, 0.3],     // Steep hill climb under Suzuki bridge (+10m)
-      [-235, -135, 2, 0.32],   // T12 Gravity Cavity plunge onto front straight!
-      [-185, -205, 2, 0.28],
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-135, -185, 2, 0],
+        [95, -185, 8, 0],          // Uphill pit straight
+        [215, -165, 10, 22],       // Turn 1 uphill right
+        [245, -75, 6, 20],         // Esses 1 downhill
+        [195, 5, 3, 20],           // Esses 2
+        [225, 85, 1, 20],          // Turn 5 uphill right
+        [165, 165, 3, 18],         // Turn 6 right
+        [85, 195, 3, 13],          // Turn 7 sharp 90° right onto Back Straight!
+        [-135, 195, 4, 0],         // Long dead-straight Back Straight
+        [-205, 185, 4, 12.5],      // T10A-T10B sharp chicane!
+        [-235, 135, 8, 12.5],      // T10B exit climbing
+        [-225, 15, 15, 22],        // Turn 11 crest under bridge!
+        [-245, -145, 4, 22],       // Turn 12 terrifying downhill right onto straight!
+      ],
+      1650,
+      17,
+    ),
   },
   {
     id: 'montreal',
@@ -780,30 +1064,34 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'parkland',
-    asphaltColor: '#242931',
+    asphaltColor: '#262b33',
     kerbPrimary: '#dc2626',
     kerbSecondary: '#ffffff',
     trackWidth: 17,
     targetLapSeconds: 40,
     corners: 14,
-    // Pit Straight -> Senna S (T1-2) -> T3-4 Chicane -> T6-7 Chicane -> T8-9 Chicane -> L'Epingle Hairpin -> Casino Straight -> Wall of Champions Chicane
-    waypoints: pts([
-      [-125, -215, 0, 0.3],
-      [105, -215, 0, 0.32],    // Pit straight
-      [182, -192, 0, 0.34],    // T1 Senna S left
-      [230, -222, 0, 0.36],    // T2 Senna S right
-      [272, -158, 0, 0.34],    // T3-4 chicane
-      [255, -25, 0, 0.24],     // T5 sweep
-      [285, 85, 0, 0.2],       // T6-7 chicane
-      [235, 165, 0, 0.22],     // T8-9 chicane
-      [115, 195, 0, 0.34],     // Run to Hairpin
-      [35, 225, 0, 0.36],      // L'Epingle 180° hairpin!
-      [-115, 165, 0, 0.32],    // Casino Straight
-      [-265, 85, 0, 0.32],     // Casino Straight high speed
-      [-285, -55, 0, 0.34],    // Braking for Wall of Champions
-      [-265, -145, 0, 0.34],   // Wall of Champions chicane right-left
-      [-215, -195, 0, 0.32],   // Exit past Wall of Champions!
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-185, -125, 0, 0],
+        [55, -125, 0, 0],          // Pit straight
+        [145, -145, 0, 13],        // T1-T2 Senna S left-right!
+        [195, -105, 0, 14],        // T2 exit
+        [245, -115, 0, 13],        // T3-T4 chicane
+        [295, -85, 0, 13],         // T5 fast right
+        [335, -35, 0, 14],         // T6-T7 chicane
+        [295, 25, 0, 0],           // Straight to T8
+        [235, 45, 0, 13],          // T8-T9 chicane
+        [155, 85, 0, 0],           // Approach to Hairpin
+        [115, 115, 0, 12.5],       // T10 L'Épingle hairpin entry!
+        [75, 95, 0, 12.5],         // T10 L'Épingle hairpin exit
+        [-245, 105, 0, 0],         // HUGE dead-straight Casino Straight!
+        [-295, 95, 0, 12.5],       // T13 Wall of Champions chicane right
+        [-285, 45, 0, 12.5],       // T14 Wall of Champions left
+        [-275, -110, 0, 16],       // Return onto Pit Straight
+      ],
+      1840,
+      17,
+    ),
   },
   {
     id: 'miami',
@@ -814,31 +1102,33 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'stadium',
-    asphaltColor: '#282d37',
+    asphaltColor: '#262b34',
     kerbPrimary: '#06b6d4',
-    kerbSecondary: '#f97316',
+    kerbSecondary: '#ec4899',
     trackWidth: 17.5,
     targetLapSeconds: 37,
     corners: 19,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Hard Rock Stadium Pit Straight -> T1 90° Left -> T4-8 Marina Sweepers -> Straight -> T11-16 Chicane Underpass -> Long Back Straight -> T17 Left Hairpin
-    waypoints: pts([
-      [-115, 225, 0, 0.32],
-      [95, 225, 0, 0.28],      // Stadium straight
-      [195, 210, 0, 0.28],     // Turn 1 90° left
-      [235, 115, 0, 0.35],     // Turn 2-3 sweeping
-      [195, 25, 0, 0.35],      // Marina esses T4-T6
-      [265, -65, 0, 0.3],      // T7-T8 Marina hairpin
-      [185, -145, 0, 0.32],    // Straightaway
-      [65, -175, 0, 0.3],      // T11 heavy brake
-      [5, -220, 2, 0.32],      // T12-13 chicane under overpass
-      [-65, -185, 4, 0.32],    // T14-15 tight chicane crest
-      [-135, -215, 1, 0.3],    // T16 exit onto 1.2km straight
-      [-275, -145, 0, 0.35],   // Long back straight
-      [-285, 35, 0, 0.3],      // T17 braking
-      [-265, 145, 0, 0.28],    // Turn 17 tight left hairpin
-      [-205, 215, 0, 0.3],     // T18-19 kink onto front straight
-    ]),
+    // CCW: Pit straight -> T1 -> T2-3 -> sweeping T4-8 -> T11 -> T12-16 tight highway chicane -> long back straight -> T17 tight hairpin
+    waypoints: buildCircuitPoints(
+      [
+        [-135, 185, 0, 0],
+        [115, 185, 0, 0],          // Pit straight
+        [235, 165, 0, 16],         // Turn 1 left
+        [265, 95, 0, 16],          // Turn 2-3
+        [215, -35, 0, 26],         // T4-T6 sweeping marina curves
+        [135, -155, 0, 24],        // T7-T8 double apex left
+        [-5, -185, 0, 0],          // Straight to T11
+        [-75, -185, 0, 13],        // Turn 11 heavy braking left!
+        [-95, -115, 0, 12.5],      // T12-T13 chicane
+        [-165, -135, 1, 12.5],     // T14-T15 tight uphill chicane!
+        [-215, -75, 0, 13],        // T16 exit onto back straight
+        [-265, 115, 0, 0],         // Long dead-straight Back Straight
+        [-275, 175, 0, 12.5],      // T17 tight 180° hairpin left!
+        [-225, 195, 0, 13],        // T17 exit onto Pit Straight
+      ],
+      1740,
+      17.5,
+    ),
   },
   {
     id: 'las-vegas',
@@ -849,28 +1139,33 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'street-night',
-    asphaltColor: '#1f242d',
-    kerbPrimary: '#dc2626',
-    kerbSecondary: '#f8fafc',
+    asphaltColor: '#22262f',
+    kerbPrimary: '#ef4444',
+    kerbSecondary: '#ffffff',
     trackWidth: 17.5,
     targetLapSeconds: 38,
     corners: 17,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Pit Straight -> T1 Left Hairpin -> Sphere Right Sweeper -> Koval Straight -> T5 90° Left -> Long Las Vegas Blvd Strip -> T14 Chicane -> T17 Fast Left
-    waypoints: pts([
-      [-125, 210, 0, 0.32],
-      [95, 210, 0, 0.28],      // Pit lane straight
-      [195, 195, 0, 0.28],     // T1 tight 90° left hairpin
-      [235, 110, 0, 0.38],     // The Sphere sweeping arc
-      [275, -15, 0, 0.3],      // Koval straight
-      [235, -135, 0, 0.28],    // Turn 5 90° left
-      [105, -175, 0, 0.3],     // Turn 6-9 chicane onto The Strip
-      [-105, -205, 0, 0.35],   // Iconic Las Vegas Blvd Strip flat-out!
-      [-265, -165, 0, 0.3],    // T12 heavy braking
-      [-285, -65, 0, 0.28],    // T14-15 chicane
-      [-245, 65, 0, 0.32],     // T17 fast sweeping left
-      [-205, 195, 0, 0.3],
-    ]),
+    // CCW: Harmon Pit Straight -> T1-2 hairpin -> T3-4 -> T5-9 Sphere -> T12 onto huge Las Vegas Blvd Strip -> T14-16 tight chicane
+    waypoints: buildCircuitPoints(
+      [
+        [-115, 195, 0, 0],
+        [145, 195, 0, 0],          // Harmon Ave pit straight
+        [225, 185, 0, 12.5],       // T1 tight 90° left hairpin!
+        [185, 105, 0, 22],         // T3-T4 sweeping right
+        [255, -25, 0, 13],         // T5 90° left around Sphere
+        [215, -115, 0, 20],        // T6-T8 Sphere bowl sweep
+        [135, -155, 0, 13],        // T9 left onto Koval Lane
+        [-5, -165, 0, 0],          // Koval Lane straight
+        [-85, -175, 0, 13],        // T12 90° left onto The Strip!
+        [-245, -115, 0, 0],        // HUGE dead-straight Las Vegas Strip!
+        [-285, 105, 0, 0],         // Strip braking zone
+        [-295, 165, 0, 12.5],      // T14 heavy braking chicane left
+        [-245, 175, 0, 12.5],      // T15 chicane right
+        [-255, 215, 0, 13],        // T16 left onto Harmon
+      ],
+      1800,
+      17.5,
+    ),
   },
   {
     id: 'mexico-city',
@@ -881,29 +1176,32 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'stadium',
-    asphaltColor: '#262b33',
+    asphaltColor: '#272c35',
     kerbPrimary: '#16a34a',
-    kerbSecondary: '#dc2626',
+    kerbSecondary: '#ef4444',
     trackWidth: 17,
     targetLapSeconds: 35,
     corners: 17,
-    // 1.2km Pit Straight -> T1-3 Chicane -> T4-6 Hairpin/Chicane -> Rapid Esses 7-11 -> Foro Sol Baseball Stadium Hairpin -> Peraltada
-    waypoints: pts([
-      [-135, -225, 0, 0.3],
-      [125, -225, 0, 0.24],    // Long pit straight
-      [235, -215, 0, 0.18],    // T1 braking -> right-left-right
-      [255, -165, 0, 0.2],     // T2-T3
-      [185, -115, 0, 0.22],    // Short straight
-      [235, -25, 0, 0.18],     // T4-T6 tight chicane
-      [165, 65, 0, 0.3],       // Esses T7
-      [225, 145, 0, 0.28],     // Esses T8-T11
-      [115, 205, 0, 0.26],     // Back straight
-      [-35, 215, 0, 0.3],      // T12 Stadium entry braking
-      [-115, 175, 0, 0.34],    // Foro Sol Baseball Stadium hairpin!
-      [-165, 215, 0, 0.3],     // Stadium exit
-      [-245, 95, 0, 0.35],     // Peraltada half-curve
-      [-225, -165, 0, 0.32],   // Peraltada exit onto pit straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-155, -175, 0, 0],
+        [165, -175, 0, 0],         // Long dead-straight Main Straight
+        [235, -175, 0, 13],        // T1 sharp 90° right!
+        [235, -135, 0, 13],        // T2-T3 chicane left-right
+        [125, -105, 0, 0],         // Middle straight
+        [45, -105, 0, 13],         // T4 hairpin right!
+        [45, -45, 0, 13],          // T5-T6 exit left
+        [145, 15, 0, 20],          // T7-T11 high-speed Esses
+        [115, 115, 0, 20],         // Esses exit
+        [15, 175, 0, 14],          // T12 90° right into Foro Sol Stadium
+        [-115, 175, 0, 13],        // Foro Sol stadium tight chicane
+        [-135, 125, 0, 13],        // Stadium exit
+        [-235, 105, 0, 26],        // Peraltada half-sweep right
+        [-235, -135, 0, 22],       // Peraltada exit onto Main Straight
+      ],
+      1660,
+      17,
+    ),
   },
   {
     id: 'interlagos',
@@ -920,24 +1218,26 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 17.5,
     targetLapSeconds: 35,
     corners: 15,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Steep Uphill Arquibancadas -> Senna S Downhill (L-R) -> Curva do Sol (L) -> Reta Oposta -> Descida do Lago (L) -> Ferradura (R) -> Laranjinha -> Bico de Pato (R) -> Mergulho (L) -> Junção (L)
-    waypoints: pts([
-      [-115, 215, 8, 0.35],
-      [85, 226, 11, 0.45],     // Steep uphill pit straight (+11m)
-      [222, 214, 9, 0.48],     // Senna S entry left downhill
-      [230, 178, 7, 0.46],     // Senna S mid transition
-      [154, 128, 5, 0.48],     // Senna S exit right
-      [238, 52, 2, 0.48],      // Curva do Sol sweeping left
-      [215, -85, 0, 0.32],     // Reta Oposta back straight
-      [145, -185, 1, 0.28],    // Descida do Lago double-left
-      [55, -155, 3, 0.28],     // Ferradura right
-      [-25, -195, 4, 0.28],    // Laranjinha
-      [-115, -145, 2, 0.26],   // Pinheirinho & Bico de Pato hairpin!
-      [-195, -175, 1, 0.28],   // Mergulho
-      [-245, -55, 1, 0.26],    // Junção heavy braking uphill left!
-      [-215, 145, 6, 0.35],    // Subida dos Boxes steep climb!
-    ]),
+    // CCW: Steep uphill Arquibancadas -> Senna S (L-R) -> Curva do Sol (L) -> Reta Oposta -> Descida do Lago (L) -> Ferradura -> Laranjinha -> Bico de Pato (R) -> Mergulho -> Juncao (L)
+    waypoints: buildCircuitPoints(
+      [
+        [-125, 205, 6, 0],
+        [115, 215, 11, 0],         // Steep uphill Pit Straight
+        [215, 210, 9, 13],         // Senna S entry left downhill
+        [155, 125, 5, 13],         // Senna S exit right
+        [235, 45, 2, 24],          // Curva do Sol sweeping left
+        [215, -95, 0, 0],          // Dead-straight Reta Oposta
+        [145, -195, 1, 16],        // Descida do Lago double-left
+        [45, -155, 3, 18],         // Ferradura right
+        [-35, -195, 4, 16],        // Laranjinha
+        [-115, -135, 2, 13],       // Pinheirinho & Bico de Pato tight hairpin!
+        [-195, -165, 1, 16],       // Mergulho
+        [-245, -45, 1, 13.5],      // Juncao heavy braking uphill left!
+        [-215, 155, 6, 16],        // Subida dos Boxes steep climb onto Pit Straight
+      ],
+      1660,
+      17.5,
+    ),
   },
 
   // ==================== REMAINING EUROPE (9 tracks) ====================
@@ -956,24 +1256,27 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 16.5,
     targetLapSeconds: 36,
     corners: 19,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Pit Straight -> Tamburello Chicane (L-R-L) -> Villeneuve -> Tosa Hairpin (L) -> Piratella (L) -> Acque Minerali (R-R) -> Variante Alta -> Rivazza 1-2 (L)
-    waypoints: pts([
-      [-115, 215, 0, 0.32],
-      [95, 215, 0, 0.3],       // Pit straight
-      [215, 185, 0, 0.26],     // Tamburello chicane left-right-left
-      [255, 115, 0, 0.28],     // Villeneuve chicane
-      [225, 15, 1, 0.26],      // Tosa hairpin!
-      [135, -35, 6, 0.34],     // Uphill to Piratella
-      [195, -125, 7, 0.32],    // Piratella fast left
-      [125, -195, 2, 0.26],    // Acque Minerali downhill double-right!
-      [15, -215, 6, 0.3],      // Climb to Variante Alta
-      [-65, -235, 7, 0.26],    // Variante Alta tight chicane!
-      [-155, -165, 4, 0.32],   // Downhill blast
-      [-245, -75, 1, 0.26],    // Rivazza 1 downhill left
-      [-235, 35, 0, 0.28],     // Rivazza 2 left
-      [-195, 185, 0, 0.3],     // Onto pit straight
-    ]),
+    // CCW: Pit Straight -> Tamburello L-R-L -> Villeneuve -> Tosa Hairpin (L) -> Piratella (L) -> Acque Minerali -> Variante Alta -> Rivazza 1-2
+    waypoints: buildCircuitPoints(
+      [
+        [-125, 205, 0, 0],
+        [95, 205, 0, 0],           // Pit straight
+        [205, 185, 0, 14],         // Tamburello chicane
+        [255, 115, 0, 14],         // Villeneuve chicane
+        [235, 15, 1, 12.5],        // Tosa Hairpin tight left!
+        [195, -15, 3, 12.5],       // Tosa exit
+        [155, -115, 10, 18],       // Piratella uphill left
+        [15, -165, 2, 15],         // Acque Minerali drop R-R
+        [-15, -115, 3, 15],        // Acque Minerali climb
+        [-135, -145, 7, 13],       // Variante Alta tight chicane!
+        [-165, -115, 7, 13],       // Variante Alta exit
+        [-245, -25, 2, 16],        // Plunge to Rivazza
+        [-235, 145, 0, 14],        // Rivazza 1-2 double-left onto Pit Straight
+        [-185, 195, 0, 14],
+      ],
+      1680,
+      16.5,
+    ),
   },
   {
     id: 'barcelona',
@@ -983,122 +1286,139 @@ export const TRACKS: TrackSpec[] = [
     region: 'Europe',
     seriesTags: ['F1'],
     flagship: false,
-    scenery: 'stadium',
-    asphaltColor: '#272c35',
-    kerbPrimary: '#dc2626',
+    scenery: 'desert',
+    asphaltColor: '#292e36',
+    kerbPrimary: '#ef4444',
     kerbSecondary: '#facc15',
     trackWidth: 17.5,
     targetLapSeconds: 37,
     corners: 14,
-    // Pit Straight -> Elf Chicane (T1-2) -> Renault T3 -> Repsol T4 -> T5 Hairpin -> T7-8 -> Campsa T9 -> Back Straight -> La Caixa T10 Hairpin -> T12-14
-    waypoints: pts([
-      [-125, -225, 2, 0.3],
-      [105, -225, 2, 0.25],    // Main straight
-      [215, -210, 1, 0.2],     // T1-2 Elf chicane
-      [265, -125, 3, 0.42],    // Turn 3 long fast Renault right
-      [215, -25, 4, 0.24],     // Repsol T4 right
-      [135, 25, 1, 0.18],      // Turn 5 downhill hairpin
-      [195, 115, 3, 0.25],     // Turn 7-8 chicane uphill
-      [165, 215, 6, 0.32],     // Campsa T9 crest
-      [-35, 235, 4, 0.28],     // Back straight
-      [-145, 215, 2, 0.18],    // La Caixa Turn 10 tight hairpin!
-      [-195, 145, 2, 0.26],    // Stadium T11-12
-      [-255, 15, 1, 0.26],     // T13-14 fast sweepers
-      [-215, -185, 2, 0.3],
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-145, -195, 0, 0],
+        [125, -195, 0, 0],         // Main straight
+        [215, -195, 0, 13],        // Elf T1 right
+        [225, -155, 0, 13],        // T2 left
+        [305, -75, 2, 34],         // T3 Renault long sweeper right!
+        [245, 65, 4, 15],          // T4 Repsol 180° hairpin right
+        [115, 35, 3, 13],          // T5 downhill left hairpin!
+        [85, 115, 5, 15],          // T7-T8 chicane
+        [-15, 165, 4, 22],         // T9 Campsa crest
+        [-175, 185, 1, 0],         // Dead-straight Back Straight
+        [-235, 185, 0, 12.5],      // T10 La Caixa hairpin!
+        [-195, 125, 0, 13],        // T10 exit
+        [-235, 25, 0, 16],         // T11-T12 Stadium
+        [-245, -135, 0, 20],       // Final fast right onto Main Straight
+      ],
+      1720,
+      17.5,
+    ),
   },
   {
     id: 'madring',
-    name: 'Madring (Madrid GP)',
+    name: 'Circuito de Madring (Madrid)',
     shortName: 'Madring',
     country: 'Spain',
     region: 'Europe',
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'street-night',
-    asphaltColor: '#232831',
+    asphaltColor: '#242933',
     kerbPrimary: '#ef4444',
     kerbSecondary: '#facc15',
     trackWidth: 17,
     targetLapSeconds: 37,
     corners: 20,
-    // IFEMA Straight -> T1-2 Chicane -> High-Speed Banked Monumental Bowl -> Tunnel Underpass -> Chicane -> Street Section
-    waypoints: pts([
-      [-115, -220, 0, 0.3],
-      [95, -220, 0, 0.25],     // IFEMA pit straight
-      [205, -205, 0, 0.2],     // T1-2 chicane
-      [255, -105, 3, 0.35],    // Fast street section
-      [245, 35, 5, 0.4, 10],   // La Monumental banked sweeping hairpin!
-      [155, 125, 4, 0.35, 8],
-      [55, 195, 0, 0.25],      // Underpass exit
-      [-55, 225, 1, 0.22],     // Technical chicane
-      [-155, 165, 2, 0.22],    // 90° street corners
-      [-235, 115, 2, 0.22],
-      [-245, -15, 1, 0.22],
-      [-215, -155, 0, 0.22],   // Final 90° onto IFEMA straight
-    ]),
+    // CW: IFEMA Recta Principal -> T1-2 chicane -> Alta Velocidad -> T12 banked "La Monumental" 180° bowl -> IFEMA street section
+    waypoints: buildCircuitPoints(
+      [
+        [-155, -195, 0, 0],
+        [95, -195, 0, 0],          // Recta Principal
+        [185, -195, 0, 13],        // T1-T2 braking chicane
+        [215, -145, 0, 14],        // T3 exit
+        [275, -55, 2, 24],         // Alta Velocidad sweep
+        [255, 75, 3, 14],          // T7-T9 Valdebebas corners
+        [185, 125, 4, 14],         // T10
+        [135, 225, 4, 26, 12],     // T12 "La Monumental" banked 180° bowl!
+        [-15, 235, 4, 26, 12],     // Monumental banked exit
+        [-135, 185, 1, 0],         // Back straight under tunnel
+        [-195, 185, 0, 13],        // T14 90° street braking right
+        [-195, 95, 0, 13],         // T15-T17 IFEMA chicane
+        [-255, 65, 0, 13],         // T18 90° right
+        [-245, -135, 0, 14],       // T19-T20 back onto Recta Principal
+      ],
+      1740,
+      17,
+    ),
   },
   {
     id: 'red-bull-ring',
     name: 'Red Bull Ring (Spielberg)',
-    shortName: 'Spielberg',
+    shortName: 'Red Bull Ring',
     country: 'Austria',
     region: 'Europe',
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'forest',
-    asphaltColor: '#252a33',
-    kerbPrimary: '#dc2626',
-    kerbSecondary: '#f8fafc',
+    asphaltColor: '#272c34',
+    kerbPrimary: '#ef4444',
+    kerbSecondary: '#facc15',
     trackWidth: 18,
     targetLapSeconds: 36,
     corners: 10,
-    // Steep Climb Front Straight -> Niki Lauda T1 90° -> Steep Uphill Blast -> Remus T3 Hairpin -> Downhill to Rauch T4 -> T6-7-8 -> Rindt T9-10
-    waypoints: pts([
-      [-125, -210, 2, 0.3],
-      [105, -210, 8, 0.25],    // Steep uphill pit straight
-      [215, -205, 10, 0.18],   // Turn 1 Niki Lauda 90° right
-      [255, -55, 19, 0.28],    // Steepest uphill drag in F1 (+19m)
-      [245, 105, 20, 0.16],    // Turn 3 Remus sharp uphill hairpin!
-      [135, 95, 16, 0.26],     // Downhill blast to T4
-      [25, 195, 8, 0.18],      // Turn 4 Rauch 90° right braking
-      [-115, 175, 5, 0.3],     // Turn 6-7 fast lefts
-      [-235, 95, 3, 0.28],     // Turn 9 Rindt fast right
-      [-235, -65, 1, 0.28],    // Turn 10 final right
-      [-195, -195, 1, 0.26],
-    ]),
+    // Angular boomerang! Steep uphill T1 90° R -> uphill straight -> T3 Remus tight hairpin R -> downhill straight -> T4 90° R -> T6-7 fast L -> T9-10 Rindt R
+    waypoints: buildCircuitPoints(
+      [
+        [-135, -205, 0, 0],
+        [95, -205, 12, 0],         // Steep uphill Pit Straight
+        [155, -205, 14, 13.5],     // Turn 1 Castrol sharp 90° right!
+        [245, -35, 24, 0],         // Long uphill straight to Remus
+        [265, 45, 25, 13],         // Turn 3 Remus sharp hairpin right!
+        [195, 75, 22, 13],         // Remus exit
+        [45, 175, 12, 0],          // Long downhill straight
+        [-5, 205, 8, 14],          // Turn 4 Schlossgold 90° right
+        [-95, 115, 5, 22],         // Turn 6-7 double-left
+        [-215, 65, 3, 18],         // Turn 9-10 Rindt double-right
+        [-215, -165, 0, 18],       // Final turn onto Pit Straight
+      ],
+      1660,
+      18,
+    ),
   },
   {
     id: 'hungaroring',
-    name: 'Hungaroring',
+    name: 'Hungaroring (Budapest)',
     shortName: 'Hungaroring',
     country: 'Hungary',
     region: 'Europe',
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'parkland',
-    asphaltColor: '#262b33',
+    asphaltColor: '#282d35',
     kerbPrimary: '#16a34a',
-    kerbSecondary: '#ef4444',
+    kerbSecondary: '#dc2626',
     trackWidth: 16.5,
     targetLapSeconds: 36,
     corners: 14,
-    // Pit Straight -> T1 Hairpin -> T2 Downhill Hairpin -> T4 Blind Crest -> T5 -> T6-7 Chicane -> T8-11 Flowing Esses -> T12-14 Stadium Hairpins
-    waypoints: pts([
-      [-115, -225, 4, 0.3],
-      [105, -225, 4, 0.24],    // Pit straight
-      [215, -215, 3, 0.18],    // Turn 1 hairpin right
-      [195, -115, 0, 0.2],     // Turn 2 downhill hairpin left
-      [255, -25, 3, 0.3],      // Turn 4 blind uphill left
-      [185, 55, 6, 0.42],      // Turn 5 right
-      [110, 88, 5, 0.48],      // Turn 6-7 tight chicane!
-      [175, 165, 4, 0.4],      // Turn 8-9 sweeping right-left
-      [55, 225, 3, 0.3],       // Turn 11 fast right
-      [-85, 195, 2, 0.28],     // Turn 12 90° right
-      [-145, 125, 2, 0.3],     // Turn 13 long 180° hairpin left
-      [-235, 25, 3, 0.28],     // Turn 14 final hairpin right!
-      [-205, -175, 4, 0.3],
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-125, -215, 0, 0],
+        [125, -215, 0, 0],         // Pit straight
+        [215, -215, 0, 12.5],      // Turn 1 tight 180° hairpin right!
+        [205, -165, 0, 12.5],      // T1 exit
+        [95, -135, 2, 14],         // T2-T3 downhill left
+        [15, -45, 7, 16],          // T4 blind crest left
+        [85, 25, 6, 16],           // T5 right
+        [135, 75, 5, 12.5],        // T6-T7 chicane!
+        [75, 145, 4, 18],          // T8-T11 flowing esses
+        [-45, 175, 3, 14],         // T12 90° right
+        [-145, 145, 2, 13],        // T13 180° hairpin left!
+        [-195, 25, 1, 14],         // T14 180° hairpin right onto Pit Straight
+        [-195, -175, 0, 14],
+      ],
+      1680,
+      16.5,
+    ),
   },
   {
     id: 'zandvoort',
@@ -1109,29 +1429,30 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'coastal',
-    asphaltColor: '#292e36',
+    asphaltColor: '#292e37',
     kerbPrimary: '#f97316',
     kerbSecondary: '#ffffff',
     trackWidth: 16,
     targetLapSeconds: 39,
     corners: 14,
-    // Pit Straight -> Tarzanbocht 180° Hairpin -> Gerlach -> Hugenholtz Banked Bowl (18°) -> Scheivlak Blind Crest -> Marlboro/Hans Ernst Hairpin -> Arie Luyendyk 18° Banked Final Bowl!
-    waypoints: pts([
-      [-115, -225, 0, 0.32],
-      [95, -225, 0, 0.32],     // Pit straight
-      [205, -215, 1, 0.36],    // Tarzanbocht 180° hairpin entry!
-      [212, -168, 1.5, 0.36],  // Tarzanbocht hairpin exit
-      [142, -142, 2, 0.32],    // Gerlachbocht
-      [95, -92, 3, 0.32, 16],  // Hugenholtzbocht banked 16° bowl!
-      [175, -15, 7, 0.3],      // Hunzerug uphill
-      [235, 95, 10, 0.35],     // Scheivlak blind downhill crest
-      [165, 195, 4, 0.3],      // Mastersbocht
-      [45, 225, 3, 0.24],      // Turn 9-10 hairpin
-      [-85, 195, 2, 0.2],      // Hans Ernst chicane
-      [-205, 135, 2, 0.32],    // Kumho corner
-      [-265, -25, 5, 0.45, 18],// Arie Luyendykbocht steep 18° banked bowl!
-      [-215, -195, 2, 0.38, 12],
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-135, -215, 0, 0],
+        [95, -215, 0, 0],          // Pit straight
+        [205, -215, 2, 13, 10],    // Tarzanbocht banked 180° hairpin!
+        [195, -165, 3, 13, 10],    // Tarzan exit
+        [115, -125, 5, 14, 14],    // Gerlach -> Hugenholtz steep 14° banked left!
+        [175, -25, 11, 20],        // Hunserug crest & Rob Slotemaker
+        [245, 75, 14, 22],         // Scheivlak fast downhill right!
+        [145, 175, 7, 14],         // Mastersbocht -> Renault
+        [-15, 155, 4, 13],         // Hans Ernst chicane!
+        [-115, 195, 2, 16],        // Kumho corner
+        [-225, 95, 4, 30, 16],     // Arie Luyendyk 16° steep banked sweeper!
+        [-215, -165, 2, 28, 14],   // Banked exit onto Pit Straight
+      ],
+      1740,
+      16,
+    ),
   },
   {
     id: 'paul-ricard',
@@ -1139,31 +1460,36 @@ export const TRACKS: TrackSpec[] = [
     shortName: 'Paul Ricard',
     country: 'France',
     region: 'Europe',
-    seriesTags: ['F1'],
+    seriesTags: ['WEC', 'F1'],
     flagship: false,
-    scenery: 'stadium',
-    asphaltColor: '#262b35',
+    scenery: 'parkland',
+    asphaltColor: '#232833',
     kerbPrimary: '#2563eb',
     kerbSecondary: '#ef4444',
     trackWidth: 18.5,
     targetLapSeconds: 38,
     corners: 15,
-    // Pit Straight -> Verrerie S-Chicane -> Sainte-Baume -> Mistral Straight -> North Chicane -> Signes High-Speed Right -> Beausset Double-Right
-    waypoints: pts([
-      [-125, -225, 0, 0.3],
-      [105, -225, 0, 0.25],    // Pit straight
-      [215, -205, 0, 0.22],    // Verrerie S-chicane
-      [245, -125, 1, 0.22],    // T3-T4
-      [175, -45, 2, 0.24],     // Sainte-Baume hairpin
-      [245, 75, 2, 0.28],      // Mistral Straight pt 1
-      [265, 185, 2, 0.2],      // Mistral North Chicane!
-      [155, 235, 2, 0.3],      // Mistral Straight pt 2
-      [-45, 255, 2, 0.35],     // Signes ultra-fast right!
-      [-165, 205, 2, 0.3],     // Double-Right du Beausset
-      [-125, 105, 1, 0.24],    // Bendor
-      [-225, 45, 1, 0.24],     // Virage du Pont chicane
-      [-235, -145, 0, 0.24],   // Final turn onto pit straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-165, -155, 0, 0],
+        [85, -155, 0, 0],          // Pit straight
+        [155, -155, 0, 13.5],      // T1-T2 Verrerie L-R chicane
+        [195, -105, 0, 13.5],
+        [265, -95, 0, 14],         // T3-T5 S-bend onto Mistral
+        [365, -110, 0, 0],         // Mistral Straight West->East!
+        [385, -55, 0, 13.5],       // North Chicane!
+        [365, 15, 0, 13.5],
+        [365, 135, 0, 0],          // Mistral Straight Part 2
+        [275, 185, 0, 32],         // Signes fast right!
+        [95, 195, 0, 18],          // Beausset double-right loop
+        [15, 115, 0, 15],          // Virage du Pont technical switchbacks
+        [-125, 145, 0, 15],
+        [-255, 65, 0, 16],
+        [-255, -125, 0, 15],       // Final corner onto Pit Straight
+      ],
+      1780,
+      18.5,
+    ),
   },
   {
     id: 'baku',
@@ -1173,30 +1499,34 @@ export const TRACKS: TrackSpec[] = [
     region: 'Europe',
     seriesTags: ['F1'],
     flagship: false,
-    scenery: 'coastal',
-    asphaltColor: '#242932',
-    kerbPrimary: '#06b6d4',
-    kerbSecondary: '#ef4444',
+    scenery: 'street-night',
+    asphaltColor: '#252932',
+    kerbPrimary: '#ef4444',
+    kerbSecondary: '#06b6d4',
     trackWidth: 15,
     targetLapSeconds: 40,
     corners: 20,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // 2.2km Main Straight -> T1 90° Left -> T2 90° Left -> T3 90° Left -> Old City Narrow Uphill Castle Chicane (T8-11) -> Long Coastal Kink Straight!
-    waypoints: pts([
-      [-155, 220, 0, 0.32],
-      [135, 220, 0, 0.28],     // Iconic 2.2km Main Straight
-      [235, 210, 0, 0.26],     // T1 90° left braking
-      [235, 95, 0, 0.26],      // T2 90° left
-      [135, 95, 0, 0.26],      // T3 90° left
-      [135, -15, 1, 0.26],     // T4-T6 chicane
-      [215, -75, 2, 0.26],     // T7 90° right
-      [165, -165, 7, 0.26],    // T8-T10 Ultra-narrow uphill Old Castle section!
-      [65, -205, 8, 0.28],     // T11-T12 castle exit
-      [-25, -175, 5, 0.3],     // Fast downhill kinks (T13-15)
-      [-135, -185, 1, 0.26],   // T16 90° left onto Caspian Coastal blast!
-      [-255, -85, 0, 0.35],    // Flat-out coastal kinks T17-20
-      [-235, 155, 0, 0.3],     // Back onto 2.2km main straight
-    ]),
+    // CCW: HUGE Waterfront Main Straight -> T1 90° L -> T2 90° L -> T3 90° L -> T4-7 90° grid -> T8-12 Narrow Uphill Castle -> T15 90° L -> T16 90° L -> Waterfront kinks
+    waypoints: buildCircuitPoints(
+      [
+        [-215, 195, 0, 0],
+        [195, 195, 0, 0],          // Massive dead-straight Main Straight
+        [255, 195, 0, 12],         // T1 sharp 90° left!
+        [255, 55, 0, 12],          // T2 90° left!
+        [115, 55, 0, 12],          // T3 90° left!
+        [115, 115, 0, 12],         // T4 90° right
+        [5, 115, 1, 12],           // T5-T6 chicane
+        [-45, 5, 3, 12],           // T7 90° right toward Old City
+        [-115, -25, 8, 11.5],      // T8-T12 Narrow Uphill Castle Section!
+        [-165, -135, 14, 12],      // T12 summit crest
+        [-255, -145, 10, 13],      // Downhill straight to T15
+        [-285, -65, 2, 12],        // T15 sharp 90° left!
+        [-285, 25, 0, 12],         // T16 90° left onto fast Waterfront!
+        [-265, 155, 0, 26],        // T17-T20 flat-out coastal kinks onto Main Straight
+      ],
+      1840,
+      15,
+    ),
   },
   {
     id: 'portimao',
@@ -1204,33 +1534,37 @@ export const TRACKS: TrackSpec[] = [
     shortName: 'Portimão',
     country: 'Portugal',
     region: 'Europe',
-    seriesTags: ['WEC', 'F1'],
+    seriesTags: ['F1', 'WEC'],
     flagship: false,
     scenery: 'desert',
-    asphaltColor: '#282d36',
-    kerbPrimary: '#dc2626',
-    kerbSecondary: '#facc15',
+    asphaltColor: '#2a2e37',
+    kerbPrimary: '#facc15',
+    kerbSecondary: '#16a34a',
     trackWidth: 17.5,
     targetLapSeconds: 37,
     corners: 15,
-    // Rollercoaster Main Straight -> T1 Blind Crest -> T3 Hairpin -> Steep Plunge T5 Hairpin -> Blind Uphill T8 -> T10-13 -> T15 Long Sweeper
-    waypoints: pts([
-      [-125, -220, 8, 0.3],
-      [105, -220, 12, 0.26],   // Steep rollercoaster front straight
-      [215, -195, 10, 0.24],   // T1-2 downhill right
-      [235, -95, 2, 0.18],     // T3 steep hairpin!
-      [145, -35, 7, 0.28],     // T4 uphill crest
-      [185, 55, 1, 0.18],      // T5 bottom of valley hairpin
-      [225, 155, 13, 0.3],     // Steep climb to T8 blind crest (+13m)
-      [115, 225, 10, 0.24],    // T10-11 double right
-      [-15, 185, 5, 0.22],     // T13 hairpin
-      [-155, 215, 2, 0.32],    // T14
-      [-255, 95, 4, 0.42],     // T15 massive sweeping final right
-      [-215, -175, 8, 0.35],   // Onto pit straight over crest
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-135, -205, 8, 0],
+        [115, -205, 2, 0],         // Downhill Pit Straight
+        [215, -185, 0, 16],        // T1 plunge right
+        [245, -105, 2, 18],        // T2 right
+        [215, -25, 4, 13],         // T3 tight 180° hairpin right!
+        [135, -45, 9, 16],         // T4 uphill left
+        [105, 65, 16, 13],         // T5 Craig Jones tight hairpin left crest!
+        [165, 145, 8, 18],         // Blind rollercoaster drop
+        [55, 205, 5, 16],          // T8-T11 undulations
+        [-65, 165, 9, 14],         // T13 hairpin
+        [-175, 185, 12, 22],       // Galp crest
+        [-245, 75, 10, 26],        // Final sweeping downhill right onto Pit Straight
+        [-215, -155, 9, 22],
+      ],
+      1740,
+      17.5,
+    ),
   },
 
-  // ==================== ASIA, MIDDLE EAST & OCEANIA (9 tracks) ====================
+  // ==================== ASIA-PACIFIC & MIDDLE EAST (10 tracks) ====================
   {
     id: 'fuji',
     name: 'Fuji Speedway',
@@ -1240,27 +1574,31 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['WEC'],
     flagship: false,
     scenery: 'forest',
-    asphaltColor: '#252a33',
-    kerbPrimary: '#2563eb',
+    asphaltColor: '#272c35',
+    kerbPrimary: '#dc2626',
     kerbSecondary: '#ffffff',
     trackWidth: 18,
     targetLapSeconds: 36,
     corners: 16,
-    // Iconic 1.5km Pit Straight -> T1 Hairpin -> Coca-Cola Left -> 100R Long Sweeper -> Hairpin -> 300R -> Dunlop Chicane -> Technical Sector 3
-    waypoints: pts([
-      [-155, -225, 0, 0.3],
-      [145, -225, 0, 0.32],    // Massive 1.5km Fuji front straight
-      [246, -210, 0, 0.36],    // T1 tight hairpin right
-      [214, -125, 1, 0.32],    // Coca-Cola Corner
-      [275, -15, 3, 0.45],     // 100R long high-speed sweeper
-      [215, 105, 5, 0.34],     // Advan Hairpin!
-      [95, 155, 6, 0.34],      // 300R fast sweep
-      [-25, 225, 4, 0.32],     // Dunlop Chicane
-      [-115, 185, 3, 0.32],    // Sector 3 technical hairpin 1
-      [-185, 215, 2, 0.32],    // Technical hairpin 2
-      [-245, 115, 1, 0.3],     // Panasonic Corner
-      [-225, -175, 0, 0.3],    // Onto 1.5km front straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-185, -195, 0, 0],
+        [195, -195, 0, 0],         // HUGE 1.5km Main Straight!
+        [255, -195, 0, 12.5],      // T1 tight 180° hairpin right!
+        [215, -145, 0, 13],        // T1 exit
+        [115, -115, 0, 22],        // Coca-Cola fast left
+        [215, -15, 1, 28],         // 100R long sweeping right!
+        [135, 95, 2, 12.5],        // Advan Hairpin tight left!
+        [85, 75, 3, 13],           // Advan exit
+        [-15, 135, 4, 24],         // 300R fast sweep
+        [-105, 195, 5, 13],        // Dunlop Chicane tight right-left!
+        [-155, 155, 6, 13],        // Dunlop exit
+        [-235, 115, 5, 15],        // T13-T16 technical uphill complex
+        [-245, -125, 2, 16],       // Panasonic final corner onto Main Straight
+      ],
+      1720,
+      18,
+    ),
   },
   {
     id: 'shanghai',
@@ -1271,29 +1609,32 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'stadium',
-    asphaltColor: '#262b33',
-    kerbPrimary: '#dc2626',
-    kerbSecondary: '#facc15',
+    asphaltColor: '#272c35',
+    kerbPrimary: '#ef4444',
+    kerbSecondary: '#ffffff',
     trackWidth: 18,
     targetLapSeconds: 39,
     corners: 16,
-    // Pit Straight -> Iconic Snail Spiral T1-2-3-4 -> T6 Hairpin -> High-Speed T7-8 -> T11-12 -> 1.1km Back Straight -> T14 Hairpin -> T16
-    waypoints: pts([
-      [-125, -225, 0, 0.32],
-      [105, -225, 2, 0.32],    // Pit straight
-      [235, -195, 3, 0.38],    // Iconic Snail Corner T1 entry
-      [265, -115, 2, 0.34],    // Snail tightening T2
-      [205, -85, 1, 0.34],     // Snail T3-T4 exit
-      [145, -135, 1, 0.36],    // T5
-      [95, -55, 2, 0.34],      // T6 Hairpin!
-      [185, 35, 3, 0.35],      // T7-T8 sweeping esses
-      [225, 145, 2, 0.24],     // T9-T10
-      [115, 195, 1, 0.2],      // T11-T13 banked snail onto Back Straight
-      [-85, 235, 0, 0.28],     // 1.1km Back Straight
-      [-225, 205, 0, 0.18],    // Turn 14 tight hairpin!
-      [-265, 65, 0, 0.26],     // T15
-      [-225, -175, 0, 0.22],   // T16 90° left onto pit straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-145, -215, 0, 0],
+        [115, -215, 0, 0],         // Pit Straight
+        [235, -195, 2, 24],        // T1-T2 famous tightening snail right!
+        [215, -125, 2, 14],        // T3 sharp left hairpin exit
+        [125, -105, 1, 16],        // T4 left
+        [215, -25, 1, 13],         // T6 tight hairpin right!
+        [125, 5, 2, 18],           // T7-T8 high-speed S
+        [155, 105, 3, 20],         // T9-T10
+        [15, 175, 2, 20, 7],       // T11-T13 banked snail loop right!
+        [5, 225, 2, 22, 7],        // T13 exit onto Back Straight
+        [-245, 225, 0, 0],         // HUGE 1.17km Back Straight!
+        [-295, 225, 0, 12.5],      // T14 tightest 180° hairpin right!
+        [-275, 175, 0, 12.5],      // T14 exit
+        [-245, -175, 0, 14],       // T16 90° left onto Pit Straight
+      ],
+      1860,
+      18,
+    ),
   },
   {
     id: 'singapore',
@@ -1304,29 +1645,34 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'street-night',
-    asphaltColor: '#1f242c',
-    kerbPrimary: '#ef4444',
-    kerbSecondary: '#f8fafc',
+    asphaltColor: '#21262f',
+    kerbPrimary: '#06b6d4',
+    kerbSecondary: '#ffffff',
     trackWidth: 15.5,
     targetLapSeconds: 40,
     corners: 19,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Pit Straight -> T1-3 Sheares Chicane -> Memorial T5 (R) -> Raffles Blvd -> T7 90° Left -> Esplanade Bridge -> Bayfront Street Grid
-    waypoints: pts([
-      [-125, 220, 0, 0.32],
-      [95, 220, 0, 0.28],      // Pit straight
-      [205, 205, 0, 0.26],     // Sheares T1-3 chicane
-      [245, 115, 0, 0.28],     // T5 90° right onto Raffles Blvd
-      [235, -35, 0, 0.3],      // Raffles Blvd straight
-      [175, -115, 0, 0.26],    // T7 90° left braking!
-      [115, -75, 0, 0.26],     // T8-9 90° street sequence
-      [55, -165, 0, 0.28],     // Anderson Bridge
-      [-45, -195, 0, 0.26],    // T13 Hairpin!
-      [-135, -155, 0, 0.28],   // Esplanade Waterfront straight
-      [-235, -125, 0, 0.26],   // T16-17 Stadium chicane
-      [-245, 15, 0, 0.28],     // T18-19 under grandstand
-      [-205, 175, 0, 0.28],    // Final kink onto pit straight
-    ]),
+    // CCW: Pit straight -> T1-3 Sheares chicane -> Raffles Blvd -> T7 Memorial 90° L -> T8-9 -> Anderson Bridge -> Esplanade Drive -> T14 90° R -> Marina promenade -> T18-19 chicane
+    waypoints: buildCircuitPoints(
+      [
+        [-135, 195, 0, 0],
+        [95, 195, 0, 0],           // Pit straight
+        [175, 195, 0, 12],         // T1 Sheares left
+        [195, 155, 0, 12],         // T2-T3 chicane
+        [255, 55, 0, 0],           // Raffles Blvd straight
+        [255, -25, 0, 12],         // T5 right
+        [245, -135, 0, 12],        // T7 Memorial 90° left!
+        [125, -135, 0, 12],        // T8-T9
+        [45, -175, 0, 14],         // Anderson Bridge
+        [-135, -175, 0, 0],        // Straight Esplanade Drive!
+        [-215, -175, 0, 12],       // T14 sharp 90° left
+        [-215, -65, 0, 18],        // Marina Bay Promenade fast kinks
+        [-265, 25, 0, 16],
+        [-245, 135, 0, 12],        // T18-T19 chicane onto Pit Straight
+        [-205, 195, 0, 13],
+      ],
+      1780,
+      15.5,
+    ),
   },
   {
     id: 'sepang',
@@ -1343,24 +1689,27 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 18.5,
     targetLapSeconds: 39,
     corners: 15,
-    // Twin Parallel Straights (Pit Straight + Back Straight) connected by T15 Hairpin & T1-2 Hairpin!
-    waypoints: pts([
-      [-135, -225, 0, 0.3],
-      [125, -225, 0, 0.32],    // Main Pit Straight
-      [238, -216, 1, 0.58],    // T1 Pangkor Laut tight hairpin entry
-      [254, -170, 1, 0.66],    // T1/T2 hairpin arc
-      [164, -120, 1, 0.78],    // T2 downhill left
-      [280, -40, 2, 0.60],     // T3 fast right
-      [215, 45, 3, 0.32],      // T4 90° right
-      [245, 165, 3, 0.38],     // T5-T6 ultra-fast S-curves
-      [125, 225, 2, 0.32],     // T7-T8 double-right
-      [-15, 185, 1, 0.32],     // T9 tight hairpin left
-      [-115, 215, 2, 0.32],    // T11-12
-      [-245, 145, 1, 0.32],    // Back straight braking zone
-      [-265, -25, 0, 0.32],    // Back straight parallel to pit straight!
-      [-244, -178, 0, 0.36],   // T15 tight hairpin onto pit straight!
-      [-202, -218, 0, 0.34],   // T15 exit
-    ]),
+    // Twin parallel straights! Pit Straight -> T1-2 Pangkor Laut hairpin -> T3 -> T4 90° -> T5-6 ultra-fast S -> T7-8 -> T9 hairpin -> Back Straight -> T15 tight hairpin!
+    waypoints: buildCircuitPoints(
+      [
+        [-155, -205, 0, 0],
+        [145, -205, 0, 0],         // Main Pit Straight
+        [245, -205, 1, 13.5],      // T1 tight hairpin right!
+        [245, -155, 1, 13.5],      // T2 tight left!
+        [175, -115, 1, 15],        // T2 exit
+        [275, -45, 2, 22],         // T3 fast right
+        [225, 45, 3, 14],          // T4 90° right
+        [245, 175, 3, 24],         // T5-T6 ultra-fast S-curves
+        [115, 225, 2, 18],         // T7-T8 double-right
+        [-15, 185, 1, 13.5],       // T9 tight hairpin left!
+        [-115, 215, 2, 16],        // T11-T12
+        [-245, 145, 1, 16],        // Back straight entry
+        [-265, -135, 0, 0],        // Dead-straight parallel Back Straight!
+        [-265, -205, 0, 16],       // T15 tight hairpin onto Pit Straight!
+      ],
+      1860,
+      18.5,
+    ),
   },
   {
     id: 'bahrain',
@@ -1377,25 +1726,27 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 18,
     targetLapSeconds: 38,
     corners: 15,
-    // Pit Straight -> T1 Tight Hairpin -> T4 Hairpin -> T5-7 Esses -> T8 Hairpin -> T9-10 Off-Camber Lockup Hairpin -> Back Straight -> T11 -> T13 -> T14
-    waypoints: pts([
-      [-135, -225, 0, 0.32],
-      [125, -225, 0, 0.32],    // Pit straight
-      [230, -214, 0, 0.36],    // Turn 1 tight right hairpin!
-      [236, -166, 0.5, 0.36],  // T1/T2 hairpin exit
-      [185, -135, 1, 0.32],    // Turn 2-3 blast
-      [255, -25, 2, 0.3],      // Turn 4 90° right braking
-      [195, 65, 2, 0.32],      // Turn 5-7 flowing esses
-      [242, 152, 1, 0.36],     // Turn 8 hairpin entry
-      [202, 184, 1, 0.36],     // Turn 8 hairpin apex
-      [125, 155, 1, 0.32],     // Turn 9
-      [35, 215, 0, 0.3],       // Turn 10 iconic off-camber hairpin!
-      [-115, 215, 1, 0.28],    // Back straight
-      [-225, 155, 2, 0.26],    // Turn 11 fast left
-      [-255, 35, 2, 0.24],     // Turn 12-13 right
-      [-225, -145, 0, 0.2],    // Turn 14 braking onto pit straight
-      [-185, -215, 0, 0.24],
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-155, -215, 0, 0],
+        [135, -215, 0, 0],         // Main Pit Straight
+        [235, -215, 0, 13],        // Turn 1 tight right hairpin!
+        [235, -165, 0.5, 13],      // T1-T2 exit
+        [175, -125, 1, 0],         // T2-T3 blast
+        [265, -25, 2, 14],         // Turn 4 90° right!
+        [195, 75, 2, 20],          // T5-T7 fast Esses
+        [245, 165, 1, 13],         // T8 tight hairpin right!
+        [195, 195, 1, 13],         // T8 exit
+        [115, 145, 1, 14],         // T9-T10 off-camber double-left lockup!
+        [-5, 195, 0, 0],           // Back Straight!
+        [-115, 195, 0, 18],        // T11 fast left
+        [-215, 135, 0, 22],        // T12-T13 sweeping right
+        [-255, 25, 0, 0],          // Straight to T14
+        [-255, -185, 0, 13.5],     // T14-T15 90° right onto Pit Straight
+      ],
+      1800,
+      18,
+    ),
   },
   {
     id: 'jeddah',
@@ -1406,29 +1757,32 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'street-night',
-    asphaltColor: '#21262f',
+    asphaltColor: '#232833',
     kerbPrimary: '#16a34a',
     kerbSecondary: '#ffffff',
     trackWidth: 16.5,
     targetLapSeconds: 39,
     corners: 27,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Pit Straight -> T1-2 Chicane -> High-Speed Flowing Corniche Kinks (T4-12) -> T13 Banked 180° Left Hairpin -> T16-26 Blind Street Sweepers -> T27 Left Hairpin
-    waypoints: pts([
-      [-125, 210, 0, 0.32],
-      [105, 210, 0, 0.28],     // Pit straight
-      [205, 195, 0, 0.26],     // T1-2 chicane
-      [255, 115, 0, 0.35],     // High-speed flowing T4-T6
-      [235, 15, 0, 0.35],      // T7-T9 blind wall kinks
-      [275, -95, 0, 0.35],     // T10-T12
-      [225, -205, 1, 0.28, 12], // T13 iconic 12° banked 180° left hairpin!
-      [125, -175, 0, 0.32],    // T14-T15
-      [15, -215, 0, 0.35],     // High-speed sweepers T16-T21
-      [-115, -175, 0, 0.35],   // T22-T24 fast chicane
-      [-225, -115, 0, 0.34],   // T25-T26
-      [-255, 75, 0, 0.28],     // Long straight to T27
-      [-225, 195, 0, 0.26],    // T27 final left hairpin onto pit straight!
-    ]),
+    // CCW long fast coastal ribbon -> T1-2 chicane -> high-speed coastal kinks -> T13 banked hairpin -> sweeping coastal S -> T27 hairpin
+    waypoints: buildCircuitPoints(
+      [
+        [-165, 85, 0, 0],
+        [115, 85, 0, 0],           // Pit straight
+        [205, 85, 0, 13],          // T1-T2 tight chicane!
+        [235, 48, 0, 14],          // T3 exit
+        [335, -12, 0, 32],         // High-speed coastal kinks T4-T12
+        [435, -62, 0, 15, 10],     // T13 banked 180° hairpin left!
+        [415, -108, 0, 15, 10],    // T13 exit
+        [205, -68, 0, 34],         // T16-T22 rapid coastal esses
+        [-45, -88, 0, 36],         // T23-T24 DRS sweep
+        [-345, -55, 0, 0],         // Long fast coastal back straight
+        [-395, 45, 0, 0],          // Final straight approach
+        [-375, 85, 0, 13],         // T27 tight hairpin left onto Pit Straight!
+        [-305, 85, 0, 13],
+      ],
+      1860,
+      16.5,
+    ),
   },
   {
     id: 'lusail',
@@ -1439,100 +1793,116 @@ export const TRACKS: TrackSpec[] = [
     seriesTags: ['F1', 'WEC'],
     flagship: false,
     scenery: 'desert',
-    asphaltColor: '#282c34',
-    kerbPrimary: '#9f1239',
-    kerbSecondary: '#f8fafc',
+    asphaltColor: '#252a33',
+    kerbPrimary: '#7c2d12',
+    kerbSecondary: '#ffffff',
     trackWidth: 18,
     targetLapSeconds: 37,
     corners: 16,
-    // 1.06km Pit Straight -> T1 90° -> T2 -> T4-5 -> T6 Hairpin -> T10 Hairpin -> T12-14 Triple-Apex Right -> T16
-    waypoints: pts([
-      [-135, -225, 0, 0.3],
-      [125, -225, 0, 0.28],    // 1.06km pit straight
-      [235, -205, 0, 0.26],    // Turn 1 90° right
-      [205, -115, 0, 0.28],    // Turn 2 left
-      [265, -15, 0, 0.35],     // Turn 4-5 fast sweepers
-      [225, 105, 0, 0.26],     // Turn 6 hairpin!
-      [115, 145, 0, 0.28],     // T7-T9
-      [35, 215, 0, 0.26],      // Turn 10 tight left hairpin
-      [-115, 215, 0, 0.42],    // Iconic Triple-Apex Right (T12-T13-T14)!
-      [-235, 125, 0, 0.38],
-      [-255, -45, 0, 0.3],     // T15
-      [-215, -195, 0, 0.28],   // T16 right onto main straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-165, -215, 0, 0],
+        [165, -215, 0, 0],         // HUGE 1.07km Main Straight!
+        [245, -215, 0, 13.5],      // T1 heavy braking 90° right!
+        [225, -125, 0, 18],        // T2-T3 left
+        [265, -15, 0, 22],         // T4-T5 flowing right
+        [215, 125, 0, 13],         // T6 tight 180° hairpin left!
+        [155, 115, 0, 14],         // T6 exit
+        [65, 185, 0, 20],          // T7-T9 medium rights
+        [-55, 135, 0, 15],         // T10 90° left
+        [-155, 195, 0, 26],        // T12-T14 triple-apex sweeping right!
+        [-255, 85, 0, 24],         // T14-T15 high speed sweep
+        [-245, -185, 0, 15],       // T16 final 90° right onto Main Straight
+      ],
+      1760,
+      18,
+    ),
   },
   {
     id: 'yas-marina',
-    name: 'Yas Marina Circuit',
+    name: 'Yas Marina Circuit (Abu Dhabi)',
     shortName: 'Yas Marina',
     country: 'UAE',
     region: 'Asia-Pacific & Middle East',
     seriesTags: ['F1'],
     flagship: false,
-    scenery: 'street-night',
-    asphaltColor: '#232831',
-    kerbPrimary: '#0284c7',
-    kerbSecondary: '#ffffff',
+    scenery: 'coastal',
+    asphaltColor: '#252a34',
+    kerbPrimary: '#06b6d4',
+    kerbSecondary: '#ef4444',
     trackWidth: 17.5,
     targetLapSeconds: 37,
     corners: 16,
-    // Counter-Clockwise layout matching RacingCircuits.info:
-    // Pit Straight -> T1 90° Left -> T2-4 Esses -> T5 Left Hairpin -> 1.2km Back Straight -> T6-7 Chicane -> T9 Banked Left Hairpin -> W Hotel Section -> T16
-    waypoints: pts([
-      [-125, 220, 0, 0.32],
-      [95, 220, 0, 0.28],      // Pit straight
-      [195, 205, 0, 0.26],     // Turn 1 90° left
-      [245, 115, 2, 0.34],     // T2-T4 high-speed esses
-      [225, -15, 1, 0.26],     // Turn 5 hairpin!
-      [185, -135, 0, 0.3],     // 1.2km Back straight
-      [25, -215, 0, 0.26],     // T6-T7 tight chicane!
-      [-115, -215, 0, 0.32],   // Second straight
-      [-225, -165, 1, 0.3, 7], // Turn 9 banked Marsa hairpin
-      [-255, -45, 0, 0.26],    // W Hotel Marina underpass section
-      [-215, 75, 0, 0.26],     // T13-14 90° hotel bends
-      [-205, 195, 0, 0.28],    // T16 onto pit straight
-    ]),
+    // CCW: Pit straight -> T1 90° L -> uphill T2-4 S -> T5 hairpin L -> HUGE 1.2km straight -> T6-7 chicane -> straight -> T9 banked Marsa hairpin -> Yas Hotel 90° grid
+    waypoints: buildCircuitPoints(
+      [
+        [-125, 195, 0, 0],
+        [95, 195, 0, 0],           // Pit straight
+        [175, 195, 0, 13],         // Turn 1 90° left!
+        [195, 95, 6, 22],          // Uphill Turn 2-4 sweeping left-right-left
+        [145, -25, 4, 13],         // Turn 5 tight 180° hairpin left!
+        [105, -55, 2, 13],         // T5 exit
+        [-155, -145, 0, 0],        // HUGE 1.2km dead-straight Back Straight!
+        [-235, -165, 0, 12.5],     // Turn 6-7 tight chicane!
+        [-265, -125, 0, 12.5],     // T7 exit
+        [-295, 25, 0, 0],          // Second DRS straight
+        [-285, 125, 0, 18, 7],     // Turn 9 Marsa banked 180° hairpin!
+        [-195, 95, 0, 18, 7],      // Marsa exit
+        [-195, 185, 0, 13],        // T12-T16 Yas Hotel 90° marina complex
+        [-155, 195, 0, 13],
+      ],
+      1760,
+      17.5,
+    ),
   },
   {
     id: 'albert-park',
-    name: 'Albert Park Circuit (Melbourne)',
-    shortName: 'Melbourne',
+    name: 'Albert Park Grand Prix Circuit (Melbourne)',
+    shortName: 'Albert Park',
     country: 'Australia',
     region: 'Asia-Pacific & Middle East',
     seriesTags: ['F1'],
     flagship: false,
     scenery: 'parkland',
-    asphaltColor: '#262b34',
-    kerbPrimary: '#facc15',
-    kerbSecondary: '#16a34a',
+    asphaltColor: '#272c35',
+    kerbPrimary: '#16a34a',
+    kerbSecondary: '#facc15',
     trackWidth: 17,
     targetLapSeconds: 35,
     corners: 14,
-    // Pit Straight -> Jones Chicane (T1-2) -> T3 Hairpin -> T6 Fast Right -> Lakeside Straight -> High-Speed T9-10 Chicane -> T11 -> T13 -> T14
-    waypoints: pts([
-      [-115, -220, 0, 0.3],
-      [95, -220, 0, 0.24],     // Pit straight
-      [195, -205, 0, 0.2],     // T1-2 Jones chicane
-      [245, -115, 0, 0.18],    // T3-4 tight hairpin complex
-      [215, -15, 0, 0.26],     // T5-6 fast right
-      [235, 115, 0, 0.3],      // Lakeside curved straight
-      [145, 195, 0, 0.28],     // Ultra-fast T9-T10 chicane!
-      [15, 225, 0, 0.24],      // T11 90° left braking
-      [-115, 195, 0, 0.22],    // T12
-      [-225, 125, 0, 0.2],     // T13 90° right
-      [-235, -35, 0, 0.26],    // T14
-      [-195, -185, 0, 0.24],   // Final bend onto pit straight
-    ]),
+    waypoints: buildCircuitPoints(
+      [
+        [-145, -195, 0, 0],
+        [95, -195, 0, 0],          // Pit straight
+        [195, -195, 0, 14],        // T1-T2 fast right-left chicane!
+        [245, -155, 0, 14],        // T2 exit
+        [285, -35, 0, 0],          // Straight to T3
+        [265, 25, 0, 13],          // T3 sharp 90° right!
+        [185, 45, 0, 14],          // T4-T5 left-right
+        [155, 135, 0, 24],         // T6-T8 fast sweep around lake
+        [-5, 195, 0, 26],          // Lakeside drive
+        [-115, 175, 0, 18],        // T9-T10 ultra-fast chicane!
+        [-225, 115, 0, 13],        // T11 tight 90° left
+        [-255, 5, 0, 13.5],        // T13 90° right!
+        [-225, -145, 0, 14],       // T14 90° right onto Pit Straight
+      ],
+      1680,
+      17,
+    ),
   },
 ];
 
 export function getTrackById(id: string): TrackSpec {
+  const builtin = TRACKS.find((t) => t.id === id);
+  if (builtin) return builtin;
   const custom = getCustomTrackById(id);
   if (custom) return custom;
-  return TRACKS.find((t) => t.id === id) ?? TRACKS[0];
+  return TRACKS[0];
 }
 
-export function getTracksByRegion(region: TrackRegion): TrackSpec[] {
+export function getTracksByRegion(region: TrackRegion | 'All' | 'Flagship'): TrackSpec[] {
+  if (region === 'Flagship') return TRACKS.filter((t) => t.flagship);
+  if (region === 'All') return TRACKS;
   return TRACKS.filter((t) => t.region === region);
 }
 
@@ -1540,16 +1910,16 @@ export interface SampledSplinePoint {
   x: number;
   y: number;
   z: number;
-  tx: number; // unit tangent x
+  tx: number;
   ty: number;
-  tz: number; // unit tangent z
-  nx: number; // unit right normal x (in XZ plane)
-  nz: number; // unit right normal z
-  s: number; // cumulative arc length
-  t: number; // normalized 0..1 progress
-  curvature: number; // signed horizontal curvature
-  banking?: number; // banking angle in radians
-  width?: number; // local track width
+  tz: number;
+  nx: number;
+  nz: number;
+  s: number;
+  t: number; // 0..1 normalized progress
+  curvature: number; // signed 1/R in 1/m (+ = right turn, - = left turn)
+  banking?: number; // radians
+  width?: number; // track width in meters
 }
 
 export interface CompiledTrack {
@@ -1558,158 +1928,161 @@ export interface CompiledTrack {
   totalLength: number;
   pitEntryT: number;
   pitExitT: number;
-  pitOffset: number; // lateral offset of pit lane (+right / -left)
+  pitOffset: number; // lateral world offset for pit corridor
 }
 
-/**
- * C^1-continuous Hermite Catmull-Rom with per-node tension support (0.15 tight .. 0.85 sweeping).
- * When tau1 = tau2 = 0.5, matches classic uniform Catmull-Rom identically.
- */
-function hermiteCatmullRom(
+function hermiteCatmullRomVal(
   p0: number,
   p1: number,
   p2: number,
   p3: number,
   t: number,
-  tau1 = 0.5,
-  tau2 = 0.5,
+  tau1 = 0.16,
+  tau2 = 0.16,
 ): number {
-  const t2 = t * t;
-  const t3 = t2 * t;
-  const h00 = 2 * t3 - 3 * t2 + 1;
-  const h10 = t3 - 2 * t2 + t;
-  const h01 = -2 * t3 + 3 * t2;
-  const h11 = t3 - t2;
   const m1 = tau1 * (p2 - p0);
   const m2 = tau2 * (p3 - p1);
-  return h00 * p1 + h10 * m1 + h01 * p2 + h11 * m2;
-}
-
-function centripetalHermitePoint(
-  p0: { x: number; z: number },
-  p1: { x: number; z: number },
-  p2: { x: number; z: number },
-  p3: { x: number; z: number },
-  t: number,
-  tau1 = 0.5,
-  tau2 = 0.5,
-): { x: number; z: number } {
-  const dt0 = Math.sqrt(Math.max(12, Math.hypot(p1.x - p0.x, p1.z - p0.z)));
-  const dt1 = Math.sqrt(Math.max(12, Math.hypot(p2.x - p1.x, p2.z - p1.z)));
-  const dt2 = Math.sqrt(Math.max(12, Math.hypot(p3.x - p2.x, p3.z - p2.z)));
-
-  const k1 = 0.72 + tau1 * 0.68;
-  const k2 = 0.72 + tau2 * 0.68;
-
-  const m1x =
-    k1 *
-    dt1 *
-    ((p1.x - p0.x) / dt0 - (p2.x - p0.x) / (dt0 + dt1) + (p2.x - p1.x) / dt1);
-  const m1z =
-    k1 *
-    dt1 *
-    ((p1.z - p0.z) / dt0 - (p2.z - p0.z) / (dt0 + dt1) + (p2.z - p1.z) / dt1);
-
-  const m2x =
-    k2 *
-    dt1 *
-    ((p2.x - p1.x) / dt1 - (p3.x - p1.x) / (dt1 + dt2) + (p3.x - p2.x) / dt2);
-  const m2z =
-    k2 *
-    dt1 *
-    ((p2.z - p1.z) / dt1 - (p3.z - p1.z) / (dt1 + dt2) + (p3.z - p2.z) / dt2);
-
   const t2 = t * t;
   const t3 = t2 * t;
-  const h00 = 2 * t3 - 3 * t2 + 1;
-  const h10 = t3 - 2 * t2 + t;
-  const h01 = -2 * t3 + 3 * t2;
-  const h11 = t3 - t2;
-
-  return {
-    x: h00 * p1.x + h10 * m1x + h01 * p2.x + h11 * m2x,
-    z: h00 * p1.z + h10 * m1z + h01 * p2.z + h11 * m2z,
-  };
+  return (
+    (2 * t3 - 3 * t2 + 1) * p1 +
+    (t3 - 2 * t2 + t) * m1 +
+    (-2 * t3 + 3 * t2) * p2 +
+    (t3 - t2) * m2
+  );
 }
 
 /**
  * Compiles track waypoints into a dense, arc-length-uniformly-resampled closed racing spline.
- * Uses >= 1,200 arc-length divisions + centripetal Catmull-Rom so hairpins never cusp or pinch.
+ * Uses THREE.CatmullRomCurve3 ('catmullrom', low tension = 0.16, arcLengthDivisions = 1800)
+ * so straights stay dead straight and hairpins/chicanes stay sharp without oval rounding.
  */
-export function compileTrack(spec: TrackSpec, sampleCount = 480): CompiledTrack {
+export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack {
   let ptsArr = spec.waypoints;
-  if (spec.startNodeIndex !== undefined && spec.startNodeIndex > 0 && spec.startNodeIndex < ptsArr.length) {
+  if (
+    spec.startNodeIndex !== undefined &&
+    spec.startNodeIndex > 0 &&
+    spec.startNodeIndex < ptsArr.length
+  ) {
     const head = ptsArr.slice(spec.startNodeIndex);
     const tail = ptsArr.slice(0, spec.startNodeIndex);
     ptsArr = [...head, ...tail];
   }
   const n = ptsArr.length;
-  const denseCount = Math.max(1200, n * 60);
-  const dense: Array<{ x: number; y: number; z: number; banking: number; width: number }> = [];
+  const hasPerNodeTension = ptsArr.some((wp) => wp.tension !== undefined);
 
-  for (let i = 0; i < denseCount; i++) {
-    const u = (i / denseCount) * n;
-    const seg = Math.floor(u) % n;
-    const localT = u - Math.floor(u);
-    const p0 = ptsArr[(seg - 1 + n) % n];
-    const p1 = ptsArr[seg];
-    const p2 = ptsArr[(seg + 1) % n];
-    const p3 = ptsArr[(seg + 2) % n];
-
-    const tau1 = Math.max(0.15, Math.min(0.85, p1.tension ?? 0.5));
-    const tau2 = Math.max(0.15, Math.min(0.85, p2.tension ?? 0.5));
-
-    const bank0 = (p0.banking || 0) * (Math.PI / 180);
-    const bank1 = (p1.banking || 0) * (Math.PI / 180);
-    const bank2 = (p2.banking || 0) * (Math.PI / 180);
-    const bank3 = (p3.banking || 0) * (Math.PI / 180);
-
-    const w0 = p0.width || spec.trackWidth;
-    const w1 = p1.width || spec.trackWidth;
-    const w2 = p2.width || spec.trackWidth;
-    const w3 = p3.width || spec.trackWidth;
-
-    const xz = centripetalHermitePoint(p0, p1, p2, p3, localT, tau1, tau2);
-    dense.push({
-      x: xz.x,
-      y: hermiteCatmullRom(p0.y, p1.y, p2.y, p3.y, localT, 0.5, 0.5),
-      z: xz.z,
-      banking: hermiteCatmullRom(bank0, bank1, bank2, bank3, localT, 0.5, 0.5),
-      width: hermiteCatmullRom(w0, w1, w2, w3, localT, 0.5, 0.5),
-    });
-  }
-
-  // Cumulative 3D arc length table across dense points (closing back to index 0)
-  const denseCumLen: number[] = [0];
-  let totalLength = 0;
-  for (let i = 1; i <= denseCount; i++) {
-    const a = dense[i - 1];
-    const b = dense[i % denseCount];
-    totalLength += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
-    denseCumLen.push(totalLength);
-  }
-
-  // Uniform arc-length resampling into `sampleCount` points
   const raw: Array<{ x: number; y: number; z: number; banking: number; width: number; s: number }> = [];
-  let cursor = 0;
-  for (let k = 0; k < sampleCount; k++) {
-    const targetS = (k / sampleCount) * totalLength;
-    while (cursor < denseCount - 1 && denseCumLen[cursor + 1] < targetS) {
-      cursor++;
+  let totalLength = 0;
+
+  if (!hasPerNodeTension) {
+    // Centripetal Catmull-Rom over piecewise straight collars + circular corner clusters
+    // guarantees zero ribbon self-intersection folds AND dead-straight straights.
+    const curve = new THREE.CatmullRomCurve3(
+      ptsArr.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
+      true,
+      'centripetal',
+      0.5,
+    );
+    curve.arcLengthDivisions = Math.max(1500, n * 30, 1800);
+    totalLength = curve.getLength();
+    const spaced = curve.getSpacedPoints(sampleCount);
+
+    for (let k = 0; k < sampleCount; k++) {
+      const u = k / sampleCount;
+      const tParam = curve.getUtoTmapping(u, 0);
+      const segU = tParam * n;
+      const seg = Math.floor(segU) % n;
+      const localT = segU - Math.floor(segU);
+
+      const p0 = ptsArr[(seg - 1 + n) % n];
+      const p1 = ptsArr[seg];
+      const p2 = ptsArr[(seg + 1) % n];
+      const p3 = ptsArr[(seg + 2) % n];
+
+      const bank0 = (p0.banking || 0) * (Math.PI / 180);
+      const bank1 = (p1.banking || 0) * (Math.PI / 180);
+      const bank2 = (p2.banking || 0) * (Math.PI / 180);
+      const bank3 = (p3.banking || 0) * (Math.PI / 180);
+
+      const w0 = p0.width || spec.trackWidth;
+      const w1 = p1.width || spec.trackWidth;
+      const w2 = p2.width || spec.trackWidth;
+      const w3 = p3.width || spec.trackWidth;
+
+      const pt = spaced[k];
+      raw.push({
+        x: pt.x,
+        y: pt.y,
+        z: pt.z,
+        banking: hermiteCatmullRomVal(bank0, bank1, bank2, bank3, localT, 0.18, 0.18),
+        width: hermiteCatmullRomVal(w0, w1, w2, w3, localT, 0.18, 0.18),
+        s: u * totalLength,
+      });
     }
-    const s0 = denseCumLen[cursor];
-    const s1 = denseCumLen[cursor + 1];
-    const alpha = s1 > s0 ? (targetS - s0) / (s1 - s0) : 0;
-    const a = dense[cursor];
-    const b = dense[(cursor + 1) % denseCount];
-    raw.push({
-      x: a.x + (b.x - a.x) * alpha,
-      y: a.y + (b.y - a.y) * alpha,
-      z: a.z + (b.z - a.z) * alpha,
-      banking: a.banking + (b.banking - a.banking) * alpha,
-      width: a.width + (b.width - a.width) * alpha,
-      s: targetS,
-    });
+  } else {
+    // Custom Track Studio path honoring per-node tension overrides (same Catmull-Rom polynomial, 1800+ arc divisions)
+    const denseCount = Math.max(1800, n * 60);
+    const dense: Array<{ x: number; y: number; z: number; banking: number; width: number }> = [];
+
+    for (let i = 0; i < denseCount; i++) {
+      const u = (i / denseCount) * n;
+      const seg = Math.floor(u) % n;
+      const localT = u - Math.floor(u);
+      const p0 = ptsArr[(seg - 1 + n) % n];
+      const p1 = ptsArr[seg];
+      const p2 = ptsArr[(seg + 1) % n];
+      const p3 = ptsArr[(seg + 2) % n];
+
+      const tau1 = Math.max(0.12, Math.min(0.85, p1.tension ?? 0.16));
+      const tau2 = Math.max(0.12, Math.min(0.85, p2.tension ?? 0.16));
+
+      const bank0 = (p0.banking || 0) * (Math.PI / 180);
+      const bank1 = (p1.banking || 0) * (Math.PI / 180);
+      const bank2 = (p2.banking || 0) * (Math.PI / 180);
+      const bank3 = (p3.banking || 0) * (Math.PI / 180);
+
+      const w0 = p0.width || spec.trackWidth;
+      const w1 = p1.width || spec.trackWidth;
+      const w2 = p2.width || spec.trackWidth;
+      const w3 = p3.width || spec.trackWidth;
+
+      dense.push({
+        x: hermiteCatmullRomVal(p0.x, p1.x, p2.x, p3.x, localT, tau1, tau2),
+        y: hermiteCatmullRomVal(p0.y, p1.y, p2.y, p3.y, localT, 0.25, 0.25),
+        z: hermiteCatmullRomVal(p0.z, p1.z, p2.z, p3.z, localT, tau1, tau2),
+        banking: hermiteCatmullRomVal(bank0, bank1, bank2, bank3, localT, 0.25, 0.25),
+        width: hermiteCatmullRomVal(w0, w1, w2, w3, localT, 0.25, 0.25),
+      });
+    }
+
+    const denseCumLen: number[] = [0];
+    for (let i = 1; i <= denseCount; i++) {
+      const a = dense[i - 1];
+      const b = dense[i % denseCount];
+      totalLength += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+      denseCumLen.push(totalLength);
+    }
+
+    let cursor = 0;
+    for (let k = 0; k < sampleCount; k++) {
+      const targetS = (k / sampleCount) * totalLength;
+      while (cursor < denseCount - 1 && denseCumLen[cursor + 1] < targetS) {
+        cursor++;
+      }
+      const s0 = denseCumLen[cursor];
+      const s1 = denseCumLen[cursor + 1];
+      const alpha = s1 > s0 ? (targetS - s0) / (s1 - s0) : 0;
+      const a = dense[cursor];
+      const b = dense[(cursor + 1) % denseCount];
+      raw.push({
+        x: a.x + (b.x - a.x) * alpha,
+        y: a.y + (b.y - a.y) * alpha,
+        z: a.z + (b.z - a.z) * alpha,
+        banking: a.banking + (b.banking - a.banking) * alpha,
+        width: a.width + (b.width - a.width) * alpha,
+        s: targetS,
+      });
+    }
   }
 
   const samples: SampledSplinePoint[] = [];
@@ -1749,7 +2122,7 @@ export function compileTrack(spec: TrackSpec, sampleCount = 480): CompiledTrack 
       nx,
       nz,
       s: curr.s,
-      t: curr.s / totalLength,
+      t: curr.s / Math.max(1, totalLength),
       curvature,
       banking: curr.banking,
       width: curr.width,
@@ -1827,7 +2200,7 @@ export function projectOntoTrack(
 
   if (hintT !== undefined) {
     const centerIdx = Math.floor((((hintT % 1) + 1) % 1) * n);
-    const windowRadius = 34;
+    const windowRadius = Math.max(36, Math.round(n * 0.08));
     for (let offset = -windowRadius; offset <= windowRadius; offset++) {
       const i = (centerIdx + offset + n) % n;
       const dx = x - samples[i].x;

@@ -566,3 +566,135 @@ export function importTrackFromString(inputStr: string): { success: boolean; tra
     return { success: false, error: 'Invalid JSON format. Please paste valid track JSON or an APXTRK share code.' };
   }
 }
+
+export const NODE_HIT_RADIUS_PX = 16;
+export const NODE_COLLIDER_RADIUS_MULTIPLIER = 2.0;
+
+/**
+ * Finds the closest spline waypoint to screen coordinates (mouseX, mouseY) within hitRadius pixels.
+ */
+export function findClosestWaypointHit2D(
+  waypoints: TrackWaypoint[],
+  mouseX: number,
+  mouseY: number,
+  centerX: number,
+  centerY: number,
+  scale: number,
+  hitRadius: number = NODE_HIT_RADIUS_PX,
+): number {
+  let bestIndex = -1;
+  let bestDist = hitRadius;
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    const sx = centerX + wp.x * scale;
+    const sy = centerY + wp.z * scale;
+    const dist = Math.hypot(mouseX - sx, mouseY - sy);
+    if (dist <= bestDist) {
+      bestDist = dist;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+function evalCatmullSegment(
+  p0: number,
+  p1: number,
+  p2: number,
+  p3: number,
+  t: number,
+): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    0.5 *
+    (2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  );
+}
+
+/**
+ * Finds the waypoint segment (i -> (i+1)%n) whose spline curve passes closest to (targetX, targetZ).
+ * Returns splice insertion index (`i + 1`) and interpolated waypoint properties.
+ */
+export function findTrackSegmentInsertIndex(
+  waypoints: TrackWaypoint[],
+  targetX: number,
+  targetZ: number,
+  defaultTrackWidth = 17,
+): {
+  insertIndex: number;
+  segmentIndex: number;
+  distance: number;
+  waypoint: TrackWaypoint;
+} {
+  const n = waypoints.length;
+  if (n < 2) {
+    return {
+      insertIndex: n,
+      segmentIndex: 0,
+      distance: 0,
+      waypoint: {
+        x: Math.round(targetX),
+        y: 0,
+        z: Math.round(targetZ),
+        width: defaultTrackWidth,
+        banking: 0,
+        tension: 0.5,
+      },
+    };
+  }
+
+  let bestSeg = 0;
+  let bestLocalT = 0.5;
+  let bestDistSq = Infinity;
+
+  const SUBSTEPS = 20;
+  for (let i = 0; i < n; i++) {
+    const p0 = waypoints[(i - 1 + n) % n];
+    const p1 = waypoints[i];
+    const p2 = waypoints[(i + 1) % n];
+    const p3 = waypoints[(i + 2) % n];
+
+    for (let s = 0; s <= SUBSTEPS; s++) {
+      const t = s / SUBSTEPS;
+      const sx = evalCatmullSegment(p0.x, p1.x, p2.x, p3.x, t);
+      const sz = evalCatmullSegment(p0.z, p1.z, p2.z, p3.z, t);
+      const dx = targetX - sx;
+      const dz = targetZ - sz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestDistSq) {
+        bestDistSq = d2;
+        bestSeg = i;
+        bestLocalT = t;
+      }
+    }
+  }
+
+  const a = waypoints[bestSeg];
+  const b = waypoints[(bestSeg + 1) % n];
+  const y = Math.round(((a.y ?? 0) + ((b.y ?? 0) - (a.y ?? 0)) * bestLocalT) * 10) / 10;
+  const width = Math.round(
+    (a.width ?? defaultTrackWidth) + ((b.width ?? defaultTrackWidth) - (a.width ?? defaultTrackWidth)) * bestLocalT,
+  );
+  const banking = Math.round((a.banking ?? 0) + ((b.banking ?? 0) - (a.banking ?? 0)) * bestLocalT);
+  const tension =
+    Math.round(((a.tension ?? 0.5) + ((b.tension ?? 0.5) - (a.tension ?? 0.5)) * bestLocalT) * 100) / 100;
+
+  return {
+    insertIndex: bestSeg + 1,
+    segmentIndex: bestSeg,
+    distance: Math.sqrt(bestDistSq),
+    waypoint: {
+      x: Math.round(targetX),
+      y,
+      z: Math.round(targetZ),
+      width,
+      banking,
+      tension,
+    },
+  };
+}
+

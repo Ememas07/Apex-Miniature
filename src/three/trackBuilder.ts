@@ -367,7 +367,7 @@ export function buildTrackEnvironment(
 
   const sampleCount = compiled.samples.length;
   const distScale = compiled.totalLength / sampleCount;
-  // Identify heavy braking corners (|curvature| > 0.022 preceded by straight approach < 0.011)
+  // Corners where target apex speed drops below 65% of straight-line top speed (|curvature| > 0.025, R < 40m)
   const zoneEntries: Array<{ index: number; side: number }> = [];
   let cooldownSamples = 0;
   for (let i = 0; i < sampleCount; i++) {
@@ -376,13 +376,13 @@ export function buildTrackEnvironment(
       continue;
     }
     const cur = compiled.samples[i];
-    if (Math.abs(cur.curvature) > 0.022) {
-      // Check preceding ~90m..180m has smoother approach
-      const backCheck = Math.max(4, Math.round(70 / distScale));
+    if (Math.abs(cur.curvature) > 0.025) {
+      // Check preceding ~50m has a genuine straight/braking approach
+      const backCheck = Math.max(4, Math.round(50 / distScale));
       let approachClear = true;
       for (let b = 2; b <= backCheck; b++) {
         const prev = compiled.samples[(i - b + sampleCount) % sampleCount];
-        if (Math.abs(prev.curvature) > 0.013) {
+        if (Math.abs(prev.curvature) > 0.015) {
           approachClear = false;
           break;
         }
@@ -391,13 +391,13 @@ export function buildTrackEnvironment(
         // Outside of the corner is opposite the inside turn direction
         const outsideSide = cur.curvature > 0 ? -1 : 1;
         zoneEntries.push({ index: i, side: outsideSide });
-        cooldownSamples = Math.max(12, Math.round(110 / distScale));
+        cooldownSamples = Math.max(12, Math.round(95 / distScale));
       }
     }
   }
 
-  // Scale board spacing proportionally to scaled track length so 200/150/100/50 feel authentic on ~2km circuits
-  const worldSpacingRatio = Math.min(0.85, Math.max(0.45, compiled.totalLength / 3200));
+  // Scale board spacing proportionally to scaled track length so 200/150/100/50 sit cleanly along approach
+  const worldSpacingRatio = Math.min(0.85, Math.max(0.42, compiled.totalLength / 3200));
   for (const zone of zoneEntries) {
     for (let bIdx = 0; bIdx < boardDists.length; bIdx++) {
       const metersBefore = boardDists[bIdx] * worldSpacingRatio;
@@ -407,6 +407,7 @@ export function buildTrackEnvironment(
       const inPitWindow = s.t >= 0.89 || s.t <= 0.09;
       if (inPitWindow && zone.side === pitSideSign) continue;
       if (s.y > 4.2) continue; // avoid floating boards beside elevated overpasses
+      if (bIdx < 2 && Math.abs(s.curvature) > 0.02) continue; // only show 200m/150m if approach is clear
 
       const bank = s.banking || 0;
       const curHalfW = s.width ? s.width * 0.5 : halfW;
