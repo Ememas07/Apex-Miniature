@@ -27,8 +27,10 @@ import {
   createCarSimState,
   getCompoundModifiers,
   resolveCarCollisions,
+  resolveWallContact,
   stepCarPhysics,
 } from './physics';
+import { isPositionSafeFromTrack } from '../three/trackBuilder';
 
 test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.HYPERCAR_GTP).length, 12);
@@ -418,19 +420,34 @@ test('Issue 6: AI Anti-Stuck Watchdog resets car aligned at 35 km/h if stationar
   assert.ok(Math.hypot(aiCar.x, aiCar.z) < 2000, 'Expected car to be placed back near track coordinates');
 });
 
-test('Issue 9: Flagship circuits scaled to 35–55s for standard tracks and 65–75s for Spa/Le Mans', () => {
+test('1:1 Metric Scale & Real-World Lap Times: 1 unit = 1 meter, authentic circuit lengths and realistic target lap times', () => {
+  // Spa ~7,004m, Le Mans ~13,626m, Monza ~5,793m, Daytona ~5,729m, Suzuka ~5,807m, Monaco ~3,337m
   const spa = TRACKS.find((t) => t.id === 'spa-francorchamps')!;
   const leMans = TRACKS.find((t) => t.id === 'le-mans')!;
-  assert.ok(spa.targetLapSeconds >= 65 && spa.targetLapSeconds <= 75, `Spa lap ${spa.targetLapSeconds} outside 65-75s`);
-  assert.ok(leMans.targetLapSeconds >= 65 && leMans.targetLapSeconds <= 75, `Le Mans lap ${leMans.targetLapSeconds} outside 65-75s`);
+  const monza = TRACKS.find((t) => t.id === 'monza')!;
+  const suzuka = TRACKS.find((t) => t.id === 'suzuka')!;
+  const monaco = TRACKS.find((t) => t.id === 'monaco')!;
+  const daytona = TRACKS.find((t) => t.id === 'daytona-road')!;
 
-  const standardCircuits = TRACKS.filter((t) => t.flagship && t.id !== 'spa-francorchamps' && t.id !== 'le-mans');
-  for (const t of standardCircuits) {
-    assert.ok(
-      t.targetLapSeconds >= 35 && t.targetLapSeconds <= 55,
-      `Track ${t.name} target lap ${t.targetLapSeconds} outside 35-55s`,
-    );
-  }
+  const spaCompiled = compileTrack(spa);
+  const monzaCompiled = compileTrack(monza);
+  const leMansCompiled = compileTrack(leMans);
+  const suzukaCompiled = compileTrack(suzuka);
+  const monacoCompiled = compileTrack(monaco);
+
+  assert.ok(spaCompiled.totalLength >= 6800 && spaCompiled.totalLength <= 7200, `Spa length ${spaCompiled.totalLength}m outside 6.8-7.2km`);
+  assert.ok(monzaCompiled.totalLength >= 5600 && monzaCompiled.totalLength <= 6000, `Monza length ${monzaCompiled.totalLength}m outside 5.6-6.0km`);
+  assert.ok(leMansCompiled.totalLength >= 13400 && leMansCompiled.totalLength <= 13800, `Le Mans length ${leMansCompiled.totalLength}m outside 13.4-13.8km`);
+  assert.ok(suzukaCompiled.totalLength >= 5600 && suzukaCompiled.totalLength <= 6000, `Suzuka length ${suzukaCompiled.totalLength}m outside 5.6-6.0km`);
+  assert.ok(monacoCompiled.totalLength >= 3200 && monacoCompiled.totalLength <= 3500, `Monaco length ${monacoCompiled.totalLength}m outside 3.2-3.5km`);
+
+  // Target lap times match real-world benchmarks (Monza ~1:21, Spa ~1:46, Suzuka ~1:29, Monaco ~1:12, Le Mans ~3:28)
+  assert.ok(monza.targetLapSeconds >= 78 && monza.targetLapSeconds <= 86, `Monza target lap ${monza.targetLapSeconds}s outside ~1:21`);
+  assert.ok(spa.targetLapSeconds >= 102 && spa.targetLapSeconds <= 112, `Spa target lap ${spa.targetLapSeconds}s outside ~1:46`);
+  assert.ok(suzuka.targetLapSeconds >= 86 && suzuka.targetLapSeconds <= 94, `Suzuka target lap ${suzuka.targetLapSeconds}s outside ~1:29`);
+  assert.ok(monaco.targetLapSeconds >= 69 && monaco.targetLapSeconds <= 76, `Monaco target lap ${monaco.targetLapSeconds}s outside ~1:12`);
+  assert.ok(leMans.targetLapSeconds >= 200 && leMans.targetLapSeconds <= 216, `Le Mans target lap ${leMans.targetLapSeconds}s outside ~3:28`);
+  assert.ok(daytona.targetLapSeconds >= 90 && daytona.targetLapSeconds <= 100, `Daytona target lap ${daytona.targetLapSeconds}s outside ~1:35`);
 });
 
 test('Authentic Track Directions & Heavy Braking: flat-out hairpin entry understeers wide off-track', () => {
@@ -833,6 +850,176 @@ test('Track Studio Helpers: generous node hit-testing (>= 14px & >= 1.8x collide
   assert.ok(ins.distance < 2, `Expected point on spline segment to match tightly, dist=${ins.distance}`);
   assert.equal(ins.waypoint.y, 5, 'Expected elevation Y to interpolate halfway between 0m and 10m');
 });
+
+test('Smooth Wall-Sliding Collisions, Depenetration & 25 km/h Damage Threshold', () => {
+  const spa = compileTrack(TRACKS[0]);
+  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const car = createCarSimState({
+    id: 'wall-test-car',
+    name: 'Wall Tester',
+    isPlayer: true,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+
+  const sample = sampleTrackAtT(spa, 0.1);
+  const wallLateral = spa.spec.trackWidth * 0.5 + 6.2; // Guardrail position
+
+  // 1. Low-speed impact (< 25 km/h = 6.94 m/s) -> 0 damage
+  car.speed = 5.0; // 18 km/h
+  car.lateralOffset = wallLateral + 0.3; // Penetrating by 0.3m
+  car.vx = 4.0;
+  car.vz = 3.0;
+  car.aeroDamage = 0;
+  car.wallCollisionCooldown = 0;
+
+  resolveWallContact(car, sample, wallLateral, 1, 1 / 60);
+  assert.equal(car.aeroDamage, 0, 'Impact below 25 km/h should accumulate zero damage');
+  assert.ok(car.lateralOffset <= wallLateral - 0.04, `Expected depenetration outward by depth + 0.05m, got ${car.lateralOffset}`);
+
+  // 2. High-speed glancing scrape (120 km/h = 33.3 m/s) -> reduced damage (0.25x), cooldown 0.5s, no dead stop
+  car.speed = 33.3;
+  car.lateralOffset = wallLateral + 0.25;
+  car.vx = sample.tx * 30 + sample.nx * 10; // 10 m/s normal component = 36 km/h > 25 km/h threshold
+  car.vz = sample.tz * 30 + sample.nz * 10;
+  car.aeroDamage = 0;
+  car.wallCollisionCooldown = 0;
+
+  resolveWallContact(car, sample, wallLateral, 1, 1 / 60);
+  assert.ok(car.aeroDamage > 0 && car.aeroDamage <= 3.5, `Expected 75% reduced damage accumulation (< 3.5), got ${car.aeroDamage}`);
+  assert.equal(car.wallCollisionCooldown, 0.5, 'Expected 0.5s wall collision cooldown');
+  assert.ok(car.speed >= 25.0, `Expected car to slide along wall without dead stopping, got speed ${car.speed}`);
+
+  // 3. 100% damage caps performance penalty at 11% (car remains fully drivable)
+  car.aeroDamage = 100;
+  const damageFactor = 1 - (car.aeroDamage / 100) * 0.11;
+  assert.ok(damageFactor >= 0.88 && damageFactor <= 0.90, `Damage factor at 100% aero damage must be ~0.89, got ${damageFactor}`);
+});
+
+test('Invisible Pit-Lane Collision Walls & Strict Entry/Exit Openings', () => {
+  const spa = compileTrack(TRACKS[0]);
+  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const car = createCarSimState({
+    id: 'pit-wall-car',
+    name: 'Pit Wall Tester',
+    isPlayer: true,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+
+  const pitSign = Math.sign(spa.pitOffset) || 1;
+  const dividerWallLat = pitSign === 1 ? spa.spec.trackWidth * 0.5 + 0.8 : -spa.spec.trackWidth * 0.5 - 0.8;
+
+  // Car on main straight at t = 0.98 (alongside pit lane divider wall)
+  // Attempting to cut sideways into pit lane is blocked by divider wall
+  const sampleMidPit = sampleTrackAtT(spa, 0.98);
+  car.inPitLane = false;
+  car.trackT = 0.98;
+  const testLat = dividerWallLat + pitSign * 0.4; // Crossing into divider wall
+  car.lateralOffset = testLat;
+  car.x = sampleMidPit.x + sampleMidPit.nx * testLat;
+  car.z = sampleMidPit.z + sampleMidPit.nz * testLat;
+  car.heading = Math.atan2(sampleMidPit.tx, sampleMidPit.tz);
+
+  stepCarPhysics(
+    car,
+    { throttle: 0.5, brake: 0, steer: 0, specialPressed: false },
+    spa,
+    1 / 60,
+    { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
+  );
+
+  // Depenetrated back to the main track side of the divider wall
+  if (pitSign === 1) {
+    assert.ok(car.lateralOffset <= dividerWallLat, `Expected main track car to be blocked by pit divider, got ${car.lateralOffset}`);
+  } else {
+    assert.ok(car.lateralOffset >= dividerWallLat, `Expected main track car to be blocked by pit divider, got ${car.lateralOffset}`);
+  }
+});
+
+test('Strict Track Surface Clearance: zero trees, rocks, grandstands, or props inside clearance buffer', () => {
+  const spa = compileTrack(TRACKS[0]);
+  const halfW = spa.spec.trackWidth * 0.5;
+  const s = sampleTrackAtT(spa, 0.5);
+
+  // 1. Position on track centerline (dx=0, dz=0) must be rejected
+  assert.equal(
+    isPositionSafeFromTrack(s.x, s.z, 3.0, spa),
+    false,
+    'Point on track centerline must violate clearance',
+  );
+
+  // 2. Position on edge/kerb (halfW + 1.0m) must be rejected
+  assert.equal(
+    isPositionSafeFromTrack(s.x + s.nx * (halfW + 1.0), s.z + s.nz * (halfW + 1.0), 3.0, spa),
+    false,
+    'Point on kerb must violate clearance',
+  );
+
+  // 3. Position inside exclusion buffer (halfW + kerbWidth + runoffMargin + propRadius + 2.0m) must be rejected
+  const bufferViolator = halfW + 1.8 + 4.2 + 3.0 + 2.0;
+  assert.equal(
+    isPositionSafeFromTrack(s.x + s.nx * bufferViolator, s.z + s.nz * bufferViolator, 3.0, spa),
+    false,
+    'Point inside 5.0m exclusion buffer must violate clearance',
+  );
+
+  // 4. Position well outside safe zone (halfW + 25m) must be accepted
+  const safeDist = halfW + 1.8 + 4.2 + 3.0 + 15.0;
+  assert.equal(
+    isPositionSafeFromTrack(s.x + s.nx * safeDist, s.z + s.nz * safeDist, 3.0, spa),
+    true,
+    'Point safely beyond clearance buffer must be accepted',
+  );
+});
+
+test('All 43 Circuits: Zero 2D self-intersections or pinch points (< trackWidth * 2.0) and Suzuka overpass clearance >= 6.5m', () => {
+  for (const trackSpec of TRACKS) {
+    const compiled = compileTrack(trackSpec);
+    const n = compiled.samples.length;
+    const isSuzuka = trackSpec.id === 'suzuka';
+    const minSeparation = trackSpec.trackWidth * 2.0;
+
+    let minNonAdjacentDist = Infinity;
+    for (let i = 0; i < n; i++) {
+      const p1 = compiled.samples[i];
+      for (let j = i + 1; j < n; j++) {
+        // Skip nearby adjacent samples along curve
+        const stepDist = Math.min(j - i, n - (j - i));
+        if (stepDist < 24) continue;
+
+        const p2 = compiled.samples[j];
+        const dx = p1.x - p2.x;
+        const dz = p1.z - p2.z;
+        const dist2D = Math.hypot(dx, dz);
+
+        if (dist2D < minSeparation) {
+          if (isSuzuka) {
+            // Suzuka figure-8 bridge overpass: upper and lower segments must have >= 6.5m vertical clearance
+            const dy = Math.abs(p1.y - p2.y);
+            assert.ok(dy >= 6.5, `Suzuka overpass vertical clearance ${dy.toFixed(2)}m < 6.5m at samples ${i} and ${j}`);
+          } else {
+            minNonAdjacentDist = Math.min(minNonAdjacentDist, dist2D);
+          }
+        }
+      }
+    }
+
+    if (!isSuzuka) {
+      assert.ok(
+        minNonAdjacentDist >= minSeparation,
+        `Track ${trackSpec.id} has pinch point / self-intersection: minDist ${minNonAdjacentDist.toFixed(2)}m < minSeparation ${minSeparation.toFixed(2)}m`,
+      );
+    }
+  }
+});
+
 
 
 

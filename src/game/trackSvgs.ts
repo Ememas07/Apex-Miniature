@@ -44,13 +44,13 @@ export const TRACK_SVG_REGISTRY: Record<string, string> = {
     'M 240,650 L 240,380 L 255,320 L 240,295 L 265,270 L 310,245 L 295,205 L 350,165 L 420,155 L 605,165 L 625,190 L 650,165 L 670,175 L 790,185 L 810,160 L 835,185 L 855,185 L 920,190 L 935,210 L 885,260 L 665,485 L 645,515 L 675,550 L 685,610 L 615,635 L 465,645 L 415,615 L 365,645 L 325,625 L 295,665 L 265,680 L 245,675 Z',
 
   'daytona-road':
-    'M 780,760 Q 500,730 220,760 C 125,705 105,575 150,455 L 215,475 L 255,545 C 295,615 355,605 340,540 L 375,475 L 455,465 C 510,490 495,545 445,550 L 470,410 L 430,315 L 620,315 L 650,293 L 680,315 L 710,299 L 740,315 C 875,380 915,545 865,695 Z',
+    'M 780,760 Q 500,730 220,760 C 125,705 105,575 150,455 L 215,475 L 255,545 C 295,615 355,605 340,540 L 370,490 L 430,510 C 485,530 545,510 565,455 C 575,395 525,370 460,370 L 440,345 L 480,315 L 620,315 L 650,293 L 680,315 L 710,299 L 740,315 C 875,380 915,545 865,695 Z',
 
   'suzuka':
     'M 785,580 L 635,745 L 590,780 L 545,735 L 570,685 L 535,645 L 565,600 L 530,555 C 505,485 465,465 445,455 L 415,410 L 465,385 L 485,345 L 425,275 C 395,245 375,255 365,275 L 310,365 L 225,415 C 125,435 115,505 175,540 L 495,490 L 615,470 C 695,460 745,480 775,505 L 810,515 L 780,545 L 790,570 Z',
 
   'laguna-seca':
-    'M 560,760 L 320,640 L 245,595 C 165,585 155,645 215,675 L 315,660 L 345,605 L 385,535 L 515,485 L 575,455 L 545,385 L 465,305 L 425,235 L 385,185 L 425,155 L 475,185 C 565,215 635,255 675,295 L 735,385 L 715,475 L 765,575 L 735,635 Z',
+    'M 680,730 L 360,730 L 250,710 C 160,690 140,590 220,560 L 320,560 L 380,530 L 515,485 L 575,455 L 545,385 L 465,305 L 425,235 L 385,185 L 425,155 L 475,185 C 565,215 635,255 675,295 L 735,385 L 715,475 L 765,575 L 735,650 Z',
 
   'silverstone':
     'M 340,720 L 510,635 L 565,625 L 585,595 L 645,595 L 635,545 L 585,545 L 555,515 L 375,425 L 315,385 C 325,325 405,315 415,315 L 465,285 L 545,235 L 615,255 L 675,235 L 715,275 L 765,255 L 805,305 L 665,675 L 615,745 L 535,755 L 445,735 L 405,775 Z',
@@ -69,7 +69,7 @@ export const TRACK_SVG_REGISTRY: Record<string, string> = {
     'M 540,840 L 540,490 L 465,445 L 415,445 L 375,480 L 355,555 L 285,580 L 225,580 L 175,505 L 185,420 L 225,325 L 285,265 L 760,265 L 825,325 L 865,435 L 830,490 L 885,545 L 885,845 L 820,930 L 680,940 Z',
 
   'road-america':
-    'M 320,840 L 320,310 L 410,240 L 515,240 L 565,305 L 565,425 L 475,495 L 475,615 L 545,685 C 655,735 735,685 755,575 L 755,395 L 825,335 L 825,215 L 745,155 L 585,155 L 495,205 L 395,205 L 245,315 L 245,840 Z',
+    'M 320,840 L 320,330 L 410,270 L 515,270 L 565,335 L 565,435 L 475,495 L 475,615 L 545,685 C 655,735 735,685 755,575 L 755,395 L 825,315 L 825,185 L 745,115 L 585,115 L 495,155 L 395,165 L 230,295 L 230,840 Z',
 
   'road-atlanta':
     'M 480,820 L 565,705 L 565,585 L 495,505 L 545,425 L 495,345 L 545,265 L 635,265 L 765,375 L 765,635 L 715,695 L 745,745 L 675,815 L 555,835 Z',
@@ -165,6 +165,62 @@ export const TRACK_SVG_REGISTRY: Record<string, string> = {
     'M 365,795 L 365,475 L 435,425 L 395,355 L 465,315 L 545,365 L 615,315 L 695,365 L 755,435 L 715,515 L 775,575 L 725,655 L 645,645 L 575,725 L 485,725 L 435,785 L 395,795 Z',
 };
 
+export interface RealTrackMetric {
+  lengthMeters: number;
+  trackWidth: number;
+  targetLapSeconds: number;
+}
+
+/**
+ * Official Real-World metric dimensions (1 unit = 1 meter) from RacingCircuits.info
+ * for all 43 circuits, with realistic track widths (11m-15m) and real-life lap times.
+ */
+export const REAL_TRACK_METRICS: Record<string, RealTrackMetric> = {
+  'spa-francorchamps': { lengthMeters: 7004, trackWidth: 14.5, targetLapSeconds: 106 },
+  'daytona-road': { lengthMeters: 5729, trackWidth: 14.0, targetLapSeconds: 96 },
+  'laguna-seca': { lengthMeters: 3602, trackWidth: 12.0, targetLapSeconds: 76 },
+  'le-mans': { lengthMeters: 13626, trackWidth: 13.5, targetLapSeconds: 208 },
+  'monza': { lengthMeters: 5793, trackWidth: 14.0, targetLapSeconds: 81 },
+  'silverstone': { lengthMeters: 5891, trackWidth: 14.0, targetLapSeconds: 87 },
+  'suzuka': { lengthMeters: 5807, trackWidth: 13.0, targetLapSeconds: 89 },
+  'monaco': { lengthMeters: 3337, trackWidth: 11.0, targetLapSeconds: 72 },
+  'cota': { lengthMeters: 5513, trackWidth: 14.5, targetLapSeconds: 94 },
+  'sebring': { lengthMeters: 6019, trackWidth: 13.5, targetLapSeconds: 107 },
+  'long-beach': { lengthMeters: 3167, trackWidth: 12.0, targetLapSeconds: 67 },
+  'detroit-street': { lengthMeters: 2735, trackWidth: 12.0, targetLapSeconds: 62 },
+  'mid-ohio': { lengthMeters: 3634, trackWidth: 12.0, targetLapSeconds: 74 },
+  'watkins-glen': { lengthMeters: 5472, trackWidth: 13.0, targetLapSeconds: 88 },
+  'mosport': { lengthMeters: 3957, trackWidth: 12.5, targetLapSeconds: 75 },
+  'lime-rock': { lengthMeters: 2414, trackWidth: 11.5, targetLapSeconds: 50 },
+  'road-america': { lengthMeters: 6515, trackWidth: 13.0, targetLapSeconds: 110 },
+  'vir': { lengthMeters: 5260, trackWidth: 12.0, targetLapSeconds: 98 },
+  'indianapolis-road': { lengthMeters: 3925, trackWidth: 13.5, targetLapSeconds: 76 },
+  'road-atlanta': { lengthMeters: 4088, trackWidth: 12.5, targetLapSeconds: 72 },
+  'montreal': { lengthMeters: 4361, trackWidth: 13.0, targetLapSeconds: 73 },
+  'miami': { lengthMeters: 5412, trackWidth: 13.5, targetLapSeconds: 89 },
+  'las-vegas': { lengthMeters: 6201, trackWidth: 14.0, targetLapSeconds: 93 },
+  'mexico-city': { lengthMeters: 4304, trackWidth: 13.0, targetLapSeconds: 77 },
+  'interlagos': { lengthMeters: 4309, trackWidth: 13.0, targetLapSeconds: 70 },
+  'imola': { lengthMeters: 4909, trackWidth: 12.5, targetLapSeconds: 75 },
+  'barcelona': { lengthMeters: 4657, trackWidth: 13.5, targetLapSeconds: 73 },
+  'madring': { lengthMeters: 5474, trackWidth: 13.0, targetLapSeconds: 88 },
+  'red-bull-ring': { lengthMeters: 4318, trackWidth: 13.0, targetLapSeconds: 65 },
+  'hungaroring': { lengthMeters: 4381, trackWidth: 12.5, targetLapSeconds: 76 },
+  'zandvoort': { lengthMeters: 4259, trackWidth: 12.5, targetLapSeconds: 71 },
+  'paul-ricard': { lengthMeters: 5842, trackWidth: 14.5, targetLapSeconds: 92 },
+  'baku': { lengthMeters: 6003, trackWidth: 12.5, targetLapSeconds: 102 },
+  'portimao': { lengthMeters: 4653, trackWidth: 13.5, targetLapSeconds: 78 },
+  'fuji': { lengthMeters: 4563, trackWidth: 14.0, targetLapSeconds: 74 },
+  'shanghai': { lengthMeters: 5451, trackWidth: 14.0, targetLapSeconds: 93 },
+  'singapore': { lengthMeters: 4940, trackWidth: 12.0, targetLapSeconds: 91 },
+  'sepang': { lengthMeters: 5543, trackWidth: 14.0, targetLapSeconds: 92 },
+  'bahrain': { lengthMeters: 5412, trackWidth: 14.0, targetLapSeconds: 90 },
+  'jeddah': { lengthMeters: 6174, trackWidth: 13.0, targetLapSeconds: 88 },
+  'lusail': { lengthMeters: 5419, trackWidth: 14.0, targetLapSeconds: 83 },
+  'yas-marina': { lengthMeters: 5281, trackWidth: 13.5, targetLapSeconds: 83 },
+  'albert-park': { lengthMeters: 5278, trackWidth: 13.5, targetLapSeconds: 78 },
+};
+
 /**
  * Calculates 2D polygon signed area in screen/SVG space (x, y).
  */
@@ -217,10 +273,11 @@ function parseSvgVertices(svgD: string): Array<[number, number]> {
 export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}): TrackWaypoint[] {
   const trackId = options.trackId ?? '';
   const isCCW = options.direction === 'ccw' || (trackId ? CCW_CIRCUIT_IDS.has(trackId) : false);
-  const trackWidth = options.trackWidth ?? 17;
-  const targetLapSeconds =
-    options.targetLapSeconds ??
-    (trackId === 'spa-francorchamps' || trackId === 'le-mans' ? 70 : 45);
+  const metric = trackId ? REAL_TRACK_METRICS[trackId] : undefined;
+  const trackWidth = metric?.trackWidth ?? options.trackWidth ?? 13.5;
+  const targetLengthMeters =
+    metric?.lengthMeters ??
+    (options.targetLapSeconds ? options.targetLapSeconds * 60 : 5000);
 
   let rawVerts = parseSvgVertices(svgPathD);
   if (rawVerts.length < 3) return [];
@@ -244,9 +301,8 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
     filtered.push(v);
   }
 
-  // Authentic scale factor (average racing speed ~ 55 m/s)
-  const targetLengthMeters = targetLapSeconds * 55;
-  const minSafeRadius = Math.max(13.5, trackWidth * 0.76);
+  // Authentic 1:1 scale factor (1 unit = 1 meter)
+  const minSafeRadius = Math.max(9.5, trackWidth * 0.72);
   const n = filtered.length;
 
   let sumX = 0;
@@ -353,8 +409,8 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
     cleaned.push(pt);
   }
 
-  // Subdivide straights so waypoints density is 180-240 points
-  const gap = 14;
+  // Subdivide straights so waypoints density is 200-280 points at 1:1 scale
+  const gap = 20;
   const dense: typeof cornerExpanded = [];
   const m = cleaned.length;
   for (let i = 0; i < m; i++) {
@@ -378,32 +434,37 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
   }
 
   const totalPts = dense.length;
-  return dense.map((p, idx) => {
+  const rawWaypoints = dense.map((p, idx) => {
     const t = idx / totalPts;
     let y = 0;
     let banking = 0;
 
-    // Iconic elevation and banking profiles
+    // 1:1 Metric Elevation Profiles in true meters
     if (trackId === 'spa-francorchamps') {
-      if (t >= 0.08 && t <= 0.22) {
-        const u = (t - 0.08) / 0.14;
-        y = Math.sin(u * Math.PI) * 24.5;
-      } else if (t >= 0.25 && t <= 0.45) {
-        y = 20 - (t - 0.25) * 40;
+      // Spa has ~100m total elevation span.
+      // Descend into Eau Rouge (lowest point), then steep climb up Raidillon (+35m) to Kemmel, peaking at Les Combes (+45m).
+      if (t >= 0.05 && t <= 0.14) {
+        const u = (t - 0.05) / 0.09;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 35;
+      } else if (t > 0.14 && t <= 0.22) {
+        const u = (t - 0.14) / 0.08;
+        y = 35 + Math.sin(u * Math.PI * 0.5) * 10;
+      } else if (t > 0.22 && t <= 0.48) {
+        const u = (t - 0.22) / 0.26;
+        y = 45 * Math.cos(u * Math.PI * 0.5);
+      } else if (t > 0.48 && t <= 0.75) {
+        const u = (t - 0.48) / 0.27;
+        y = Math.sin(u * Math.PI) * -8;
       }
     } else if (trackId === 'laguna-seca') {
-      if (t >= 0.55 && t <= 0.70) {
-        const u = (t - 0.55) / 0.15;
-        y = 24 * (1 - u);
+      // Laguna Seca Corkscrew: climb Rahal straight up to Corkscrew crest (+18m), then plunge 18m down turns 8 & 8A
+      if (t >= 0.46 && t <= 0.58) {
+        const u = (t - 0.46) / 0.12;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 18;
+      } else if (t > 0.58 && t <= 0.68) {
+        const u = (t - 0.58) / 0.10;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 18;
       }
-    } else if (trackId === 'daytona-road') {
-      if (t >= 0.20 && t <= 0.42) banking = 31;
-      else if (t >= 0.75 && t <= 0.95) banking = 31;
-    } else if (trackId === 'zandvoort') {
-      if (t >= 0.15 && t <= 0.25) banking = 18;
-      else if (t >= 0.88 && t <= 0.98) banking = 18;
-    } else if (trackId === 'indianapolis-road') {
-      if (t >= 0.88 && t <= 0.98) banking = 9.2;
     } else if (trackId === 'suzuka') {
       // Smooth cosine figure-8 bridge overpass (+10.5m deck clearing lower track at 0m)
       if (t >= 0.24 && t <= 0.32) {
@@ -416,29 +477,86 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
         y = (1 + Math.cos(u * Math.PI)) * 0.5 * 10.5;
       }
     } else if (trackId === 'red-bull-ring') {
-      if (t >= 0.12 && t <= 0.30) {
-        const u = (t - 0.12) / 0.18;
-        y = Math.sin(u * Math.PI * 0.5) * 22;
-      } else if (t > 0.30 && t <= 0.48) {
-        const u = (t - 0.30) / 0.18;
-        y = (1 - u) * 22;
+      if (t >= 0.10 && t <= 0.24) {
+        const u = (t - 0.10) / 0.14;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 24;
+      } else if (t > 0.24 && t <= 0.45) {
+        const u = (t - 0.24) / 0.21;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 24;
       }
     } else if (trackId === 'cota') {
-      if (t >= 0.05 && t <= 0.16) {
-        const u = (t - 0.05) / 0.11;
-        y = Math.sin(u * Math.PI * 0.5) * 26;
-      } else if (t > 0.16 && t <= 0.25) {
-        const u = (t - 0.16) / 0.09;
-        y = (1 - u) * 26;
+      if (t >= 0.03 && t <= 0.12) {
+        const u = (t - 0.03) / 0.09;
+        y = (1 - Math.cos(u * Math.PI)) * 0.5 * 28;
+      } else if (t > 0.12 && t <= 0.22) {
+        const u = (t - 0.12) / 0.10;
+        y = (1 + Math.cos(u * Math.PI)) * 0.5 * 28;
+      }
+    }
+
+    // Realistic Banking Profiles: Banked ovals capped at 18 deg with smooth cosine ease curves
+    if (trackId === 'daytona-road') {
+      if (t >= 0.20 && t <= 0.42) {
+        const ease = 0.035;
+        let factor = 1.0;
+        if (t < 0.20 + ease) factor = (1 - Math.cos(((t - 0.20) / ease) * Math.PI)) * 0.5;
+        else if (t > 0.42 - ease) factor = (1 - Math.cos(((0.42 - t) / ease) * Math.PI)) * 0.5;
+        banking = 18 * factor;
+      } else if (t >= 0.75 && t <= 0.95) {
+        const ease = 0.035;
+        let factor = 1.0;
+        if (t < 0.75 + ease) factor = (1 - Math.cos(((t - 0.75) / ease) * Math.PI)) * 0.5;
+        else if (t > 0.95 - ease) factor = (1 - Math.cos(((0.95 - t) / ease) * Math.PI)) * 0.5;
+        banking = 18 * factor;
+      }
+    } else if (trackId === 'zandvoort') {
+      if (t >= 0.14 && t <= 0.24) {
+        const ease = 0.025;
+        let factor = 1.0;
+        if (t < 0.14 + ease) factor = (1 - Math.cos(((t - 0.14) / ease) * Math.PI)) * 0.5;
+        else if (t > 0.24 - ease) factor = (1 - Math.cos(((0.24 - t) / ease) * Math.PI)) * 0.5;
+        banking = 18 * factor;
+      } else if (t >= 0.88 && t <= 0.98) {
+        const ease = 0.025;
+        let factor = 1.0;
+        if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
+        else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
+        banking = 18 * factor;
+      }
+    } else if (trackId === 'indianapolis-road') {
+      if (t >= 0.88 && t <= 0.98) {
+        const ease = 0.025;
+        let factor = 1.0;
+        if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
+        else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
+        banking = 9.0 * factor;
       }
     }
 
     return {
       x: Math.round(p.x * 10) / 10,
-      y: Math.round(y * 10) / 10,
+      y,
       z: Math.round(p.z * 10) / 10,
       ...(banking ? { banking } : {}),
       width: trackWidth,
     };
   });
+
+  // Low-pass smoothing filter on elevation (Y) so slopes are realistic and transition buttery smooth
+  const smoothedWaypoints: TrackWaypoint[] = [];
+  const W = rawWaypoints.length;
+  for (let i = 0; i < W; i++) {
+    const yMinus2 = rawWaypoints[(i - 2 + W) % W].y;
+    const yMinus1 = rawWaypoints[(i - 1 + W) % W].y;
+    const y0 = rawWaypoints[i].y;
+    const yPlus1 = rawWaypoints[(i + 1) % W].y;
+    const yPlus2 = rawWaypoints[(i + 2) % W].y;
+    const smoothedY = 0.06 * yMinus2 + 0.24 * yMinus1 + 0.40 * y0 + 0.24 * yPlus1 + 0.06 * yPlus2;
+    smoothedWaypoints.push({
+      ...rawWaypoints[i],
+      y: Math.round(smoothedY * 10) / 10,
+    });
+  }
+
+  return smoothedWaypoints;
 }

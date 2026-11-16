@@ -80,6 +80,7 @@ export interface CarSimState {
   aiPaceMultiplier: number;
   aiStuckTimer: number;
   aiPrevHeadingErr: number;
+  wallCollisionCooldown?: number;
 }
 
 export function createCarSimState(params: {
@@ -167,6 +168,7 @@ export function createCarSimState(params: {
     aiPaceMultiplier: params.aiPaceMultiplier ?? 1.0,
     aiStuckTimer: 0,
     aiPrevHeadingErr: 0,
+    wallCollisionCooldown: 0,
   };
 }
 
@@ -230,6 +232,60 @@ export function computeUpdatedAdaptiveBoost(
 }
 
 /**
+ * Resolves car contact against barriers, guardrails and invisible pit walls:
+ * 1. Depenetration: pushes car out of wall collision normal (normal * depth + 0.05m) every frame
+ * 2. Tangent wall-sliding: projects velocity onto wall tangent (v_slide = v - (v . n)n) with 0.07 scraping friction and 0.15 restitution
+ * 3. Outward yaw alignment toward wall tangent so car glances off smoothly instead of sticking dead
+ * 4. Damage: ignores impacts < 25 km/h (0 damage); heavy impacts accumulated at 0.25x rate with 0.5s cooldown
+ */
+export function resolveWallContact(
+  car: CarSimState,
+  sample: { nx: number; nz: number; tx: number; tz: number },
+  wallLat: number,
+  side: 1 | -1, // 1 = car struck right wall (+lateral), -1 = car struck left wall (-lateral)
+  dt: number,
+): void {
+  const penetration = side === 1 ? car.lateralOffset - wallLat : wallLat - car.lateralOffset;
+  if (penetration <= 0) return;
+
+  // Depenetration: push car out along collision normal (-side * n)
+  const pushDist = penetration + 0.05;
+  car.x -= sample.nx * (side * pushDist);
+  car.z -= sample.nz * (side * pushDist);
+  car.lateralOffset = side === 1 ? wallLat - 0.05 : wallLat + 0.05;
+
+  // Velocity projection onto wall tangent: v_slide = v - (v . n)n
+  const vNorm = side * (car.vx * sample.nx + car.vz * sample.nz);
+  const vTan = car.vx * sample.tx + car.vz * sample.tz;
+
+  // Tangent slide with modest scraping friction (0.07) and gentle restitution (0.15)
+  const vSlide = vTan * 0.93;
+  const vBounce = vNorm > 0 ? -0.15 * vNorm : 0;
+
+  car.vx = vSlide * sample.tx + (side * vBounce) * sample.nx;
+  car.vz = vSlide * sample.tz + (side * vBounce) * sample.nz;
+  car.speed = Math.max(0, vSlide);
+
+  // Outward yaw alignment toward wall tangent so car glances off smoothly
+  const wallHeading = Math.atan2(sample.tx, sample.tz);
+  let headingDiff = wallHeading - car.heading;
+  while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
+  while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
+  car.heading += headingDiff * Math.min(1.0, dt * 8.5);
+
+  // Collision damage threshold & cooldown:
+  // Ignore low-speed grazing impacts below 25 km/h (6.944 m/s) -> 0 damage
+  const impactSpeed = Math.max(0, vNorm);
+  const DAMAGE_THRESHOLD_SPEED = 25 / SPEED_KMH_FACTOR; // 6.944 m/s
+  if (impactSpeed >= DAMAGE_THRESHOLD_SPEED && (!car.wallCollisionCooldown || car.wallCollisionCooldown <= 0)) {
+    // 75% reduced damage accumulation (0.25x rate) with 0.5s cooldown
+    const heavyDmg = (impactSpeed - DAMAGE_THRESHOLD_SPEED) * 0.25;
+    car.aeroDamage = Math.min(100, car.aeroDamage + Math.min(5.0, heavyDmg));
+    car.wallCollisionCooldown = 0.5;
+  }
+}
+
+/**
  * Steps a single car's sim-cade physics for `dt` seconds.
  */
 export function stepCarPhysics(
@@ -290,8 +346,8 @@ export function stepCarPhysics(
   const isInPitCorridor =
     inPitProgress &&
     (pitSideSign === 1
-      ? car.lateralOffset > halfW - 0.5 && car.lateralOffset < halfW + 16
-      : car.lateralOffset < -halfW + 0.5 && car.lateralOffset > -halfW - 16);
+      ? car.lateralOffset > halfW + 1.6 && car.lateralOffset < halfW + 18
+      : car.lateralOffset < -halfW - 1.6 && car.lateralOffset > -halfW - 18);
   car.inPitLane = isInPitCorridor;
 
   // Manual pit limiter toggle
@@ -418,14 +474,17 @@ export function stepCarPhysics(
 
   // Compute physical performance scalars
   const paceScale = classMeta.basePaceIndex;
-  const maxSpeedBase = (28 + (attrs.topSpeed / 100) * 18) * paceScale; // ~36..53 m/s
-  const accelBase = (15 + (attrs.acceleration / 100) * 14) * paceScale;
-  const gripBase = (1.35 + (attrs.corneringGrip / 100) * 1.15) * (0.85 + paceScale * 0.15);
-  const brakeBase = (24 + (attrs.braking / 100) * 18) * paceScale;
+  // 1:1 Metric Scale (1 unit = 1 meter):
+  // Top speeds reach 315-350 km/h (87-97 m/s) for F1/Hypercar, and 270-292 km/h (75-81 m/s) for GT3
+  const maxSpeedBase = (63 + (attrs.topSpeed / 100) * 19) * (0.64 + 0.36 * paceScale);
+  const accelBase = (18 + (attrs.acceleration / 100) * 14) * (0.62 + 0.38 * paceScale);
+  const gripBase = (1.42 + (attrs.corneringGrip / 100) * 1.15) * (0.75 + paceScale * 0.25);
+  const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35);
 
   const compoundMod = getCompoundModifiers(car.compound, opts.trackWetness);
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
-  const damageFactor = 1 - (car.aeroDamage / 100) * 0.18;
+  // Cap maximum speed/grip penalty at 10%-12% even at 100% damage so a damaged car remains fully drivable
+  const damageFactor = 1 - (car.aeroDamage / 100) * 0.11;
   const fuelFactor = car.fuel > 0 ? 1.0 : 0.45; // Limp home if out of fuel
 
   let specialSpeedMult = 1.0;
@@ -542,18 +601,18 @@ export function stepCarPhysics(
     trailBrakeBonus *
     bankingGripBonus;
 
-  // Centripetal lateral physics cap: high-speed flat-out turning cannot cheat tight hairpins
+  // Centripetal lateral physics cap: realistic centripetal limit matching physical Gs
   const maxTurnRate = Math.min(
-    availableGrip * 1.48,
-    (availableGrip * 14.8) / Math.max(7.5, car.speed),
+    availableGrip * 1.45,
+    (availableGrip * 22.0) / Math.max(7.5, car.speed),
   );
-  const lateralDemand = Math.abs(steerInput) * speedNorm * speedNorm * 1.65;
-  const understeer = Math.max(0, (lateralDemand - availableGrip * 0.54) * 1.75);
+  const lateralDemand = Math.abs(steerInput) * speedNorm * speedNorm * 1.55;
+  const understeer = Math.max(0, (lateralDemand - availableGrip * 0.56) * 1.65);
   car.understeerFactor = Math.min(1, understeer);
 
   // Over-driving entries scrubs speed & pushes the car wide with genuine front-axle washout
-  if (understeer > 0.05 && car.speed > 10) {
-    car.speed = Math.max(9.5, car.speed - understeer * 13.5 * dt);
+  if (understeer > 0.05 && car.speed > 12) {
+    car.speed = Math.max(11.0, car.speed - understeer * 15.0 * dt);
   }
 
   const turnEffectiveness = 1 - Math.min(0.55, understeer * 0.45);
@@ -595,23 +654,56 @@ export function stepCarPhysics(
     ((proj.sample.curvature > 0 && car.lateralOffset > 0) ||
       (proj.sample.curvature < 0 && car.lateralOffset < 0));
 
-  // Guardrail outer containment so cars bounce gently rather than leaving the world
-  const maxLeftLat = sampleHalfW + (inPitProgress && pitSideSign === -1 ? 16.5 : 7.5);
-  const maxRightLat = sampleHalfW + (inPitProgress && pitSideSign === 1 ? 16.5 : 7.5);
-  if (car.lateralOffset > maxRightLat) {
-    const push = car.lateralOffset - maxRightLat;
-    car.x -= proj.sample.nx * push;
-    car.z -= proj.sample.nz * push;
-    car.speed *= 0.82;
-    car.aeroDamage = Math.min(100, car.aeroDamage + 2.5);
-    car.lateralOffset = maxRightLat;
-  } else if (car.lateralOffset < -maxLeftLat) {
-    const push = -maxLeftLat - car.lateralOffset;
-    car.x += proj.sample.nx * push;
-    car.z += proj.sample.nz * push;
-    car.speed *= 0.82;
-    car.aeroDamage = Math.min(100, car.aeroDamage + 2.5);
-    car.lateralOffset = -maxLeftLat;
+  // Update wall collision cooldown timer
+  if (car.wallCollisionCooldown && car.wallCollisionCooldown > 0) {
+    car.wallCollisionCooldown = Math.max(0, car.wallCollisionCooldown - dt);
+  }
+
+  // Guardrails, outer containment & invisible pit-lane walls
+  const pitSign = compiledTrack.spec.pitSide === 'right' ? 1 : -1;
+  const pitOffset = compiledTrack.pitOffset;
+  const isPitThroat =
+    (car.trackT >= compiledTrack.pitEntryT && car.trackT < ((compiledTrack.pitEntryT + 0.018) % 1 || 0.91)) ||
+    (car.trackT <= compiledTrack.pitExitT && car.trackT > ((compiledTrack.pitExitT - 0.018 + 1) % 1 || 0.07));
+  const isPitDividerZone = inPitProgress && !isPitThroat;
+
+  if (car.inPitLane) {
+    // 1. Pit divider wall separating pit lane from main track straight
+    const dividerWallLat = pitSign === 1 ? sampleHalfW + 1.2 : -sampleHalfW - 1.2;
+    if (isPitDividerZone) {
+      if (pitSign === 1 && car.lateralOffset < dividerWallLat) {
+        resolveWallContact(car, proj.sample, dividerWallLat, -1, dt);
+      } else if (pitSign === -1 && car.lateralOffset > dividerWallLat) {
+        resolveWallContact(car, proj.sample, dividerWallLat, 1, dt);
+      }
+    }
+    // 2. Outer pit-garage boundary wall
+    const garageWallLat = pitOffset + pitSign * 4.8;
+    if (pitSign === 1 && car.lateralOffset > garageWallLat) {
+      resolveWallContact(car, proj.sample, garageWallLat, 1, dt);
+    } else if (pitSign === -1 && car.lateralOffset < garageWallLat) {
+      resolveWallContact(car, proj.sample, garageWallLat, -1, dt);
+    }
+  } else {
+    // Car on main track
+    // 1. Pit divider wall prevents crossing sideways into pit lane
+    if (isPitDividerZone) {
+      const dividerWallLat = pitSign === 1 ? sampleHalfW + 0.8 : -sampleHalfW - 0.8;
+      if (pitSign === 1 && car.lateralOffset > dividerWallLat) {
+        resolveWallContact(car, proj.sample, dividerWallLat, 1, dt);
+      } else if (pitSign === -1 && car.lateralOffset < dividerWallLat) {
+        resolveWallContact(car, proj.sample, dividerWallLat, -1, dt);
+      }
+    }
+    // 2. Outer track guardrails / barriers
+    const outerRunoff = 6.2;
+    const maxRight = inPitProgress && pitSign === 1 ? sampleHalfW + 0.8 : sampleHalfW + outerRunoff;
+    const maxLeft = inPitProgress && pitSign === -1 ? -sampleHalfW - 0.8 : -sampleHalfW - outerRunoff;
+    if (car.lateralOffset > maxRight && (!isPitDividerZone || pitSign !== 1)) {
+      resolveWallContact(car, proj.sample, maxRight, 1, dt);
+    } else if (car.lateralOffset < maxLeft && (!isPitDividerZone || pitSign !== -1)) {
+      resolveWallContact(car, proj.sample, maxLeft, -1, dt);
+    }
   }
 
   // Pit box trigger
@@ -684,17 +776,17 @@ export function stepCarPhysics(
   const targetTemp = compoundMod.optimalTemp + cornerLoad * 24 + car.understeerFactor * 16 - opts.trackWetness * 14;
   car.tireTemp += (targetTemp - car.tireTemp) * Math.min(1, dt * 1.4);
 
-  // Recalibrated fuel consumption: ~6.5% - 7.8% per race lap at full push -> ~12-16 laps on full tank
-  const lapProgressDelta = (car.speed * dt) / Math.max(400, compiledTrack.totalLength);
+  // Recalibrated fuel consumption: a full tank lasts ~12-16 laps at 1:1 scale (a 5km-7km lap burns ~6-8% of a tank)
+  const lapProgressDelta = (car.speed * dt) / Math.max(2000, compiledTrack.totalLength);
   const throttleLoad = 0.40 + 0.60 * throttle;
   let overboostFuelMult = 1.0;
   if (car.specialActive && (specialType === 'v10-overboost' || specialType === 'rich-fuel-overboost')) {
-    overboostFuelMult = 1.35; // +35% fuel burn while overboost active!
+    overboostFuelMult = 1.35; // +35% fuel burn while overboost active
   }
-  const fuelBurn = 9.5 * lapProgressDelta * throttleLoad * efficiencyFactor * overboostFuelMult;
+  const fuelBurn = 8.8 * lapProgressDelta * throttleLoad * efficiencyFactor * overboostFuelMult;
   car.fuel = Math.max(0, car.fuel - fuelBurn);
 
-  const avgBurnRatePerLap = Math.max(4.5, 9.5 * efficiencyFactor * 0.78 * overboostFuelMult);
+  const avgBurnRatePerLap = Math.max(4.0, 8.8 * efficiencyFactor * 0.78 * overboostFuelMult);
   car.fuelLapsRemaining = Number((car.fuel / avgBurnRatePerLap).toFixed(1));
 
   // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 1.5s outside a pit stall,
@@ -889,7 +981,7 @@ export function computeAIControl(
         leadDs = ds;
         leadCar = other;
       }
-      if (ds < Math.max(28, dynamicBrakingDist)) {
+      if (ds < Math.max(65, dynamicBrakingDist)) {
         const otherClass = CAR_CLASSES[other.carSpec.classId];
         if (classMeta.basePaceIndex > otherClass.basePaceIndex + 0.04) {
           slowerClassAhead = true;
@@ -942,7 +1034,8 @@ export function computeAIControl(
   }
 
   // Smooth lateral lane transition
-  const laneBlendRate = leadCar ? 4.2 : 2.2;
+  const hasLateralOverlapNow = leadCar ? Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.35 : false;
+  const laneBlendRate = hasLateralOverlapNow ? 5.5 : (leadCar ? 4.2 : 2.2);
   car.aiTargetOffset += (desiredOffset - car.aiTargetOffset) * Math.min(1, dt * laneBlendRate);
 
   // Layer 3 Lockout: Hold parallel lateral spacing (|myLat - otherLat| >= carWidth * 1.4) when alongside
@@ -964,8 +1057,9 @@ export function computeAIControl(
   }
 
   // ==================== 3. KINEMATIC STOPPING-DISTANCE CURVATURE SCAN ====================
-  const scanDist = Math.max(24, (car.speed * car.speed) / (2 * brakeDecel) + 15.0);
-  const scanSteps = 20;
+  // Extended AI lookahead: 150m - 350m ahead of heavy corners so AI brakes smoothly from 330+ km/h
+  const scanDist = Math.max(150, Math.min(350, (car.speed * car.speed) / (2 * Math.max(10, brakeDecel * 0.82)) + 35.0));
+  const scanSteps = 28;
   let maxBrakeRatio = 0;
   let immediateCornerSpeed = 999;
 
@@ -979,14 +1073,15 @@ export function computeAIControl(
       car.trackT + dMeters / Math.max(100, compiledTrack.totalLength),
     );
     const absK = Math.abs(sample.curvature);
-    if (absK < 0.004) continue;
+    if (absK < 0.0048) continue;
 
     const bankBonus = 1.0 + Math.sin(Math.abs(sample.banking || 0)) * 0.35;
-    const sampleGrip = effectiveLatGripBase * bankBonus;
-    // Calibrated below stepCarPhysics centripetal ceiling (14.8) so AI holds clean apex without washing wide
-    const vSafe = Math.max(10.5, Math.sqrt((sampleGrip * 12.2) / absK) * skillFactor);
+    const aeroDownforceBonus = 1.0 + Math.min(0.38, car.speed / 62.0);
+    const sampleGrip = effectiveLatGripBase * bankBonus * aeroDownforceBonus;
+    // Calibrated centripetal safe cornering speed at 1:1 metric scale
+    const vSafe = Math.max(10.5, Math.sqrt((sampleGrip * 18.5) / absK) * skillFactor);
 
-    if (dMeters < 14) {
+    if (dMeters < 16) {
       immediateCornerSpeed = Math.min(immediateCornerSpeed, vSafe);
     }
 
@@ -1021,28 +1116,32 @@ export function computeAIControl(
 
   if (leadCar) {
     const closingSpeed = car.speed - leadCar.speed;
+    const hasLateralOverlap = Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.35;
     const pullingOutToPass =
       Math.abs(car.aiTargetOffset - leadCar.lateralOffset) >= CAR_WIDTH * 1.45 &&
       Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.45;
-    // If actively moving into an open overtaking lane with safe gap (> 6.5m), keep passing momentum;
-    // only match speed closely inside emergency tailgating gap or when boxed in.
-    const immediateDanger = !pullingOutToPass || leadDs < 6.8 || closingSpeed > 9.0;
+
+    // When directly behind with lateral overlap, ALWAYS match speed and brake to avoid rear-ending!
+    const immediateDanger = hasLateralOverlap || !pullingOutToPass || leadDs < 12.0 || closingSpeed > 1.5;
 
     if (immediateDanger) {
-      const gap = Math.max(0.5, leadDs - 4.6);
+      const gap = Math.max(0.5, leadDs - 4.2);
       const desiredFollowSpeed =
-        leadDs < 9.0 ? Math.max(0, leadCar.speed * Math.max(0, (leadDs - 4.2) / 4.8)) : leadCar.speed;
+        leadDs < 10.0
+          ? Math.max(0, leadCar.speed * Math.max(0, (leadDs - 4.0) / 6.0))
+          : (hasLateralOverlap ? Math.min(leadCar.speed, car.speed) : leadCar.speed);
 
-      if (car.speed > desiredFollowSpeed || closingSpeed > 0.35) {
-        const reqAvoidDecel =
-          (car.speed * car.speed - desiredFollowSpeed * desiredFollowSpeed) / (2 * gap) +
-          Math.max(0, closingSpeed) * (2.2 / gap);
-        if (reqAvoidDecel > 1.5) {
+      if (car.speed > desiredFollowSpeed || closingSpeed > 0.2) {
+        const speedDiffDecel =
+          (car.speed * car.speed - desiredFollowSpeed * desiredFollowSpeed) / (2 * Math.max(1.0, gap));
+        const closingDecel = Math.max(0, closingSpeed) * (3.0 / Math.max(1.0, gap));
+        const reqAvoidDecel = speedDiffDecel + closingDecel;
+        if (reqAvoidDecel > 1.0) {
           avoidBrake = Math.max(0, Math.min(1.0, reqAvoidDecel / brakeDecel));
-          avoidThrottleCap = avoidBrake > 0.08 ? 0.0 : 0.45;
+          avoidThrottleCap = avoidBrake > 0.05 ? 0.0 : 0.35;
         }
-      } else if (leadDs < 10.5 && !pullingOutToPass) {
-        avoidThrottleCap = Math.min(avoidThrottleCap, 0.78);
+      } else if (leadDs < 14.0 && hasLateralOverlap) {
+        avoidThrottleCap = Math.min(avoidThrottleCap, 0.5);
       }
     }
   }
@@ -1062,9 +1161,12 @@ export function computeAIControl(
     Math.abs(ahead20.curvature),
   );
   const curvBlend = Math.min(1, nearCurv / 0.042);
-  const straightLook = Math.max(20, Math.min(32, 18 + car.speed * 0.30));
-  const tightLook = Math.max(8, Math.min(14, 8 + car.speed * 0.22));
-  const lookAheadDist = straightLook * (1 - curvBlend) + tightLook * curvBlend;
+  const straightLook = Math.max(38, Math.min(68, 32 + car.speed * 0.36));
+  const tightLook = Math.max(14, Math.min(26, 12 + car.speed * 0.18));
+  let lookAheadDist = straightLook * (1 - curvBlend) + tightLook * curvBlend;
+  if (leadCar && leadDs < 24 && Math.abs(car.lateralOffset - steerTargetOffset) > 0.5) {
+    lookAheadDist = Math.max(12, Math.min(lookAheadDist, leadDs * 0.85));
+  }
 
   const targetSample = sampleTrackAtT(
     compiledTrack,

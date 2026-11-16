@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CompiledTrack, sampleTrackAtT } from '../game/tracks';
+import { CompiledTrack, SampledSplinePoint, sampleTrackAtT } from '../game/tracks';
 import { SceneryTheme } from '../game/types';
 import {
   createAsphaltTexture,
@@ -324,6 +324,38 @@ export function buildTrackEnvironment(
   barrierInst.castShadow = true;
   group.add(barrierInst);
 
+  // Concrete Pit Wall Divider between main track straight and pit lane corridor
+  const pitWallGeo = track(new THREE.BoxGeometry(0.55, 1.1, 4.4));
+  const pitWallMat = track(new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.65, metalness: 0.25 }));
+  const pitWallMatrices: THREE.Matrix4[] = [];
+  for (let i = 0; i < compiled.samples.length; i += 2) {
+    const s = compiled.samples[i];
+    // Extend along pit corridor except throat and merge
+    const inDivider = (s.t >= 0.905 || s.t <= 0.075);
+    if (inDivider) {
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const wallOffset = curHalfW + 0.9;
+      dummy.position.set(
+        s.x + s.nx * pitSideSign * wallOffset,
+        s.y + 0.55,
+        s.z + s.nz * pitSideSign * wallOffset,
+      );
+      dummy.rotation.set(0, Math.atan2(s.tx, s.tz), 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      pitWallMatrices.push(dummy.matrix.clone());
+    }
+  }
+  if (pitWallMatrices.length > 0) {
+    const pitWallInst = new THREE.InstancedMesh(pitWallGeo, pitWallMat, pitWallMatrices.length);
+    pitWallMatrices.forEach((m, idx) => pitWallInst.setMatrixAt(idx, m));
+    pitWallInst.instanceMatrix.needsUpdate = true;
+    pitWallInst.computeBoundingSphere();
+    pitWallInst.castShadow = true;
+    pitWallInst.receiveShadow = true;
+    group.add(pitWallInst);
+  }
+
   // 6b. Concrete Overpass Support Piers on Elevated Sections (e.g., Suzuka Figure-8 Bridge)
   const pierGeo = track(new THREE.BoxGeometry(1.4, 1.0, 1.4));
   const pierMat = track(
@@ -505,9 +537,13 @@ export function buildTrackEnvironment(
   }
   group.add(sfGroup);
 
-  // 8. Miniature Pit Garages & Grandstands flanking the Main Straight
+  // 8. Pit Garages & Grandstands flanking the Main Straight
   const pitBuildingGroup = new THREE.Group();
-  pitBuildingGroup.position.set(sf.x + sf.nx * (compiled.pitOffset - 7.5), sf.y, sf.z + sf.nz * (compiled.pitOffset - 7.5));
+  pitBuildingGroup.position.set(
+    sf.x + sf.nx * (compiled.pitOffset + pitSideSign * 7.5),
+    sf.y,
+    sf.z + sf.nz * (compiled.pitOffset + pitSideSign * 7.5),
+  );
   pitBuildingGroup.rotation.y = sfAngle;
 
   const garageWallGeo = track(new THREE.BoxGeometry(5.5, 4.2, 34));
@@ -520,14 +556,18 @@ export function buildTrackEnvironment(
   const garageRoofGeo = track(new THREE.BoxGeometry(8.5, 0.6, 36));
   const garageRoofMat = track(new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.45, metalness: 0.2 }));
   const garageRoof = new THREE.Mesh(garageRoofGeo, garageRoofMat);
-  garageRoof.position.set(1.2, 4.4, 0);
+  garageRoof.position.set(1.2 * pitSideSign, 4.4, 0);
   garageRoof.castShadow = true;
   pitBuildingGroup.add(garageRoof);
   group.add(pitBuildingGroup);
 
   // Main Grandstand opposite Pit Lane
   const standGroup = new THREE.Group();
-  standGroup.position.set(sf.x + sf.nx * (halfW + 13), sf.y, sf.z + sf.nz * (halfW + 13));
+  standGroup.position.set(
+    sf.x - sf.nx * pitSideSign * (halfW + 13),
+    sf.y,
+    sf.z - sf.nz * pitSideSign * (halfW + 13),
+  );
   standGroup.rotation.y = sfAngle;
   const standBaseGeo = track(new THREE.BoxGeometry(9.5, 5.4, 38));
   const standBaseMat = track(new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.75 }));
@@ -560,8 +600,17 @@ export function buildTrackEnvironment(
   specInst.computeBoundingSphere();
   standGroup.add(specInst);
 
+  const isSafe = (px: number, pz: number, r: number) =>
+    isPositionSafeFromTrack(px, pz, r, compiled, pitSamples);
+
   // 9. Scenery Perimeter Landmarks (Trees / Desert Rocks / Night Towers)
-  const propCount = 110;
+  const propRadius =
+    compiled.spec.scenery === 'street-night'
+      ? 5.5
+      : compiled.spec.scenery === 'desert'
+      ? 4.2
+      : 3.2;
+
   const propGeo =
     compiled.spec.scenery === 'street-night'
       ? track(new THREE.BoxGeometry(8, 22, 8))
@@ -577,26 +626,75 @@ export function buildTrackEnvironment(
     }),
   );
 
-  const propInst = new THREE.InstancedMesh(propGeo, propMat, propCount);
-  for (let i = 0; i < propCount; i++) {
-    const angle = (i / propCount) * Math.PI * 2;
-    const dist = 235 + ((i * 53) % 140);
-    const px = Math.cos(angle) * dist;
-    const pz = Math.sin(angle) * dist;
-    const s = 0.8 + ((i * 19) % 10) * 0.09;
-    const hScale = compiled.spec.scenery === 'street-night' ? 0.6 + ((i * 23) % 10) * 0.16 : s;
+  // Compute track bounding extent for natural distribution
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < compiled.samples.length; i++) {
+    const s = compiled.samples[i];
+    if (s.x < minX) minX = s.x;
+    if (s.x > maxX) maxX = s.x;
+    if (s.z < minZ) minZ = s.z;
+    if (s.z > maxZ) maxZ = s.z;
+  }
+  const midX = (minX + maxX) * 0.5;
+  const midZ = (minZ + maxZ) * 0.5;
+  const spanX = (maxX - minX) * 0.5 + 160;
+  const spanZ = (maxZ - minZ) * 0.5 + 160;
+
+  // Strict Exclusion Buffer Filter: discard any object violating clearance threshold
+  const validProps: Array<{ matrix: THREE.Matrix4; color: number }> = [];
+  const TARGET_PROPS = 120;
+  const MAX_ATTEMPTS = 650;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS && validProps.length < TARGET_PROPS; attempt++) {
+    let px = 0;
+    let pz = 0;
+    if (attempt % 2 === 0) {
+      // Offset perpendicular to spline samples
+      const sampleIdx = (attempt * 19) % compiled.samples.length;
+      const s = compiled.samples[sampleIdx];
+      const side = attempt % 4 === 0 ? -1 : 1;
+      const distOffset = (halfW + 1.8 + 4.2 + propRadius + 5.0) + 14 + ((attempt * 31) % 65);
+      px = s.x + s.nx * side * distOffset;
+      pz = s.z + s.nz * side * distOffset;
+    } else {
+      // Polar scatter around circuit perimeter
+      const angle = (attempt / 180) * Math.PI * 2;
+      const rx = Math.cos(angle) * (spanX * (0.60 + ((attempt * 13) % 35) * 0.015));
+      const rz = Math.sin(angle) * (spanZ * (0.60 + ((attempt * 19) % 35) * 0.015));
+      px = midX + rx;
+      pz = midZ + rz;
+    }
+
+    // Strict Clearance Check: ZERO props ever sit on asphalt, kerbs, runoff, or pit lane
+    if (!isSafe(px, pz, propRadius)) {
+      continue;
+    }
+
+    const s = 0.8 + ((attempt * 19) % 10) * 0.09;
+    const hScale = compiled.spec.scenery === 'street-night' ? 0.6 + ((attempt * 23) % 10) * 0.16 : s;
     dummy.position.set(px, compiled.spec.scenery === 'street-night' ? 11 * hScale : 4.2 * s, pz);
-    dummy.rotation.set(0, (i * 0.7) % Math.PI, 0);
+    dummy.rotation.set(0, (attempt * 0.7) % Math.PI, 0);
     dummy.scale.set(s, hScale, s);
     dummy.updateMatrix();
-    propInst.setMatrixAt(i, dummy.matrix);
-    colorObj.setHex(i % 2 === 0 ? palette.propColor1 : palette.propColor2);
-    propInst.setColorAt(i, colorObj);
+
+    validProps.push({
+      matrix: dummy.matrix.clone(),
+      color: attempt % 2 === 0 ? palette.propColor1 : palette.propColor2,
+    });
   }
-  propInst.instanceMatrix.needsUpdate = true;
-  if (propInst.instanceColor) propInst.instanceColor.needsUpdate = true;
-  propInst.computeBoundingSphere();
-  group.add(propInst);
+
+  if (validProps.length > 0) {
+    const propInst = new THREE.InstancedMesh(propGeo, propMat, validProps.length);
+    for (let i = 0; i < validProps.length; i++) {
+      propInst.setMatrixAt(i, validProps[i].matrix);
+      colorObj.setHex(validProps[i].color);
+      propInst.setColorAt(i, colorObj);
+    }
+    propInst.instanceMatrix.needsUpdate = true;
+    if (propInst.instanceColor) propInst.instanceColor.needsUpdate = true;
+    propInst.computeBoundingSphere();
+    group.add(propInst);
+  }
 
   // 10. Night Street Circuit Floodlight Towers
   if (compiled.spec.scenery === 'street-night') {
@@ -621,10 +719,14 @@ export function buildTrackEnvironment(
     const floodStep = Math.max(12, Math.floor(compiled.samples.length / 20));
     for (let i = 0; i < compiled.samples.length; i += floodStep) {
       const s = compiled.samples[i];
-      const flGroup = new THREE.Group();
       const curHalfW = s.width ? s.width * 0.5 : halfW;
-      const postX = s.x - s.nx * (curHalfW + 7.2);
-      const postZ = s.z - s.nz * (curHalfW + 7.2);
+      const postOffset = curHalfW + 1.8 + 4.2 + 0.4 + 5.0 + 1.5;
+      const postX = s.x - s.nx * postOffset;
+      const postZ = s.z - s.nz * postOffset;
+
+      if (!isSafe(postX, postZ, 0.5)) continue;
+
+      const flGroup = new THREE.Group();
       flGroup.position.set(postX, s.y, postZ);
       flGroup.rotation.y = Math.atan2(s.nx, s.nz);
 
@@ -651,4 +753,46 @@ export function buildTrackEnvironment(
       disposables.forEach((d) => d.dispose());
     },
   };
+}
+
+// Helper function to enforce strict track surface clearance:
+// distToCenterline >= (trackWidth / 2) + kerbWidth + runoffMargin + propRadius + 5.0m
+// tested against EVERY point on main track spline AND pit-lane spline
+export function isPositionSafeFromTrack(
+  px: number,
+  pz: number,
+  radius: number,
+  compiled: CompiledTrack,
+  pitSamples?: Array<{ x: number; z: number; width?: number }>,
+): boolean {
+  const KERB_WIDTH = 1.8;
+  const RUNOFF_MARGIN = 4.2;
+  const EXTRA_BUFFER = 5.0;
+  const halfW = compiled.spec.trackWidth * 0.5;
+
+  for (let i = 0; i < compiled.samples.length; i++) {
+    const s = compiled.samples[i];
+    const hw = s.width ? s.width * 0.5 : halfW;
+    const reqBuffer = hw + KERB_WIDTH + RUNOFF_MARGIN + radius + EXTRA_BUFFER;
+    const dx = px - s.x;
+    const dz = pz - s.z;
+    if (dx * dx + dz * dz < reqBuffer * reqBuffer) {
+      return false;
+    }
+  }
+
+  if (pitSamples) {
+    for (let i = 0; i < pitSamples.length; i++) {
+      const ps = pitSamples[i];
+      const hw = ps.width ? ps.width * 0.5 : 3.8;
+      const reqBuffer = hw + KERB_WIDTH + RUNOFF_MARGIN + radius + EXTRA_BUFFER;
+      const dx = px - ps.x;
+      const dz = pz - ps.z;
+      if (dx * dx + dz * dz < reqBuffer * reqBuffer) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
