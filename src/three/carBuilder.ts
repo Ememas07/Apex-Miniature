@@ -1638,6 +1638,7 @@ function createDiecastWheel(
   caliperMat: THREE.Material,
   rotorMat: THREE.Material,
   outSign: -1 | 1,
+  track: <T extends { dispose: () => void }>(item: T) => T,
   grooveMat?: THREE.Material,
   isGrooved = false,
 ): THREE.Group {
@@ -1645,19 +1646,19 @@ function createDiecastWheel(
   const rimRadius = radius * 0.66;
 
   // Open-ended tire tread band + annular sidewalls so wheel center is truly hollow
-  const tireGeo = new THREE.CylinderGeometry(radius, radius, width, 28, 1, true);
+  const tireGeo = track(new THREE.CylinderGeometry(radius, radius, width, 28, 1, true));
   tireGeo.rotateZ(Math.PI / 2);
   const tireMesh = new THREE.Mesh(tireGeo, tireMat);
   tireMesh.castShadow = true;
   wheelGroup.add(tireMesh);
 
-  const outerWallGeo = new THREE.RingGeometry(rimRadius, radius, 28);
+  const outerWallGeo = track(new THREE.RingGeometry(rimRadius, radius, 28));
   outerWallGeo.rotateY(outSign > 0 ? Math.PI / 2 : -Math.PI / 2);
   const outerWall = new THREE.Mesh(outerWallGeo, tireMat);
   outerWall.position.x = outSign * width * 0.5;
   wheelGroup.add(outerWall);
 
-  const innerWallGeo = new THREE.RingGeometry(rimRadius, radius, 28);
+  const innerWallGeo = track(new THREE.RingGeometry(rimRadius, radius, 28));
   innerWallGeo.rotateY(outSign > 0 ? -Math.PI / 2 : Math.PI / 2);
   const innerWall = new THREE.Mesh(innerWallGeo, tireMat);
   innerWall.position.x = -outSign * width * 0.5;
@@ -1666,7 +1667,7 @@ function createDiecastWheel(
   if (isGrooved && grooveMat) {
     const grooveOffsets = [-width * 0.32, -width * 0.11, width * 0.11, width * 0.32];
     for (const gx of grooveOffsets) {
-      const gGeo = new THREE.CylinderGeometry(radius + 0.003, radius + 0.003, width * 0.08, 24, 1, true);
+      const gGeo = track(new THREE.CylinderGeometry(radius + 0.003, radius + 0.003, width * 0.08, 24, 1, true));
       gGeo.rotateZ(Math.PI / 2);
       const gMesh = new THREE.Mesh(gGeo, grooveMat);
       gMesh.position.x = gx;
@@ -1675,19 +1676,21 @@ function createDiecastWheel(
   }
 
   // Hollow inner wheel barrel
-  const barrelMat = new THREE.MeshStandardMaterial({
-    color: 0x0c0e12,
-    metalness: 0.45,
-    roughness: 0.55,
-    side: THREE.DoubleSide,
-  });
-  const rimGeo = new THREE.CylinderGeometry(rimRadius, rimRadius, width * 0.96, 24, 1, true);
+  const barrelMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0x0c0e12,
+      metalness: 0.45,
+      roughness: 0.55,
+      side: THREE.DoubleSide,
+    }),
+  );
+  const rimGeo = track(new THREE.CylinderGeometry(rimRadius, rimRadius, width * 0.96, 24, 1, true));
   rimGeo.rotateZ(Math.PI / 2);
   const rimMesh = new THREE.Mesh(rimGeo, barrelMat);
   wheelGroup.add(rimMesh);
 
   // Outer alloy rim lip on outward wheel face
-  const lipGeo = new THREE.TorusGeometry(rimRadius, 0.015, 8, 28);
+  const lipGeo = track(new THREE.TorusGeometry(rimRadius, 0.015, 8, 28));
   lipGeo.rotateY(Math.PI / 2);
   const lipMesh = new THREE.Mesh(lipGeo, rimMat);
   lipMesh.position.x = outSign * width * 0.49;
@@ -1696,7 +1699,7 @@ function createDiecastWheel(
   // Split 5-spoke / Y-spoke alloy wheel face clearly visible on outward side
   const spokeGroup = new THREE.Group();
   spokeGroup.position.x = outSign * width * 0.36;
-  const spokeGeo = new THREE.BoxGeometry(width * 0.14, rimRadius * 0.95, rimRadius * 0.11);
+  const spokeGeo = track(new THREE.BoxGeometry(width * 0.14, rimRadius * 0.95, rimRadius * 0.11));
   for (let s = 0; s < 5; s++) {
     const baseAngle = (s * 2 * Math.PI) / 5;
     for (const forkOffset of [-0.14, 0.14]) {
@@ -1705,12 +1708,12 @@ function createDiecastWheel(
       spokeGroup.add(spoke);
     }
   }
-  const hubGeo = new THREE.CylinderGeometry(rimRadius * 0.24, rimRadius * 0.24, width * 0.18, 16);
+  const hubGeo = track(new THREE.CylinderGeometry(rimRadius * 0.24, rimRadius * 0.24, width * 0.18, 16));
   hubGeo.rotateZ(Math.PI / 2);
   const hubMesh = new THREE.Mesh(hubGeo, rimMat);
   spokeGroup.add(hubMesh);
 
-  const nutGeo = new THREE.CylinderGeometry(rimRadius * 0.11, rimRadius * 0.11, width * 0.22, 12);
+  const nutGeo = track(new THREE.CylinderGeometry(rimRadius * 0.11, rimRadius * 0.11, width * 0.22, 12));
   nutGeo.rotateZ(Math.PI / 2);
   const nutMesh = new THREE.Mesh(nutGeo, caliperMat);
   spokeGroup.add(nutMesh);
@@ -1718,13 +1721,13 @@ function createDiecastWheel(
 
   // Slotted brake rotor & painted brake caliper recessed behind spokes
   const rotorRadius = rimRadius * 0.82;
-  const rotorGeo = new THREE.CylinderGeometry(rotorRadius, rotorRadius, width * 0.10, 20);
+  const rotorGeo = track(new THREE.CylinderGeometry(rotorRadius, rotorRadius, width * 0.10, 20));
   rotorGeo.rotateZ(Math.PI / 2);
   const rotorMesh = new THREE.Mesh(rotorGeo, rotorMat);
   rotorMesh.position.x = outSign * width * 0.12;
   wheelGroup.add(rotorMesh);
 
-  const caliperGeo = new THREE.BoxGeometry(width * 0.20, rotorRadius * 0.42, rotorRadius * 0.34);
+  const caliperGeo = track(new THREE.BoxGeometry(width * 0.20, rotorRadius * 0.42, rotorRadius * 0.34));
   const caliperMesh = new THREE.Mesh(caliperGeo, caliperMat);
   caliperMesh.position.set(outSign * width * 0.15, rotorRadius * 0.68, rotorRadius * 0.30);
   caliperMesh.rotation.x = -0.42;
@@ -1741,6 +1744,7 @@ function createSuspensionArms(
   endY: number,
   endZ: number,
   mat: THREE.Material,
+  track: <T extends { dispose: () => void }>(item: T) => T,
 ): THREE.Group {
   const group = new THREE.Group();
   const wishbones = [
@@ -1756,7 +1760,7 @@ function createSuspensionArms(
     const p2 = new THREE.Vector3(endX, wb.y1, endZ + wb.zOff1);
     const dir = new THREE.Vector3().subVectors(p2, p1);
     const len = dir.length();
-    const rodGeo = new THREE.CylinderGeometry(0.016, 0.016, len, 6);
+    const rodGeo = track(new THREE.CylinderGeometry(0.016, 0.016, len, 6));
     const rod = new THREE.Mesh(rodGeo, mat);
     rod.position.copy(p1).addScaledVector(dir, 0.5);
     rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
@@ -2976,6 +2980,7 @@ export function buildDiecastCar(
       caliperMat,
       rotorMat,
       wc.x < 0 ? -1 : 1,
+      track,
       tireGrooveMat,
       isF1_2005,
     );
@@ -2996,6 +3001,7 @@ export function buildDiecastCar(
         wheelRadius,
         wc.z,
         matteTrimMat,
+        track,
       );
       bodyGroup.add(suspension);
     }

@@ -6,6 +6,7 @@ import {
   computeBoPEquilibriumScore,
   getCarsByClass,
   resolveCarSpecial,
+  resolveNumberPlateColors,
   validateDriverNumber,
 } from './cars';
 import { CarClassId, TrackSpec, TrackWaypoint } from './types';
@@ -1557,6 +1558,44 @@ test('Acoustic Engine Synthesis & Spa Eau Rouge DEM Alignment', () => {
   const raidillonCrest = sampleTrackAtT(spa, 0.145);
   assert.ok(eauRougeSample.y <= -20, `Expected Eau Rouge valley <= -20m, got ${eauRougeSample.y.toFixed(1)}m`);
   assert.ok(raidillonCrest.y >= 52, `Expected Raidillon crest >= +52m, got ${raidillonCrest.y.toFixed(1)}m`);
+});
+
+test('All 76 cars map cleanly to per-class tuning, GT4 plate style, and disambiguated acoustic profiles', () => {
+  // Every car's class resolves cleanly within tuning bounds
+  for (const car of CARS) {
+    const profile = resolveTuningConfig(car.classId);
+    assert.ok(profile.downforceScale >= 0.55 && profile.downforceScale <= 1.35, `Bad downforceScale for ${car.id}`);
+    assert.ok(profile.dragScale >= 0.65 && profile.dragScale <= 1.45, `Bad dragScale for ${car.id}`);
+  }
+
+  // Hyphenated / alias class keys match exact CarClassId profiles
+  assert.deepEqual(resolveTuningConfig('f1-2026'), resolveTuningConfig(CarClassId.F1_2026));
+  assert.deepEqual(resolveTuningConfig('f1-2021'), resolveTuningConfig(CarClassId.F1_2021));
+  assert.deepEqual(resolveTuningConfig('f1-2005'), resolveTuningConfig(CarClassId.F1_2005));
+  assert.deepEqual(resolveTuningConfig('hypercar'), resolveTuningConfig(CarClassId.HYPERCAR_GTP));
+  assert.deepEqual(resolveTuningConfig('gt3'), resolveTuningConfig(CarClassId.GT3));
+  assert.deepEqual(resolveTuningConfig('gt4'), resolveTuningConfig(CarClassId.GT4));
+
+  // GT4 cyan number plate resolves cleanly
+  assert.deepEqual(resolveNumberPlateColors(CarClassId.GT4, 'gt4-cyan'), { bg: '#0284c7', text: '#ffffff' });
+
+  // Disambiguated acoustic profiles (prevent brand-name substring collisions across F1/GTP/GT4/Supercar)
+  assert.equal(resolveAcousticProfile('f1-26-cadillac', 'v6-hybrid', CarClassId.F1_2026).type, 'V6_TURBO_HYBRID');
+  assert.equal(resolveAcousticProfile('f1-26-mclaren', 'v6-hybrid', CarClassId.F1_2026).type, 'V6_TURBO_HYBRID');
+  assert.equal(resolveAcousticProfile('f1-21-mclaren', 'v6-hybrid', CarClassId.F1_2021).type, 'V6_TURBO_HYBRID');
+  assert.equal(resolveAcousticProfile('f1-26-alpine', 'v6-hybrid', CarClassId.F1_2026).type, 'V6_TURBO_HYBRID');
+  assert.equal(resolveAcousticProfile('alpine-a424', 'v6-hybrid', CarClassId.HYPERCAR_GTP).type, 'V6_TURBO_HYBRID');
+  assert.equal(resolveAcousticProfile('alpine-a110-gt4', 'turbo-i4', CarClassId.GT4).type, 'INLINE4_TURBO');
+
+  const p963 = resolveAcousticProfile('porsche-963', 'v8-hybrid', CarClassId.HYPERCAR_GTP);
+  assert.equal(p963.type, 'V8_FLATPLANE');
+  assert.equal(p963.hasHybridWhine, true);
+
+  const p918 = resolveAcousticProfile('porsche-918-spyder', 'v8-hybrid', CarClassId.SUPERCAR);
+  assert.equal(p918.type, 'V8_FLATPLANE');
+  assert.equal(p918.hasHybridWhine, true);
+
+  assert.equal(resolveAcousticProfile('porsche-cayman-gt4-rs', 'flat6', CarClassId.GT4).type, 'FLAT6_BOXER');
 });
 
 

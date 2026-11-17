@@ -141,7 +141,12 @@ export function resolveAcousticProfile(
   }
 
   // 4. Flat-6 Boxer Metallic Pulse (Porsche 911 GT3 R, 718 Cayman GT4, 992 GT3 RS)
-  const isFlat6 = engineType === 'flat6' || carId.includes('porsche') || carId.includes('911') || carId.includes('718');
+  const isFlat6 =
+    engineType === 'flat6' ||
+    (carId.includes('porsche') && engineType !== 'v8-hybrid') ||
+    carId.includes('911') ||
+    carId.includes('718') ||
+    carId.includes('cayman');
   if (isFlat6) {
     return {
       type: 'FLAT6_BOXER',
@@ -170,7 +175,7 @@ export function resolveAcousticProfile(
 
   // 5. V8 Crossplane Deep Bass Burble (Cadillac V-Series.R, Corvette Z06, Mustang, AMG GT3)
   const isV8Crossplane =
-    carId.includes('cadillac') ||
+    carId.includes('cadillac-vseries') ||
     carId.includes('corvette') ||
     carId.includes('mustang') ||
     carId.includes('amg') ||
@@ -202,11 +207,12 @@ export function resolveAcousticProfile(
     };
   }
 
-  // 6. V8 Flatplane Crisp Bark (Ferrari 499P, McLaren 720S/Artura, Koenigsegg Jesko)
+  // 6. V8 Flatplane Crisp Bark (Ferrari 499P, Porsche 963/918, McLaren 720S/750S/W1/Artura, Koenigsegg Jesko)
+  const isF1Modern = classId === CarClassId.F1_2026 || classId === CarClassId.F1_2021;
   const isV8Flatplane =
     engineType === 'v8-hybrid' ||
     carId.includes('499p') ||
-    carId.includes('mclaren') ||
+    (!isF1Modern && carId.includes('mclaren')) ||
     carId.includes('jesko');
   if (isV8Flatplane) {
     const isNonHybrid = carId.includes('valkyrie') || carId.includes('glickenhaus') || carId.includes('scg-007');
@@ -241,7 +247,7 @@ export function resolveAcousticProfile(
     carId.includes('yaris') ||
     carId.includes('civic') ||
     carId.includes('clio') ||
-    carId.includes('alpine');
+    carId.includes('alpine-a110');
   if (isI4) {
     return {
       type: 'INLINE4_TURBO',

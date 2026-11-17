@@ -73,16 +73,20 @@ export function resolveTuningConfig(carClass?: CarClassId | string): TuningConfi
   const str = String(carClass);
   const upper = str.toUpperCase();
   const lower = str.toLowerCase();
+  const normalized = upper.replace(/[-\s]+/g, '_');
 
   const matched =
     classesMap[str] ||
     classesMap[upper] ||
     classesMap[lower] ||
-    (upper.includes('GT3') ? classesMap['GT3'] : null) ||
-    (upper.includes('HYPER') || upper.includes('GTP') ? classesMap['HYPERCAR_GTP'] : null) ||
-    (upper.includes('F1_2026') || upper === 'F1' || upper.includes('F1') ? classesMap['F1_2026'] : null) ||
-    (upper.includes('LMP2') ? classesMap['LMP2'] : null) ||
-    (upper.includes('GT4') ? classesMap['GT4'] : null);
+    classesMap[normalized] ||
+    (normalized.includes('GT3') ? classesMap['GT3'] : null) ||
+    (normalized.includes('HYPER') || normalized.includes('GTP') ? classesMap['HYPERCAR_GTP'] : null) ||
+    (normalized.includes('F1_2021') ? classesMap['F1_2021'] : null) ||
+    (normalized.includes('F1_2005') ? classesMap['F1_2005'] : null) ||
+    (normalized.includes('F1_2026') || normalized === 'F1' || normalized.includes('F1') ? classesMap['F1_2026'] : null) ||
+    (normalized.includes('LMP2') ? classesMap['LMP2'] : null) ||
+    (normalized.includes('GT4') ? classesMap['GT4'] : null);
 
   if (!matched) return GLOBAL_TUNING_CONFIG;
   return clampProfile(matched, GLOBAL_TUNING_CONFIG);

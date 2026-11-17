@@ -1,5 +1,5 @@
-import { CAR_CLASSES, getCarById } from '../game/cars';
-import { getTrackById } from '../game/tracks';
+import { CAR_CLASSES, CARS, getCarById } from '../game/cars';
+import { getTrackById, TRACKS } from '../game/tracks';
 import { RaceConfig } from '../game/types';
 
 interface TitleOverlayProps {
@@ -37,7 +37,7 @@ export function TitleOverlay({
         <div className="flex items-center gap-3">
           <span className="font-display font-bold text-slate-100">APEX MINIATURE</span>
           <span aria-hidden="true" className="text-slate-600">/</span>
-          <span className="text-slate-400">All 57 Cars & 43 Circuits Unlocked</span>
+          <span className="text-slate-400">All {CARS.length} Cars & {TRACKS.length} Circuits Unlocked</span>
         </div>
         <div className="flex items-center gap-4 pointer-events-auto">
           {roomCode && (

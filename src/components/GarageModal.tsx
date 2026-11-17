@@ -55,6 +55,7 @@ const PLATE_OPTIONS: Array<{ id: NumberPlateStyle; label: string; color: string 
   { id: 'gtp-red', label: 'GTP Red', color: '#dc2626' },
   { id: 'lmp2-blue', label: 'LMP2 Blue', color: '#2563eb' },
   { id: 'gt3-green', label: 'GT3 Green', color: '#16a34a' },
+  { id: 'gt4-cyan', label: 'GT4 Cyan', color: '#0284c7' },
   { id: 'gtd-amber', label: 'GTD Amber', color: '#f59e0b' },
   { id: 'formula-white', label: 'Formula White', color: '#f8fafc' },
 ];
