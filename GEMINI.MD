@@ -1,0 +1,6 @@
+### Token & Tool-Call Efficiency Protocol
+1. **Surgical File Reads Only:** Never dump entire large files (like `cars.ts`, `tracks.ts`, or bundle outputs) into context. Use `grep_search` / line-range reads (`startLine`–`endLine`) to inspect only the specific functions, interfaces, or data entries relevant to the task.
+2. **Parallelize Tool Calls:** Batch independent read-only searches and file reads into a single parallel tool turn instead of sequential one-by-one turns.
+3. **Minimal-Diff Edits:** Use targeted search-and-replace / patch edits rather than rewriting entire files. Never echo unchanged code blocks back in assistant messages.
+4. **Silent Execution Between Milestones:** Do not narrate routine steps ("Now I will read X", "Next I will edit Y"). Execute tool calls directly and only output a concise final summary after verification passes.
+5. **Single-Pass Verification & Terse Output:** Run `npx tsc --noEmit` once after batching all edits—not after every file change. When inspecting command logs, read only error lines/tail output, and keep final summaries under 15 bullet points.
