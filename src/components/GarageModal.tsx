@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, RotateCcw, Check, Search } from 'lucide-react';
+import { X, RotateCcw, Check, Search, Paintbrush } from 'lucide-react';
 import {
   CAR_CLASSES,
   CARS,
@@ -18,6 +18,7 @@ import {
   RimFinish,
 } from '../game/types';
 import { GarageAngle, GarageViewport } from '../three/GarageViewport';
+import { LiveryStudioModal } from './LiveryStudioModal';
 
 interface GarageModalProps {
   selectedCarId: string;
@@ -80,6 +81,7 @@ export function GarageModal({
   const [carSearch, setCarSearch] = useState('');
   const [tab, setTab] = useState<StudioTab>('livery');
   const [angle, setAngle] = useState<GarageAngle>('hero');
+  const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
 
   const trimmedCarSearch = carSearch.trim();
   const effectiveClassFilter: CarClassId | 'ALL' = trimmedCarSearch.length > 0 && activeClass !== 'ALL' ? 'ALL' : activeClass;
@@ -370,6 +372,16 @@ export function GarageModal({
 
           {tab === 'livery' && (
             <>
+              {/* Livery Studio Button */}
+              <button
+                type="button"
+                onClick={() => setLiveryStudioOpen(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-indigo-950/40 transition-all cursor-pointer mb-2"
+              >
+                <Paintbrush className="w-4 h-4" />
+                Open 3D Livery Studio & UV Painter
+              </button>
+
               {/* Livery Templates */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-2">
@@ -629,6 +641,22 @@ export function GarageModal({
       >
         <X className="w-4 h-4" />
       </button>
+
+      {/* 3D Livery Studio & UV Painter Modal */}
+      {liveryStudioOpen && (
+        <LiveryStudioModal
+          initialCarId={activeCar.id}
+          initialLivery={livery}
+          onApplyLivery={(carId, newLivery) => {
+            if (carId !== activeCar.id) {
+              onSelectCar(carId, newLivery);
+            } else {
+              onChangeLivery(newLivery);
+            }
+          }}
+          onClose={() => setLiveryStudioOpen(false)}
+        />
+      )}
     </div>
   );
 }

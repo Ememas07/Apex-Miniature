@@ -17,12 +17,14 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 
 const DEFAULT_INPUT_DIR = 'models/raw-cars';
 const DEFAULT_OUTPUT_DIR = 'models/lowpoly-cars';
-const DEFAULT_TRIS = 1800;
+const DEFAULT_TRIS = 12000;
 const DEFAULT_WELD_EPSILON = 1e-4;
 const DEFAULT_TARGET_LENGTH = 3.75; // Matches src/three/carBuilder.ts (~3.68-3.78m)
 
 const STRIP_HELPER_RE =
-  /(?:^|[_\-\s.])(COCKPIT_HR|COCKPIT_LR|STEER_HR|STEER_LR|DRIVER|SHADOW|COLLIDER|BLUR|DAMAGE|LOD_?[BCD])(?:$|[_\-\s.\d])/i;
+  /(?:^|[_\-\s.])(COCKPIT|STEER|DRIVER|SHADOW|COLLIDER|BLUR|DAMAGE|LOD_?[BCD]|INT|CABIN|INTERIOR|SEAT|ROLLCAGE|DASH|ELECTRONICS|GAUGE|BUTTONS|PEDAL|HELMET|OCCLUSION)(?:$|[_\-\s.\d])/i;
+const STRIP_MAT_RE =
+  /(?:^|[_\-\s.])(INT|COCKPIT|STEER|SEAT|ROLLCAGE|DASH|ELECTRONICS|DISPLAY|GAUGE|BUTTONS|PEDAL|HELMET|OCCLUSION)(?:$|[_\-\s.\d])/i;
 const GLASS_RE =
   /(?:^|[_\-\s.])(GLASS|WINDSHIELD|WINDSCREEN|WINDOW|WINDOWS|GLAZING|CANOPY_GLASS)(?:$|[_\-\s.\d])/i;
 const AERO_WING_RE =
@@ -45,7 +47,8 @@ Options:
   --tris <n>             Target triangle budget per car (default: ${DEFAULT_TRIS})
   --ratio <0..1>         Target decimation ratio (overrides --tris)
   --weld-epsilon <eps>   Vertex weld tolerance before simplify (default: ${DEFAULT_WELD_EPSILON})
-  --flat / --no-flat     Split vertices & compute flat face normals (default: true)
+  --flat / --no-flat     Split vertices & compute flat face normals (default: false / smooth)
+  --filter <pattern>     Convert only cars matching name pattern (e.g. --filter oreca)
   --exclude-glass        Strip glass/windshield/window nodes & materials
   --scale <factor>       Additional uniform scale multiplier (default: 1.0)
   --target-length <m>    Normalized car length along +Z in meters (default: ${DEFAULT_TARGET_LENGTH})
@@ -62,7 +65,8 @@ function parseArgs(argv) {
     tris: DEFAULT_TRIS,
     ratio: null,
     weldEpsilon: DEFAULT_WELD_EPSILON,
-    flat: true,
+    flat: false,
+    filter: null,
     excludeGlass: false,
     scale: 1.0,
     targetLength: DEFAULT_TARGET_LENGTH,
@@ -94,6 +98,10 @@ function parseArgs(argv) {
       opts.flat = false;
     } else if (arg === '--flat=true') {
       opts.flat = true;
+    } else if ((arg === '--filter' || arg === '--car') && i + 1 < argv.length) {
+      opts.filter = argv[++i].toLowerCase();
+    } else if (arg.startsWith('--filter=') || arg.startsWith('--car=')) {
+      opts.filter = arg.split('=')[1].toLowerCase();
     } else if (arg === '--exclude-glass') {
       opts.excludeGlass = true;
     } else if (arg === '--scale' && i + 1 < argv.length) {
@@ -144,6 +152,7 @@ function parseArgs(argv) {
 
 function classifyWheelCorner(name) {
   const n = name.toUpperCase();
+  if (/WHEELHOUSE|WHEEL_HOUSE|WHEEL_ARCH/i.test(n)) return null;
   const isWheelPart =
     /(?:^|[_\-\s.])(WHEEL|RIM|TYRE|TIRE|DISC|HUB)(?:$|[_\-\s.\d])/i.test(n) ||
     /(WHEEL|RIM|TYRE|TIRE)/i.test(n);
@@ -517,9 +526,11 @@ function parseKn5File(kn5Path, excludeGlass) {
       const kn5Mat = matId >= 0 && matId < kn5Materials.length ? kn5Materials[matId] : null;
       const matName = kn5Mat ? kn5Mat.name.replace(/\s+/g, '_') : '';
       const isGlass = curGlass || isGlassName(matName);
+      const isMatStripped = STRIP_MAT_RE.test(matName);
 
       if (
         !shouldStrip &&
+        !isMatStripped &&
         isVisible !== 0 &&
         isRenderable !== 0 &&
         triCount > 0 &&
@@ -572,8 +583,15 @@ function parseKn5File(kn5Path, excludeGlass) {
       const kn5Mat = matId >= 0 && matId < kn5Materials.length ? kn5Materials[matId] : null;
       const matName = kn5Mat ? kn5Mat.name.replace(/\s+/g, '_') : '';
       const isGlass = curGlass || isGlassName(matName);
+      const isMatStripped = STRIP_MAT_RE.test(matName);
 
-      if (!shouldStrip && isVisible !== 0 && triCount > 0 && !(excludeGlass && isGlass)) {
+      if (
+        !shouldStrip &&
+        !isMatStripped &&
+        isVisible !== 0 &&
+        triCount > 0 &&
+        !(excludeGlass && isGlass)
+      ) {
         const groupName = curWheel ? curWheel : curWing ? 'AERO_WING' : isGlass ? 'GLASS' : 'BODY';
         addMeshTriangles(groupName, matName, meshVerts, meshUVs, meshIndices, currentMat);
       }
@@ -910,20 +928,23 @@ function simplifySubmesh(submesh, targetTris) {
   const clampedTargetTris = Math.max(1, targetTris);
   const targetIndexCount = clampedTargetTris * 3;
 
-  // Try progressive error thresholds from tightest to permissive so QEM hits budget cleanly
+  // Progressive simplification capped at 0.08m (8cm) max geometric error.
+  // Using LockBorder preserves exterior silhouettes, wheel roundness, and boundary edges.
   let bestIndices = submesh.indices;
-  for (const targetError of [0.05, 0.2, 0.8, 4.0, 1e6]) {
+  for (const targetError of [0.01, 0.02, 0.03, 0.05, 0.08]) {
     const [simplified] = MeshoptSimplifier.simplify(
       submesh.indices,
       submesh.positions,
       3,
       targetIndexCount,
       targetError,
-      ['Prune'],
+      ['LockBorder'],
     );
-    bestIndices = simplified;
-    if (simplified.length <= targetIndexCount * 1.1) {
-      break;
+    if (simplified && simplified.length >= 3) {
+      bestIndices = simplified;
+      if (simplified.length <= targetIndexCount * 1.1) {
+        break;
+      }
     }
   }
 
@@ -935,41 +956,50 @@ function allocateBudgets(submeshes, totalTargetTris) {
   if (totalInTris === 0) return submeshes.map(() => 0);
   if (totalTargetTris >= totalInTris) return submeshes.map((m) => m.inTris);
 
-  // First, ensure the largest submesh in each object group (body, wing, each wheel) gets a min floor
-  const largestIdxByGroup = new Map();
-  for (let i = 0; i < submeshes.length; i++) {
-    const g = submeshes[i].groupName;
-    const prev = largestIdxByGroup.get(g);
-    if (prev === undefined || submeshes[i].inTris > submeshes[prev].inTris) {
-      largestIdxByGroup.set(g, i);
-    }
-  }
-  const primaryIndices = new Set(largestIdxByGroup.values());
-
-  const targets = submeshes.map((m, i) => {
+  const targets = submeshes.map((m) => {
     const prop = Math.round((m.inTris / totalInTris) * totalTargetTris);
-    if (primaryIndices.has(i)) {
-      const floor = Math.min(m.inTris, 8);
-      return Math.min(m.inTris, Math.max(floor, prop));
+    const g = (m.groupName || '').toUpperCase();
+    const mat = (m.material || '').toUpperCase();
+
+    let floor = 0;
+    if (g.startsWith('WHEEL_')) {
+      if (mat.includes('TYRE') || mat.includes('TIRE')) {
+        floor = Math.min(m.inTris, Math.max(180, Math.floor(totalTargetTris * 0.02)));
+      } else if (mat.includes('RIM') || mat.includes('WHEEL')) {
+        floor = Math.min(m.inTris, Math.max(180, Math.floor(totalTargetTris * 0.02)));
+      } else {
+        floor = Math.min(m.inTris, Math.max(40, Math.floor(totalTargetTris * 0.005)));
+      }
+    } else if (g === 'BODY') {
+      if (mat.includes('CARPAINT') || mat.includes('BODY') || mat.includes('CHASSIS') || mat.includes('SKIN')) {
+        floor = Math.min(m.inTris, Math.max(1800, Math.floor(totalTargetTris * 0.35)));
+      } else {
+        floor = Math.min(m.inTris, Math.max(30, Math.floor(totalTargetTris * 0.005)));
+      }
+    } else if (g === 'AERO_WING') {
+      floor = Math.min(m.inTris, Math.max(80, Math.floor(totalTargetTris * 0.015)));
+    } else if (g === 'GLASS') {
+      floor = Math.min(m.inTris, Math.max(80, Math.floor(totalTargetTris * 0.015)));
     }
-    // Secondary/tiny submeshes scale strictly proportionally so micro-details don't steal body/wheel tris
-    return Math.min(m.inTris, prop);
+
+    return Math.min(m.inTris, Math.max(floor, prop));
   });
 
   // Adjust delta on largest submeshes to match totalTargetTris closely
   let diff = targets.reduce((s, v) => s + v, 0) - totalTargetTris;
   const order = submeshes
-    .map((m, idx) => ({ idx, inTris: m.inTris }))
+    .map((m, idx) => ({ idx, inTris: m.inTris, groupName: m.groupName, material: m.material }))
     .sort((a, b) => b.inTris - a.inTris);
 
   let guard = 0;
-  while (diff !== 0 && guard++ < 10000) {
+  while (diff !== 0 && guard++ < 20000) {
     let changed = false;
     for (const item of order) {
       if (diff === 0) break;
       const idx = item.idx;
-      const floor = primaryIndices.has(idx) ? Math.min(submeshes[idx].inTris, 8) : 0;
-      if (diff > 0 && targets[idx] > floor) {
+      const isTyreOrRim = item.groupName.startsWith('WHEEL_') && /(TYRE|TIRE|RIM)/i.test(item.material);
+      const minFloor = isTyreOrRim ? 150 : 20;
+      if (diff > 0 && targets[idx] > minFloor) {
         targets[idx]--;
         diff--;
         changed = true;
@@ -1443,6 +1473,11 @@ async function main() {
   const kn5Files = entries
     .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.kn5'))
     .map((e) => path.join(inputDir, e.name))
+    .filter((p) => {
+      if (!opts.filter) return true;
+      const base = path.basename(p, path.extname(p)).toLowerCase();
+      return base.includes(opts.filter);
+    })
     .sort((a, b) => a.localeCompare(b));
 
   if (kn5Files.length === 0) {

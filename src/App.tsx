@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GarageModal } from './components/GarageModal';
+import { LiveryStudioModal } from './components/LiveryStudioModal';
 import { PauseModal } from './components/PauseModal';
 import { RaceHUD } from './components/RaceHUD';
 import { RaceSetupModal } from './components/RaceSetupModal';
@@ -61,6 +62,7 @@ export default function App() {
   const [garageOpen, setGarageOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [trackStudioOpen, setTrackStudioOpen] = useState(false);
+  const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -294,7 +296,7 @@ export default function App() {
       />
 
       {/* Title Screen */}
-      {phase === 'title' && !garageOpen && !setupOpen && !trackStudioOpen && (
+      {phase === 'title' && !garageOpen && !setupOpen && !trackStudioOpen && !liveryStudioOpen && (
         <TitleOverlay
           raceConfig={raceConfig}
           roomCode={room?.code ?? null}
@@ -302,6 +304,23 @@ export default function App() {
           onOpenGarage={() => setGarageOpen(true)}
           onOpenSetup={() => setSetupOpen(true)}
           onOpenStudio={() => handleOpenStudio()}
+          onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
+        />
+      )}
+
+      {/* 3D Livery Studio & UV Painter */}
+      {liveryStudioOpen && (
+        <LiveryStudioModal
+          initialCarId={raceConfig.playerCarId}
+          initialLivery={raceConfig.playerLivery}
+          onApplyLivery={(carId, newLivery) => {
+            if (carId !== raceConfig.playerCarId) {
+              handleSelectCar(carId, newLivery);
+            } else {
+              handleChangeLivery(newLivery);
+            }
+          }}
+          onClose={() => setLiveryStudioOpen(false)}
         />
       )}
 

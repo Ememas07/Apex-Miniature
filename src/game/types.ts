@@ -77,6 +77,7 @@ export interface LiveryConfig {
   numberPlateStyle: NumberPlateStyle;
   headlightTint: HeadlightTint;
   windshieldBanner: string;
+  customTexture?: string; // Optional data URL or texture path for custom painted liveries
 }
 
 export interface CarSpec {

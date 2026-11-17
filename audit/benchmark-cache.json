@@ -4,26 +4,26 @@
     "carClass": "F1_2026",
     "car": "f1_2026",
     "carName": "Red Bull RB22 (2026)",
-    "lapTime": 63.77,
-    "lapSec": 63.767,
-    "trapKmh": 320.97,
+    "lapTime": 63.78,
+    "lapSec": 63.783,
+    "trapKmh": 319.71,
     "wallHits": 0,
     "offTrackPct": 0,
-    "errorPct": 10.12,
-    "elapsedMs": 421
+    "errorPct": 10,
+    "elapsedMs": 423
   },
   "suzuka:F1_2026": {
     "track": "suzuka",
     "carClass": "F1_2026",
     "car": "f1_2026",
     "carName": "Red Bull RB22 (2026)",
-    "lapTime": 93.55,
-    "lapSec": 93.55,
-    "trapKmh": 337.07,
+    "lapTime": 93.7,
+    "lapSec": 93.7,
+    "trapKmh": 335.24,
     "wallHits": 0,
     "offTrackPct": 0,
-    "errorPct": 3.78,
-    "elapsedMs": 554
+    "errorPct": 3.76,
+    "elapsedMs": 585
   },
   "spa-francorchamps:HYPERCAR_GTP": {
     "track": "spa-francorchamps",
@@ -36,7 +36,7 @@
     "wallHits": 0,
     "offTrackPct": 0,
     "errorPct": 0.55,
-    "elapsedMs": 795
+    "elapsedMs": 807
   },
   "monza:GT3": {
     "track": "monza",
@@ -49,7 +49,7 @@
     "wallHits": 0,
     "offTrackPct": 0,
     "errorPct": 0.58,
-    "elapsedMs": 803
+    "elapsedMs": 831
   },
   "spa-francorchamps:GT3": {
     "track": "spa-francorchamps",
@@ -62,19 +62,19 @@
     "wallHits": 0,
     "offTrackPct": 0,
     "errorPct": 0.37,
-    "elapsedMs": 978
+    "elapsedMs": 1017
   },
   "le-mans:HYPERCAR_GTP": {
     "track": "le-mans",
     "carClass": "HYPERCAR_GTP",
     "car": "hypercar_gtp",
     "carName": "Cadillac V-Series.R",
-    "lapTime": 198.27,
-    "lapSec": 198.267,
+    "lapTime": 199.32,
+    "lapSec": 199.317,
     "trapKmh": 335.73,
     "wallHits": 0,
     "offTrackPct": 0,
-    "errorPct": 3.13,
-    "elapsedMs": 1231
+    "errorPct": 2.75,
+    "elapsedMs": 1163
   }
 }

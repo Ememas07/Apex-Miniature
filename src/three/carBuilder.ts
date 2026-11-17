@@ -1791,7 +1791,21 @@ export function buildDiecastCar(
   const bodyGroup = new THREE.Group();
   root.add(bodyGroup);
 
-  const liveryTex = track(createLiveryTexture(livery, classId, maxAniso));
+  let liveryTex: THREE.Texture;
+  if (livery.customTexture) {
+    try {
+      const loader = new THREE.TextureLoader();
+      liveryTex = track(loader.load(livery.customTexture));
+      liveryTex.colorSpace = THREE.SRGBColorSpace;
+      liveryTex.wrapS = THREE.RepeatWrapping;
+      liveryTex.wrapT = THREE.RepeatWrapping;
+      liveryTex.anisotropy = maxAniso;
+    } catch {
+      liveryTex = track(createLiveryTexture(livery, classId, maxAniso));
+    }
+  } else {
+    liveryTex = track(createLiveryTexture(livery, classId, maxAniso));
+  }
   const numberPlateTex = track(createNumberPlateTexture(livery, classId, maxAniso));
   const bannerTex = track(createWindshieldBannerTexture(livery.windshieldBanner, livery.secondaryColor, maxAniso));
   const carbonTex = track(createCarbonTexture(maxAniso));

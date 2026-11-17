@@ -234,16 +234,35 @@ function convertSourceMaterial(
       roughness: rim.roughness,
       metalness: rim.metalness,
     });
-  } else if (/carpaint|body_?paint|chassis_?paint|^paint/i.test(lowerMat)) {
+  } else if (
+    /(?:car_?paint|body_?paint|chassis_?paint|^paint|ext_chassis|_ext_carpaint|ext_body|^body$|^chassis$|skin\d*|livery)/i.test(
+      lowerMat,
+    )
+  ) {
     const customizedPrimary =
       ctx.livery.primaryColor.toLowerCase() !== ctx.carSpec.defaultLivery.primaryColor.toLowerCase();
     const paintColor =
       isNeutralColor(srcColor) || customizedPrimary
         ? new THREE.Color(ctx.livery.primaryColor)
         : srcColor;
+
+    let liveryTexture: THREE.Texture | null = null;
+    if (ctx.livery.customTexture) {
+      try {
+        const loader = new THREE.TextureLoader();
+        liveryTexture = ctx.track(loader.load(ctx.livery.customTexture));
+        liveryTexture.colorSpace = THREE.SRGBColorSpace;
+        liveryTexture.wrapS = THREE.RepeatWrapping;
+        liveryTexture.wrapT = THREE.RepeatWrapping;
+      } catch (err) {
+        console.warn('Failed to load custom livery texture:', err);
+      }
+    }
+
     built = new THREE.MeshPhysicalMaterial({
       name: matName,
-      color: paintColor,
+      color: liveryTexture ? (customizedPrimary ? paintColor : 0xffffff) : paintColor,
+      map: liveryTexture,
       roughness: 0.24,
       metalness: 0.18,
       clearcoat: 1.0,
@@ -316,6 +335,9 @@ function instantiateObjRig(
     const meshName = mesh.name || 'PART';
     const isWheelMesh = isWheelObjectName(meshName);
     const clonedGeo = track(mesh.geometry.clone());
+    if (!clonedGeo.attributes.normal || clonedGeo.attributes.normal.count === 0) {
+      clonedGeo.computeVertexNormals();
+    }
 
     const rawMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const mappedMats = rawMats.map((m) =>
@@ -436,4 +458,104 @@ export async function buildCarRigAsync(
     }
   }
   return buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, maxAniso, carSpec.id);
+}
+
+export function applyCustomTextureToRig(
+  rig: BuiltCarRig,
+  textureOrCanvas: HTMLCanvasElement | THREE.Texture | string,
+  primaryColor?: string,
+): void {
+  let texture: THREE.Texture;
+  if (typeof textureOrCanvas === 'string') {
+    const loader = new THREE.TextureLoader();
+    texture = loader.load(textureOrCanvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+  } else if (textureOrCanvas instanceof THREE.Texture) {
+    texture = textureOrCanvas;
+  } else {
+    texture = new THREE.CanvasTexture(textureOrCanvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+  }
+
+  const pColor = primaryColor ? new THREE.Color(primaryColor) : null;
+
+  rig.bodyGroup.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const mat = m as THREE.MeshStandardMaterial;
+      const lower = (mat.name || '').toLowerCase();
+      const isGlass = /glass|window|windshield/i.test(lower);
+      const isLight = /light|emissive/i.test(lower);
+      if (!isGlass && !isLight) {
+        mat.map = texture;
+        if (pColor) mat.color.copy(pColor);
+        mat.needsUpdate = true;
+      }
+    }
+  });
+}
+
+export function renderUVWireframeToCanvas(
+  meshOrGroup: THREE.Object3D,
+  canvas: HTMLCanvasElement,
+  options?: { strokeStyle?: string; lineWidth?: number; fillBackground?: string },
+): boolean {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  if (options?.fillBackground) {
+    ctx.fillStyle = options.fillBackground;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  ctx.strokeStyle = options?.strokeStyle || 'rgba(56, 189, 248, 0.45)';
+  ctx.lineWidth = options?.lineWidth || 1;
+
+  let drawnCount = 0;
+  meshOrGroup.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    const geo = mesh.geometry;
+    const uvAttr = geo.getAttribute('uv');
+    if (!uvAttr || uvAttr.count === 0) return;
+
+    const indexAttr = geo.getIndex();
+    ctx.beginPath();
+
+    const drawTri = (i0: number, i1: number, i2: number) => {
+      const u0 = ((uvAttr.getX(i0) % 1) + 1) % 1;
+      const v0 = 1 - (((uvAttr.getY(i0) % 1) + 1) % 1);
+      const u1 = ((uvAttr.getX(i1) % 1) + 1) % 1;
+      const v1 = 1 - (((uvAttr.getY(i1) % 1) + 1) % 1);
+      const u2 = ((uvAttr.getX(i2) % 1) + 1) % 1;
+      const v2 = 1 - (((uvAttr.getY(i2) % 1) + 1) % 1);
+
+      ctx.moveTo(u0 * w, v0 * h);
+      ctx.lineTo(u1 * w, v1 * h);
+      ctx.lineTo(u2 * w, v2 * h);
+      ctx.closePath();
+      drawnCount++;
+    };
+
+    if (indexAttr) {
+      for (let i = 0; i < indexAttr.count; i += 3) {
+        drawTri(indexAttr.getX(i), indexAttr.getX(i + 1), indexAttr.getX(i + 2));
+      }
+    } else {
+      for (let i = 0; i < uvAttr.count; i += 3) {
+        drawTri(i, i + 1, i + 2);
+      }
+    }
+    ctx.stroke();
+  });
+
+  return drawnCount > 0;
 }

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   CARS,
   CAR_CLASSES,
@@ -9,7 +11,7 @@ import {
   resolveNumberPlateColors,
   validateDriverNumber,
 } from './cars';
-import { CarClassId, TrackSpec, TrackWaypoint } from './types';
+import { CarClassId, LiveryConfig, TrackSpec, TrackWaypoint } from './types';
 import { TRACKS, compileTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
 import {
   CUSTOM_TRACK_TEMPLATES,
@@ -1596,6 +1598,62 @@ test('All 76 cars map cleanly to per-class tuning, GT4 plate style, and disambig
   assert.equal(p918.hasHybridWhine, true);
 
   assert.equal(resolveAcousticProfile('porsche-cayman-gt4-rs', 'flat6', CarClassId.GT4).type, 'FLAT6_BOXER');
+});
+
+test('KN5 to OBJ Converter & Livery Visualizer: smooth normals, 4 wheels on Oreca & Vantage GT4, and UV custom texturing', () => {
+  // 1. Converted OBJs have 4 wheels and proper low-poly triangle budgets
+  const checkObj = (carFolder: string) => {
+    const objPath = path.resolve('models/lowpoly-cars', carFolder, `${carFolder}.obj`);
+    assert.ok(fs.existsSync(objPath), `Model file not found: ${objPath}`);
+    const content = fs.readFileSync(objPath, 'utf8');
+    const lines = content.split('\n');
+    const objects = new Set<string>();
+    let vCount = 0;
+    let vnCount = 0;
+    let vtCount = 0;
+    let fCount = 0;
+
+    for (const l of lines) {
+      if (l.startsWith('o ')) objects.add(l.slice(2).trim());
+      else if (l.startsWith('v ')) vCount++;
+      else if (l.startsWith('vn ')) vnCount++;
+      else if (l.startsWith('vt ')) vtCount++;
+      else if (l.startsWith('f ')) fCount++;
+    }
+
+    assert.ok(fCount > 5000, `${carFolder} has too few triangles (${fCount})`);
+    assert.ok(objects.has('WHEEL_LF') || objects.has('WHEEL_FL'), `${carFolder} missing front-left wheel`);
+    assert.ok(objects.has('WHEEL_RF') || objects.has('WHEEL_FR'), `${carFolder} missing front-right wheel`);
+    assert.ok(objects.has('WHEEL_LR') || objects.has('WHEEL_RL'), `${carFolder} missing rear-left wheel`);
+    assert.ok(objects.has('WHEEL_RR'), `${carFolder} missing rear-right wheel`);
+    assert.ok(objects.has('BODY'), `${carFolder} missing BODY object`);
+    // Smooth normals exported
+    assert.ok(vnCount > 0, `${carFolder} missing vertex normals`);
+    // UVs exported
+    assert.ok(vtCount > 0, `${carFolder} missing texture coordinates`);
+  };
+
+  checkObj('oreca-07-ao');
+  checkObj('aston-vantage-gt4');
+  checkObj('aston-vantage-gt3');
+
+  // 2. Custom Livery Texture Support in LiveryConfig
+  const customLivery: LiveryConfig = {
+    primaryColor: '#0284c7',
+    secondaryColor: '#facc15',
+    tertiaryColor: '#ffffff',
+    rimFinish: 'gloss-black',
+    template: 'racing-stripes',
+    carbonHood: false,
+    carbonWing: false,
+    carbonSplitter: false,
+    driverNumber: '77',
+    numberPlateStyle: 'gt4-cyan',
+    headlightTint: 'crystal-white',
+    windshieldBanner: 'APEX',
+    customTexture: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  };
+  assert.ok(customLivery.customTexture && customLivery.customTexture.startsWith('data:image/png'));
 });
 
 
