@@ -21,17 +21,74 @@ export interface TuningConfig {
   aiBrakeMarginScale: number;
 }
 
+export const TUNING_BOUNDS = {
+  downforceScale: [0.55, 1.35] as [number, number],
+  brakeForceScale: [0.55, 1.35] as [number, number],
+  dragScale: [0.65, 1.45] as [number, number],
+  lowSpeedGripScale: [0.65, 1.30] as [number, number],
+  aiCornerSpeedScale: [0.75, 1.00] as [number, number], // Strictly capped at 100% of physical tire grip
+  aiBrakeMarginScale: [0.85, 1.40] as [number, number], // Cannot brake later than physical stopping distance
+};
+
 const clampNum = (v: number | undefined, min: number, max: number, fallback = 1.0) =>
   Math.max(min, Math.min(max, typeof v === 'number' && Number.isFinite(v) ? v : fallback));
 
-export const ACTIVE_TUNING_CONFIG: TuningConfig = {
-  downforceScale: clampNum(tuningConfigRaw.downforceScale, 0.55, 1.35),
-  brakeForceScale: clampNum(tuningConfigRaw.brakeForceScale, 0.55, 1.35),
-  dragScale: clampNum(tuningConfigRaw.dragScale, 0.65, 1.45),
-  lowSpeedGripScale: clampNum(tuningConfigRaw.lowSpeedGripScale, 0.65, 1.30),
-  aiCornerSpeedScale: clampNum(tuningConfigRaw.aiCornerSpeedScale, 0.75, 1.00),
-  aiBrakeMarginScale: clampNum(tuningConfigRaw.aiBrakeMarginScale, 0.85, 1.40),
+function clampProfile(raw: Partial<TuningConfig> | undefined, fallback: TuningConfig): TuningConfig {
+  return {
+    downforceScale: clampNum(raw?.downforceScale, TUNING_BOUNDS.downforceScale[0], TUNING_BOUNDS.downforceScale[1], fallback.downforceScale),
+    brakeForceScale: clampNum(raw?.brakeForceScale, TUNING_BOUNDS.brakeForceScale[0], TUNING_BOUNDS.brakeForceScale[1], fallback.brakeForceScale),
+    dragScale: clampNum(raw?.dragScale, TUNING_BOUNDS.dragScale[0], TUNING_BOUNDS.dragScale[1], fallback.dragScale),
+    lowSpeedGripScale: clampNum(raw?.lowSpeedGripScale, TUNING_BOUNDS.lowSpeedGripScale[0], TUNING_BOUNDS.lowSpeedGripScale[1], fallback.lowSpeedGripScale),
+    aiCornerSpeedScale: clampNum(raw?.aiCornerSpeedScale, TUNING_BOUNDS.aiCornerSpeedScale[0], TUNING_BOUNDS.aiCornerSpeedScale[1], fallback.aiCornerSpeedScale),
+    aiBrakeMarginScale: clampNum(raw?.aiBrakeMarginScale, TUNING_BOUNDS.aiBrakeMarginScale[0], TUNING_BOUNDS.aiBrakeMarginScale[1], fallback.aiBrakeMarginScale),
+  };
+}
+
+const DEFAULT_FALLBACK_TUNING: TuningConfig = {
+  downforceScale: 1.0,
+  brakeForceScale: 1.0,
+  dragScale: 1.0,
+  lowSpeedGripScale: 1.0,
+  aiCornerSpeedScale: 1.0,
+  aiBrakeMarginScale: 1.0,
 };
+
+// Global base config
+const rawGlobal: Partial<TuningConfig> =
+  (tuningConfigRaw as any).global ??
+  ((tuningConfigRaw as any).downforceScale !== undefined ? tuningConfigRaw : {});
+
+export const GLOBAL_TUNING_CONFIG: TuningConfig = clampProfile(rawGlobal, DEFAULT_FALLBACK_TUNING);
+
+/**
+ * Resolves the specific tuning profile for a vehicle class, clamped within bounds.
+ */
+export function resolveTuningConfig(carClass?: CarClassId | string): TuningConfig {
+  if (!carClass) return GLOBAL_TUNING_CONFIG;
+  const classesMap = (tuningConfigRaw as any).classes;
+  if (!classesMap || typeof classesMap !== 'object') {
+    return GLOBAL_TUNING_CONFIG;
+  }
+
+  const str = String(carClass);
+  const upper = str.toUpperCase();
+  const lower = str.toLowerCase();
+
+  const matched =
+    classesMap[str] ||
+    classesMap[upper] ||
+    classesMap[lower] ||
+    (upper.includes('GT3') ? classesMap['GT3'] : null) ||
+    (upper.includes('HYPER') || upper.includes('GTP') ? classesMap['HYPERCAR_GTP'] : null) ||
+    (upper.includes('F1_2026') || upper === 'F1' || upper.includes('F1') ? classesMap['F1_2026'] : null) ||
+    (upper.includes('LMP2') ? classesMap['LMP2'] : null) ||
+    (upper.includes('GT4') ? classesMap['GT4'] : null);
+
+  if (!matched) return GLOBAL_TUNING_CONFIG;
+  return clampProfile(matched, GLOBAL_TUNING_CONFIG);
+}
+
+export const ACTIVE_TUNING_CONFIG: TuningConfig = GLOBAL_TUNING_CONFIG;
 
 export const SPEED_KMH_FACTOR = 3.6;
 
@@ -153,8 +210,10 @@ export function computeRoadSurfaceTilt(
 export function computeClassGripProfile(
   classId: CarClassId,
   speed: number,
+  tuningOverride?: TuningConfig,
 ): { classGripMult: number; classDownforceBonus: number } {
-  const dfScale = ACTIVE_TUNING_CONFIG.downforceScale;
+  const tuning = tuningOverride ?? resolveTuningConfig(classId);
+  const dfScale = tuning.downforceScale;
   switch (classId) {
     case CarClassId.F1_2026:
     case CarClassId.F1_2021:
@@ -599,6 +658,7 @@ export function stepCarPhysics(
 
   // Compute physical performance scalars
   const paceScale = classMeta.basePaceIndex;
+  const tuning = resolveTuningConfig(car.carSpec?.classId);
   const classId = car.carSpec.classId;
   const isGTP = classId === CarClassId.HYPERCAR_GTP;
   const isLMP2 = classId === CarClassId.LMP2;
@@ -656,13 +716,13 @@ export function stepCarPhysics(
   const gripBase =
     (1.42 + (attrs.corneringGrip / 100) * 1.15) *
     (0.75 + paceScale * 0.25) *
-    ACTIVE_TUNING_CONFIG.lowSpeedGripScale;
+    tuning.lowSpeedGripScale;
   const brakeMultiplier = isSupercar ? 0.85 : isCoupe ? 0.85 : isGT4 ? 0.88 : 1.0;
   const brakeBase =
     (24 + (attrs.braking / 100) * 15) *
     (0.65 + paceScale * 0.35) *
     brakeMultiplier *
-    ACTIVE_TUNING_CONFIG.brakeForceScale;
+    tuning.brakeForceScale;
 
   const compoundMod = getCompoundModifiers(car.compound, opts.trackWetness);
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
@@ -716,7 +776,7 @@ export function stepCarPhysics(
 
   // Speed ceiling (AI gains pace via cornering commitment/skill rather than unrealistic +7% straight-line Vmax)
   const aiStraightScale = car.isPlayer ? 1.0 : 1.0 + (car.aiPaceMultiplier - 1.0) * 0.25;
-  const dragVmaxFactor = Math.pow(ACTIVE_TUNING_CONFIG.dragScale, -0.22);
+  const dragVmaxFactor = Math.pow(tuning.dragScale, -0.22);
   let effectiveMaxSpeed =
     maxSpeedBase *
     specialSpeedMult *
@@ -824,7 +884,7 @@ export function stepCarPhysics(
         const engineAccel = accelBase * aeroTraction * specialAccelMult * fuelFactor * throttle * torqueCurve;
         // Quadratic aero drag F_drag = c_drag * v^2 smoothly balancing engine power near target Vmax
         const cAeroDrag =
-          ((accelBase * 0.12) / (effectiveMaxSpeed * effectiveMaxSpeed)) * ACTIVE_TUNING_CONFIG.dragScale;
+          ((accelBase * 0.12) / (effectiveMaxSpeed * effectiveMaxSpeed)) * tuning.dragScale;
         const aeroDragDecel = cAeroDrag * car.speed * car.speed;
         const netAccel = engineAccel - aeroDragDecel;
         let nextSpeed = Math.max(0, car.speed + netAccel * dt);
@@ -841,13 +901,13 @@ export function stepCarPhysics(
 
     // Natural aero/rolling drag when coasting or above effectiveMaxSpeed
     const dragCoeff =
-      (car.specialActive && specialType === 'active-aero' ? 0.34 : 0.46) * ACTIVE_TUNING_CONFIG.dragScale;
+      (car.specialActive && specialType === 'active-aero' ? 0.34 : 0.46) * tuning.dragScale;
     if (!car.pitLimiterActive && car.speed > effectiveMaxSpeed) {
       car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
     } else if (throttle < 0.05 && brake < 0.05 && !car.pitLimiterActive) {
       car.speed = Math.max(
         0,
-        car.speed - (car.speed * dragCoeff + 0.00032 * ACTIVE_TUNING_CONFIG.dragScale * car.speed * car.speed) * dt,
+        car.speed - (car.speed * dragCoeff + 0.00032 * tuning.dragScale * car.speed * car.speed) * dt,
       );
     }
 
@@ -922,7 +982,7 @@ export function stepCarPhysics(
   const trailBrakeBonus = brake > 0.08 && brake < 0.7 && Math.abs(steerInput) > 0.25 ? 1.14 : 1.0;
   const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
   const bankingGripBonus = 1.0 + Math.sin(Math.abs(sampleBank)) * 0.35;
-  const { classGripMult, classDownforceBonus } = computeClassGripProfile(classId, car.speed);
+  const { classGripMult, classDownforceBonus } = computeClassGripProfile(classId, car.speed, tuning);
   const availableGrip =
     gripBase *
     classGripMult *
@@ -1309,6 +1369,7 @@ export function computeAIControl(
 
   // Physical performance estimation matching stepCarPhysics via shared computeClassGripProfile
   const paceScale = classMeta.basePaceIndex;
+  const tuning = resolveTuningConfig(car.carSpec?.classId);
   const isSupercar = car.carSpec.classId === CarClassId.SUPERCAR;
   const isCoupe = car.carSpec.classId === CarClassId.TRACK_COUPE;
   const isGT4 = car.carSpec.classId === CarClassId.GT4;
@@ -1320,19 +1381,19 @@ export function computeAIControl(
   const gripBase =
     (1.42 + (attrs.corneringGrip / 100) * 1.15) *
     (0.75 + paceScale * 0.25) *
-    ACTIVE_TUNING_CONFIG.lowSpeedGripScale;
+    tuning.lowSpeedGripScale;
   const brakeBase =
     (24 + (attrs.braking / 100) * 15) *
     (0.65 + paceScale * 0.35) *
     classBrakeMult *
-    ACTIVE_TUNING_CONFIG.brakeForceScale;
+    tuning.brakeForceScale;
   const personalityBrakeFactor =
     personality === 'Late-Braker' ? 0.94 : personality === 'Tire-Saver' ? 0.82 : 0.88;
   const brakeDecel = Math.max(12, brakeBase * compoundMod.grip * personalityBrakeFactor);
   // Cornering speed utilization capped strictly <= 1.00 (100% of physical tire grip)
   const skillFactor = Math.max(
     0.75,
-    Math.min(1.0, 0.96 * (0.45 + 0.55 * car.aiPaceMultiplier) * ACTIVE_TUNING_CONFIG.aiCornerSpeedScale),
+    Math.min(1.0, 0.96 * (0.45 + 0.55 * car.aiPaceMultiplier) * tuning.aiCornerSpeedScale),
   );
 
   const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
@@ -1502,7 +1563,7 @@ export function computeAIControl(
     if (absK < 0.0042) continue;
 
     const bankBonus = 1.0 + Math.sin(Math.abs(sample.banking || 0)) * 0.35;
-    const { classGripMult, classDownforceBonus } = computeClassGripProfile(car.carSpec.classId, car.speed);
+    const { classGripMult, classDownforceBonus } = computeClassGripProfile(car.carSpec.classId, car.speed, tuning);
     const sampleGrip = effectiveLatGripBase * classGripMult * bankBonus * classDownforceBonus;
     // Calibrated centripetal safe cornering speed with boosted exit aggression
     const minCornerSpeed = absK > 0.10 ? 7.6 : 9.5;
@@ -1518,7 +1579,7 @@ export function computeAIControl(
       const avgTy = (currentSample.ty + sample.ty) * 0.5;
       const slopeAwareBrake = Math.max(8.0, brakeDecel + 9.81 * avgTy * 0.85);
       const reqBrakeDist = (car.speed * car.speed - vSafe * vSafe) / (2 * slopeAwareBrake);
-      const ratio = (reqBrakeDist * ACTIVE_TUNING_CONFIG.aiBrakeMarginScale) / Math.max(1.2, dMeters - 1.0);
+      const ratio = (reqBrakeDist * tuning.aiBrakeMarginScale) / Math.max(1.2, dMeters - 1.0);
       if (ratio > maxBrakeRatio) {
         maxBrakeRatio = ratio;
       }

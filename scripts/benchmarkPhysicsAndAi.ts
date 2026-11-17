@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { fileURLToPath } from 'node:url';
 import { CARS, CAR_CLASSES } from '../src/game/cars';
 import { TRACKS, compileTrack } from '../src/game/tracks';
 import {
@@ -9,6 +11,8 @@ import {
   SPEED_KMH_FACTOR,
 } from '../src/game/physics';
 import { CarClassId } from '../src/game/types';
+
+const __filename = fileURLToPath(import.meta.url);
 
 const BENCHMARK_TRACK_IDS = [
   'spa-francorchamps',
@@ -348,47 +352,29 @@ function runFlyingLapBenchmark(filterPairs?: Array<{ trackId: string; classId: C
   return lapResults;
 }
 
-function main() {
-  const isJson = process.argv.includes('--json');
-  const isStream = process.argv.includes('--stream') || isJson;
+const TARGET_BENCHMARKS = [
+  { trackId: 'spa-francorchamps', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 137.5, targetTrapKmh: 280 },
+  { trackId: 'spa-francorchamps', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 123.0, targetTrapKmh: 320 },
+  { trackId: 'monza', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 107.5, targetTrapKmh: 292 },
+  { trackId: 'suzuka', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 89.5, targetTrapKmh: 332 },
+  { trackId: 'monaco', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 71.0, targetTrapKmh: 292 },
+  { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 206.0, targetTrapKmh: 340 },
+] as const;
 
-  if (isJson || isStream) {
-    const targetBenchmarks = [
-      { trackId: 'spa-francorchamps', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 137.5, targetTrapKmh: 280 },
-      { trackId: 'spa-francorchamps', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 123.0, targetTrapKmh: 320 },
-      { trackId: 'monza', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 107.5, targetTrapKmh: 292 },
-      { trackId: 'suzuka', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 89.5, targetTrapKmh: 332 },
-      { trackId: 'monaco', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 71.0, targetTrapKmh: 292 },
-      { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 206.0, targetTrapKmh: 340 },
-    ];
-
-    const trackCache = new Map<string, ReturnType<typeof compileTrack>>();
-    function getTrack(id: string) {
-      let t = trackCache.get(id);
-      if (!t) {
-        const raw = TRACKS.find((trk) => trk.id === id);
-        if (!raw) throw new Error(`Track not found: ${id}`);
-        t = compileTrack(raw);
-        trackCache.set(id, t);
-      }
-      return t;
-    }
-
-    const jsonRows: Array<{
-      track: string;
-      carClass: string;
-      lapSec: number;
-      trapKmh: number;
-      wallHits: number;
-      offTrackPct: number;
-    }> = [];
-
-    for (let i = 0; i < targetBenchmarks.length; i++) {
-      const bench = targetBenchmarks[i];
-      const startMs = Date.now();
-      const track = getTrack(bench.trackId);
+// ==================== WORKER THREAD LOGIC ====================
+if (!isMainThread) {
+  const { bench } = (workerData || {}) as { bench?: (typeof TARGET_BENCHMARKS)[number] };
+  if (!bench) {
+    parentPort?.postMessage(null);
+  } else {
+    const rawTrack = TRACKS.find((t) => t.id === bench.trackId);
+    if (!rawTrack) {
+      parentPort?.postMessage(null);
+    } else {
+      const track = compileTrack(rawTrack);
       const cars = CARS.filter((c) => c.classId === bench.classId);
 
+      const startMs = Date.now();
       const laps: NonNullable<ReturnType<typeof simulateCarFlyingLap>>[] = [];
       for (const carSpec of cars) {
         const res = simulateCarFlyingLap(carSpec, track);
@@ -399,48 +385,171 @@ function main() {
       const best = laps[0];
       const elapsedMs = Date.now() - startMs;
 
-      if (!best) continue;
+      if (best) {
+        const lapErr = Math.abs(best.totalLap - bench.targetLapSec) / bench.targetLapSec;
+        const trapErr = Math.abs(best.trapKmh - bench.targetTrapKmh) / bench.targetTrapKmh;
+        const totalWallHits = laps.reduce((s, r) => s + r.wallHits, 0);
+        const maxOffTrack = Number(Math.max(...laps.map((r) => r.offTrackPct)).toFixed(3));
+        const penalty = (totalWallHits > 0 ? totalWallHits * 1.0 : 0) + (maxOffTrack > 0.5 ? 0.5 : 0);
+        const errorPct = Number(((lapErr * 0.75 + trapErr * 0.25 + penalty) * 100).toFixed(2));
 
-      const lapErr = Math.abs(best.totalLap - bench.targetLapSec) / bench.targetLapSec;
-      const trapErr = Math.abs(best.trapKmh - bench.targetTrapKmh) / bench.targetTrapKmh;
-      const totalWallHits = laps.reduce((s, r) => s + r.wallHits, 0);
-      const maxOffTrack = Number(Math.max(...laps.map((r) => r.offTrackPct)).toFixed(3));
-      const penalty = (totalWallHits > 0 ? totalWallHits * 1.0 : 0) + (maxOffTrack > 0.5 ? 0.5 : 0);
-      const errorPct = Number(((lapErr * 0.75 + trapErr * 0.25 + penalty) * 100).toFixed(2));
+        parentPort?.postMessage({
+          track: bench.trackId,
+          carClass: bench.classId,
+          car: bench.car,
+          carName: best.carName,
+          lapTime: Number(best.totalLap.toFixed(2)),
+          lapSec: Number(best.totalLap.toFixed(3)),
+          trapKmh: Number(best.trapKmh.toFixed(2)),
+          wallHits: totalWallHits,
+          offTrackPct: maxOffTrack,
+          errorPct,
+          elapsedMs,
+        });
+      } else {
+        parentPort?.postMessage(null);
+      }
+    }
+  }
+}
 
-      const row = {
-        track: bench.trackId,
-        carClass: bench.classId,
-        lapSec: Number(best.totalLap.toFixed(3)),
-        trapKmh: Number(best.trapKmh.toFixed(2)),
-        wallHits: totalWallHits,
-        offTrackPct: maxOffTrack,
-      };
-      jsonRows.push(row);
+async function main() {
+  const isJson = process.argv.includes('--json');
+  const isStream = process.argv.includes('--stream') || isJson;
 
+  if (isJson || isStream) {
+    const classArg = process.argv.find((a) => a.startsWith('--class='))?.split('=')[1]?.toUpperCase();
+    const onlyOutliers = process.argv.includes('--only-outliers');
+    const marginArg =
+      process.argv.find((a) => a.startsWith('--margin='))?.split('=')[1] ??
+      (process.argv.includes('--margin') ? process.argv[process.argv.indexOf('--margin') + 1] : '1.5');
+    const marginPct = Number(marginArg) || 1.5;
+
+    const CACHE_PATH = path.resolve(process.cwd(), 'audit/benchmark-cache.json');
+    let cache: Record<string, any> = {};
+    if (fs.existsSync(CACHE_PATH)) {
+      try {
+        cache = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+      } catch {}
+    }
+
+    const tasksToRun: (typeof TARGET_BENCHMARKS)[number][] = [];
+    const cachedItems: any[] = [];
+
+    for (const bench of TARGET_BENCHMARKS) {
+      const key = `${bench.trackId}:${bench.classId}`;
+      const isClassMatch =
+        !classArg ||
+        bench.classId.toUpperCase().includes(classArg) ||
+        bench.car.toUpperCase().includes(classArg);
+
+      if (!isClassMatch) {
+        if (cache[key]) {
+          cachedItems.push(cache[key]);
+        }
+        continue;
+      }
+
+      const cached = cache[key];
+      const isWithinMargin =
+        cached &&
+        cached.errorPct <= marginPct &&
+        (cached.wallHits || 0) === 0 &&
+        (cached.offTrackPct || 0) <= 0.05;
+
+      if (onlyOutliers && isWithinMargin) {
+        cachedItems.push(cached);
+      } else {
+        tasksToRun.push(bench);
+      }
+    }
+
+    const totalExpected = cachedItems.length + tasksToRun.length;
+    let completedCount = 0;
+
+    // Immediately stream progress for cached / within-margin items
+    for (const c of cachedItems) {
+      completedCount++;
       const progressEvent = {
         type: 'progress',
-        completed: i + 1,
-        total: targetBenchmarks.length,
-        track: bench.trackId,
-        car: bench.car,
-        carClass: bench.classId,
-        carName: best.carName,
-        lapTime: Number(best.totalLap.toFixed(2)),
-        lapSec: Number(best.totalLap.toFixed(3)),
-        trapKmh: Number(best.trapKmh.toFixed(2)),
-        errorPct,
-        elapsedMs,
+        completed: completedCount,
+        total: totalExpected,
+        track: c.track,
+        car: c.car,
+        carClass: c.carClass,
+        carName: c.carName,
+        lapTime: c.lapTime ?? c.lapSec,
+        lapSec: c.lapSec ?? c.lapTime,
+        trapKmh: c.trapKmh,
+        errorPct: c.errorPct,
+        elapsedMs: 0,
+        cached: true,
       };
-
       const line = JSON.stringify(progressEvent);
-      // Emit incremental NDJSON progress line to stderr immediately as each benchmark finishes
       process.stderr.write(line + '\n');
-      // Emit to stdout prefixed with PROGRESS:
       process.stdout.write(`PROGRESS:${line}\n`);
     }
 
-    // Followed by the final summary JSON at the end
+    // Run active tasks concurrently across CPU cores using worker threads
+    const freshMap = new Map<string, any>();
+    if (tasksToRun.length > 0) {
+      const promises = tasksToRun.map((bench) => {
+        return new Promise<void>((resolve, reject) => {
+          const worker = new Worker(__filename, {
+            workerData: { bench },
+            execArgv: ['--import', 'tsx'],
+          });
+
+          worker.on('message', (msg) => {
+            if (msg) {
+              completedCount++;
+              freshMap.set(`${msg.track}:${msg.carClass}`, msg);
+              cache[`${msg.track}:${msg.carClass}`] = msg;
+              const progressEvent = {
+                type: 'progress',
+                completed: completedCount,
+                total: totalExpected,
+                ...msg,
+              };
+              const line = JSON.stringify(progressEvent);
+              process.stderr.write(line + '\n');
+              process.stdout.write(`PROGRESS:${line}\n`);
+            }
+            resolve();
+          });
+
+          worker.on('error', (err) => reject(err));
+          worker.on('exit', (code) => {
+            if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
+            else resolve();
+          });
+        });
+      });
+
+      await Promise.all(promises);
+    }
+
+    // Persist cache
+    try {
+      fs.mkdirSync(path.dirname(CACHE_PATH), { recursive: true });
+      fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
+    } catch {}
+
+    // Output final summary JSON in canonical order
+    const jsonRows = TARGET_BENCHMARKS.map((bench) => {
+      const key = `${bench.trackId}:${bench.classId}`;
+      const item = freshMap.get(key) || cache[key];
+      if (!item) return null;
+      return {
+        track: item.track,
+        carClass: item.carClass,
+        lapSec: item.lapSec,
+        trapKmh: item.trapKmh,
+        wallHits: item.wallHits,
+        offTrackPct: item.offTrackPct,
+      };
+    }).filter(Boolean);
+
     console.log(JSON.stringify(jsonRows));
     return;
   }
@@ -527,4 +636,9 @@ function main() {
   console.log(`Wrote ${outPath} (${laps.length} laps, total wallHits=${totalWalls}, max offTrack=${maxOff.toFixed(2)}%)`);
 }
 
-main();
+if (isMainThread) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

@@ -23,6 +23,7 @@ import {
 } from './customTracks';
 import {
   ACTIVE_TUNING_CONFIG,
+  resolveTuningConfig,
   computeAIControl,
   computeClassGripProfile,
   computeRoadSurfaceTilt,
@@ -1508,6 +1509,14 @@ test('Manual Transmission Forward Gear Persistence & Tuning Bounds Safety', () =
   assert.ok(ACTIVE_TUNING_CONFIG.brakeForceScale >= 0.55 && ACTIVE_TUNING_CONFIG.brakeForceScale <= 1.35);
   assert.ok(ACTIVE_TUNING_CONFIG.dragScale >= 0.65 && ACTIVE_TUNING_CONFIG.dragScale <= 1.45);
   assert.ok(ACTIVE_TUNING_CONFIG.lowSpeedGripScale >= 0.65 && ACTIVE_TUNING_CONFIG.lowSpeedGripScale <= 1.3);
+
+  // Verify per-class tuning profiles resolve and clamp within realistic physical bounds
+  const gt3Tuning = resolveTuningConfig(CarClassId.GT3);
+  const hyperTuning = resolveTuningConfig(CarClassId.HYPERCAR_GTP);
+  const f1Tuning = resolveTuningConfig(CarClassId.F1_2026);
+  assert.ok(gt3Tuning.downforceScale >= 0.55 && gt3Tuning.downforceScale <= 1.35);
+  assert.ok(hyperTuning.dragScale >= 0.65 && hyperTuning.dragScale <= 1.45);
+  assert.ok(f1Tuning.aiCornerSpeedScale >= 0.75 && f1Tuning.aiCornerSpeedScale <= 1.0);
 });
 
 test('Acoustic Engine Synthesis & Spa Eau Rouge DEM Alignment', () => {

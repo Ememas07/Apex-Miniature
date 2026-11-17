@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 
 const CONFIG_PATH = 'src/game/tuningConfig.json';
-const BENCHMARK_CMD = 'npx tsx scripts/benchmarkPhysicsAndAi.ts --json';
+const isWindows = process.platform === 'win32';
+const NPX_CMD = isWindows ? 'npx.cmd' : 'npx';
 
 const BOUNDS = {
   downforceScale: [0.55, 1.35],
@@ -22,64 +23,116 @@ const IRL_TARGETS = [
   { track: 'le-mans', carClass: 'HYPERCAR_GTP', targetLapSec: 206.0, targetTrapKmh: 340 },
 ];
 
-function evaluate(config) {
+function evaluate(config, opts = {}) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-  const raw = execSync(BENCHMARK_CMD, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const jsonLine = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).find((l) => l.startsWith('[')) || raw.trim();
+
+  const flags = ['--json'];
+  if (opts.classId) flags.push(`--class=${opts.classId}`);
+  if (opts.onlyOutliers) flags.push('--only-outliers');
+  if (opts.margin) flags.push(`--margin=${opts.margin}`);
+
+  const cmd = `${NPX_CMD} tsx scripts/benchmarkPhysicsAndAi.ts ${flags.join(' ')}`;
+  const raw = execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const jsonLine =
+    raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).find((l) => l.startsWith('[')) || raw.trim();
   const rows = JSON.parse(jsonLine);
 
   let totalErr = 0;
   let matched = 0;
+  const classErrors = {};
 
   for (const target of IRL_TARGETS) {
+    if (opts.classId && target.carClass !== opts.classId) continue;
     const row = rows.find((r) => r.track === target.track && r.carClass === target.carClass);
     if (!row) continue;
     matched++;
     const lapErr = Math.abs(row.lapSec - target.targetLapSec) / target.targetLapSec;
     const trapErr = Math.abs(row.trapKmh - target.targetTrapKmh) / target.targetTrapKmh;
     const penalty = (row.wallHits || 0) * 1.0 + ((row.offTrackPct || 0) > 0.5 ? 0.5 : 0);
-    totalErr += lapErr * 0.75 + trapErr * 0.25 + penalty;
+    const err = lapErr * 0.75 + trapErr * 0.25 + penalty;
+    totalErr += err;
+
+    if (!classErrors[target.carClass]) classErrors[target.carClass] = [];
+    classErrors[target.carClass].push(err);
   }
 
-  return matched > 0 ? totalErr / matched : Infinity;
+  const avgClassErrors = {};
+  for (const [cls, errs] of Object.entries(classErrors)) {
+    avgClassErrors[cls] = errs.reduce((a, b) => a + b, 0) / errs.length;
+  }
+
+  return {
+    err: matched > 0 ? totalErr / matched : Infinity,
+    rows,
+    classErrors: avgClassErrors,
+  };
 }
 
 let bestConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-let bestErr = evaluate(bestConfig);
-console.log(`Baseline Error: ${(bestErr * 100).toFixed(2)}%`);
 
-const keys = Object.keys(bestConfig);
+// Initial baseline all-tracks parallel verification
+console.log('Running parallel baseline benchmark...');
+const baseResult = evaluate(bestConfig);
+let bestErr = baseResult.err;
+console.log(`Baseline Overall Error: ${(bestErr * 100).toFixed(2)}%`);
+for (const [cls, err] of Object.entries(baseResult.classErrors)) {
+  console.log(`  - ${cls}: ${(err * 100).toFixed(2)}%`);
+}
+
+const paramKeys = Object.keys(BOUNDS);
+const targetClasses = ['HYPERCAR_GTP', 'F1_2026', 'GT3'];
 const stepsArg = process.argv.find((a) => a.startsWith('--steps='));
 const ITERATIONS = stepsArg ? Math.max(1, Number(stepsArg.split('=')[1]) || 60) : 60;
 
 for (let i = 1; i <= ITERATIONS; i++) {
-  const key = keys[(i - 1) % keys.length];
-  // Step size decays slightly over time for finer convergence
+  // Focus perturbations on out-of-margin classes
+  const targetClass = targetClasses[(i - 1) % targetClasses.length];
+  const paramKey = paramKeys[Math.floor((i - 1) / targetClasses.length) % paramKeys.length];
+
   const maxStep = i < 30 ? 0.04 : 0.015;
   const delta = (Math.random() > 0.5 ? 1 : -1) * (0.005 + Math.random() * maxStep);
 
-  const [minVal, maxVal] = BOUNDS[key] || [0.5, 1.5];
-  const rawVal = bestConfig[key] * (1 + delta);
+  const [minVal, maxVal] = BOUNDS[paramKey] || [0.5, 1.5];
+  const currentVal = bestConfig.classes?.[targetClass]?.[paramKey] ?? bestConfig.global?.[paramKey] ?? 1.0;
+  const rawVal = currentVal * (1 + delta);
   const clampedVal = Math.min(Math.max(rawVal, minVal), maxVal);
 
-  const candidate = {
-    ...bestConfig,
-    [key]: Number(clampedVal.toFixed(4)),
-  };
+  const candidate = JSON.parse(JSON.stringify(bestConfig));
+  if (!candidate.classes) candidate.classes = {};
+  if (!candidate.classes[targetClass]) candidate.classes[targetClass] = { ...candidate.global };
+  candidate.classes[targetClass][paramKey] = Number(clampedVal.toFixed(4));
 
   try {
-    const err = evaluate(candidate);
-    if (err < bestErr) {
-      bestErr = err;
-      bestConfig = candidate;
-      console.log(`[${i}/${ITERATIONS}] ${key} -> ${candidate[key]} | Error: ${(bestErr * 100).toFixed(2)}%`);
+    // 1. Fast class-scoped check focusing on outliers
+    const quickRes = evaluate(candidate, {
+      classId: targetClass,
+      onlyOutliers: true,
+      margin: 1.5,
+    });
+
+    const prevClassErr = baseResult.classErrors[targetClass] ?? bestErr;
+    if (quickRes.err < prevClassErr) {
+      // 2. Regression Guard: Full all-tracks parallel verification pass
+      const fullRes = evaluate(candidate);
+      if (fullRes.err < bestErr) {
+        bestErr = fullRes.err;
+        bestConfig = candidate;
+        baseResult.classErrors[targetClass] = fullRes.classErrors[targetClass];
+        console.log(
+          `[${i}/${ITERATIONS}] [${targetClass}] ${paramKey} -> ${candidate.classes[targetClass][paramKey]} | Overall Error: ${(bestErr * 100).toFixed(2)}%`,
+        );
+      } else {
+        // Revert candidate
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(bestConfig, null, 2));
+      }
     } else {
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(bestConfig, null, 2));
     }
   } catch (e) {
-    console.warn(`[${i}/${ITERATIONS}] Eval failed: ${e.message}`);
+    console.warn(`[${i}/${ITERATIONS}] Step failed: ${e.message}`);
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(bestConfig, null, 2));
   }
 }
 
 fs.writeFileSync(CONFIG_PATH, JSON.stringify(bestConfig, null, 2));
-console.log('\nOptimal config saved to src/game/tuningConfig.json:', bestConfig);
+console.log('\nOptimal config saved to src/game/tuningConfig.json');

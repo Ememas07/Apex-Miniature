@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process';
 
 const PORT = 4175;
 const CONFIG_PATH = 'src/game/tuningConfig.json';
+const isWindows = process.platform === 'win32';
+const NPX_CMD = isWindows ? 'npx.cmd' : 'npx';
 
 const IRL_TARGETS = [
   { track: 'spa-francorchamps', carClass: 'GT3', targetLapSec: 137.5, targetTrapKmh: 280 },
@@ -23,17 +25,43 @@ const BOUNDS = {
   aiBrakeMarginScale: [0.85, 1.40], // Cannot brake later than physical stopping distance
 };
 
-const DEFAULT_CONFIG = {
-  downforceScale: 1.0,
-  brakeForceScale: 1.0,
-  dragScale: 1.0,
-  lowSpeedGripScale: 1.0,
+const DEFAULT_PROFILE = {
+  downforceScale: 1.0049,
+  brakeForceScale: 0.9931,
+  dragScale: 1.1652,
+  lowSpeedGripScale: 1.0221,
   aiCornerSpeedScale: 1.0,
-  aiBrakeMarginScale: 1.0,
+  aiBrakeMarginScale: 1.0609,
+};
+
+const DEFAULT_CONFIG = {
+  global: { ...DEFAULT_PROFILE },
+  classes: {
+    GT3: { ...DEFAULT_PROFILE },
+    HYPERCAR_GTP: { ...DEFAULT_PROFILE },
+    F1_2026: { ...DEFAULT_PROFILE },
+    LMP2: { ...DEFAULT_PROFILE },
+    GT4: { ...DEFAULT_PROFILE },
+    F1_2021: { ...DEFAULT_PROFILE },
+    F1_2005: { ...DEFAULT_PROFILE },
+    FORMULA_E: { ...DEFAULT_PROFILE },
+    TRACK_COUPE: { ...DEFAULT_PROFILE },
+    SUPERCAR: { ...DEFAULT_PROFILE },
+  },
 };
 
 if (!fs.existsSync(CONFIG_PATH)) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2));
+}
+
+let loadedConfig;
+try {
+  loadedConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  if (!loadedConfig.classes) {
+    loadedConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  }
+} catch {
+  loadedConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 }
 
 let state = {
@@ -41,14 +69,16 @@ let state = {
   step: 0,
   maxSteps: 100,
   stepStartTime: null,
+  currentTestingClass: null,
   currentTestingParam: null,
   subStep: null,
   bestErr: null,
-  bestConfig: JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')),
+  classErrors: {},
+  bestConfig: loadedConfig,
   bestRows: [],
   liveRows: [],
   history: [],
-  logs: ['Ready. Click "Start / Resume" to begin live physics & AI auto-tuning.'],
+  logs: ['Ready. Click "Start / Resume" to begin parallel physics & AI auto-tuning.'],
 };
 
 const clients = new Set();
@@ -67,13 +97,12 @@ function log(msg) {
 
 let currentProcess = null;
 
-function evaluateAsync(config, onProgress) {
+function evaluateAsync(config, flags = [], onProgress) {
   return new Promise((resolve, reject) => {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 
-    const isWindows = process.platform === 'win32';
-    const cmd = isWindows ? 'npx.cmd' : 'npx';
-    const child = spawn(cmd, ['tsx', 'scripts/benchmarkPhysicsAndAi.ts', '--json'], {
+    const args = ['tsx', 'scripts/benchmarkPhysicsAndAi.ts', '--json', ...flags];
+    const child = spawn(NPX_CMD, args, {
       env: { ...process.env },
     });
     currentProcess = child;
@@ -129,6 +158,7 @@ function evaluateAsync(config, onProgress) {
       if (finalRows && Array.isArray(finalRows)) {
         let totalErr = 0;
         let matched = 0;
+        const classErrors = {};
 
         for (const t of IRL_TARGETS) {
           const r = finalRows.find((x) => x.track === t.track && x.carClass === t.carClass);
@@ -137,10 +167,23 @@ function evaluateAsync(config, onProgress) {
           const lapErr = Math.abs(r.lapSec - t.targetLapSec) / t.targetLapSec;
           const trapErr = Math.abs(r.trapKmh - t.targetTrapKmh) / t.targetTrapKmh;
           const penalty = (r.wallHits || 0) * 1.0 + ((r.offTrackPct || 0) > 0.5 ? 0.5 : 0);
-          totalErr += lapErr * 0.75 + trapErr * 0.25 + penalty;
+          const err = lapErr * 0.75 + trapErr * 0.25 + penalty;
+          totalErr += err;
+
+          if (!classErrors[t.carClass]) classErrors[t.carClass] = [];
+          classErrors[t.carClass].push(err);
         }
 
-        resolve({ err: matched > 0 ? totalErr / matched : Infinity, rows: finalRows });
+        const avgClassErrors = {};
+        for (const [cls, errs] of Object.entries(classErrors)) {
+          avgClassErrors[cls] = errs.reduce((a, b) => a + b, 0) / errs.length;
+        }
+
+        resolve({
+          err: matched > 0 ? totalErr / matched : Infinity,
+          rows: finalRows,
+          classErrors: avgClassErrors,
+        });
       } else {
         reject(new Error(`Benchmark exited with code ${code}`));
       }
@@ -161,6 +204,7 @@ function handleProgress(prog) {
     trapKmh: prog.trapKmh,
     errorPct: prog.errorPct,
     elapsedMs: prog.elapsedMs,
+    cached: prog.cached ?? false,
   };
 
   if (!state.liveRows) state.liveRows = [];
@@ -187,12 +231,17 @@ function handleProgress(prog) {
   broadcast();
 }
 
+const targetClasses = ['HYPERCAR_GTP', 'F1_2026', 'GT3'];
+const paramKeys = Object.keys(BOUNDS);
+
 async function stepLoop() {
   if (!state.running) return;
   if (state.step >= state.maxSteps) {
     state.running = false;
     state.subStep = null;
     state.stepStartTime = null;
+    state.currentTestingClass = null;
+    state.currentTestingParam = null;
     log(`Completed ${state.maxSteps} iterations. Optimal config saved.`);
     broadcast();
     return;
@@ -203,12 +252,13 @@ async function stepLoop() {
       state.stepStartTime = Date.now();
       state.subStep = { completed: 0, total: 6, track: 'spa-francorchamps', carClass: 'GT3' };
       broadcast();
-      const base = await evaluateAsync(state.bestConfig, handleProgress);
+      const base = await evaluateAsync(state.bestConfig, [], handleProgress);
       state.bestErr = base.err;
+      state.classErrors = base.classErrors;
       state.bestRows = base.rows;
       state.liveRows = [...base.rows];
       state.history.push({ step: 0, err: +(base.err * 100).toFixed(2) });
-      log(`Baseline error: ${(base.err * 100).toFixed(2)}%`);
+      log(`Baseline overall error: ${(base.err * 100).toFixed(2)}% (parallel worker pool ready)`);
       state.subStep = null;
       broadcast();
     }
@@ -216,38 +266,62 @@ async function stepLoop() {
     if (!state.running) return;
 
     state.step++;
-    const keys = Object.keys(state.bestConfig);
-    const key = keys[(state.step - 1) % keys.length];
-    const maxStep = state.step < 40 ? 0.045 : 0.015;
+    const targetClass = targetClasses[(state.step - 1) % targetClasses.length];
+    const paramKey = paramKeys[Math.floor((state.step - 1) / targetClasses.length) % paramKeys.length];
+
+    const maxStep = state.step < 30 ? 0.045 : 0.015;
     const delta = (Math.random() > 0.5 ? 1 : -1) * (0.005 + Math.random() * maxStep);
 
-    const [minVal, maxVal] = BOUNDS[key] || [0.5, 1.5];
-    const rawVal = state.bestConfig[key] * (1 + delta);
+    const [minVal, maxVal] = BOUNDS[paramKey] || [0.5, 1.5];
+    const currentVal =
+      state.bestConfig.classes?.[targetClass]?.[paramKey] ??
+      state.bestConfig.global?.[paramKey] ??
+      1.0;
+    const rawVal = currentVal * (1 + delta);
     const clampedVal = Math.min(Math.max(rawVal, minVal), maxVal);
 
-    const candidate = {
-      ...state.bestConfig,
-      [key]: Number(clampedVal.toFixed(4)),
-    };
+    const candidate = JSON.parse(JSON.stringify(state.bestConfig));
+    if (!candidate.classes) candidate.classes = {};
+    if (!candidate.classes[targetClass]) candidate.classes[targetClass] = { ...candidate.global };
+    candidate.classes[targetClass][paramKey] = Number(clampedVal.toFixed(4));
 
-    state.currentTestingParam = `${key} -> ${candidate[key]}`;
+    state.currentTestingClass = targetClass;
+    state.currentTestingParam = `${paramKey} -> ${candidate.classes[targetClass][paramKey]}`;
     state.stepStartTime = Date.now();
-    state.subStep = { completed: 0, total: 6, track: 'spa-francorchamps', carClass: 'GT3' };
     broadcast();
 
-    const res = await evaluateAsync(candidate, handleProgress);
+    // 1. Fast class-scoped perturbation testing only outliers
+    const quickRes = await evaluateAsync(
+      candidate,
+      [`--class=${targetClass}`, '--only-outliers', '--margin=1.5'],
+      handleProgress,
+    );
+
     if (!state.running) return;
 
-    state.subStep = null;
-    if (res.err < state.bestErr) {
-      state.bestErr = res.err;
-      state.bestConfig = candidate;
-      state.bestRows = res.rows;
-      state.liveRows = [...res.rows];
-      state.history.push({ step: state.step, err: +(res.err * 100).toFixed(2) });
-      log(`Step ${state.step}: ${key} -> ${candidate[key]} (Error: ${(res.err * 100).toFixed(2)}%)`);
+    const prevClassErr = state.classErrors[targetClass] ?? state.bestErr;
+    if (quickRes.err < prevClassErr) {
+      // 2. Regression Guard: Run full all-tracks parallel verification pass
+      log(`Candidate improved ${targetClass} (err: ${(quickRes.err * 100).toFixed(2)}%). Running Regression Guard verification...`);
+      const fullRes = await evaluateAsync(candidate, [], handleProgress);
+
+      if (!state.running) return;
+
+      if (fullRes.err < state.bestErr) {
+        state.bestErr = fullRes.err;
+        state.classErrors = fullRes.classErrors;
+        state.bestConfig = candidate;
+        state.bestRows = fullRes.rows;
+        state.liveRows = [...fullRes.rows];
+        state.history.push({ step: state.step, err: +(fullRes.err * 100).toFixed(2) });
+        log(
+          `Step ${state.step} [${targetClass}]: ${paramKey} -> ${candidate.classes[targetClass][paramKey]} (Overall Error: ${(fullRes.err * 100).toFixed(2)}%)`,
+        );
+      } else {
+        // Revert candidate
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(state.bestConfig, null, 2));
+      }
     } else {
-      // Restore bestConfig on disk after rejected candidate
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(state.bestConfig, null, 2));
     }
   } catch (e) {
@@ -259,7 +333,10 @@ async function stepLoop() {
 
   state.subStep = null;
   state.stepStartTime = null;
+  state.currentTestingClass = null;
+  state.currentTestingParam = null;
   broadcast();
+
   if (state.running) {
     setTimeout(stepLoop, 20);
   }
@@ -281,7 +358,7 @@ const HTML = `<!doctype html>
     button.reset { background: #30363d; }
     button.reset:hover { background: #3c444d; }
     .badge { font-family: monospace; font-size: 14px; padding: 4px 10px; border-radius: 4px; background: #161b22; border: 1px solid #30363d; }
-    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
+    .grid { display: grid; grid-template-columns: 380px 1fr; gap: 16px; }
     .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
     .card h2 { margin: 0 0 10px; font-size: 13px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; }
     .param { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #21262d; font-family: monospace; font-size: 13px; }
@@ -295,6 +372,13 @@ const HTML = `<!doctype html>
     svg { width: 100%; height: 140px; background: #0d1117; border-radius: 6px; }
     .logs { font-family: monospace; font-size: 12px; max-height: 160px; overflow-y: auto; color: #8b949e; }
     .logs div { padding: 3px 0; border-bottom: 1px dotted #21262d; }
+
+    /* Class Tabs */
+    .class-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid #30363d; padding-bottom: 8px; }
+    .tab-btn { background: #21262d; color: #8b949e; border: 1px solid #30363d; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+    .tab-btn.active { background: #388bfd22; color: #58a6ff; border-color: #388bfd; }
+    .tab-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: #30363d; color: #e6edf3; }
+    .tab-badge.locked { background: #23863644; color: #3fb950; border: 1px solid #238636; }
 
     /* Sub-Step Live Progress Section */
     .substep-card { margin-bottom: 16px; background: #161b22; border: 1px solid #388bfd44; border-radius: 8px; padding: 12px 16px; }
@@ -337,8 +421,15 @@ const HTML = `<!doctype html>
 
   <div class="grid">
     <div class="card">
-      <h2>Active Parameters</h2>
+      <h2>Active Multipliers by Class</h2>
+      <div class="class-tabs">
+        <button class="tab-btn active" id="tab-ALL" onclick="selectClassTab('ALL')">All Classes</button>
+        <button class="tab-btn" id="tab-GT3" onclick="selectClassTab('GT3')">GT3 <span class="tab-badge locked" id="badge-GT3">0.3%</span></button>
+        <button class="tab-btn" id="tab-HYPERCAR_GTP" onclick="selectClassTab('HYPERCAR_GTP')">Hypercar <span class="tab-badge" id="badge-HYPERCAR_GTP">5.3%</span></button>
+        <button class="tab-btn" id="tab-F1_2026" onclick="selectClassTab('F1_2026')">F1 2026 <span class="tab-badge" id="badge-F1_2026">7.7%</span></button>
+      </div>
       <div id="params"></div>
+
       <h2 style="margin-top:16px;">Live Tuning Log</h2>
       <div class="logs" id="logs"></div>
     </div>
@@ -350,7 +441,7 @@ const HTML = `<!doctype html>
       </div>
 
       <div class="card">
-        <h2>Simulated vs. IRL Targets (Real-Time Push)</h2>
+        <h2>Simulated vs. IRL Targets (Parallel Worker Streams)</h2>
         <table>
           <thead>
             <tr>
@@ -404,6 +495,50 @@ async function cmd(action) {
 }
 
 let latestState = null;
+let currentTab = 'ALL';
+
+function selectClassTab(cls) {
+  currentTab = cls;
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  const activeBtn = document.getElementById('tab-' + cls);
+  if (activeBtn) activeBtn.classList.add('active');
+  renderParams();
+}
+
+function renderParams() {
+  if (!latestState) return;
+  const cfg = latestState.bestConfig;
+  const container = document.getElementById('params');
+  if (!container || !cfg) return;
+
+  const classesToShow = currentTab === 'ALL' ? ['GT3', 'HYPERCAR_GTP', 'F1_2026'] : [currentTab];
+  let html = '';
+
+  for (const cls of classesToShow) {
+    const prof = cfg.classes?.[cls] || cfg.global || {};
+    const err = latestState.classErrors?.[cls];
+    const isTestingThisClass = latestState.running && latestState.currentTestingClass === cls;
+    const highlight = isTestingThisClass ? 'border:1px solid #388bfd;background:rgba(56,139,253,0.08);' : '';
+
+    html += '<div style="margin-bottom:12px;padding:8px;border-radius:6px;background:#0d1117;' + highlight + '">';
+    html += '<div style="display:flex;justify-content:space-between;font-weight:600;font-size:12px;color:#58a6ff;margin-bottom:4px;">';
+    html += '<span>' + formatClass(cls) + '</span>';
+    if (err !== undefined) {
+      const errCls = err < 0.015 ? 'color:#3fb950;' : 'color:#f0883e;';
+      html += '<span style="' + errCls + '">' + (err * 100).toFixed(2) + '% error</span>';
+    }
+    html += '</div>';
+
+    for (const [k, v] of Object.entries(prof)) {
+      const isParamTesting = isTestingThisClass && latestState.currentTestingParam?.startsWith(k);
+      const paramStyle = isParamTesting ? 'color:#58a6ff;font-weight:bold;' : '';
+      html += '<div class="param" style="' + paramStyle + '"><span>' + k + '</span><strong>' + Number(v).toFixed(4) + '</strong></div>';
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
 
 // 60fps smooth elapsed-time counter
 function renderSmoothTimer() {
@@ -412,11 +547,6 @@ function renderSmoothTimer() {
     const timerEl = document.getElementById('subStepTimer');
     if (timerEl) {
       timerEl.textContent = 'Elapsed: ' + elapsedSec.toFixed(2) + 's';
-    }
-  } else if (!latestState || !latestState.running) {
-    const timerEl = document.getElementById('subStepTimer');
-    if (timerEl && timerEl.textContent.startsWith('Elapsed:')) {
-      // Keep freeze value or show Idle
     }
   }
   requestAnimationFrame(renderSmoothTimer);
@@ -429,23 +559,31 @@ es.onmessage = (e) => {
   latestState = s;
 
   document.getElementById('status').textContent =
-    (s.running ? '⚡ RUNNING' : '⏸ IDLE') + ' — Step ' + s.step + '/' + s.maxSteps;
+    (s.running ? '⚡ RUNNING (Parallel Workers)' : '⏸ IDLE') + ' — Step ' + s.step + '/' + s.maxSteps;
 
   document.getElementById('errBadge').textContent =
-    s.bestErr !== null ? 'Mean Error: ' + (s.bestErr * 100).toFixed(2) + '%' : '';
+    s.bestErr !== null ? 'Overall Error: ' + (s.bestErr * 100).toFixed(2) + '%' : '';
 
   const testParamEl = document.getElementById('testingParamBadge');
   if (s.running && s.currentTestingParam) {
     testParamEl.style.display = 'inline-block';
-    testParamEl.textContent = 'Testing: ' + s.currentTestingParam;
+    testParamEl.textContent = 'Testing [' + (s.currentTestingClass || '') + ']: ' + s.currentTestingParam;
   } else {
     testParamEl.style.display = 'none';
   }
 
-  // Update Parameters
-  document.getElementById('params').innerHTML = Object.entries(s.bestConfig)
-    .map(([k, v]) => '<div class="param"><span>' + k + '</span><strong>' + v.toFixed(4) + '</strong></div>')
-    .join('');
+  // Update class error badges in tabs
+  for (const cls of ['GT3', 'HYPERCAR_GTP', 'F1_2026']) {
+    const badge = document.getElementById('badge-' + cls);
+    const err = s.classErrors?.[cls];
+    if (badge && err !== undefined) {
+      badge.textContent = (err * 100).toFixed(1) + '%';
+      if (err < 0.015) badge.classList.add('locked');
+      else badge.classList.remove('locked');
+    }
+  }
+
+  renderParams();
 
   // Update Logs
   document.getElementById('logs').innerHTML = s.logs.map((l) => '<div>' + l + '</div>').join('');
@@ -463,16 +601,17 @@ es.onmessage = (e) => {
     fillEl.style.width = pct + '%';
 
     if (completed > 0) {
-      titleEl.innerHTML = '⏱ Track ' + completed + '/' + total + ': ' + formatTrack(sub.track) + ' ' + formatClass(sub.carClass);
+      const cachedNote = sub.cached ? ' [Reused Baseline Margin]' : '';
+      titleEl.innerHTML = '⏱ Track ' + completed + '/' + total + ': ' + formatTrack(sub.track) + ' ' + formatClass(sub.carClass) + cachedNote;
       detailEl.innerHTML =
         '<div>Car: <span>' + (sub.carName || formatClass(sub.carClass)) + '</span></div>' +
         '<div>Lap: <span>' + fmt(sub.lapTime) + '</span></div>' +
         '<div>Trap: <span>' + (sub.trapKmh ? sub.trapKmh.toFixed(1) + ' km/h' : '—') + '</span></div>' +
         '<div>Sub-Step Error: <span style="color:' + (sub.errorPct < 2.0 ? '#3fb950' : '#f0883e') + '">' + sub.errorPct + '%</span></div>' +
-        '<div>Sub-Step Time: <span>' + sub.elapsedMs + 'ms</span></div>';
+        '<div>Worker Time: <span>' + sub.elapsedMs + 'ms</span></div>';
     } else {
-      titleEl.textContent = '🚀 Preparing next benchmark iteration...';
-      detailEl.innerHTML = '<div>Starting 6-circuit matrix sweep...</div>';
+      titleEl.textContent = '🚀 Worker threads running parallel benchmarks across cores...';
+      detailEl.innerHTML = '<div>Dispatching parallel workers...</div>';
     }
   } else if (!s.running) {
     fillEl.style.width = '0%';
@@ -540,7 +679,7 @@ http.createServer((req, res) => {
   } else if (req.url === '/api/start' && req.method === 'POST') {
     if (!state.running) {
       state.running = true;
-      log('Started optimization loop.');
+      log('Started parallel class-scoped optimization loop.');
       stepLoop();
     }
     res.end('ok');
@@ -548,6 +687,8 @@ http.createServer((req, res) => {
     state.running = false;
     state.subStep = null;
     state.stepStartTime = null;
+    state.currentTestingClass = null;
+    state.currentTestingParam = null;
     if (currentProcess) {
       try {
         currentProcess.kill();
@@ -561,6 +702,8 @@ http.createServer((req, res) => {
     state.running = false;
     state.subStep = null;
     state.stepStartTime = null;
+    state.currentTestingClass = null;
+    state.currentTestingParam = null;
     if (currentProcess) {
       try {
         currentProcess.kill();
@@ -569,12 +712,13 @@ http.createServer((req, res) => {
     }
     state.step = 0;
     state.bestErr = null;
-    state.bestConfig = { ...DEFAULT_CONFIG };
+    state.classErrors = {};
+    state.bestConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
     state.bestRows = [];
     state.liveRows = [];
     state.history = [];
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2));
-    log('Reset multipliers to 1.0000.');
+    log('Reset all class multipliers to default calibrated values.');
     broadcast();
     res.end('ok');
   }

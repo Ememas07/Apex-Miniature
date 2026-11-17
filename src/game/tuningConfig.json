@@ -1,8 +1,92 @@
 {
-  "downforceScale": 1.0049,
-  "brakeForceScale": 0.9931,
-  "dragScale": 1.1652,
-  "lowSpeedGripScale": 1.0221,
-  "aiCornerSpeedScale": 1,
-  "aiBrakeMarginScale": 1.0609
+  "global": {
+    "downforceScale": 1.0049,
+    "brakeForceScale": 0.9931,
+    "dragScale": 1.1652,
+    "lowSpeedGripScale": 1.0221,
+    "aiCornerSpeedScale": 1.0,
+    "aiBrakeMarginScale": 1.0609
+  },
+  "classes": {
+    "GT3": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "HYPERCAR_GTP": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "F1_2026": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "LMP2": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "GT4": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "F1_2021": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "F1_2005": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "FORMULA_E": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "TRACK_COUPE": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    },
+    "SUPERCAR": {
+      "downforceScale": 1.0049,
+      "brakeForceScale": 0.9931,
+      "dragScale": 1.1652,
+      "lowSpeedGripScale": 1.0221,
+      "aiCornerSpeedScale": 1.0,
+      "aiBrakeMarginScale": 1.0609
+    }
+  }
 }
