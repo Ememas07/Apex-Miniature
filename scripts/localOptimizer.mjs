@@ -1,9 +1,9 @@
 import fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const CONFIG_PATH = 'src/game/tuningConfig.json';
-const isWindows = process.platform === 'win32';
-const NPX_CMD = isWindows ? 'npx.cmd' : 'npx';
+const TSX_CLI_PATH = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
 
 const BOUNDS = {
   downforceScale: [0.55, 1.35],
@@ -31,8 +31,8 @@ function evaluate(config, opts = {}) {
   if (opts.onlyOutliers) flags.push('--only-outliers');
   if (opts.margin) flags.push(`--margin=${opts.margin}`);
 
-  const cmd = `${NPX_CMD} tsx scripts/benchmarkPhysicsAndAi.ts ${flags.join(' ')}`;
-  const raw = execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const args = [TSX_CLI_PATH, 'scripts/benchmarkPhysicsAndAi.ts', ...flags];
+  const raw = execFileSync(process.execPath, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const jsonLine =
     raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).find((l) => l.startsWith('[')) || raw.trim();
   const rows = JSON.parse(jsonLine);

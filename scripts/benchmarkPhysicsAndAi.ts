@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CARS, CAR_CLASSES } from '../src/game/cars';
 import { TRACKS, compileTrack } from '../src/game/tracks';
@@ -13,6 +13,7 @@ import {
 import { CarClassId } from '../src/game/types';
 
 const __filename = fileURLToPath(import.meta.url);
+const TSX_CLI_PATH = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
 
 const BENCHMARK_TRACK_IDS = [
   'spa-francorchamps',
@@ -361,56 +362,57 @@ const TARGET_BENCHMARKS = [
   { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 206.0, targetTrapKmh: 340 },
 ] as const;
 
-// ==================== WORKER THREAD LOGIC ====================
-if (!isMainThread) {
-  const { bench } = (workerData || {}) as { bench?: (typeof TARGET_BENCHMARKS)[number] };
-  if (!bench) {
-    parentPort?.postMessage(null);
-  } else {
-    const rawTrack = TRACKS.find((t) => t.id === bench.trackId);
-    if (!rawTrack) {
-      parentPort?.postMessage(null);
-    } else {
-      const track = compileTrack(rawTrack);
-      const cars = CARS.filter((c) => c.classId === bench.classId);
-
-      const startMs = Date.now();
-      const laps: NonNullable<ReturnType<typeof simulateCarFlyingLap>>[] = [];
-      for (const carSpec of cars) {
-        const res = simulateCarFlyingLap(carSpec, track);
-        if (res) laps.push(res);
-      }
-
-      laps.sort((a, b) => a.totalLap - b.totalLap);
-      const best = laps[0];
-      const elapsedMs = Date.now() - startMs;
-
-      if (best) {
-        const lapErr = Math.abs(best.totalLap - bench.targetLapSec) / bench.targetLapSec;
-        const trapErr = Math.abs(best.trapKmh - bench.targetTrapKmh) / bench.targetTrapKmh;
-        const totalWallHits = laps.reduce((s, r) => s + r.wallHits, 0);
-        const maxOffTrack = Number(Math.max(...laps.map((r) => r.offTrackPct)).toFixed(3));
-        const penalty = (totalWallHits > 0 ? totalWallHits * 1.0 : 0) + (maxOffTrack > 0.5 ? 0.5 : 0);
-        const errorPct = Number(((lapErr * 0.75 + trapErr * 0.25 + penalty) * 100).toFixed(2));
-
-        parentPort?.postMessage({
-          track: bench.trackId,
-          carClass: bench.classId,
-          car: bench.car,
-          carName: best.carName,
-          lapTime: Number(best.totalLap.toFixed(2)),
-          lapSec: Number(best.totalLap.toFixed(3)),
-          trapKmh: Number(best.trapKmh.toFixed(2)),
-          wallHits: totalWallHits,
-          offTrackPct: maxOffTrack,
-          errorPct,
-          elapsedMs,
-        });
-      } else {
-        parentPort?.postMessage(null);
-      }
-    }
+// ==================== WORKER CHILD LOGIC ====================
+const workerItemArg = process.argv.find((a) => a.startsWith('--worker-item='));
+if (workerItemArg) {
+  const itemJson = decodeURIComponent(workerItemArg.slice('--worker-item='.length));
+  const bench = JSON.parse(itemJson) as (typeof TARGET_BENCHMARKS)[number];
+  const rawTrack = TRACKS.find((t) => t.id === bench.trackId);
+  if (!rawTrack) {
+    console.log(JSON.stringify(null));
+    process.exit(0);
   }
+  const track = compileTrack(rawTrack);
+  const cars = CARS.filter((c) => c.classId === bench.classId);
+
+  const startMs = Date.now();
+  const laps: NonNullable<ReturnType<typeof simulateCarFlyingLap>>[] = [];
+  for (const carSpec of cars) {
+    const res = simulateCarFlyingLap(carSpec, track);
+    if (res) laps.push(res);
+  }
+
+  laps.sort((a, b) => a.totalLap - b.totalLap);
+  const best = laps[0];
+  const elapsedMs = Date.now() - startMs;
+
+  if (best) {
+    const lapErr = Math.abs(best.totalLap - bench.targetLapSec) / bench.targetLapSec;
+    const trapErr = Math.abs(best.trapKmh - bench.targetTrapKmh) / bench.targetTrapKmh;
+    const totalWallHits = laps.reduce((s, r) => s + r.wallHits, 0);
+    const maxOffTrack = Number(Math.max(...laps.map((r) => r.offTrackPct)).toFixed(3));
+    const penalty = (totalWallHits > 0 ? totalWallHits * 1.0 : 0) + (maxOffTrack > 0.5 ? 0.5 : 0);
+    const errorPct = Number(((lapErr * 0.75 + trapErr * 0.25 + penalty) * 100).toFixed(2));
+
+    console.log(
+      JSON.stringify({
+        track: bench.trackId,
+        carClass: bench.classId,
+        car: bench.car,
+        carName: best.carName,
+        lapTime: Number(best.totalLap.toFixed(2)),
+        lapSec: Number(best.totalLap.toFixed(3)),
+        trapKmh: Number(best.trapKmh.toFixed(2)),
+        wallHits: totalWallHits,
+        offTrackPct: maxOffTrack,
+        errorPct,
+        elapsedMs,
+      }),
+    );
+  } else {
+    console.log(JSON.stringify(null));
+  }
+  process.exit(0);
 }
 
 async function main() {
@@ -490,38 +492,49 @@ async function main() {
       process.stdout.write(`PROGRESS:${line}\n`);
     }
 
-    // Run active tasks concurrently across CPU cores using worker threads
+    // Run active tasks concurrently across CPU cores using process.execPath with tsx CLI directly
     const freshMap = new Map<string, any>();
     if (tasksToRun.length > 0) {
       const promises = tasksToRun.map((bench) => {
         return new Promise<void>((resolve, reject) => {
-          const worker = new Worker(__filename, {
-            workerData: { bench },
-            execArgv: ['--import', 'tsx'],
+          const child = spawn(
+            process.execPath,
+            [TSX_CLI_PATH, __filename, `--worker-item=${encodeURIComponent(JSON.stringify(bench))}`],
+            {
+              env: { ...process.env },
+              stdio: ['ignore', 'pipe', 'pipe'],
+            },
+          );
+
+          let stdout = '';
+          child.stdout?.on('data', (d) => {
+            stdout += d.toString();
           });
 
-          worker.on('message', (msg) => {
-            if (msg) {
-              completedCount++;
-              freshMap.set(`${msg.track}:${msg.carClass}`, msg);
-              cache[`${msg.track}:${msg.carClass}`] = msg;
-              const progressEvent = {
-                type: 'progress',
-                completed: completedCount,
-                total: totalExpected,
-                ...msg,
-              };
-              const line = JSON.stringify(progressEvent);
-              process.stderr.write(line + '\n');
-              process.stdout.write(`PROGRESS:${line}\n`);
+          child.on('error', (err) => reject(err));
+          child.on('close', (code) => {
+            if (code !== 0) {
+              reject(new Error(`Worker exited with code ${code}`));
+              return;
             }
+            try {
+              const msg = JSON.parse(stdout.trim());
+              if (msg) {
+                completedCount++;
+                freshMap.set(`${msg.track}:${msg.carClass}`, msg);
+                cache[`${msg.track}:${msg.carClass}`] = msg;
+                const progressEvent = {
+                  type: 'progress',
+                  completed: completedCount,
+                  total: totalExpected,
+                  ...msg,
+                };
+                const line = JSON.stringify(progressEvent);
+                process.stderr.write(line + '\n');
+                process.stdout.write(`PROGRESS:${line}\n`);
+              }
+            } catch {}
             resolve();
-          });
-
-          worker.on('error', (err) => reject(err));
-          worker.on('exit', (code) => {
-            if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
-            else resolve();
           });
         });
       });
@@ -636,9 +649,7 @@ async function main() {
   console.log(`Wrote ${outPath} (${laps.length} laps, total wallHits=${totalWalls}, max offTrack=${maxOff.toFixed(2)}%)`);
 }
 
-if (isMainThread) {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
-}
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -10,7 +10,7 @@
     "wallHits": 0,
     "offTrackPct": 0,
     "errorPct": 11.96,
-    "elapsedMs": 416
+    "elapsedMs": 408
   },
   "suzuka:F1_2026": {
     "track": "suzuka",
@@ -23,20 +23,20 @@
     "wallHits": 0,
     "offTrackPct": 0,
     "errorPct": 3.44,
-    "elapsedMs": 596
+    "elapsedMs": 526
   },
   "spa-francorchamps:HYPERCAR_GTP": {
     "track": "spa-francorchamps",
     "carClass": "HYPERCAR_GTP",
     "car": "hypercar_gtp",
     "carName": "Cadillac V-Series.R",
-    "lapTime": 122.03,
-    "lapSec": 122.033,
-    "trapKmh": 323.95,
+    "lapTime": 122.23,
+    "lapSec": 122.233,
+    "trapKmh": 323.67,
     "wallHits": 0,
     "offTrackPct": 0,
-    "errorPct": 0.9,
-    "elapsedMs": 810
+    "errorPct": 0.75,
+    "elapsedMs": 770
   },
   "monza:GT3": {
     "track": "monza",
@@ -49,7 +49,7 @@
     "wallHits": 0,
     "offTrackPct": 0,
     "errorPct": 0.28,
-    "elapsedMs": 856
+    "elapsedMs": 785
   },
   "spa-francorchamps:GT3": {
     "track": "spa-francorchamps",
@@ -62,19 +62,19 @@
     "wallHits": 0,
     "offTrackPct": 0,
     "errorPct": 0.31,
-    "elapsedMs": 1005
+    "elapsedMs": 957
   },
   "le-mans:HYPERCAR_GTP": {
     "track": "le-mans",
     "carClass": "HYPERCAR_GTP",
     "car": "hypercar_gtp",
     "carName": "Cadillac V-Series.R",
-    "lapTime": 179.47,
-    "lapSec": 179.467,
-    "trapKmh": 339.44,
+    "lapTime": 179.82,
+    "lapSec": 179.817,
+    "trapKmh": 339.48,
     "wallHits": 0,
-    "offTrackPct": 0.322,
-    "errorPct": 9.7,
-    "elapsedMs": 1182
+    "offTrackPct": 0.309,
+    "errorPct": 9.57,
+    "elapsedMs": 1036
   }
 }

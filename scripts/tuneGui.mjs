@@ -1,11 +1,11 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const PORT = 4175;
 const CONFIG_PATH = 'src/game/tuningConfig.json';
-const isWindows = process.platform === 'win32';
-const NPX_CMD = isWindows ? 'npx.cmd' : 'npx';
+const TSX_CLI_PATH = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
 
 const IRL_TARGETS = [
   { track: 'spa-francorchamps', carClass: 'GT3', targetLapSec: 137.5, targetTrapKmh: 280 },
@@ -101,8 +101,8 @@ function evaluateAsync(config, flags = [], onProgress) {
   return new Promise((resolve, reject) => {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 
-    const args = ['tsx', 'scripts/benchmarkPhysicsAndAi.ts', '--json', ...flags];
-    const child = spawn(NPX_CMD, args, {
+    const args = [TSX_CLI_PATH, 'scripts/benchmarkPhysicsAndAi.ts', '--json', ...flags];
+    const child = spawn(process.execPath, args, {
       env: { ...process.env },
     });
     currentProcess = child;
