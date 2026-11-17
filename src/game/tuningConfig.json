@@ -17,20 +17,20 @@
       "aiBrakeMarginScale": 1.0609
     },
     "HYPERCAR_GTP": {
-      "downforceScale": 0.9325,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
-      "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "downforceScale": 0.9406,
+      "brakeForceScale": 0.9479,
+      "dragScale": 1.2146,
+      "lowSpeedGripScale": 1.0326,
+      "aiCornerSpeedScale": 0.9843,
+      "aiBrakeMarginScale": 1.0537
     },
     "F1_2026": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 1.0521,
+      "brakeForceScale": 0.9872,
+      "dragScale": 1.2797,
+      "lowSpeedGripScale": 0.992,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.0295
     },
     "LMP2": {
       "downforceScale": 1.0049,
