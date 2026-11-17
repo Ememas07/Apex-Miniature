@@ -198,6 +198,118 @@ function measureStraightLineDyno() {
   return results;
 }
 
+function simulateCarFlyingLap(
+  spec: (typeof CARS)[0],
+  track: ReturnType<typeof compileTrack>,
+) {
+  const halfW = track.spec.trackWidth * 0.5;
+  const car = createCarSimState({
+    id: spec.id,
+    name: spec.name,
+    isPlayer: false,
+    carId: spec.id,
+    livery: spec.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: track,
+    compound: 'soft',
+    personality: 'Metronome',
+    aiPaceMultiplier: 1.07,
+  });
+
+  // Spawn at t=0.68 rolling at 42 m/s for a clean flying lap across S/F
+  const startT = 0.68;
+  const sp = track.samples[Math.floor(startT * track.samples.length)];
+  car.trackT = sp.t;
+  car.prevTrackT = sp.t;
+  car.x = sp.x;
+  car.y = sp.y;
+  car.z = sp.z;
+  car.heading = Math.atan2(sp.tx, sp.tz);
+  car.speed = 42;
+  car.vx = Math.sin(car.heading) * car.speed;
+  car.vz = Math.cos(car.heading) * car.speed;
+  car.lateralOffset = 0;
+
+  const dt = 1 / 60;
+  let startedFlyingLap = false;
+  let lapElapsed = 0;
+  let s1End = 0;
+  let s2End = 0;
+  let trapKmh = 0;
+  let maxAbsLat = 0;
+  let offTrackTicks = 0;
+  let totalFlyingTicks = 0;
+  let prevDmg = 0;
+  let wallHits = 0;
+
+  for (let tick = 0; tick < 60 * 420; tick++) {
+    const ai = computeAIControl(car, track, [car], dt, 0);
+    const beforeT = car.trackT;
+    stepCarPhysics(car, ai, track, dt, {
+      trackWetness: 0,
+      totalLaps: 10,
+      isQualifying: false,
+      allCars: [car],
+    });
+
+    const crossedSF = beforeT > 0.8 && car.trackT < 0.2;
+    if (!startedFlyingLap) {
+      if (crossedSF) {
+        startedFlyingLap = true;
+        lapElapsed = 0;
+        s1End = 0;
+        s2End = 0;
+        trapKmh = 0;
+        maxAbsLat = 0;
+        offTrackTicks = 0;
+        totalFlyingTicks = 0;
+        wallHits = 0;
+        prevDmg = car.aeroDamage;
+      }
+      continue;
+    }
+
+    lapElapsed += dt;
+    totalFlyingTicks++;
+    const kmh = car.speed * SPEED_KMH_FACTOR;
+    if (kmh > trapKmh) trapKmh = kmh;
+    if (Math.abs(car.lateralOffset) > maxAbsLat) maxAbsLat = Math.abs(car.lateralOffset);
+    if (Math.abs(car.lateralOffset) > halfW + 1.8) offTrackTicks++;
+    if (car.aeroDamage > prevDmg + 0.05) {
+      wallHits++;
+      prevDmg = car.aeroDamage;
+    }
+
+    if (s1End === 0 && car.trackT >= 0.333) {
+      s1End = lapElapsed;
+    }
+    if (s2End === 0 && car.trackT >= 0.667) {
+      s2End = lapElapsed;
+    }
+    if (crossedSF && lapElapsed > 15) {
+      const s1 = s1End || lapElapsed / 3;
+      const s2 = (s2End || (lapElapsed * 2) / 3) - s1;
+      const s3 = lapElapsed - (s1 + s2);
+      return {
+        trackId: track.spec.id,
+        carId: spec.id,
+        carName: spec.name,
+        classId: spec.classId,
+        s1,
+        s2,
+        s3,
+        totalLap: lapElapsed,
+        trapKmh,
+        maxAbsLat,
+        halfWidth: halfW,
+        offTrackPct: (offTrackTicks / Math.max(1, totalFlyingTicks)) * 100,
+        wallHits,
+      };
+    }
+  }
+  return null;
+}
+
 function runFlyingLapBenchmark(filterPairs?: Array<{ trackId: string; classId: CarClassId }>) {
   const trackIds = filterPairs
     ? Array.from(new Set(filterPairs.map((p) => p.trackId)))
@@ -223,115 +335,13 @@ function runFlyingLapBenchmark(filterPairs?: Array<{ trackId: string; classId: C
   }> = [];
 
   for (const track of compiledTracks) {
-    const halfW = track.spec.trackWidth * 0.5;
     const carsForTrack = filterPairs
       ? CARS.filter((c) => filterPairs.some((p) => p.trackId === track.spec.id && p.classId === c.classId))
       : CARS;
     for (const spec of carsForTrack) {
-      const car = createCarSimState({
-        id: spec.id,
-        name: spec.name,
-        isPlayer: false,
-        carId: spec.id,
-        livery: spec.defaultLivery,
-        gridSlot: 0,
-        compiledTrack: track,
-        compound: 'soft',
-        personality: 'Metronome',
-        aiPaceMultiplier: 1.07,
-      });
-
-      // Spawn at t=0.68 rolling at 42 m/s for a clean flying lap across S/F
-      const startT = 0.68;
-      const sp = track.samples[Math.floor(startT * track.samples.length)];
-      car.trackT = sp.t;
-      car.prevTrackT = sp.t;
-      car.x = sp.x;
-      car.y = sp.y;
-      car.z = sp.z;
-      car.heading = Math.atan2(sp.tx, sp.tz);
-      car.speed = 42;
-      car.vx = Math.sin(car.heading) * car.speed;
-      car.vz = Math.cos(car.heading) * car.speed;
-      car.lateralOffset = 0;
-
-      const dt = 1 / 60;
-      let startedFlyingLap = false;
-      let lapElapsed = 0;
-      let s1End = 0;
-      let s2End = 0;
-      let trapKmh = 0;
-      let maxAbsLat = 0;
-      let offTrackTicks = 0;
-      let totalFlyingTicks = 0;
-      let prevDmg = 0;
-      let wallHits = 0;
-
-      for (let tick = 0; tick < 60 * 420; tick++) {
-        const ai = computeAIControl(car, track, [car], dt, 0);
-        const beforeT = car.trackT;
-        stepCarPhysics(car, ai, track, dt, {
-          trackWetness: 0,
-          totalLaps: 10,
-          isQualifying: false,
-          allCars: [car],
-        });
-
-        const crossedSF = beforeT > 0.8 && car.trackT < 0.2;
-        if (!startedFlyingLap) {
-          if (crossedSF) {
-            startedFlyingLap = true;
-            lapElapsed = 0;
-            s1End = 0;
-            s2End = 0;
-            trapKmh = 0;
-            maxAbsLat = 0;
-            offTrackTicks = 0;
-            totalFlyingTicks = 0;
-            wallHits = 0;
-            prevDmg = car.aeroDamage;
-          }
-          continue;
-        }
-
-        lapElapsed += dt;
-        totalFlyingTicks++;
-        const kmh = car.speed * SPEED_KMH_FACTOR;
-        if (kmh > trapKmh) trapKmh = kmh;
-        if (Math.abs(car.lateralOffset) > maxAbsLat) maxAbsLat = Math.abs(car.lateralOffset);
-        if (Math.abs(car.lateralOffset) > halfW + 1.8) offTrackTicks++;
-        if (car.aeroDamage > prevDmg + 0.05) {
-          wallHits++;
-          prevDmg = car.aeroDamage;
-        }
-
-        if (s1End === 0 && car.trackT >= 0.333) {
-          s1End = lapElapsed;
-        }
-        if (s2End === 0 && car.trackT >= 0.667) {
-          s2End = lapElapsed;
-        }
-        if (crossedSF && lapElapsed > 15) {
-          const s1 = s1End || lapElapsed / 3;
-          const s2 = (s2End || (lapElapsed * 2) / 3) - s1;
-          const s3 = lapElapsed - (s1 + s2);
-          lapResults.push({
-            trackId: track.spec.id,
-            carId: spec.id,
-            carName: spec.name,
-            classId: spec.classId,
-            s1,
-            s2,
-            s3,
-            totalLap: lapElapsed,
-            trapKmh,
-            maxAbsLat,
-            halfWidth: halfW,
-            offTrackPct: (offTrackTicks / Math.max(1, totalFlyingTicks)) * 100,
-            wallHits,
-          });
-          break;
-        }
+      const res = simulateCarFlyingLap(spec, track);
+      if (res) {
+        lapResults.push(res);
       }
     }
   }
@@ -339,33 +349,98 @@ function runFlyingLapBenchmark(filterPairs?: Array<{ trackId: string; classId: C
 }
 
 function main() {
-  if (process.argv.includes('--json')) {
-    const targetPairs: Array<{ trackId: string; classId: CarClassId }> = [
-      { trackId: 'spa-francorchamps', classId: CarClassId.GT3 },
-      { trackId: 'spa-francorchamps', classId: CarClassId.HYPERCAR_GTP },
-      { trackId: 'monza', classId: CarClassId.GT3 },
-      { trackId: 'suzuka', classId: CarClassId.F1_2026 },
-      { trackId: 'monaco', classId: CarClassId.F1_2026 },
-      { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP },
+  const isJson = process.argv.includes('--json');
+  const isStream = process.argv.includes('--stream') || isJson;
+
+  if (isJson || isStream) {
+    const targetBenchmarks = [
+      { trackId: 'spa-francorchamps', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 137.5, targetTrapKmh: 280 },
+      { trackId: 'spa-francorchamps', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 123.0, targetTrapKmh: 320 },
+      { trackId: 'monza', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 107.5, targetTrapKmh: 292 },
+      { trackId: 'suzuka', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 89.5, targetTrapKmh: 332 },
+      { trackId: 'monaco', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 71.0, targetTrapKmh: 292 },
+      { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 206.0, targetTrapKmh: 340 },
     ];
-    const laps = runFlyingLapBenchmark(targetPairs);
-    const jsonRows = targetPairs
-      .map((pair) => {
-        const sub = laps
-          .filter((l) => l.trackId === pair.trackId && l.classId === pair.classId)
-          .sort((a, b) => a.totalLap - b.totalLap);
-        const best = sub[0];
-        if (!best) return null;
-        return {
-          track: pair.trackId,
-          carClass: pair.classId,
-          lapSec: Number(best.totalLap.toFixed(3)),
-          trapKmh: Number(best.trapKmh.toFixed(2)),
-          wallHits: sub.reduce((s, r) => s + r.wallHits, 0),
-          offTrackPct: Number(Math.max(...sub.map((r) => r.offTrackPct)).toFixed(3)),
-        };
-      })
-      .filter(Boolean);
+
+    const trackCache = new Map<string, ReturnType<typeof compileTrack>>();
+    function getTrack(id: string) {
+      let t = trackCache.get(id);
+      if (!t) {
+        const raw = TRACKS.find((trk) => trk.id === id);
+        if (!raw) throw new Error(`Track not found: ${id}`);
+        t = compileTrack(raw);
+        trackCache.set(id, t);
+      }
+      return t;
+    }
+
+    const jsonRows: Array<{
+      track: string;
+      carClass: string;
+      lapSec: number;
+      trapKmh: number;
+      wallHits: number;
+      offTrackPct: number;
+    }> = [];
+
+    for (let i = 0; i < targetBenchmarks.length; i++) {
+      const bench = targetBenchmarks[i];
+      const startMs = Date.now();
+      const track = getTrack(bench.trackId);
+      const cars = CARS.filter((c) => c.classId === bench.classId);
+
+      const laps: NonNullable<ReturnType<typeof simulateCarFlyingLap>>[] = [];
+      for (const carSpec of cars) {
+        const res = simulateCarFlyingLap(carSpec, track);
+        if (res) laps.push(res);
+      }
+
+      laps.sort((a, b) => a.totalLap - b.totalLap);
+      const best = laps[0];
+      const elapsedMs = Date.now() - startMs;
+
+      if (!best) continue;
+
+      const lapErr = Math.abs(best.totalLap - bench.targetLapSec) / bench.targetLapSec;
+      const trapErr = Math.abs(best.trapKmh - bench.targetTrapKmh) / bench.targetTrapKmh;
+      const totalWallHits = laps.reduce((s, r) => s + r.wallHits, 0);
+      const maxOffTrack = Number(Math.max(...laps.map((r) => r.offTrackPct)).toFixed(3));
+      const penalty = (totalWallHits > 0 ? totalWallHits * 1.0 : 0) + (maxOffTrack > 0.5 ? 0.5 : 0);
+      const errorPct = Number(((lapErr * 0.75 + trapErr * 0.25 + penalty) * 100).toFixed(2));
+
+      const row = {
+        track: bench.trackId,
+        carClass: bench.classId,
+        lapSec: Number(best.totalLap.toFixed(3)),
+        trapKmh: Number(best.trapKmh.toFixed(2)),
+        wallHits: totalWallHits,
+        offTrackPct: maxOffTrack,
+      };
+      jsonRows.push(row);
+
+      const progressEvent = {
+        type: 'progress',
+        completed: i + 1,
+        total: targetBenchmarks.length,
+        track: bench.trackId,
+        car: bench.car,
+        carClass: bench.classId,
+        carName: best.carName,
+        lapTime: Number(best.totalLap.toFixed(2)),
+        lapSec: Number(best.totalLap.toFixed(3)),
+        trapKmh: Number(best.trapKmh.toFixed(2)),
+        errorPct,
+        elapsedMs,
+      };
+
+      const line = JSON.stringify(progressEvent);
+      // Emit incremental NDJSON progress line to stderr immediately as each benchmark finishes
+      process.stderr.write(line + '\n');
+      // Emit to stdout prefixed with PROGRESS:
+      process.stdout.write(`PROGRESS:${line}\n`);
+    }
+
+    // Followed by the final summary JSON at the end
     console.log(JSON.stringify(jsonRows));
     return;
   }

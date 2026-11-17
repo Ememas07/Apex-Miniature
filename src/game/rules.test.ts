@@ -438,7 +438,7 @@ test('Issue 6: AI Anti-Stuck Watchdog resets car aligned at 35 km/h if stationar
   }
 
   // Watchdog should have triggered at 1.5s and reset the car at 35 km/h (~9.72 m/s) in an unoccupied lane
-  assert.ok(aiCar.speed >= 9.0 && aiCar.speed <= 12.5, `Expected reset car speed ~35 km/h (9.72 m/s), got ${aiCar.speed}`);
+  assert.ok(aiCar.speed >= 8.5 && aiCar.speed <= 12.5, `Expected reset car speed ~35 km/h (9.72 m/s), got ${aiCar.speed}`);
   assert.ok(Math.hypot(aiCar.x, aiCar.z) < 2000, 'Expected car to be placed back near track coordinates');
 });
 

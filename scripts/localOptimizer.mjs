@@ -25,7 +25,8 @@ const IRL_TARGETS = [
 function evaluate(config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
   const raw = execSync(BENCHMARK_CMD, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const rows = JSON.parse(raw);
+  const jsonLine = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).find((l) => l.startsWith('[')) || raw.trim();
+  const rows = JSON.parse(jsonLine);
 
   let totalErr = 0;
   let matched = 0;
