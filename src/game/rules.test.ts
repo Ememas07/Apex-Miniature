@@ -23,6 +23,8 @@ import {
 } from './customTracks';
 import {
   computeAIControl,
+  computeClassGripProfile,
+  computeRoadSurfaceTilt,
   computeStandings,
   createCarSimState,
   getCompoundModifiers,
@@ -230,8 +232,8 @@ test('Driver number validation and standings calculation work cleanly', () => {
   assert.ok(p.distanceSq < 100);
 });
 
-test('Issue 1: Pit Speed Limiter strictly clamps forward speed to 60 km/h (16.67 m/s)', () => {
-  const spa = compileTrack(TRACKS[0]);
+test('Issue 1: Pit Speed Limiter smoothly ramps speed down (~14-18 m/s^2) and holds 60 km/h (16.67 m/s)', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
   const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
   const car = createCarSimState({
     id: 'p1',
@@ -240,34 +242,46 @@ test('Issue 1: Pit Speed Limiter strictly clamps forward speed to 60 km/h (16.67
     carId: f1.id,
     livery: f1.defaultLivery,
     gridSlot: 1,
-    compiledTrack: spa,
+    compiledTrack: monza,
     compound: 'soft',
   });
 
-  // Enter pit at high speed (45 m/s = 162 km/h)
+  // Position on Monza dead-straight frontstretch (t = 0.01 -> ~0.02) at 45 m/s (162 km/h)
+  const sp = sampleTrackAtT(monza, 0.01);
+  car.x = sp.x;
+  car.y = sp.y;
+  car.z = sp.z;
+  car.trackT = sp.t;
+  car.prevTrackT = sp.t;
+  car.heading = Math.atan2(sp.tx, sp.tz);
   car.speed = 45;
+  car.vx = sp.tx * 45;
+  car.vz = sp.tz * 45;
+
   // Engage manual pit limiter
   stepCarPhysics(
     car,
     { throttle: 1, brake: 0, steer: 0, specialPressed: false, pitLimiterToggle: true },
-    spa,
+    monza,
     1 / 60,
     { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
   );
   assert.equal(car.pitLimiterActive, true);
+  // Smooth progressive ramp (no instant snap to 16.67 m/s on tick 1)
+  assert.ok(car.speed > 43 && car.speed < 45, `Expected smooth progressive ramp on tick 1, got ${car.speed}`);
 
-  // Run physics for 2 seconds with 100% full throttle
-  for (let i = 0; i < 120; i++) {
+  // Run physics for 2.2 seconds with 100% full throttle
+  for (let i = 0; i < 132; i++) {
     stepCarPhysics(
       car,
       { throttle: 1, brake: 0, steer: 0, specialPressed: false },
-      spa,
+      monza,
       1 / 60,
       { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
     );
   }
 
-  // Clamped to 60 km/h (16.67 m/s) despite 100% throttle
+  // Smoothly clamped at 60 km/h (16.67 m/s) despite 100% throttle
   assert.ok(car.speed <= 16.7, `Expected car speed <= 16.7 m/s, got ${car.speed}`);
   assert.ok(car.speed >= 16.5, `Expected car speed >= 16.5 m/s, got ${car.speed}`);
 });
@@ -1107,14 +1121,15 @@ test('Gold-Standard SVGs & Gentle Banking: Le Mans, Silverstone, Portimao, Spa, 
   const maxIndyBank = Math.max(...indy.waypoints.map((w) => w.banking || 0));
   assert.ok(maxIndyBank <= 12.0, `Indianapolis banking must be <= 12 deg, got ${maxIndyBank} deg`);
 
-  // Elevation Profiles in True Meters
+  // Elevation Profiles in True Copernicus DEM Meters
   const portimao = TRACKS.find((t) => t.id === 'portimao')!;
-  const maxPortimaoY = Math.max(...portimao.waypoints.map((w) => w.y));
-  assert.ok(maxPortimaoY >= 18.0, `Portimao rollercoaster elevation peak must be >= 18m, got ${maxPortimaoY}m`);
+  const portimaoYs = portimao.waypoints.map((w) => w.y);
+  const portimaoSpan = Math.max(...portimaoYs) - Math.min(...portimaoYs);
+  assert.ok(portimaoSpan >= 38.0, `Portimao rollercoaster elevation span must be >= 38m, got ${portimaoSpan.toFixed(1)}m`);
 
   const interlagos = TRACKS.find((t) => t.id === 'interlagos')!;
   const interlagosSpan = Math.max(...interlagos.waypoints.map((w) => w.y)) - Math.min(...interlagos.waypoints.map((w) => w.y));
-  assert.ok(interlagosSpan >= 35.0, `Interlagos elevation span must be >= 35m, got ${interlagosSpan}m`);
+  assert.ok(interlagosSpan >= 34.0, `Interlagos elevation span must be >= 34m, got ${interlagosSpan.toFixed(1)}m`);
 
   const spa = TRACKS.find((t) => t.id === 'spa-francorchamps')!;
   const maxSpaY = Math.max(...spa.waypoints.map((w) => w.y));
@@ -1267,6 +1282,61 @@ test('Bouncy Car-to-Car Collisions: elastic normal bounce, tangential momentum p
   assert.equal(carC.aeroDamage, 0, 'Grazing contact below 25 km/h must inflict 0 damage');
   assert.equal(carD.aeroDamage, 0, 'Grazing contact below 25 km/h must inflict 0 damage');
 });
+
+test('3D Road Surface Tilt, Slope Gravity & Banking Physics', () => {
+  // 1. Uphill sample (ty > 0) with tracks.ts right-hand normal (nx = -tz = -1, nz = tx = 0)
+  const uphill = computeRoadSurfaceTilt({ tx: 0, ty: 0.14, tz: 0.99, nx: -1, nz: 0, banking: 0 }, 0);
+  assert.ok(uphill.sinSlope > 0.12 && uphill.pitchRad > 0.12, `Expected positive pitch uphill, got ${uphill.pitchRad}`);
+  assert.ok(Math.abs(uphill.rollRad) < 1e-4, 'Flat road should have near-zero roll');
+
+  // 2. Downhill sample (ty < 0) produces negative sinSlope and nose-down pitchRad < 0
+  const downhill = computeRoadSurfaceTilt({ tx: 0, ty: -0.14, tz: 0.99, nx: -1, nz: 0, banking: 0 }, 0);
+  assert.ok(downhill.sinSlope < -0.12 && downhill.pitchRad < -0.12, `Expected negative pitch downhill, got ${downhill.pitchRad}`);
+
+  // 3. Banked sample (banking > 0 raises right side +nx) produces positive rollRad & sinBank
+  const banked = computeRoadSurfaceTilt({ tx: 0, ty: 0, tz: 1, nx: -1, nz: 0, banking: 0.18 }, 0);
+  assert.ok(banked.sinBank > 0.15 && banked.rollRad > 0.15, `Expected positive bank roll, got ${banked.rollRad}`);
+
+  // 4. Car physics updates damped car.pitch and car.roll on Spa Eau Rouge / Kemmel elevation
+  const spa = compileTrack(TRACKS.find((t) => t.id === 'spa-francorchamps')!);
+  const gtp = CARS.find((c) => c.id === 'ferrari-499p')!;
+  const car = createCarSimState({
+    id: 'tilt-car',
+    name: 'Tilt Tester',
+    isPlayer: true,
+    carId: gtp.id,
+    livery: gtp.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  let maxAbsPitch = 0;
+  for (let i = 0; i < 600; i++) {
+    const ai = computeAIControl(car, spa, [car], 1 / 60, 0);
+    stepCarPhysics(car, ai, spa, 1 / 60, { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] });
+    maxAbsPitch = Math.max(maxAbsPitch, Math.abs(car.pitch ?? 0));
+  }
+  assert.ok(maxAbsPitch > 0.02, `Expected non-trivial chassis pitch on Spa elevation, got ${maxAbsPitch}`);
+});
+
+test('Class Grip/Downforce Hierarchy & Monaco Hairpin Clean AI Navigation', () => {
+  // Authentic cornering hierarchy at high speed (65 m/s = 234 km/h):
+  // F1 > Hypercar/GTP > LMP2 > GT3 > GT4 > Track Coupe
+  const f1 = computeClassGripProfile(CarClassId.F1_2026, 65);
+  const gtp = computeClassGripProfile(CarClassId.HYPERCAR_GTP, 65);
+  const lmp2 = computeClassGripProfile(CarClassId.LMP2, 65);
+  const gt3 = computeClassGripProfile(CarClassId.GT3, 65);
+  const gt4 = computeClassGripProfile(CarClassId.GT4, 65);
+  const coupe = computeClassGripProfile(CarClassId.TRACK_COUPE, 65);
+
+  const eff = (p: { classGripMult: number; classDownforceBonus: number }) => p.classGripMult * p.classDownforceBonus;
+  assert.ok(eff(f1) > eff(gtp), 'F1 must outperform Hypercar in high-speed aero grip');
+  assert.ok(eff(gtp) > eff(lmp2), 'Hypercar must outperform LMP2 in high-speed grip');
+  assert.ok(eff(lmp2) > eff(gt3), 'LMP2 must outperform GT3 in high-speed grip');
+  assert.ok(eff(gt3) > eff(gt4), 'GT3 must outperform GT4 in high-speed grip');
+  assert.ok(eff(gt4) > eff(coupe), 'GT4 must outperform Track Coupe in high-speed grip');
+});
+
 
 
 

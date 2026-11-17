@@ -16,7 +16,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#262b33",
     kerbPrimary: "#e11d48",
     kerbSecondary: "#facc15",
-    trackWidth: 14.5,
+    trackWidth: REAL_TRACK_METRICS["spa-francorchamps"].trackWidth,
     targetLapSeconds: 106,
     corners: 19,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["spa-francorchamps"], { trackId: "spa-francorchamps" }),
@@ -33,7 +33,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#272b34",
     kerbPrimary: "#facc15",
     kerbSecondary: "#2563eb",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["daytona-road"].trackWidth,
     targetLapSeconds: 96,
     corners: 12,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["daytona-road"], { trackId: "daytona-road" }),
@@ -67,7 +67,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#252a32",
     kerbPrimary: "#facc15",
     kerbSecondary: "#1d4ed8",
-    trackWidth: 13.5,
+    trackWidth: REAL_TRACK_METRICS["le-mans"].trackWidth,
     targetLapSeconds: 208,
     corners: 21,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["le-mans"], { trackId: "le-mans" }),
@@ -84,7 +84,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#252930",
     kerbPrimary: "#16a34a",
     kerbSecondary: "#dc2626",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["monza"].trackWidth,
     targetLapSeconds: 81,
     corners: 11,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["monza"], { trackId: "monza" }),
@@ -101,7 +101,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#2a2e36",
     kerbPrimary: "#dc2626",
     kerbSecondary: "#ffffff",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["silverstone"].trackWidth,
     targetLapSeconds: 87,
     corners: 18,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["silverstone"], { trackId: "silverstone" }),
@@ -135,7 +135,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#2a2f38",
     kerbPrimary: "#dc2626",
     kerbSecondary: "#ffffff",
-    trackWidth: 11,
+    trackWidth: REAL_TRACK_METRICS["monaco"].trackWidth,
     targetLapSeconds: 72,
     corners: 19,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["monaco"], { trackId: "monaco" }),
@@ -152,7 +152,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#282d35",
     kerbPrimary: "#dc2626",
     kerbSecondary: "#f8fafc",
-    trackWidth: 14.5,
+    trackWidth: REAL_TRACK_METRICS["cota"].trackWidth,
     targetLapSeconds: 94,
     corners: 20,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["cota"], { trackId: "cota" }),
@@ -169,7 +169,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#373b42",
     kerbPrimary: "#2563eb",
     kerbSecondary: "#facc15",
-    trackWidth: 13.5,
+    trackWidth: REAL_TRACK_METRICS["sebring"].trackWidth,
     targetLapSeconds: 107,
     corners: 17,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["sebring"], { trackId: "sebring" }),
@@ -186,7 +186,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#252932",
     kerbPrimary: "#ef4444",
     kerbSecondary: "#facc15",
-    trackWidth: 12,
+    trackWidth: REAL_TRACK_METRICS["long-beach"].trackWidth,
     targetLapSeconds: 67,
     corners: 11,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["long-beach"], { trackId: "long-beach" }),
@@ -203,7 +203,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#242830",
     kerbPrimary: "#2563eb",
     kerbSecondary: "#ffffff",
-    trackWidth: 12,
+    trackWidth: REAL_TRACK_METRICS["detroit-street"].trackWidth,
     targetLapSeconds: 62,
     corners: 14,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["detroit-street"], { trackId: "detroit-street" }),
@@ -271,7 +271,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#272b33",
     kerbPrimary: "#16a34a",
     kerbSecondary: "#facc15",
-    trackWidth: 11.5,
+    trackWidth: REAL_TRACK_METRICS["lime-rock"].trackWidth,
     targetLapSeconds: 50,
     corners: 7,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["lime-rock"], { trackId: "lime-rock" }),
@@ -288,7 +288,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#272c34",
     kerbPrimary: "#dc2626",
     kerbSecondary: "#ffffff",
-    trackWidth: 13,
+    trackWidth: REAL_TRACK_METRICS["road-america"].trackWidth,
     targetLapSeconds: 110,
     corners: 14,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["road-america"], { trackId: "road-america" }),
@@ -322,7 +322,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#252932",
     kerbPrimary: "#ef4444",
     kerbSecondary: "#ffffff",
-    trackWidth: 13.5,
+    trackWidth: REAL_TRACK_METRICS["indianapolis-road"].trackWidth,
     targetLapSeconds: 76,
     corners: 14,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["indianapolis-road"], { trackId: "indianapolis-road" }),
@@ -373,7 +373,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#262b34",
     kerbPrimary: "#06b6d4",
     kerbSecondary: "#ec4899",
-    trackWidth: 13.5,
+    trackWidth: REAL_TRACK_METRICS["miami"].trackWidth,
     targetLapSeconds: 89,
     corners: 19,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["miami"], { trackId: "miami" }),
@@ -390,7 +390,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#22262f",
     kerbPrimary: "#ef4444",
     kerbSecondary: "#ffffff",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["las-vegas"].trackWidth,
     targetLapSeconds: 93,
     corners: 17,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["las-vegas"], { trackId: "las-vegas" }),
@@ -407,7 +407,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#272c35",
     kerbPrimary: "#16a34a",
     kerbSecondary: "#ef4444",
-    trackWidth: 13,
+    trackWidth: REAL_TRACK_METRICS["mexico-city"].trackWidth,
     targetLapSeconds: 77,
     corners: 17,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["mexico-city"], { trackId: "mexico-city" }),
@@ -475,7 +475,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#242933",
     kerbPrimary: "#ef4444",
     kerbSecondary: "#facc15",
-    trackWidth: 13,
+    trackWidth: REAL_TRACK_METRICS["madring"].trackWidth,
     targetLapSeconds: 88,
     corners: 20,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["madring"], { trackId: "madring" }),
@@ -526,7 +526,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#292e37",
     kerbPrimary: "#f97316",
     kerbSecondary: "#ffffff",
-    trackWidth: 12.5,
+    trackWidth: REAL_TRACK_METRICS["zandvoort"].trackWidth,
     targetLapSeconds: 71,
     corners: 14,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["zandvoort"], { trackId: "zandvoort" }),
@@ -543,7 +543,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#232833",
     kerbPrimary: "#2563eb",
     kerbSecondary: "#ef4444",
-    trackWidth: 14.5,
+    trackWidth: REAL_TRACK_METRICS["paul-ricard"].trackWidth,
     targetLapSeconds: 92,
     corners: 15,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["paul-ricard"], { trackId: "paul-ricard" }),
@@ -560,7 +560,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#252932",
     kerbPrimary: "#ef4444",
     kerbSecondary: "#06b6d4",
-    trackWidth: 12.5,
+    trackWidth: REAL_TRACK_METRICS["baku"].trackWidth,
     targetLapSeconds: 102,
     corners: 20,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["baku"], { trackId: "baku" }),
@@ -577,7 +577,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#2a2e37",
     kerbPrimary: "#facc15",
     kerbSecondary: "#16a34a",
-    trackWidth: 13.5,
+    trackWidth: REAL_TRACK_METRICS["portimao"].trackWidth,
     targetLapSeconds: 78,
     corners: 15,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["portimao"], { trackId: "portimao" }),
@@ -594,7 +594,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#272c35",
     kerbPrimary: "#dc2626",
     kerbSecondary: "#ffffff",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["fuji"].trackWidth,
     targetLapSeconds: 74,
     corners: 16,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["fuji"], { trackId: "fuji" }),
@@ -611,7 +611,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#272c35",
     kerbPrimary: "#ef4444",
     kerbSecondary: "#ffffff",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["shanghai"].trackWidth,
     targetLapSeconds: 93,
     corners: 16,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["shanghai"], { trackId: "shanghai" }),
@@ -628,7 +628,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#21262f",
     kerbPrimary: "#06b6d4",
     kerbSecondary: "#ffffff",
-    trackWidth: 12,
+    trackWidth: REAL_TRACK_METRICS["singapore"].trackWidth,
     targetLapSeconds: 91,
     corners: 19,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["singapore"], { trackId: "singapore" }),
@@ -645,7 +645,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#272c35",
     kerbPrimary: "#06b6d4",
     kerbSecondary: "#facc15",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["sepang"].trackWidth,
     targetLapSeconds: 92,
     corners: 15,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["sepang"], { trackId: "sepang" }),
@@ -662,7 +662,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#2a2e36",
     kerbPrimary: "#dc2626",
     kerbSecondary: "#ffffff",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["bahrain"].trackWidth,
     targetLapSeconds: 90,
     corners: 15,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["bahrain"], { trackId: "bahrain" }),
@@ -679,7 +679,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#232833",
     kerbPrimary: "#16a34a",
     kerbSecondary: "#ffffff",
-    trackWidth: 13,
+    trackWidth: REAL_TRACK_METRICS["jeddah"].trackWidth,
     targetLapSeconds: 88,
     corners: 27,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["jeddah"], { trackId: "jeddah" }),
@@ -696,7 +696,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#252a33",
     kerbPrimary: "#7c2d12",
     kerbSecondary: "#ffffff",
-    trackWidth: 14,
+    trackWidth: REAL_TRACK_METRICS["lusail"].trackWidth,
     targetLapSeconds: 83,
     corners: 16,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["lusail"], { trackId: "lusail" }),
@@ -713,7 +713,7 @@ export const TRACKS: TrackSpec[] = [
     asphaltColor: "#252a34",
     kerbPrimary: "#06b6d4",
     kerbSecondary: "#ef4444",
-    trackWidth: 13.5,
+    trackWidth: REAL_TRACK_METRICS["yas-marina"].trackWidth,
     targetLapSeconds: 83,
     corners: 16,
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["yas-marina"], { trackId: "yas-marina" }),
@@ -1095,11 +1095,16 @@ export function projectOntoTrack(
 
   if (hintT !== undefined) {
     const centerIdx = Math.floor((((hintT % 1) + 1) % 1) * n);
-    const windowRadius = Math.max(36, Math.round(n * 0.08));
+    const hintSample = samples[centerIdx];
+    const stepLen = Math.max(1, compiled.totalLength / n);
+    const windowRadius = Math.max(4, Math.min(12, Math.ceil(18 / stepLen)));
     for (let offset = -windowRadius; offset <= windowRadius; offset++) {
       const i = (centerIdx + offset + n) % n;
-      const dx = x - samples[i].x;
-      const dz = z - samples[i].z;
+      const cand = samples[i];
+      // Prevent jumping across opposite hairpin legs (>=4 samples away) while allowing smooth 1..3 sample apex turns
+      if (Math.abs(offset) >= 4 && cand.tx * hintSample.tx + cand.tz * hintSample.tz < -0.25) continue;
+      const dx = x - cand.x;
+      const dz = z - cand.z;
       const dSq = dx * dx + dz * dz;
       if (dSq < bestDistSq) {
         bestDistSq = dSq;
@@ -1129,9 +1134,34 @@ export function projectOntoTrack(
     }
   }
 
-  const s = samples[bestIdx];
-  const dx = x - s.x;
-  const dz = z - s.z;
-  const lateralOffset = dx * s.nx + dz * s.nz;
-  return { sample: s, lateralOffset, distanceSq: bestDistSq };
+  // Continuous sub-segment projection onto [bestIdx - 1, bestIdx] and [bestIdx, bestIdx + 1]
+  // Eliminates discrete 5m..19m trackT steps in steering derivative & telemetry.
+  const prevIdx = (bestIdx - 1 + n) % n;
+  const nextIdx = (bestIdx + 1) % n;
+
+  const projectSeg = (iA: number, iB: number) => {
+    const a = samples[iA];
+    const b = samples[iB];
+    const vx = b.x - a.x;
+    const vz = b.z - a.z;
+    const lenSq = vx * vx + vz * vz;
+    const u = lenSq > 1e-6 ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / lenSq)) : 0;
+    const px = a.x + vx * u;
+    const pz = a.z + vz * u;
+    const dx = x - px;
+    const dz = z - pz;
+    return {
+      t: (((iA + u) / n) % 1 + 1) % 1,
+      dSq: dx * dx + dz * dz,
+    };
+  };
+
+  const segPrev = projectSeg(prevIdx, bestIdx);
+  const segNext = projectSeg(bestIdx, nextIdx);
+  const chosen = segPrev.dSq <= segNext.dSq ? segPrev : segNext;
+  const interpSample = sampleTrackAtT(compiled, chosen.dSq <= bestDistSq + 0.01 ? chosen.t : bestIdx / n);
+  const dx = x - interpSample.x;
+  const dz = z - interpSample.z;
+  const lateralOffset = dx * interpSample.nx + dz * interpSample.nz;
+  return { sample: interpSample, lateralOffset, distanceSq: chosen.dSq };
 }

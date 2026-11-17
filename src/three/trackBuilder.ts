@@ -158,15 +158,15 @@ export function buildTrackEnvironment(
       width: 7.6,
     });
   }
-  const pitRoadGeo = track(buildRibbonGeometry(pitSamples, 3.8, 0.10, 12, false, 7.6));
+  const pitRoadGeo = track(buildRibbonGeometry(pitSamples, 3.8, 0.02, 12, false, 7.6));
   const pitRoadMat = track(
     new THREE.MeshStandardMaterial({
       color: 0x333944,
       roughness: 0.82,
       metalness: 0.05,
       polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     }),
   );
   const pitMesh = new THREE.Mesh(pitRoadGeo, pitRoadMat);
@@ -175,44 +175,90 @@ export function buildTrackEnvironment(
 
   // Pit Entry Speed Limit Line (White + Amber)
   const pitEntrySp = pitSamples[7];
-  const limitGeo = track(new THREE.BoxGeometry(7.6, 0.08, 0.7));
+  const limitGeo = track(new THREE.BoxGeometry(7.6, 0.02, 0.7));
   const limitMat = track(new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 }));
   const limitLine = new THREE.Mesh(limitGeo, limitMat);
-  limitLine.position.set(pitEntrySp.x, pitEntrySp.y + 0.08, pitEntrySp.z);
+  limitLine.position.set(pitEntrySp.x, pitEntrySp.y + 0.028, pitEntrySp.z);
   limitLine.rotation.y = Math.atan2(-pitEntrySp.nz, pitEntrySp.nx);
   group.add(limitLine);
 
-  // 2. Expansive Contoured Ground Terrain Grid with Strict Road Surface Clearance
-  // Subdivide terrain quads so no triangle edge exceeds 8m near the road.
-  // For every terrain vertex (vx, vz), compute shortest 2D distance to ALL line segments of both main track and pit lane splines.
-  // Account for banked low-edge height: Y_lowestEdge = Y_center - (W/2) * |sin(theta)|
-  // For any vertex within trackWidth / 2 + kerbWidth + runoffWidth + 8.0m:
-  // terrainY = min(terrainY, Y_lowestEdge - 0.55m)
-  // Smoothly blend in 8m-25m outer shoulder band so embankments rise cleanly without ever poking through roadbed.
+  // 2. Expansive Contoured Ground Terrain Grid + Bank-Aware Embankment Skirts
+  // Preserves track surface & banking heights 100%, derives continuous surrounding terrain from DEM road heights
+  // so steep elevation circuits (Spa, Laguna Seca, Portimao) never exhibit sunken trenches or cliff walls.
   let minTrackX = Infinity, maxTrackX = -Infinity, minTrackZ = Infinity, maxTrackZ = -Infinity;
+  let minTrackY = Infinity;
   for (let i = 0; i < compiled.samples.length; i++) {
     const s = compiled.samples[i];
     if (s.x < minTrackX) minTrackX = s.x;
     if (s.x > maxTrackX) maxTrackX = s.x;
     if (s.z < minTrackZ) minTrackZ = s.z;
     if (s.z > maxTrackZ) maxTrackZ = s.z;
+    if (s.y < minTrackY) minTrackY = s.y;
   }
-  const gridSpanX = Math.max(1600, (maxTrackX - minTrackX) + 500);
-  const gridSpanZ = Math.max(1600, (maxTrackZ - minTrackZ) + 500);
+  const gridSpanX = Math.max(1600, (maxTrackX - minTrackX) + 540);
+  const gridSpanZ = Math.max(1600, (maxTrackZ - minTrackZ) + 540);
   const centerTrackX = (minTrackX + maxTrackX) * 0.5;
   const centerTrackZ = (minTrackZ + maxTrackZ) * 0.5;
 
-  // Dense terrain grid: max edge <= 8.0m across the track corridor
-  const segsX = Math.min(256, Math.max(160, Math.ceil(gridSpanX / 8.0)));
-  const segsZ = Math.min(256, Math.max(160, Math.ceil(gridSpanZ / 8.0)));
+  // Build smooth 48x48 inverse-distance-weighted surrounding landscape elevation field from track DEM samples
+  const anchorStep = Math.max(1, Math.floor(compiled.samples.length / 96));
+  const anchors: Array<{ x: number; y: number; z: number }> = [];
+  for (let i = 0; i < compiled.samples.length; i += anchorStep) {
+    const s = compiled.samples[i];
+    anchors.push({ x: s.x, y: s.y, z: s.z });
+  }
+  const FIELD_RES = 48;
+  const fieldGrid = new Float32Array((FIELD_RES + 1) * (FIELD_RES + 1));
+  const xMin = centerTrackX - gridSpanX * 0.5;
+  const zMin = centerTrackZ - gridSpanZ * 0.5;
+  const smoothR2 = 115 * 115;
+
+  for (let gz = 0; gz <= FIELD_RES; gz++) {
+    const wz = zMin + (gz / FIELD_RES) * gridSpanZ;
+    for (let gx = 0; gx <= FIELD_RES; gx++) {
+      const wx = xMin + (gx / FIELD_RES) * gridSpanX;
+      let wSum = 0;
+      let ySum = 0;
+      for (let a = 0; a < anchors.length; a++) {
+        const anc = anchors[a];
+        const dx = wx - anc.x;
+        const dz = wz - anc.z;
+        const w = 1 / (dx * dx + dz * dz + smoothR2);
+        wSum += w;
+        ySum += w * anc.y;
+      }
+      fieldGrid[gz * (FIELD_RES + 1) + gx] = wSum > 0 ? ySum / wSum : -0.25;
+    }
+  }
+
+  const sampleBaseGroundY = (wx: number, wz: number): number => {
+    const u = Math.max(0, Math.min(FIELD_RES - 0.001, ((wx - xMin) / gridSpanX) * FIELD_RES));
+    const v = Math.max(0, Math.min(FIELD_RES - 0.001, ((wz - zMin) / gridSpanZ) * FIELD_RES));
+    const x0 = Math.floor(u);
+    const z0 = Math.floor(v);
+    const fx = u - x0;
+    const fz = v - z0;
+    const stride = FIELD_RES + 1;
+    const h00 = fieldGrid[z0 * stride + x0];
+    const h10 = fieldGrid[z0 * stride + x0 + 1];
+    const h01 = fieldGrid[(z0 + 1) * stride + x0];
+    const h11 = fieldGrid[(z0 + 1) * stride + x0 + 1];
+    const h0 = h00 + (h10 - h00) * fx;
+    const h1 = h01 + (h11 - h01) * fx;
+    return h0 + (h1 - h0) * fz;
+  };
+
+  // High-resolution terrain grid (<= 7.5m edge near road corridor)
+  const segsX = Math.min(340, Math.max(180, Math.ceil(gridSpanX / 7.0)));
+  const segsZ = Math.min(340, Math.max(180, Math.ceil(gridSpanZ / 7.0)));
   const groundGeo = track(new THREE.PlaneGeometry(gridSpanX, gridSpanZ, segsX, segsZ));
   groundGeo.rotateX(-Math.PI / 2);
   groundGeo.translate(centerTrackX, 0, centerTrackZ);
 
   // Precompute line segments for both main track spline and pit-lane spline
   interface RoadSegment {
-    ax: number; az: number; ay: number; aw: number; abank: number;
-    bx: number; bz: number; by: number; bw: number; bbank: number;
+    ax: number; az: number; ay: number; aw: number; abank: number; anx: number; anz: number;
+    bx: number; bz: number; by: number; bw: number; bbank: number; bnx: number; bnz: number;
   }
   const roadSegments: RoadSegment[] = [];
   const sCount = compiled.samples.length;
@@ -220,22 +266,22 @@ export function buildTrackEnvironment(
     const a = compiled.samples[i];
     const b = compiled.samples[(i + 1) % sCount];
     roadSegments.push({
-      ax: a.x, az: a.z, ay: a.y, aw: a.width ? a.width : compiled.spec.trackWidth, abank: a.banking || 0,
-      bx: b.x, bz: b.z, by: b.y, bw: b.width ? b.width : compiled.spec.trackWidth, bbank: b.banking || 0,
+      ax: a.x, az: a.z, ay: a.y, aw: a.width ? a.width : compiled.spec.trackWidth, abank: a.banking || 0, anx: a.nx, anz: a.nz,
+      bx: b.x, bz: b.z, by: b.y, bw: b.width ? b.width : compiled.spec.trackWidth, bbank: b.banking || 0, bnx: b.nx, bnz: b.nz,
     });
   }
   for (let i = 0; i < pitSamples.length - 1; i++) {
     const a = pitSamples[i];
     const b = pitSamples[i + 1];
     roadSegments.push({
-      ax: a.x, az: a.z, ay: a.y, aw: a.width || 7.6, abank: a.banking || 0,
-      bx: b.x, bz: b.z, by: b.y, bw: b.width || 7.6, bbank: b.banking || 0,
+      ax: a.x, az: a.z, ay: a.y, aw: a.width || 7.6, abank: a.banking || 0, anx: a.nx, anz: a.nz,
+      bx: b.x, bz: b.z, by: b.y, bw: b.width || 7.6, bbank: b.banking || 0, bnx: b.nx, bnz: b.nz,
     });
   }
 
-  // Build 2D spatial grid index for fast segment distance queries
-  const CELL_SIZE = 40.0;
-  const QUERY_MARGIN = 48.0; // Corridor buffer + 25m shoulder band
+  // Build 2D spatial grid index for fast segment distance queries (covers corridor + 45m outer embankment)
+  const CELL_SIZE = 44.0;
+  const QUERY_MARGIN = 64.0;
   const spatialMap = new Map<number, number[]>();
 
   for (let i = 0; i < roadSegments.length; i++) {
@@ -258,26 +304,29 @@ export function buildTrackEnvironment(
   }
 
   const KERB_WIDTH = 1.8;
-  const RUNOFF_MARGIN = 4.2;
-  const EXTRA_INNER_CLEARANCE = 8.0; // 8.0m inner corridor buffer
-  const SHOULDER_BAND = 17.0; // 8m to 25m outer shoulder band (8.0 + 17.0 = 25.0m)
+  const RUNOFF_MARGIN = 4.6;
+  const EMBANKMENT_SPAN = 36.0; // Smooth 36m embankment transition outward from outer curb/runoff edge
 
   const posAttr = groundGeo.attributes.position;
   for (let k = 0; k < posAttr.count; k++) {
     const vx = posAttr.getX(k);
     const vz = posAttr.getZ(k);
+    const bgY = sampleBaseGroundY(vx, vz);
+    let vy = bgY;
 
     const c = Math.floor(vx / CELL_SIZE);
     const r = Math.floor(vz / CELL_SIZE);
     const key = (c * 73856093) ^ (r * 19349663);
     const candidateIdxs = spatialMap.get(key);
 
-    let vy = -0.25;
-
     if (candidateIdxs && candidateIdxs.length > 0) {
       let minDistSq = Infinity;
       let bestSeg: RoadSegment | null = null;
       let bestT = 0;
+      let bestPx = 0;
+      let bestPz = 0;
+      let lowestCorridorY = Infinity;
+      let inAnyCorridor = false;
 
       for (let j = 0; j < candidateIdxs.length; j++) {
         const seg = roadSegments[candidateIdxs[j]];
@@ -293,10 +342,24 @@ export function buildTrackEnvironment(
         const rx = vx - px;
         const rz = vz - pz;
         const dSq = rx * rx + rz * rz;
+
+        const segW = seg.aw + t * (seg.bw - seg.aw);
+        const segHalfW = segW * 0.5;
+        const segCorridor = segHalfW + KERB_WIDTH + RUNOFF_MARGIN + 3.0;
+        if (dSq <= segCorridor * segCorridor) {
+          inAnyCorridor = true;
+          const segY = seg.ay + t * (seg.by - seg.ay);
+          const segBank = seg.abank + t * (seg.bbank - seg.abank);
+          const segLowEdge = segY - segHalfW * Math.abs(Math.sin(segBank));
+          if (segLowEdge < lowestCorridorY) lowestCorridorY = segLowEdge;
+        }
+
         if (dSq < minDistSq) {
           minDistSq = dSq;
           bestSeg = seg;
           bestT = t;
+          bestPx = px;
+          bestPz = pz;
         }
       }
 
@@ -306,22 +369,25 @@ export function buildTrackEnvironment(
         const roadHalfW = roadW * 0.5;
         const roadY = bestSeg.ay + bestT * (bestSeg.by - bestSeg.ay);
         const roadBank = bestSeg.abank + bestT * (bestSeg.bbank - bestSeg.abank);
-
-        // Account for banked low-edge height: Y_lowestEdge = Y_center - (W / 2) * |sin(theta)|
+        const segNx = bestSeg.anx + bestT * (bestSeg.bnx - bestSeg.anx);
+        const segNz = bestSeg.anz + bestT * (bestSeg.bnz - bestSeg.anz);
+        const latSign = Math.sign((vx - bestPx) * segNx + (vz - bestPz) * segNz) || 1;
+        const bankEdgeY = roadY + latSign * (roadHalfW + 4.8) * Math.sin(roadBank);
         const lowestEdgeY = roadY - roadHalfW * Math.abs(Math.sin(roadBank));
-        const innerCorridor = roadHalfW + KERB_WIDTH + RUNOFF_MARGIN + EXTRA_INNER_CLEARANCE;
-        const outerCorridor = innerCorridor + SHOULDER_BAND;
 
-        if (dist <= innerCorridor) {
-          // Strictly clamp height below lowest banked edge: terrainY = min(terrainY, Y_lowestEdge - 0.55m)
-          vy = Math.min(vy, lowestEdgeY - 0.55);
-        } else if (dist < outerCorridor) {
-          // Smoothly blend terrain vertices in the 8m–25m outer shoulder band so embankments rise cleanly
-          const u = (dist - innerCorridor) / SHOULDER_BAND;
-          const blend = 0.5 * (1 - Math.cos(u * Math.PI)); // 0 at innerCorridor, 1 at outerCorridor
-          const clampedY = lowestEdgeY - 0.55;
-          const blendedY = clampedY * (1 - blend) + (-0.25) * blend;
-          vy = Math.min(vy, blendedY);
+        const innerCorridor = roadHalfW + KERB_WIDTH + RUNOFF_MARGIN + 2.5;
+        const outerEmbankment = innerCorridor + EMBANKMENT_SPAN;
+
+        if (inAnyCorridor || dist <= innerCorridor) {
+          // Deterministic vertex clamping strictly beneath lowest road/apron/kerb edge -> ZERO grass-over-surface clipping
+          const clampCeil = (lowestCorridorY < Infinity ? lowestCorridorY : lowestEdgeY) - 0.24;
+          vy = clampCeil;
+        } else if (dist < outerEmbankment) {
+          // Smoothstep outer embankment blend over 36m from bank-aware road edge out to continuous surrounding DEM terrain
+          const u = (dist - innerCorridor) / EMBANKMENT_SPAN;
+          const smooth = u * u * (3 - 2 * u);
+          const innerAnchorY = Math.min(bankEdgeY, lowestEdgeY) - 0.20;
+          vy = innerAnchorY * (1 - smooth) + bgY * smooth;
         }
       }
     }
@@ -341,7 +407,7 @@ export function buildTrackEnvironment(
   ground.receiveShadow = true;
   group.add(ground);
 
-  // Optional coastal harbor water apron
+  // Optional coastal harbor water apron safely below lowest track coastal elevation
   if (compiled.spec.scenery === 'coastal') {
     const waterGeo = track(new THREE.RingGeometry(240, 720, 48));
     waterGeo.rotateX(-Math.PI / 2);
@@ -354,13 +420,89 @@ export function buildTrackEnvironment(
       }),
     );
     const water = new THREE.Mesh(waterGeo, waterMat);
-    water.position.y = -0.18;
+    water.position.y = Math.min(-0.65, minTrackY - 1.2);
     group.add(water);
   }
 
-  // 3. Main Track Asphalt Ribbon (offset +0.10m above spline Y)
+  // 2b. Smooth Bank-Aware Outer Turf Embankment Skirts (left & right from apron outer edge +4.7m out to +34m)
+  // Bridges steep elevation crests & banked corners cleanly to surrounding terrain with zero sunken gaps or cliff steps
+  const pitSideSign = compiled.pitOffset >= 0 ? 1 : -1;
+  const buildOuterSkirt = (side: -1 | 1): THREE.BufferGeometry => {
+    const n = compiled.samples.length;
+    const vertCount = (n + 1) * 2;
+    const positions = new Float32Array(vertCount * 3);
+    const normals = new Float32Array(vertCount * 3);
+    const indices: number[] = [];
+
+    for (let i = 0; i <= n; i++) {
+      const s = compiled.samples[i % n];
+      const hw = s.width ? s.width * 0.5 : halfW;
+      const bank = s.banking || 0;
+      const cosB = Math.cos(bank);
+      const sinB = Math.sin(bank);
+
+      // Detect elevated overpass sections (e.g. Suzuka bridge) so skirt drops cleanly rather than bridging across lower road
+      let minOtherY = s.y;
+      if (s.y > 4.0) {
+        for (let k = 0; k < n; k += 4) {
+          const stepD = Math.min(Math.abs(k - (i % n)), n - Math.abs(k - (i % n)));
+          if (stepD < 24) continue;
+          const o = compiled.samples[k];
+          if ((o.x - s.x) * (o.x - s.x) + (o.z - s.z) * (o.z - s.z) < 42 * 42) {
+            minOtherY = Math.min(minOtherY, o.y);
+          }
+        }
+      }
+      const isOverpass = s.y - minOtherY > 3.5;
+
+      const inPitZone = side === pitSideSign && (s.t >= 0.885 || s.t <= 0.095);
+      const innerEdge = hw + 4.7;
+      const outerEdge = hw + 34.0;
+
+      const ix = s.x + s.nx * side * innerEdge * cosB;
+      const iz = s.z + s.nz * side * innerEdge * cosB;
+      const iy = (isOverpass || inPitZone) ? s.y - 1.2 : (s.y - 0.02 + side * innerEdge * sinB);
+
+      const ox = s.x + s.nx * side * outerEdge;
+      const oz = s.z + s.nz * side * outerEdge;
+      const bgOuterY = sampleBaseGroundY(ox, oz);
+      const oy = (isOverpass || inPitZone) ? Math.min(bgOuterY, s.y - 1.5) : (bgOuterY - 0.25);
+
+      const base = i * 2;
+      const v0 = side === 1 ? base : base + 1;
+      const v1 = side === 1 ? base + 1 : base;
+      positions[v0 * 3] = ix; positions[v0 * 3 + 1] = iy; positions[v0 * 3 + 2] = iz;
+      positions[v1 * 3] = ox; positions[v1 * 3 + 1] = oy; positions[v1 * 3 + 2] = oz;
+      normals[v0 * 3 + 1] = 1;
+      normals[v1 * 3 + 1] = 1;
+
+      if (i > 0) {
+        const a = (i - 1) * 2;
+        const b = a + 1;
+        const c = i * 2;
+        const d = c + 1;
+        indices.push(a, b, c, b, d, c);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  };
+
+  for (const side of [-1, 1] as const) {
+    const skirtGeo = track(buildOuterSkirt(side));
+    const skirtMesh = new THREE.Mesh(skirtGeo, groundMat);
+    skirtMesh.receiveShadow = true;
+    group.add(skirtMesh);
+  }
+
+  // 3. Main Track Asphalt Ribbon (clean +0.02m layering above apron & ground)
   const asphaltTex = track(createAsphaltTexture(compiled.spec.asphaltColor, maxAniso));
-  const roadGeo = track(buildRibbonGeometry(compiled.samples, halfW, 0.10, 16, true, compiled.spec.trackWidth));
+  const roadGeo = track(buildRibbonGeometry(compiled.samples, halfW, 0.02, 16, true, compiled.spec.trackWidth));
   const roadMat = track(
     new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -376,7 +518,7 @@ export function buildTrackEnvironment(
   roadMesh.receiveShadow = true;
   group.add(roadMesh);
 
-  // 4. Gravel / Turf Runoff Apron under Track
+  // 4. Gravel / Turf Runoff Apron under Track (0.00m baseline)
   const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, 0.00, 24, true, compiled.spec.trackWidth));
   const apronMat = track(
     new THREE.MeshStandardMaterial({
@@ -389,7 +531,7 @@ export function buildTrackEnvironment(
   apronMesh.receiveShadow = true;
   group.add(apronMesh);
 
-  // 5. Stylized Oversized Die-Cast Apex Kerbs (InstancedMesh on curved sections)
+  // 5. Stylized Oversized Die-Cast Apex Kerbs (+0.035m proud of asphalt)
   const kerbTex = track(createKerbTexture(compiled.spec.kerbPrimary, compiled.spec.kerbSecondary, maxAniso));
   const kerbMat = track(
     new THREE.MeshStandardMaterial({
@@ -402,7 +544,7 @@ export function buildTrackEnvironment(
       polygonOffsetUnits: -1,
     }),
   );
-  const kerbBoxGeo = track(new THREE.BoxGeometry(1.3, 0.14, 2.2));
+  const kerbBoxGeo = track(new THREE.BoxGeometry(1.3, 0.07, 2.2));
   const kerbMatrices: THREE.Matrix4[] = [];
   const dummy = new THREE.Object3D();
 
@@ -418,7 +560,7 @@ export function buildTrackEnvironment(
       const kerbDist = curHalfW + 0.55;
       dummy.position.set(
         s.x + s.nx * side * kerbDist * cosB,
-        s.y + 0.10 + (i % 2) * 0.004 + side * kerbDist * sinB,
+        s.y + 0.02 + (i % 2) * 0.003 + side * kerbDist * sinB,
         s.z + s.nz * side * kerbDist * cosB,
       );
       dummy.rotation.set(bank * side * Math.cos(Math.atan2(s.tx, s.tz)), Math.atan2(s.tx, s.tz), bank * side);
@@ -447,7 +589,6 @@ export function buildTrackEnvironment(
     }),
   );
   const barrierMatrices: THREE.Matrix4[] = [];
-  const pitSideSign = compiled.pitOffset >= 0 ? 1 : -1;
   for (let i = 0; i < compiled.samples.length; i += 2) {
     const s = compiled.samples[i];
     // Skip inner barrier along pit lane corridor so players can enter pits cleanly
@@ -652,7 +793,7 @@ export function buildTrackEnvironment(
     }),
   );
   const sfLine = new THREE.Mesh(sfLineGeo, sfLineMat);
-  sfLine.position.y = 0.08;
+  sfLine.position.y = 0.025;
   sfGroup.add(sfLine);
 
   const gantryMat = track(new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4, metalness: 0.6 }));
@@ -825,7 +966,8 @@ export function buildTrackEnvironment(
 
     const s = 0.8 + ((attempt * 19) % 10) * 0.09;
     const hScale = compiled.spec.scenery === 'street-night' ? 0.6 + ((attempt * 23) % 10) * 0.16 : s;
-    dummy.position.set(px, compiled.spec.scenery === 'street-night' ? 11 * hScale : 4.2 * s, pz);
+    const groundY = sampleBaseGroundY(px, pz);
+    dummy.position.set(px, groundY + (compiled.spec.scenery === 'street-night' ? 11 * hScale : 4.2 * s), pz);
     dummy.rotation.set(0, (attempt * 0.7) % Math.PI, 0);
     dummy.scale.set(s, hScale, s);
     dummy.updateMatrix();

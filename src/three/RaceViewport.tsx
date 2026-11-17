@@ -6,6 +6,7 @@ import { MultiplayerClient } from '../game/multiplayer';
 import {
   CarSimState,
   computeAIControl,
+  computeRoadSurfaceTilt,
   computeStandings,
   createCarSimState,
   resolveCarCollisions,
@@ -737,16 +738,17 @@ export function RaceViewport(props: RaceViewportProps) {
         if (!rig) continue;
 
         const trkSample = sampleTrackAtT(sim.compiledTrack, c.trackT);
-        const roadBank = trkSample.banking || 0;
-        const roadPitch = Math.asin(Math.max(-0.99, Math.min(0.99, trkSample.ty || 0)));
+        const fallbackTilt = computeRoadSurfaceTilt(trkSample, c.heading);
+        const roadPitch = c.pitch ?? fallbackTilt.pitchRad;
+        const roadRoll = c.roll ?? fallbackTilt.rollRad;
 
-        rig.root.position.set(c.x, c.y, c.z);
+        rig.root.position.set(c.x, c.y + 0.02, c.z);
         rig.root.rotation.order = 'YXZ';
         rig.root.rotation.y = c.heading;
         rig.root.rotation.x = -roadPitch;
-        rig.root.rotation.z = roadBank;
+        rig.root.rotation.z = -roadRoll;
 
-        // Subtle die-cast body roll & pitch
+        // Subtle die-cast suspension roll in corners
         rig.bodyGroup.rotation.z = -c.steerAngle * Math.min(1, c.speed / 30) * 0.09;
 
         const wheelSpin = (c.speed / 0.35) * dt;

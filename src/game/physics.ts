@@ -83,6 +83,97 @@ export interface CarSimState {
   aiStuckTimer: number;
   aiPrevHeadingErr: number;
   wallCollisionCooldown?: number;
+  pitch?: number; // radians (+ = nose up)
+  roll?: number; // radians (+ = right side raised)
+}
+
+/**
+ * Projects 3D track surface normal (longitudinal slope + lateral banking) onto the car's heading frame.
+ */
+export function computeRoadSurfaceTilt(
+  sample: { tx: number; ty: number; tz: number; nx: number; nz: number; banking?: number },
+  heading: number,
+): { sinSlope: number; sinBank: number; pitchRad: number; rollRad: number } {
+  const b = sample.banking || 0;
+  const cosB = Math.cos(b);
+  const sinB = Math.sin(b);
+  const rx = sample.nx * cosB;
+  const ry = sinB;
+  const rz = sample.nz * cosB;
+
+  const cx = ry * sample.tz - rz * sample.ty;
+  const cy = rz * sample.tx - rx * sample.tz;
+  const cz = rx * sample.ty - ry * sample.tx;
+  const len = Math.hypot(cx, cy, cz) || 1;
+  const nx = cx / len;
+  const ny = cy / len;
+  const nz = cz / len;
+  const signNy = ny >= 0 ? 1 : -1;
+
+  const sinH = Math.sin(heading);
+  const cosH = Math.cos(heading);
+  const sinSlope = Math.max(-0.55, Math.min(0.55, -(nx * sinH + nz * cosH) * signNy));
+  const sinBank = Math.max(-0.55, Math.min(0.55, -(nx * (-cosH) + nz * sinH) * signNy));
+  return {
+    sinSlope,
+    sinBank,
+    pitchRad: Math.asin(sinSlope),
+    rollRad: Math.asin(sinBank),
+  };
+}
+
+/**
+ * Shared class cornering grip & aerodynamic downforce curve used identically by physics & AI.
+ */
+export function computeClassGripProfile(
+  classId: CarClassId,
+  speed: number,
+): { classGripMult: number; classDownforceBonus: number } {
+  switch (classId) {
+    case CarClassId.F1_2026:
+    case CarClassId.F1_2021:
+    case CarClassId.F1_2005:
+      return {
+        classGripMult: 1.12,
+        classDownforceBonus: 1.0 + Math.min(0.75, (speed / 58.0) * 0.75),
+      };
+    case CarClassId.HYPERCAR_GTP:
+      return {
+        classGripMult: 0.98,
+        classDownforceBonus: 1.0 + Math.min(0.46, speed / 62.0),
+      };
+    case CarClassId.LMP2:
+      return {
+        classGripMult: 0.95,
+        classDownforceBonus: 1.0 + Math.min(0.40, speed / 65.0),
+      };
+    case CarClassId.FORMULA_E:
+      return {
+        classGripMult: 0.88,
+        classDownforceBonus: 1.0 + Math.min(0.22, speed / 78.0),
+      };
+    case CarClassId.GT3:
+      return {
+        classGripMult: 0.86,
+        classDownforceBonus: 1.0 + Math.min(0.26, speed / 72.0),
+      };
+    case CarClassId.SUPERCAR:
+      return {
+        classGripMult: 0.82,
+        classDownforceBonus: 1.0 + Math.min(0.18, speed / 85.0),
+      };
+    case CarClassId.GT4:
+      return {
+        classGripMult: 0.78,
+        classDownforceBonus: 1.0 + Math.min(0.16, speed / 82.0),
+      };
+    case CarClassId.TRACK_COUPE:
+    default:
+      return {
+        classGripMult: 0.76,
+        classDownforceBonus: 1.0 + Math.min(0.12, speed / 90.0),
+      };
+  }
 }
 
 export function createCarSimState(params: {
@@ -173,6 +264,8 @@ export function createCarSimState(params: {
     aiStuckTimer: 0,
     aiPrevHeadingErr: 0,
     wallCollisionCooldown: 0,
+    pitch: 0,
+    roll: 0,
   };
 }
 
@@ -478,76 +571,101 @@ export function stepCarPhysics(
 
   // Compute physical performance scalars
   const paceScale = classMeta.basePaceIndex;
-  const isGTP = car.carSpec.classId === CarClassId.HYPERCAR_GTP;
-  const isSupercar = car.carSpec.classId === CarClassId.SUPERCAR;
-  const isCoupe = car.carSpec.classId === CarClassId.TRACK_COUPE;
-  const isGT4 = car.carSpec.classId === CarClassId.GT4;
-  const isGT3 = car.carSpec.classId === CarClassId.GT3;
+  const classId = car.carSpec.classId;
+  const isGTP = classId === CarClassId.HYPERCAR_GTP;
+  const isLMP2 = classId === CarClassId.LMP2;
+  const isGT3 = classId === CarClassId.GT3;
+  const isGT4 = classId === CarClassId.GT4;
+  const isF126 = classId === CarClassId.F1_2026;
+  const isF121 = classId === CarClassId.F1_2021;
+  const isF105 = classId === CarClassId.F1_2005;
+  const isFE = classId === CarClassId.FORMULA_E;
+  const isCoupe = classId === CarClassId.TRACK_COUPE;
+  const isSupercar = classId === CarClassId.SUPERCAR;
+  const isFormula = isF126 || isF121 || isF105 || isFE;
 
-  // 1:1 Metric Scale: Realistic Top Speeds and Gearing per Class
-  // F1: 320-355 km/h, Hypercar/GTP: 318-342 km/h, LMP2: 315-325 km/h, GT3: 275-290 km/h, GT4: 260-275 km/h, FE: 285-322 km/h, Supercar: 330-400+ km/h, Coupe: 245-312 km/h
-  const classPaceBonus =
-    isSupercar
-      ? 1.08
-      : isCoupe
-      ? 1.04
-      : classMeta.id === CarClassId.FORMULA_E
-      ? 0.98
-      : (0.70 + 0.30 * paceScale);
-
-  const maxSpeedBase = isSupercar
-    ? (90 + (attrs.topSpeed - 83) * 1.35)
-    : isCoupe
-    ? (68 + (attrs.topSpeed - 64) * 1.80)
+  // 1:1 Metric Scale Top Speeds (m/s):
+  // F1: 325-355 km/h (with active-aero/ERS), GTP: 330-345 km/h, LMP2: 315-325 km/h,
+  // GT3: 285-300 km/h, GT4: 260-275 km/h, FE: 300-324 km/h, Coupe: 247-313 km/h, Supercar: 330-427 km/h
+  const maxSpeedBase = isF126
+    ? 89.2 + (attrs.topSpeed - 90) * 0.42
+    : isF121
+    ? 92.2 + (attrs.topSpeed - 90) * 0.45
+    : isF105
+    ? 94.0 + (attrs.topSpeed - 89) * 0.48
+    : isGTP
+    ? 91.7 + (attrs.topSpeed - 83) * 0.58
+    : isLMP2
+    ? 87.5 + (attrs.topSpeed - 78) * 0.46
+    : isGT3
+    ? 79.2 + (attrs.topSpeed - 74) * 0.51
     : isGT4
-    ? (72 + (attrs.topSpeed - 67) * 0.80)
-    : (68 + (attrs.topSpeed / 100) * 18) * classPaceBonus;
+    ? 72.2 + (attrs.topSpeed - 67) * 0.42
+    : isFE
+    ? 83.0 + (attrs.topSpeed - 77) * 0.55
+    : isCoupe
+    ? 68.5 + (attrs.topSpeed - 64) * 1.02
+    : 91.5 + (attrs.topSpeed - 83) * 1.70;
 
-  const accelBase = (20 + (attrs.acceleration / 100) * 16) * (0.60 + 0.40 * paceScale);
+  // Calibrated class launch acceleration (m/s^2) producing authentic 0-100 & 0-200 km/h splits
+  const accelAttrNorm = Math.max(-1, Math.min(1.5, (attrs.acceleration - 80) / 20));
+  const accelBase = isF126 || isF121 || isF105
+    ? 15.8 + (attrs.acceleration - 90) * 0.18
+    : isFE
+    ? 12.6 + (attrs.acceleration - 84) * 0.22
+    : isGTP
+    ? 11.6 + (attrs.acceleration - 85) * 0.16
+    : isLMP2
+    ? 10.7 + (attrs.acceleration - 80) * 0.16
+    : isGT3
+    ? 9.9 + (attrs.acceleration - 77) * 0.16
+    : isGT4
+    ? 7.9 + (attrs.acceleration - 70) * 0.16
+    : isCoupe
+    ? 6.2 + Math.max(0, attrs.acceleration - 64) * 0.18
+    : 12.2 + accelAttrNorm * 1.4;
+
   const gripBase = (1.42 + (attrs.corneringGrip / 100) * 1.15) * (0.75 + paceScale * 0.25);
   const brakeMultiplier = isSupercar ? 0.85 : isCoupe ? 0.85 : isGT4 ? 0.88 : 1.0;
   const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35) * brakeMultiplier;
 
   const compoundMod = getCompoundModifiers(car.compound, opts.trackWetness);
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
-  // Cap maximum speed/grip penalty at 10%-12% even at 100% damage so a damaged car remains fully drivable
   const damageFactor = 1 - (car.aeroDamage / 100) * 0.11;
-  const fuelFactor = car.fuel > 0 ? 1.0 : 0.45; // Limp home if out of fuel
+  const fuelFactor = car.fuel > 0 ? 1.0 : 0.45;
 
   let specialSpeedMult = 1.0;
   let specialAccelMult = 1.0;
   let specialGripMult = 1.0;
   if (car.specialActive) {
     if (specialType === 'active-aero') {
-      // 2026 F1: +12% top speed, -25% cornering grip vs High-Downforce Corner Mode
-      specialSpeedMult = 1.12;
+      // 2026 F1: +7.5% low-drag straight Vmax (345-355 km/h), -25% cornering grip
+      specialSpeedMult = 1.075;
+      specialAccelMult = 1.05;
       specialGripMult = 0.75;
     } else if (specialType === 'attack-mode') {
-      // Formula E: enables AWD acceleration boost and +15% power
-      specialSpeedMult = 1.06;
-      specialAccelMult = 1.15;
+      // Formula E: AWD launch & +15% power, +5.5% top speed (315-324 km/h)
+      specialSpeedMult = 1.055;
+      specialAccelMult = 1.18;
       specialGripMult = 1.08;
     } else if (specialType === 'ers-overtake' || specialType === 'hybrid-deploy') {
-      // 2021 F1 & Hypercar: +15% acceleration
-      specialSpeedMult = 1.05;
-      specialAccelMult = 1.15;
+      // 2021 F1 & Hypercar: +14% mid/high-speed pull, +3.5% Vmax
+      specialSpeedMult = 1.035;
+      specialAccelMult = 1.14;
     } else if (specialType === 'v10-overboost' || specialType === 'rich-fuel-overboost') {
-      // 2005 F1 & Non-hybrid LMH: temporary +8% power surge with +35% fuel burn
-      specialSpeedMult = 1.04;
+      // 2005 F1 & Non-hybrid LMH: +8% power surge with +35% fuel burn
+      specialSpeedMult = 1.028;
       specialAccelMult = 1.08;
     }
   }
 
-  const slipstreamMult = inSlipstream ? 1.075 : 1.0;
+  const slipstreamMult = inSlipstream ? 1.045 : 1.0;
 
-  // Gentle Slow-Down Penalties: bleed off smoothly by lifting throttle slightly on a straight, clear cleanly once served
   let penaltyCap = 1.0;
   if (car.penaltyTimeRemaining > 0) {
     if (input.throttle < 0.65 || input.brake > 0.1) {
-      // Bleed off faster when lifting or braking on straight
       car.penaltyTimeRemaining = Math.max(0, car.penaltyTimeRemaining - dt * 1.6);
     } else {
-      // Gentle slowdown penalty without abrupt mid-corner braking
       penaltyCap = 0.88;
       car.penaltyTimeRemaining = Math.max(0, car.penaltyTimeRemaining - dt * 0.7);
     }
@@ -561,7 +679,8 @@ export function stepCarPhysics(
   const offTrackDrag = onAsphalt ? 1.0 : 0.72;
   const offTrackGrip = onAsphalt ? 1.0 : 0.65;
 
-  // Speed ceiling
+  // Speed ceiling (AI gains pace via cornering commitment/skill rather than unrealistic +7% straight-line Vmax)
+  const aiStraightScale = car.isPlayer ? 1.0 : 1.0 + (car.aiPaceMultiplier - 1.0) * 0.25;
   let effectiveMaxSpeed =
     maxSpeedBase *
     specialSpeedMult *
@@ -570,11 +689,15 @@ export function stepCarPhysics(
     fuelFactor *
     offTrackDrag *
     penaltyCap *
-    (car.isPlayer ? 1.0 : car.aiPaceMultiplier);
+    aiStraightScale;
 
-  // Pit Speed Limiter: Strictly clamp to 60 km/h (framerate-independent using dt)
+  // Sample current 3D road normal tilt (slope + banking) for longitudinal gravity and lateral banking forces
+  const currentRoadSample = sampleTrackAtT(compiledTrack, car.trackT);
+  const roadTilt = computeRoadSurfaceTilt(currentRoadSample, car.heading);
+
+  // Pit Speed Limiter: smooth progressive deceleration ramp (~14-18 m/s^2) down to 60 km/h (16.6667 m/s), zero instant snap
   const PIT_LIMIT_KMH = 60;
-  const PIT_LIMIT_SPEED = PIT_LIMIT_KMH / SPEED_KMH_FACTOR; // 60 / 3.6 = 16.6667 m/s
+  const PIT_LIMIT_SPEED = PIT_LIMIT_KMH / SPEED_KMH_FACTOR; // 16.6667 m/s
 
   if (car.pitLimiterActive) {
     if (car.speed > PIT_LIMIT_SPEED) {
@@ -582,9 +705,9 @@ export function stepCarPhysics(
         car.pitSpeeding = true;
         car.penaltyTimeRemaining = Math.max(car.penaltyTimeRemaining, 3.0);
       }
-      // Smoothly brake down to 60 km/h if entered faster
-      const decel = Math.max(22, (car.speed - PIT_LIMIT_SPEED) * 5.5);
-      car.speed = Math.max(PIT_LIMIT_SPEED, car.speed - decel * dt);
+      const excess = car.speed - PIT_LIMIT_SPEED;
+      const smoothRampDecel = Math.min(18.0, 14.0 + Math.min(4.0, excess * 0.15));
+      car.speed = Math.max(PIT_LIMIT_SPEED, car.speed - smoothRampDecel * dt);
     }
     effectiveMaxSpeed = Math.min(effectiveMaxSpeed, PIT_LIMIT_SPEED);
   }
@@ -594,32 +717,24 @@ export function stepCarPhysics(
   const brake = Math.max(0, Math.min(1, input.brake));
 
   if (throttle > 0 && brake < 0.1) {
-    if (car.pitLimiterActive && car.speed >= PIT_LIMIT_SPEED - 0.05) {
-      // Ignore excess throttle above 60 km/h
-      car.speed = PIT_LIMIT_SPEED;
+    if (car.pitLimiterActive && car.speed >= PIT_LIMIT_SPEED) {
+      // Throttle rev-limited at 60 km/h once deceleration reaches target; never snap downward here
     } else {
       const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
-      let torqueCurve = Math.max(0.15, 1.15 - speedRatio * 0.85);
-      let classAccelMult = 1.0;
-      if (isGTP) {
-        // Dial back GTP acceleration & launch thrust by 25%-30% so 0-100 is ~2.9-3.1s, 0-200 is ~6.3-6.8s
-        // while climbing steadily to 320-340 km/h on straights
-        classAccelMult = 0.26 * (1 - speedRatio) + 0.28 * speedRatio;
-        torqueCurve = Math.max(0.18, 1.15 - speedRatio * 0.65);
-      } else if (isGT4) {
-        // GT4 BoP: ~1,380-1,480 kg, 0-100 in ~3.8-4.2s
-        classAccelMult = 0.22 + ((attrs.acceleration - 70) / 10) * 0.04;
-      } else if (isCoupe) {
-        // Track Coupe: hot hatches (Clio V6, Civic FL5, GR Yaris) 0-100 in ~5.4-5.8s, performance coupes 0-100 in ~3.2-3.9s
-        classAccelMult = 0.165 + Math.max(0, (attrs.acceleration - 64) / 12) * 0.08;
-      } else if (isSupercar) {
-        // Supercar / Hypercar: explosive straight-line acceleration (Jesko, F80, W1 0-100 in ~2.5-2.8s)
-        classAccelMult = 0.31 + ((attrs.acceleration - 83) / 15) * 0.08;
+      // Downforce builds rear traction above 100 km/h in F1/Prototypes, while aerodynamic drag tapers acceleration toward Vmax
+      const aeroTraction = isFormula && !isFE
+        ? 0.72 + 0.60 * Math.min(1, car.speed / 25.0)
+        : isGTP || isLMP2
+        ? 0.88 + 0.22 * Math.min(1, car.speed / 30.0)
+        : isFE
+        ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
+        : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
+      const torqueCurve = Math.max(0.05, 1.0 - 0.92 * Math.pow(speedRatio, 1.18));
+      let nextSpeed = car.speed + accelBase * aeroTraction * specialAccelMult * fuelFactor * throttle * torqueCurve * dt;
+      if (car.pitLimiterActive && car.speed <= PIT_LIMIT_SPEED) {
+        nextSpeed = Math.min(PIT_LIMIT_SPEED, nextSpeed);
       }
-      car.speed += accelBase * specialAccelMult * classAccelMult * fuelFactor * throttle * torqueCurve * dt;
-      if (car.pitLimiterActive && car.speed > PIT_LIMIT_SPEED) {
-        car.speed = PIT_LIMIT_SPEED;
-      }
+      car.speed = nextSpeed;
     }
   }
 
@@ -627,13 +742,17 @@ export function stepCarPhysics(
     car.speed = Math.max(0, car.speed - brakeBase * compoundMod.grip * brake * dt);
   }
 
-  // Natural aero/rolling drag when coasting or above effectiveMaxSpeed
-  const dragCoeff = car.specialActive && specialType === 'active-aero' ? 0.35 : 0.48;
-  if (car.pitLimiterActive && car.speed > PIT_LIMIT_SPEED) {
-    car.speed = PIT_LIMIT_SPEED;
-  } else if (car.speed > effectiveMaxSpeed) {
+  // Slope gravity force (-g * sinSlope): climbing slows car, downhill accelerates car smoothly
+  if (car.speed > 0.5 || throttle > 0.05) {
+    const slopeGravity = -9.81 * roadTilt.sinSlope;
+    car.speed = Math.max(0, car.speed + slopeGravity * dt);
+  }
+
+  // Natural aero/rolling drag when coasting or above effectiveMaxSpeed (note: pit limiter uses smoothRampDecel above)
+  const dragCoeff = car.specialActive && specialType === 'active-aero' ? 0.34 : 0.46;
+  if (!car.pitLimiterActive && car.speed > effectiveMaxSpeed) {
     car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
-  } else if (throttle < 0.05 && brake < 0.05) {
+  } else if (throttle < 0.05 && brake < 0.05 && !car.pitLimiterActive) {
     car.speed = Math.max(0, car.speed - car.speed * dragCoeff * dt);
   }
 
@@ -670,14 +789,7 @@ export function stepCarPhysics(
   const trailBrakeBonus = brake > 0.08 && brake < 0.7 && Math.abs(steerInput) > 0.25 ? 1.14 : 1.0;
   const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
   const bankingGripBonus = 1.0 + Math.sin(Math.abs(sampleBank)) * 0.35;
-  const classGripMult = isGTP ? 0.78 : isSupercar ? 0.86 : isCoupe ? 0.88 : isGT4 ? 0.90 : 1.0;
-  const classDownforceBonus = isGTP
-    ? 1.0 + Math.min(0.18, car.speed / 85.0) // Lower aerodynamic downforce coefficient
-    : isGT4
-    ? 1.0 + Math.min(0.20, car.speed / 80.0) // Noticeably lower downforce than GT3
-    : isSupercar || isCoupe
-    ? 1.0 + Math.min(0.16, car.speed / 85.0) // Road tire / street aero downforce
-    : 1.0 + Math.min(0.38, car.speed / 62.0);
+  const { classGripMult, classDownforceBonus } = computeClassGripProfile(classId, car.speed);
   const availableGrip =
     gripBase *
     classGripMult *
@@ -713,7 +825,9 @@ export function stepCarPhysics(
 
   const turnEffectiveness = 1 - Math.min(0.55, understeer * 0.45);
   const lowSpeedScale = Math.min(1, car.speed / 6.0);
-  car.heading -= steerInput * maxTurnRate * turnEffectiveness * lowSpeedScale * dt;
+  // Lateral banking centripetal gravity assist (+sinBank pulls toward -R_car = left = +heading)
+  const bankingTurnAssist = car.speed > 4.0 ? (9.81 * roadTilt.sinBank) / Math.max(10.0, car.speed) * 0.35 : 0;
+  car.heading -= (steerInput * maxTurnRate * turnEffectiveness * lowSpeedScale - bankingTurnAssist) * dt;
 
   // Lateral velocity blend & lateral slip calculation for tire scrub audio
   const desiredVx = Math.sin(car.heading) * car.speed;
@@ -733,11 +847,15 @@ export function stepCarPhysics(
   car.x += car.vx * dt;
   car.z += car.vz * dt;
 
-  // Project onto track spline
+  // Project onto track spline (update lateralOffset FIRST so car.y has zero 1-frame banking lag)
   const proj = projectOntoTrack(compiledTrack, car.x, car.z, car.trackT);
   const bank = proj.sample.banking || 0;
-  car.y = proj.sample.y + car.lateralOffset * Math.sin(bank);
   car.lateralOffset = proj.lateralOffset;
+  car.y = proj.sample.y + car.lateralOffset * Math.sin(bank);
+  const newTilt = computeRoadSurfaceTilt(proj.sample, car.heading);
+  const tiltDamp = 1 - Math.exp(-15 * dt);
+  car.pitch = (car.pitch ?? newTilt.pitchRad) + (newTilt.pitchRad - (car.pitch ?? newTilt.pitchRad)) * tiltDamp;
+  car.roll = (car.roll ?? newTilt.rollRad) + (newTilt.rollRad - (car.roll ?? newTilt.rollRad)) * tiltDamp;
 
   // Kerb contact detection on curved apexes
   const sampleHalfW = (proj.sample.width ? proj.sample.width : compiledTrack.spec.trackWidth) * 0.5;
@@ -1056,24 +1174,22 @@ export function computeAIControl(
     };
   }
 
-  // Physical performance estimation matching stepCarPhysics
+  // Physical performance estimation matching stepCarPhysics via shared computeClassGripProfile
   const paceScale = classMeta.basePaceIndex;
-  const isGTP = car.carSpec.classId === CarClassId.HYPERCAR_GTP;
   const isSupercar = car.carSpec.classId === CarClassId.SUPERCAR;
   const isCoupe = car.carSpec.classId === CarClassId.TRACK_COUPE;
   const isGT4 = car.carSpec.classId === CarClassId.GT4;
-  const classGripMult = isGTP ? 0.78 : isSupercar ? 0.86 : isCoupe ? 0.88 : isGT4 ? 0.90 : 1.0;
   const classBrakeMult = isSupercar ? 0.85 : isCoupe ? 0.85 : isGT4 ? 0.88 : 1.0;
   const compoundMod = getCompoundModifiers(car.compound, trackWetness);
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
   const damageFactor = 1 - (car.aeroDamage / 100) * 0.18;
 
-  const gripBase = (1.35 + (attrs.corneringGrip / 100) * 1.15) * (0.85 + paceScale * 0.15) * classGripMult;
-  const brakeBase = (24 + (attrs.braking / 100) * 18) * paceScale * classBrakeMult;
+  const gripBase = (1.42 + (attrs.corneringGrip / 100) * 1.15) * (0.75 + paceScale * 0.25);
+  const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35) * classBrakeMult;
   const personalityBrakeFactor =
     personality === 'Late-Braker' ? 0.94 : personality === 'Tire-Saver' ? 0.82 : 0.88;
-  const brakeDecel = Math.max(10, brakeBase * compoundMod.grip * personalityBrakeFactor);
-  const skillFactor = Math.max(0.84, Math.min(0.98, 0.91 * (0.5 + 0.5 * car.aiPaceMultiplier)));
+  const brakeDecel = Math.max(12, brakeBase * compoundMod.grip * personalityBrakeFactor);
+  const skillFactor = Math.max(0.84, Math.min(1.01, 0.93 * (0.5 + 0.5 * car.aiPaceMultiplier)));
 
   const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
   const halfW = (currentSample.width || compiledTrack.spec.trackWidth) * 0.5;
@@ -1091,6 +1207,8 @@ export function computeAIControl(
 
   let leadCar: CarSimState | null = null;
   let leadDs = Infinity;
+  let passTargetCar: CarSimState | null = null;
+  let passTargetDs = Infinity;
   let slowerClassAhead = false;
 
   // Side-by-side door awareness bounds
@@ -1120,18 +1238,23 @@ export function computeAIControl(
       }
     }
 
-    // Layer 1: Forward scan within 60m ahead and 12m alongside
-    const isWithinScanCone = ds > 0.4 && ds < 60.0 && Math.abs(dLat - car.lateralOffset) < 12.0;
-    const aheadLatOverlap = Math.abs(dLat - car.lateralOffset) < CAR_WIDTH * 1.45;
+    // Layer 1: Forward braking cone ONLY for cars overlapping our current or target lane!
+    // Never false-brake on straights for cars in an adjacent clear passing lane.
+    if (ds > 0.4 && ds < Math.max(62.0, dynamicBrakingDist + 8.0)) {
+      const latDiffCurr = Math.abs(dLat - car.lateralOffset);
+      const latDiffTarget = Math.abs(dLat - car.aiTargetOffset);
+      const inSameLane = latDiffCurr < CAR_WIDTH * 1.45 || latDiffTarget < CAR_WIDTH * 1.25;
 
-    if (isWithinScanCone) {
-      if (aheadLatOverlap && ds < dynamicBrakingDist && ds < leadDs) {
-        leadDs = ds;
-        leadCar = other;
-      } else if (!leadCar && ds < Math.max(38.0, dynamicBrakingDist) && ds < leadDs && other.speed < car.speed + 1.5) {
+      if (inSameLane && ds < dynamicBrakingDist && ds < leadDs) {
         leadDs = ds;
         leadCar = other;
       }
+
+      if (latDiffCurr < halfW * 1.45 && ds < 62.0 && ds < passTargetDs && other.speed < car.speed + 2.5) {
+        passTargetDs = ds;
+        passTargetCar = other;
+      }
+
       if (ds < 60.0) {
         const otherClass = CAR_CLASSES[other.carSpec.classId];
         if (classMeta.basePaceIndex > otherClass.basePaceIndex + 0.04) {
@@ -1153,10 +1276,12 @@ export function computeAIControl(
   let desiredOffset = baseRacingLine;
 
   // Layer 2: Proactive Overtaking Lane Selection when closing on slower car ahead within 60m
-  if (leadCar && leadDs < Math.max(48, car.speed * 1.5) && car.speed > leadCar.speed - 2.5) {
+  const overtakeRef = leadCar ?? passTargetCar;
+  const overtakeDs = leadCar ? leadDs : passTargetDs;
+  if (overtakeRef && overtakeDs < Math.max(48, car.speed * 1.5) && car.speed > overtakeRef.speed - 2.5) {
     const clearance = CAR_WIDTH * 1.35; // >= 1.35 * carWidth lateral clearance
-    const leftUpper = Math.min(maxSafeLane, leadCar.lateralOffset - clearance);
-    const rightLower = Math.max(minSafeLane, leadCar.lateralOffset + clearance);
+    const leftUpper = Math.min(maxSafeLane, overtakeRef.lateralOffset - clearance);
+    const rightLower = Math.max(minSafeLane, overtakeRef.lateralOffset + clearance);
     const leftClearance = Math.max(0, leftUpper - minSafeLane);
     const rightClearance = Math.max(0, maxSafeLane - rightLower);
 
@@ -1206,45 +1331,50 @@ export function computeAIControl(
     steerTargetOffset = compiledTrack.pitOffset;
   }
 
-  // ==================== 3. KINEMATIC STOPPING-DISTANCE CURVATURE SCAN ====================
-  // Couple AI stopping-distance lookahead directly to tuned braking deceleration and downforce curve
-  const scanDist = Math.max(160, Math.min(380, (car.speed * car.speed) / (2 * Math.max(10, brakeDecel * 0.85)) + 40.0));
-  const scanSteps = 30;
+  // ==================== 3. KINEMATIC SLOPE-AWARE STOPPING-DISTANCE CURVATURE SCAN ====================
+  const scanDist = Math.max(180, Math.min(430, (car.speed * car.speed) / (2 * Math.max(10, brakeDecel * 0.80)) + 45.0));
   let maxBrakeRatio = 0;
   let immediateCornerSpeed = 999;
 
   const effectiveLatGripBase =
     gripBase * compoundMod.grip * wearGripFactor * damageFactor;
 
-  for (let sIdx = 0; sIdx <= scanSteps; sIdx++) {
-    const dMeters = 2.5 + (sIdx / scanSteps) * scanDist;
-    const sample = sampleTrackAtT(
-      compiledTrack,
-      car.trackT + dMeters / Math.max(100, compiledTrack.totalLength),
-    );
+  // Dense 2.5m scan across near-zone [0..95m] so current apex & tight hairpins (e.g., Monaco R=4.2m) are never skipped,
+  // followed by 10m scan up to scanDist.
+  const scanDistances: number[] = [0];
+  for (let d = 2.0; d <= 95.0; d += 2.5) scanDistances.push(d);
+  for (let d = 105.0; d <= scanDist; d += 10.0) scanDistances.push(d);
+
+  for (let sIdx = 0; sIdx < scanDistances.length; sIdx++) {
+    const dMeters = scanDistances[sIdx];
+    const sample =
+      dMeters === 0
+        ? currentSample
+        : sampleTrackAtT(
+            compiledTrack,
+            car.trackT + dMeters / Math.max(100, compiledTrack.totalLength),
+          );
     const absK = Math.abs(sample.curvature);
-    if (absK < 0.0048) continue;
+    if (absK < 0.0042) continue;
 
     const bankBonus = 1.0 + Math.sin(Math.abs(sample.banking || 0)) * 0.35;
-    const aeroDownforceBonus = isGTP
-      ? 1.0 + Math.min(0.18, car.speed / 85.0)
-      : isGT4
-      ? 1.0 + Math.min(0.20, car.speed / 80.0)
-      : isSupercar || isCoupe
-      ? 1.0 + Math.min(0.16, car.speed / 85.0)
-      : 1.0 + Math.min(0.38, car.speed / 62.0);
-    const sampleGrip = effectiveLatGripBase * bankBonus * aeroDownforceBonus;
-    // Calibrated centripetal safe cornering speed at 1:1 metric scale
-    const vSafe = Math.max(10.5, Math.sqrt((sampleGrip * 18.5) / absK) * skillFactor);
+    const { classGripMult, classDownforceBonus } = computeClassGripProfile(car.carSpec.classId, car.speed);
+    const sampleGrip = effectiveLatGripBase * classGripMult * bankBonus * classDownforceBonus;
+    // Calibrated centripetal safe cornering speed (tightened slightly on extreme R<10m hairpins)
+    const minCornerSpeed = absK > 0.10 ? 7.2 : 9.0;
+    const curvScale = absK > 0.10 ? 10.5 : 21.5;
+    const vSafe = Math.max(minCornerSpeed, Math.sqrt((sampleGrip * curvScale) / absK) * skillFactor);
 
-    if (dMeters < 16) {
+    if (dMeters < 20) {
       immediateCornerSpeed = Math.min(immediateCornerSpeed, vSafe);
     }
 
-    if (car.speed > vSafe) {
-      const reqBrakeDist = (car.speed * car.speed - vSafe * vSafe) / (2 * brakeDecel);
-      // Ratio >= 1.0 means we must brake at full decel right now to reach vSafe by dMeters
-      const ratio = reqBrakeDist / Math.max(1.5, dMeters - 1.5);
+    if (dMeters > 0 && car.speed > vSafe) {
+      // Factor longitudinal road slope (ty < 0 downhill reduces effective braking deceleration)
+      const avgTy = (currentSample.ty + sample.ty) * 0.5;
+      const slopeAwareBrake = Math.max(8.0, brakeDecel + 9.81 * avgTy * 0.85);
+      const reqBrakeDist = (car.speed * car.speed - vSafe * vSafe) / (2 * slopeAwareBrake);
+      const ratio = reqBrakeDist / Math.max(1.2, dMeters - 1.0);
       if (ratio > maxBrakeRatio) {
         maxBrakeRatio = ratio;
       }
@@ -1262,8 +1392,10 @@ export function computeAIControl(
     cornerBrake = Math.min(1.0, 0.22 + (maxBrakeRatio - 0.86) * 2.6);
     cornerThrottle = 0.0;
   } else if (maxBrakeRatio >= 0.72) {
-    // Feather throttle smoothly before braking threshold
     cornerThrottle = Math.max(0.20, 1.0 - (maxBrakeRatio - 0.72) * 5.0);
+  } else if (car.understeerFactor > 0.28) {
+    // Modulate corner-exit throttle cleanly when pushing wide
+    cornerThrottle = Math.max(0.55, 1.0 - (car.understeerFactor - 0.28) * 0.7);
   }
 
   // ==================== 4. COLLISION-AVOIDANCE BRAKING ====================
@@ -1277,15 +1409,15 @@ export function computeAIControl(
       Math.abs(car.aiTargetOffset - leadCar.lateralOffset) >= CAR_WIDTH * 1.45 &&
       Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.45;
 
-    // When directly behind with lateral overlap, ALWAYS match speed and brake to avoid rear-ending!
-    const immediateDanger = hasLateralOverlap || !pullingOutToPass || leadDs < 12.0 || closingSpeed > 1.5;
+    // Only apply collision braking when actually overlapping our lane or dangerously close without open passing space
+    const immediateDanger = hasLateralOverlap && (!pullingOutToPass || leadDs < 14.0);
 
     if (immediateDanger) {
       const gap = Math.max(0.5, leadDs - 4.2);
       const desiredFollowSpeed =
         leadDs < 10.0
           ? Math.max(0, leadCar.speed * Math.max(0, (leadDs - 4.0) / 6.0))
-          : (hasLateralOverlap ? Math.min(leadCar.speed, car.speed) : leadCar.speed);
+          : Math.min(leadCar.speed, car.speed);
 
       if (car.speed > desiredFollowSpeed || closingSpeed > 0.2) {
         const speedDiffDecel =
@@ -1296,13 +1428,17 @@ export function computeAIControl(
           avoidBrake = Math.max(0, Math.min(1.0, reqAvoidDecel / brakeDecel));
           avoidThrottleCap = avoidBrake > 0.05 ? 0.0 : 0.35;
         }
-      } else if (leadDs < 14.0 && hasLateralOverlap) {
+      } else if (leadDs < 14.0) {
         avoidThrottleCap = Math.min(avoidThrottleCap, 0.5);
       }
     }
   }
 
   // ==================== 5. ADAPTIVE LOOKAHEAD + DAMPED PD STEERING ====================
+  const ahead5 = sampleTrackAtT(
+    compiledTrack,
+    car.trackT + 5 / Math.max(100, compiledTrack.totalLength),
+  );
   const ahead10 = sampleTrackAtT(
     compiledTrack,
     car.trackT + 10 / Math.max(100, compiledTrack.totalLength),
@@ -1311,14 +1447,12 @@ export function computeAIControl(
     compiledTrack,
     car.trackT + 20 / Math.max(100, compiledTrack.totalLength),
   );
-  const nearCurv = Math.max(
-    Math.abs(currentSample.curvature),
-    Math.abs(ahead10.curvature),
-    Math.abs(ahead20.curvature),
-  );
+  const apexNearCurv = Math.max(Math.abs(currentSample.curvature), Math.abs(ahead5.curvature), Math.abs(ahead10.curvature));
+  const nearCurv = Math.max(apexNearCurv, Math.abs(ahead20.curvature));
   const curvBlend = Math.min(1, nearCurv / 0.042);
   const straightLook = Math.max(38, Math.min(68, 32 + car.speed * 0.36));
-  const tightLook = Math.max(14, Math.min(26, 12 + car.speed * 0.18));
+  const baseTightLook = Math.max(12, Math.min(24, 10 + car.speed * 0.16));
+  const tightLook = apexNearCurv > 0.08 ? Math.max(7.0, Math.min(baseTightLook, 1.15 / apexNearCurv)) : baseTightLook;
   let lookAheadDist = straightLook * (1 - curvBlend) + tightLook * curvBlend;
   if (leadCar && leadDs < 24 && Math.abs(car.lateralOffset - steerTargetOffset) > 0.5) {
     lookAheadDist = Math.max(12, Math.min(lookAheadDist, leadDs * 0.85));

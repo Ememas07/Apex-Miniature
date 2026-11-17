@@ -1748,6 +1748,9 @@ export function buildDiecastCar(
       map: numberPlateTex,
       roughness: 0.38,
       metalness: 0.05,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     }),
   );
 
@@ -1756,6 +1759,9 @@ export function buildDiecastCar(
       map: bannerTex,
       roughness: 0.3,
       metalness: 0.1,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     }),
   );
 
@@ -1926,13 +1932,26 @@ export function buildDiecastCar(
       helmet.position.set(0, 0.74, 0.12);
       bodyGroup.add(helmet);
 
-      // Twin rear winglets over rear wheels
-      const wingletGeo = track(new THREE.BoxGeometry(0.42, 0.28, 0.48));
-      for (const sx of [-0.68, 0.68]) {
+      // Sculpted Gen3 Evo rear wheel aero pods & winglets
+      const wingletProfile = new THREE.Shape();
+      wingletProfile.moveTo(-0.28, 0.0);
+      wingletProfile.lineTo(0.24, 0.0);
+      wingletProfile.lineTo(0.14, 0.20);
+      wingletProfile.lineTo(-0.24, 0.30);
+      wingletProfile.closePath();
+      const wingletGeo = track(
+        new THREE.ExtrudeGeometry(wingletProfile, {
+          depth: 0.08,
+          bevelEnabled: true,
+          bevelThickness: 0.02,
+          bevelSize: 0.015,
+          bevelSegments: 2,
+        }),
+      );
+      wingletGeo.rotateY(Math.PI / 2);
+      for (const sx of [-0.62, 0.54]) {
         const winglet = new THREE.Mesh(wingletGeo, secondaryMat);
-        winglet.position.set(sx, 0.74, -1.55);
-        winglet.rotation.z = sx < 0 ? -0.22 : 0.22;
-        winglet.rotation.x = -0.12;
+        winglet.position.set(sx, 0.56, -1.52);
         winglet.castShadow = true;
         bodyGroup.add(winglet);
       }
@@ -1982,11 +2001,35 @@ export function buildDiecastCar(
       hullMesh.castShadow = true;
       bodyGroup.add(hullMesh);
 
-      const airboxGeo = track(new THREE.BoxGeometry(0.32, 0.38, 1.15));
+      // Sculpted tapered F1 roll-hoop airbox + engine cover shark fin (replaces boxy brick)
+      const engineCoverProfile = new THREE.Shape();
+      engineCoverProfile.moveTo(-0.08, 0.0);
+      engineCoverProfile.lineTo(1.32, 0.0);
+      engineCoverProfile.lineTo(1.36, 0.14);
+      engineCoverProfile.lineTo(0.55, 0.26);
+      engineCoverProfile.lineTo(0.06, 0.42);
+      engineCoverProfile.lineTo(-0.08, 0.36);
+      engineCoverProfile.closePath();
+      const airboxGeo = track(
+        new THREE.ExtrudeGeometry(engineCoverProfile, {
+          depth: 0.18,
+          bevelEnabled: true,
+          bevelThickness: 0.04,
+          bevelSize: 0.03,
+          bevelSegments: 2,
+        }),
+      );
+      airboxGeo.rotateY(Math.PI / 2);
+      airboxGeo.translate(-0.09, 0.54, -0.12);
       const airboxMesh = new THREE.Mesh(airboxGeo, secondaryMat);
-      airboxMesh.position.set(0, 0.78, -0.58);
       airboxMesh.castShadow = true;
       bodyGroup.add(airboxMesh);
+
+      // Recessed dark airbox intake above driver helmet
+      const scoopMouthGeo = track(new THREE.BoxGeometry(0.16, 0.12, 0.06));
+      const scoopMouth = new THREE.Mesh(scoopMouthGeo, matteTrimMat);
+      scoopMouth.position.set(0, 0.87, -0.02);
+      bodyGroup.add(scoopMouth);
 
       const helmetGeo = track(new THREE.SphereGeometry(0.19, 16, 14));
       const helmet = new THREE.Mesh(helmetGeo, tertiaryMat);
@@ -2331,22 +2374,40 @@ export function buildDiecastCar(
       }
     }
 
-    // Windshield Banner (Anchored flush onto sloped windshield glass)
+    // Windshield Banner (Contoured 6-vertex mesh hugging the curved windshield glass flush)
     if (!isStreetCar && cabinStations.length >= 2) {
       const stTop = cabinStations[cabinStations.length - 2];
       const stBtm = cabinStations[cabinStations.length - 1];
-      const dz = stBtm.z - stTop.z;
-      const dy = stBtm.yRoof - stTop.yRoof;
-      const bannerWidth = Math.max(0.62, stTop.wRoof * 2 * 0.96);
-      const bannerHeight = 0.11;
-      const bannerGeo = track(new THREE.PlaneGeometry(bannerWidth, bannerHeight));
-      const pitch = -Math.atan2(-dy, dz);
+      const t0 = 0.04;
+      const t1 = 0.30;
+      const lerpSt = (t: number) => ({
+        z: stTop.z + (stBtm.z - stTop.z) * t,
+        w: (stTop.wRoof + (stBtm.wRoof - stTop.wRoof) * t) * 0.94,
+        y: stTop.yRoof + (stBtm.yRoof - stTop.yRoof) * t,
+      });
+      const rTop = lerpSt(t0);
+      const rBtm = lerpSt(t1);
+      const liftY = 0.011;
+      const liftZ = 0.010;
+      const crownLift = 0.025;
+      const bPos = new Float32Array([
+        -rTop.w, rTop.y + liftY, rTop.z + liftZ,
+        0, rTop.y + crownLift + liftY, rTop.z + liftZ,
+        rTop.w, rTop.y + liftY, rTop.z + liftZ,
+        -rBtm.w, rBtm.y + liftY, rBtm.z + liftZ,
+        0, rBtm.y + crownLift + liftY, rBtm.z + liftZ,
+        rBtm.w, rBtm.y + liftY, rBtm.z + liftZ,
+      ]);
+      const bUv = new Float32Array([
+        0, 1, 0.5, 1, 1, 1,
+        0, 0, 0.5, 0, 1, 0,
+      ]);
+      const bannerGeo = track(new THREE.BufferGeometry());
+      bannerGeo.setAttribute('position', new THREE.BufferAttribute(bPos, 3));
+      bannerGeo.setAttribute('uv', new THREE.BufferAttribute(bUv, 2));
+      bannerGeo.setIndex([0, 3, 4, 0, 4, 1, 1, 4, 5, 1, 5, 2]);
+      bannerGeo.computeVertexNormals();
       const bannerMesh = new THREE.Mesh(bannerGeo, bannerMat);
-      bannerMesh.rotation.x = pitch;
-      const tPos = 0.20;
-      const bZ = stTop.z + dz * tPos;
-      const bY = stTop.yRoof + dy * tPos + 0.008;
-      bannerMesh.position.set(0, bY, bZ);
       bodyGroup.add(bannerMesh);
     }
 
@@ -2424,16 +2485,23 @@ export function buildDiecastCar(
     } else if (design.rearDeckStyle === 'jesko-boomerang') {
       // Koenigsegg Jesko Attack Active Top-Mount Boomerang Wing
       for (const sx of [-0.38, 0.38]) {
-        const pylon = new THREE.Mesh(track(new THREE.BoxGeometry(0.06, 0.44, 0.28)), matteTrimMat);
-        pylon.position.set(sx, 0.86, -bodyLen * 0.38);
+        const pylon = new THREE.Mesh(track(new THREE.BoxGeometry(0.055, 0.44, 0.26)), matteTrimMat);
+        pylon.position.set(sx, 0.84, -bodyLen * 0.38);
         pylon.rotation.x = 0.22;
         bodyGroup.add(pylon);
       }
-      const bWingGeo = track(new THREE.BoxGeometry(bodyWidth * 1.05, 0.06, 0.36));
+      const bWingWidth = bodyWidth * 1.04;
+      const bWingGeo = track(new THREE.BoxGeometry(bWingWidth, 0.055, 0.34));
       const bWing = new THREE.Mesh(bWingGeo, wingMat);
-      bWing.position.set(0, 1.05, -bodyLen * 0.46);
+      bWing.position.set(0, 1.04, -bodyLen * 0.46);
       bWing.castShadow = true;
       bodyGroup.add(bWing);
+      for (const sx of [-bWingWidth * 0.5, bWingWidth * 0.5]) {
+        const ep = new THREE.Mesh(track(new THREE.BoxGeometry(0.04, 0.22, 0.38)), carbonMat);
+        ep.position.set(sx, 0.98, -bodyLen * 0.46);
+        ep.rotation.z = sx < 0 ? -0.18 : 0.18;
+        bodyGroup.add(ep);
+      }
       rearWingFlap = bWing;
     } else if (design.rearDeckStyle === 'w1-longtail') {
       // McLaren W1 Active Longtail Wing
@@ -2447,20 +2515,23 @@ export function buildDiecastCar(
       lowLip.position.set(0, 0.68, -bodyLen * 0.48);
       bodyGroup.add(lowLip);
     } else if (design.rearDeckStyle === 'split-499p') {
-      const halfW = bodyWidth * 0.42;
-      for (const sx of [-0.52, 0.52]) {
-        const strut = new THREE.Mesh(track(new THREE.BoxGeometry(0.06, 0.42, 0.22)), matteTrimMat);
-        strut.position.set(sx, 0.78, -bodyLen * 0.44);
-        bodyGroup.add(strut);
-
-        const wing = new THREE.Mesh(track(new THREE.BoxGeometry(halfW, 0.07, 0.32)), wingMat);
-        wing.position.set(sx > 0 ? halfW * 0.5 + 0.10 : -halfW * 0.5 - 0.10, 0.99, -bodyLen * 0.46);
-        wing.castShadow = true;
-        bodyGroup.add(wing);
+      // Ferrari 499P LMH sculpted outer endplate pylons + clean single main rear wing + tucked rear deck beam
+      const wingWidth = bodyWidth * 0.98;
+      for (const sx of [-wingWidth * 0.47, wingWidth * 0.47]) {
+        const endPylon = new THREE.Mesh(track(new THREE.BoxGeometry(0.05, 0.50, 0.40)), secondaryMat);
+        endPylon.position.set(sx, 0.78, -bodyLen * 0.45);
+        endPylon.castShadow = true;
+        bodyGroup.add(endPylon);
       }
-      const lowerBar = new THREE.Mesh(track(new THREE.BoxGeometry(bodyWidth * 0.92, 0.05, 0.22)), secondaryMat);
-      lowerBar.position.set(0, 0.76, -bodyLen * 0.48);
-      bodyGroup.add(lowerBar);
+      const mainWing = new THREE.Mesh(track(new THREE.BoxGeometry(wingWidth, 0.065, 0.32)), wingMat);
+      mainWing.position.set(0, 0.99, -bodyLen * 0.46);
+      mainWing.castShadow = true;
+      bodyGroup.add(mainWing);
+      rearWingFlap = mainWing;
+
+      const deckBeam = new THREE.Mesh(track(new THREE.BoxGeometry(bodyWidth * 0.68, 0.05, 0.16)), carbonMat);
+      deckBeam.position.set(0, 0.54, -bodyLen * 0.49);
+      bodyGroup.add(deckBeam);
     } else if (design.rearDeckStyle === 'active-lip') {
       const lip = new THREE.Mesh(track(new THREE.BoxGeometry(bodyWidth * 0.80, 0.05, 0.14)), wingMat);
       lip.position.set(0, 0.70, -bodyLen * 0.48);
@@ -2476,17 +2547,35 @@ export function buildDiecastCar(
       lip.position.set(0, 0.72, -bodyLen * 0.48);
       bodyGroup.add(lip);
     } else if (design.rearDeckStyle === 'ducktail-rs') {
-      const wingWidth = bodyWidth * 0.98;
-      for (const sx of [-0.46, 0.46]) {
-        const strut = new THREE.Mesh(track(new THREE.BoxGeometry(0.06, 0.36, 0.18)), matteTrimMat);
-        strut.position.set(sx, 0.80, -bodyLen * 0.44);
-        bodyGroup.add(strut);
+      // Sculpted Porsche RS / coupe integrated ducktail lip + clean single swan-neck winglet if GT3 RS
+      const duckGeo = track(new THREE.BoxGeometry(bodyWidth * 0.86, 0.075, 0.24));
+      const duckMesh = new THREE.Mesh(duckGeo, primaryMat);
+      duckMesh.position.set(0, 0.60, -bodyLen * 0.44);
+      duckMesh.rotation.x = 0.36;
+      duckMesh.castShadow = true;
+      bodyGroup.add(duckMesh);
+
+      if (carId === 'porsche-911-gt3-rs') {
+        const wingWidth = bodyWidth * 0.96;
+        for (const sx of [-0.40, 0.40]) {
+          const strut = new THREE.Mesh(track(new THREE.BoxGeometry(0.055, 0.34, 0.18)), matteTrimMat);
+          strut.position.set(sx, 0.80, -bodyLen * 0.41);
+          strut.rotation.x = 0.16;
+          bodyGroup.add(strut);
+        }
+        const rsWing = new THREE.Mesh(track(new THREE.BoxGeometry(wingWidth, 0.06, 0.28)), wingMat);
+        rsWing.position.set(0, 0.97, -bodyLen * 0.45);
+        rsWing.castShadow = true;
+        bodyGroup.add(rsWing);
+        for (const sx of [-wingWidth * 0.5, wingWidth * 0.5]) {
+          const ep = new THREE.Mesh(track(new THREE.BoxGeometry(0.04, 0.20, 0.36)), tertiaryMat);
+          ep.position.set(sx, 0.97, -bodyLen * 0.45);
+          bodyGroup.add(ep);
+        }
+        rearWingFlap = rsWing;
+      } else {
+        rearWingFlap = duckMesh;
       }
-      const wingMesh = new THREE.Mesh(track(new THREE.BoxGeometry(wingWidth, 0.07, 0.28)), wingMat);
-      wingMesh.position.set(0, 0.96, -bodyLen * 0.46);
-      wingMesh.castShadow = true;
-      bodyGroup.add(wingMesh);
-      rearWingFlap = wingMesh;
     } else {
       // swan-neck or strut-race
       const isSwan = design.rearDeckStyle === 'swan-neck';
@@ -2511,17 +2600,45 @@ export function buildDiecastCar(
       }
     }
 
-    // Door Number Plates
+    // Door Number Plates (Compute exact hull outer skin X across door span so plates never float or clip haunches)
     if (!isStreetCar) {
-      const doorPlateGeo = track(new THREE.PlaneGeometry(0.62, 0.44));
+      const sampleSideXAt = (zQuery: number, yQuery: number): number => {
+        let s0 = hullStations[0];
+        let s1 = hullStations[hullStations.length - 1];
+        for (let i = 0; i < hullStations.length - 1; i++) {
+          if (zQuery >= hullStations[i].z && zQuery <= hullStations[i + 1].z) {
+            s0 = hullStations[i];
+            s1 = hullStations[i + 1];
+            break;
+          }
+        }
+        const span = Math.max(1e-4, s1.z - s0.z);
+        const f = Math.max(0, Math.min(1, (zQuery - s0.z) / span));
+        const halfW = s0.halfW + (s1.halfW - s0.halfW) * f;
+        const wBelt = s0.wBelt + (s1.wBelt - s0.wBelt) * f;
+        const ySill = s0.ySill + (s1.ySill - s0.ySill) * f;
+        const yBelt = s0.yBelt + (s1.yBelt - s0.yBelt) * f;
+        const vFrac = Math.max(0, Math.min(1, (yQuery - ySill) / Math.max(0.05, yBelt - ySill)));
+        return halfW * 1.02 * (1 - vFrac) + wBelt * vFrac;
+      };
+      const doorZ = 0.06;
+      const doorY = 0.40;
+      const doorHalfSpan = 0.26;
+      const xBack = sampleSideXAt(doorZ - doorHalfSpan, doorY);
+      const xMid = sampleSideXAt(doorZ, doorY);
+      const xFront = sampleSideXAt(doorZ + doorHalfSpan, doorY);
+      const flushX = Math.max(xBack, xMid, xFront) + 0.015;
+      const sideSlopeAngle = Math.atan2(xFront - xBack, doorHalfSpan * 2);
+
+      const doorPlateGeo = track(new THREE.PlaneGeometry(doorHalfSpan * 2, 0.34));
       const leftPlate = new THREE.Mesh(doorPlateGeo, plateMat);
-      leftPlate.rotation.y = -Math.PI / 2;
-      leftPlate.position.set(-bodyWidth * 0.51, 0.48, 0.05);
+      leftPlate.rotation.y = -Math.PI / 2 - sideSlopeAngle * 0.5;
+      leftPlate.position.set(-flushX, doorY, doorZ);
       bodyGroup.add(leftPlate);
 
       const rightPlate = new THREE.Mesh(doorPlateGeo, plateMat);
-      rightPlate.rotation.y = Math.PI / 2;
-      rightPlate.position.set(bodyWidth * 0.51, 0.48, 0.05);
+      rightPlate.rotation.y = Math.PI / 2 + sideSlopeAngle * 0.5;
+      rightPlate.position.set(flushX, doorY, doorZ);
       bodyGroup.add(rightPlate);
     }
 

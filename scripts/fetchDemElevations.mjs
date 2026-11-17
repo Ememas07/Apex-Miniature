@@ -200,28 +200,30 @@ function saveCache(cache) {
   fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2), 'utf8');
 }
 
-// Queries Open-Meteo elevation API (Copernicus DEM) in batches of 100 with OpenTopoData fallback on 429
+// Queries Open-Meteo elevation API (Copernicus DEM) in batches of 100 with OpenTopoData fallback
 let openMeteoDisabled = false;
 
 async function fetchElevationBatch(lats, lons) {
   if (!openMeteoDisabled) {
     const openMeteoUrl = `https://api.open-meteo.com/v1/elevation?latitude=${lats.join(',')}&longitude=${lons.join(',')}`;
 
-    try {
-      const res = await fetch(openMeteoUrl, { headers: { 'User-Agent': 'ApexMiniature/1.0' } });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.elevation)) {
-          return data.elevation;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(openMeteoUrl, { headers: { 'User-Agent': 'ApexMiniature/1.0' } });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.elevation)) {
+            return data.elevation;
+          }
         }
-        if (data && data.error) {
-          openMeteoDisabled = true;
+        if (res.status === 429 || res.status >= 500) {
+          await new Promise((r) => setTimeout(r, attempt * 1800));
+          continue;
         }
-      } else {
-        openMeteoDisabled = true;
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, attempt * 1200));
       }
-    } catch {
-      openMeteoDisabled = true;
     }
   }
 
@@ -452,7 +454,9 @@ export const REAL_DEM_ELEVATIONS: Record<string, number[]> = {\n`;
   console.log('===========================================================================================================\n');
 }
 
-main().catch((err) => {
-  console.error('\nFatal Error in fetchDemElevations:', err);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)) {
+  main().catch((err) => {
+    console.error('\nFatal Error in fetchDemElevations:', err);
+    process.exit(1);
+  });
+}
