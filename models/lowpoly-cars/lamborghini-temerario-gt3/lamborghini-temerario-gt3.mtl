@@ -45,11 +45,6 @@ Kd 0.230563 0.180339 0.208323
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_sponsor
-Kd 0.970105 0.568282 0.06565
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_Plastic
 Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
@@ -92,17 +87,6 @@ Ns 32
 
 newmtl EXT_Brake_Caliper
 Kd 0.473097 0.426432 0.338899
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_Glass_windscreen
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
-newmtl INT_DECALS_Flat
-Kd 0.219191 0.176339 0.102413
 Ks 0.25 0.25 0.25
 Ns 32
 

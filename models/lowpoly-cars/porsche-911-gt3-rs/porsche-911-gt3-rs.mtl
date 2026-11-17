@@ -90,6 +90,11 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl colorrpmline
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl arrowchrono
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
@@ -97,16 +102,6 @@ Ns 32
 
 newmtl central_rpm1
 Kd 0.6 0.6 0.6
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl dash2
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl interior_decals
-Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -127,31 +122,6 @@ Ns 32
 
 newmtl EXT_caliper_AT
 Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_Skin_White
-Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_Skin_Grey2
-Kd 0.25 0.25 0.25
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_Carbon2
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_Plastic_Flat
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl dash4
-Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -252,6 +222,11 @@ Kd 0.82 0.08 0.08
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl redrearlight
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl plasticexterior
 Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
@@ -302,16 +277,6 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl interior_red
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl interior_black
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl odi_LIGHT_front_v1.1
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
@@ -352,11 +317,6 @@ Kd 0.78 0.78 0.8
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_CUCITURE
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl cky_lateraladreapta
 Kd 0.45 0.45 0.45
 Ks 0.25 0.25 0.25
@@ -373,11 +333,6 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl blackglosshoodvents
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Weissach
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
@@ -423,24 +378,12 @@ Ks 0.25 0.25 0.25
 Ns 32
 d 0.45
 
-newmtl glass_dash
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
 newmtl glass_reartrunkstoplight
 Kd 0.82 0.08 0.08
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl Glass_-_Clear.001
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
-newmtl int_windows
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
@@ -453,6 +396,11 @@ Ns 32
 
 newmtl Material_#37
 Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl IMG_Rim_RimCapEmblem_GT2RS
+Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 

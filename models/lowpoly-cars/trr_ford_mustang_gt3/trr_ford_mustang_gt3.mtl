@@ -1,0 +1,142 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl DETROIT_EGT_RIM
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl DETROIT_EGT_RIM_IN
+Kd 0.130229 0.129108 0.128245
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GTE_M_TWALL
+Kd 0.066912 0.069937 0.066919
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GTE_M_TREAD
+Kd 0.064836 0.064782 0.064813
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GTE_M_TWALL_INSIDE
+Kd 0.041835 0.043248 0.047442
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl DISC
+Kd 0.064705 0.062267 0.069241
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl body
+Kd 0.45 0.45 0.45
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl linha_cor
+Kd 0.45 0.45 0.45
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbono
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl ext_plastico_polido
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl ext_metal_polido
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl cromado_ext
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl ext_borrachas
+Kd 0.22 0.22 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl grelhas
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl vidro_Ext
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl logo_banner
+Kd 0.022166 0.02217 0.037634
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black
+Kd 0 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl vidro_farois_frente
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl farois_tras
+Kd 0.768627 0.07451 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl farol_refletivo
+Kd 1 1 1
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl farol_interior
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.588206 0.57566 0.55286
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl DETROIT_EGT_2018_CAL
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CHEVROLET_CORVETTE76GENERIC_FL
+Kd 0.105658 0.103578 0.109911
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl farol_led
+Kd 1 1 1
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_PLASTIC_MATTE
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LEDGLASS
+Kd 0.032258 0.031746 0.032258
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl vidro_farois_tras
+Kd 0.768627 0.07451 0
+Ks 0.25 0.25 0.25
+Ns 32

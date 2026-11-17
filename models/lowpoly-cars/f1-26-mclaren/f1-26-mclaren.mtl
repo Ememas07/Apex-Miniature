@@ -40,26 +40,6 @@ Kd 0.053963 0.054936 0.053963
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl cockpit_metal
-Kd 0.266507 0.265315 0.266885
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_foam
-Kd 0.075983 0.041853 0.035314
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl generics
-Kd 0.266507 0.265315 0.266885
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit
-Kd 0 0.012266 0
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl decal
 Kd 0.608295 0.5946 0.565236
 Ks 0.25 0.25 0.25
@@ -67,11 +47,6 @@ Ns 32
 
 newmtl rear_light
 Kd 0.244928 0.250481 0.245842
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_black_s
-Kd 0.029045 0.028692 0.030462
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -92,6 +67,11 @@ Ns 32
 
 newmtl TIRE_SIDES
 Kd 0.080267 0.087255 0.080267
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl generics
+Kd 0.266507 0.265315 0.266885
 Ks 0.25 0.25 0.25
 Ns 32
 

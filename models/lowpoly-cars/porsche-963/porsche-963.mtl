@@ -30,6 +30,11 @@ Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl Side_Panels
+Kd 0.45 0.45 0.45
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl Leader_Lights
 Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25

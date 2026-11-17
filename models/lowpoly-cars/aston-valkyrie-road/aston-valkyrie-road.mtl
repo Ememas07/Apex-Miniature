@@ -1,19 +1,15 @@
 # Exported by Apex Miniature objToLowPoly.mjs
 
-newmtl win_int
+newmtl red_zad_fara
+Kd 0.435484 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl glass
 Kd 0.290323 0.285714 0.306452
 Ks 0.25 0.25 0.25
 Ns 32
-
-newmtl carbon_int
-Kd 0.299931 0.300378 0.301002
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl int_color
-Kd 0.207756 0.206814 0.208764
-Ks 0.25 0.25 0.25
-Ns 32
+d 0.45
 
 newmtl body2
 Kd 0.365014 0.365033 0.372511
@@ -70,16 +66,6 @@ Kd 0.041205 0.041264 0.056483
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_ALPHA
-Kd 0.179814 0.177812 0.182838
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl int_alpha_2
-Kd 0.179814 0.177812 0.182838
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl kolonki
 Kd 0.179814 0.177812 0.182838
 Ks 0.25 0.25 0.25
@@ -90,28 +76,8 @@ Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl dash2
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl stro4ka
 Kd 0.179814 0.177812 0.182838
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl plastic_int
-Kd 0.089907 0.090464 0.09753
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl black_int
-Kd 0.096396 0.097796 0.102728
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl metal_int
-Kd 0.10046 0.100322 0.101594
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -129,17 +95,6 @@ newmtl Brake_Caliper
 Kd 0.124874 0.129077 0.124874
 Ks 0.25 0.25 0.25
 Ns 32
-
-newmtl red_zad_fara
-Kd 0.435484 0 0
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl glass
-Kd 0.290323 0.285714 0.306452
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
 
 newmtl rim
 Kd 0.044292 0.044395 0.054215

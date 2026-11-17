@@ -94,6 +94,11 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl numberplate
+Kd 0.8 0.8 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl lumi_front
 Kd 0.8 0.8 0.8
 Ks 0.25 0.25 0.25
@@ -101,11 +106,6 @@ Ns 32
 
 newmtl _EXT_Banner
 Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl _INT_Banner
-Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -144,12 +144,12 @@ Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_tyres
-Kd 0.12 0.12 0.13
+newmtl EXT_Disc
+Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_Disc
-Kd 0.76 0.78 0.82
+newmtl EXT_tyres
+Kd 0.12 0.12 0.13
 Ks 0.25 0.25 0.25
 Ns 32

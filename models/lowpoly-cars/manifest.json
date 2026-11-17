@@ -1,6 +1,18 @@
 {
   "cars": [
     {
+      "id": "acf-genesis-gmr-001",
+      "folder": "acf_genesis_gmr_001",
+      "obj": "acf_genesis_gmr_001.obj",
+      "mtl": "acf_genesis_gmr_001.mtl"
+    },
+    {
+      "id": "acura-nsx-gt3",
+      "folder": "acura_nsx_gt3",
+      "obj": "acura_nsx_gt3.obj",
+      "mtl": "acura_nsx_gt3.mtl"
+    },
+    {
       "id": "acura-arx-06",
       "folder": "acura-arx-06",
       "obj": "acura-arx-06.obj",
@@ -49,6 +61,18 @@
       "mtl": "audi-r8-lms-gt3.mtl"
     },
     {
+      "id": "bentley-continental-gt3-18-acc",
+      "folder": "bentley_continental_gt3_18_acc",
+      "obj": "bentley_continental_gt3_18_acc.obj",
+      "mtl": "bentley_continental_gt3_18_acc.mtl"
+    },
+    {
+      "id": "bmw-m4-gt3",
+      "folder": "bmw_m4_gt3",
+      "obj": "bmw_m4_gt3.obj",
+      "mtl": "bmw_m4_gt3.mtl"
+    },
+    {
       "id": "bmw-m-hybrid-v8",
       "folder": "bmw-m-hybrid-v8",
       "obj": "bmw-m-hybrid-v8.obj",
@@ -67,10 +91,22 @@
       "mtl": "cadillac-vseries-r.mtl"
     },
     {
+      "id": "corvette-z06-gt3r",
+      "folder": "corvette_z06_gt3r",
+      "obj": "corvette_z06_gt3r.obj",
+      "mtl": "corvette_z06_gt3r.mtl"
+    },
+    {
       "id": "corvette-z06-coupe",
       "folder": "corvette-z06-coupe",
       "obj": "corvette-z06-coupe.obj",
       "mtl": "corvette-z06-coupe.mtl"
+    },
+    {
+      "id": "exmods-ferrari-f80-26",
+      "folder": "exmods_ferrari_f80_26",
+      "obj": "exmods_ferrari_f80_26.obj",
+      "mtl": "exmods_ferrari_f80_26.mtl"
     },
     {
       "id": "f1-05-ferrari",
@@ -83,6 +119,12 @@
       "folder": "f1-05-mclaren",
       "obj": "f1-05-mclaren.obj",
       "mtl": "f1-05-mclaren.mtl"
+    },
+    {
+      "id": "f1-05-renault",
+      "folder": "f1-05-renault",
+      "obj": "f1-05-renault.obj",
+      "mtl": "f1-05-renault.mtl"
     },
     {
       "id": "f1-05-williams",
@@ -235,6 +277,12 @@
       "mtl": "ford-mustang-gt4.mtl"
     },
     {
+      "id": "g87",
+      "folder": "g87",
+      "obj": "g87.obj",
+      "mtl": "g87.mtl"
+    },
+    {
       "id": "glickenhaus-scg-007",
       "folder": "glickenhaus-scg-007",
       "obj": "glickenhaus-scg-007.obj",
@@ -263,6 +311,12 @@
       "folder": "lamborghini-temerario-gt3",
       "obj": "lamborghini-temerario-gt3.obj",
       "mtl": "lamborghini-temerario-gt3.mtl"
+    },
+    {
+      "id": "lexus-rcf-gt3",
+      "folder": "lexus_rcf_gt3",
+      "obj": "lexus_rcf_gt3.obj",
+      "mtl": "lexus_rcf_gt3.mtl"
     },
     {
       "id": "ligier-js-p217",
@@ -368,15 +422,15 @@
     },
     {
       "id": "renault-clio-v6",
-      "folder": "renault_clio_v6",
-      "obj": "renault_clio_v6.obj",
-      "mtl": "renault_clio_v6.mtl"
-    },
-    {
-      "id": "renault-clio-v6",
       "folder": "renault-clio-v6",
       "obj": "renault-clio-v6.obj",
       "mtl": "renault-clio-v6.mtl"
+    },
+    {
+      "id": "rs-01-gt3",
+      "folder": "rs_01_gt3",
+      "obj": "rs_01_gt3.obj",
+      "mtl": "rs_01_gt3.mtl"
     },
     {
       "id": "toyota-gr-yaris",
@@ -395,6 +449,12 @@
       "folder": "toyota-supra-gt4",
       "obj": "toyota-supra-gt4.obj",
       "mtl": "toyota-supra-gt4.mtl"
+    },
+    {
+      "id": "trr-ford-mustang-gt3",
+      "folder": "trr_ford_mustang_gt3",
+      "obj": "trr_ford_mustang_gt3.obj",
+      "mtl": "trr_ford_mustang_gt3.mtl"
     }
   ]
 }

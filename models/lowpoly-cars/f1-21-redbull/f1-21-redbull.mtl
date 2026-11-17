@@ -40,11 +40,6 @@ Kd 0.035294 0.156863 0.192157
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl gp21_bolt2
-Kd 0.077432 0.076807 0.077463
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl yellow
 Kd 0.183751 0.206163 0.03922
 Ks 0.25 0.25 0.25
@@ -62,21 +57,6 @@ Ns 32
 
 newmtl car_chassis
 Kd 0 0 0.016129
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl gp21_cockpit_details
-Kd 0.047474 0.001519 0.012947
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_carbon1
-Kd 0.039619 0.044501 0.039619
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_chrome
-Kd 0.040058 0.043856 0.040058
 Ks 0.25 0.25 0.25
 Ns 32
 

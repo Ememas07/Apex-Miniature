@@ -5,11 +5,6 @@ Kd 0 0.301587 0.693548
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl cockpit_chrome
-Kd 0.095433 0.098159 0.095433
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl GLOW2
 Kd 0.725806 0 0
 Ks 0.25 0.25 0.25
@@ -112,21 +107,6 @@ Ns 32
 
 newmtl fabric_lines_red
 Kd 0.638892 0 0.061838
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_carbon
-Kd 0.069055 0.071906 0.069055
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_black_s
-Kd 0.020067 0.019221 0.0281
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_headrest
-Kd 0.101216 0.073537 0.035062
 Ks 0.25 0.25 0.25
 Ns 32
 

@@ -16,11 +16,6 @@ Ks 0.25 0.25 0.25
 Ns 32
 d 0.45
 
-newmtl EXT_lights_glass_int
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_lights_glass_pattern
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
@@ -170,23 +165,8 @@ Kd 0.098039 0.098039 0.098039
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_plate
-Kd 0.1455 0.15036 0.1455
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_aluminum_satin
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_carpaint2
 Kd 1 1 1
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_aluminium_brushed
-Kd 0.528037 0.527406 0.556924
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -230,11 +210,6 @@ Kd 0.098039 0.098039 0.098039
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_screw
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_plastic_metal
 Kd 0.098039 0.098039 0.098039
 Ks 0.25 0.25 0.25
@@ -265,11 +240,6 @@ Kd 0.6445 0.650236 0.657006
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_aluminium_polished
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_cast_aluminum
 Kd 0.528037 0.527406 0.556924
 Ks 0.25 0.25 0.25
@@ -292,6 +262,11 @@ Ns 32
 
 newmtl EXT_emblem
 Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_plastic_ridges
+Kd 0.113124 0.113855 0.113187
 Ks 0.25 0.25 0.25
 Ns 32
 

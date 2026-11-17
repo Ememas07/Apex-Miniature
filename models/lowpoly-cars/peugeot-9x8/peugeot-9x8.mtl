@@ -90,26 +90,6 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_Metal
-Kd 0.109816 0.099873 0.099483
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_Fabric_belts
-Kd 0.112903 0.111111 0.112903
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl carbon_cockpit
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_Carbon
-Kd 0.112903 0.111111 0.112903
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl car_chassis
 Kd 0.322581 0.31746 0.370968
 Ks 0.25 0.25 0.25
@@ -117,11 +97,6 @@ Ns 32
 
 newmtl CALIPER
 Kd 0.774194 0.785714 0.274194
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material_#3697
-Kd 0.109816 0.099873 0.099483
 Ks 0.25 0.25 0.25
 Ns 32
 

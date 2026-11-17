@@ -85,26 +85,6 @@ Kd 0.638892 0 0.061838
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl cockpit_chrome
-Kd 0.110215 0.11255 0.110215
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_carbon
-Kd 0.089493 0.092884 0.089493
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_black_s
-Kd 0.035597 0.03559 0.042559
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cockpit_headrest
-Kd 0.118322 0.085969 0.037424
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl 499p_caliper
 Kd 0.022335 0.020694 0.029202
 Ks 0.25 0.25 0.25

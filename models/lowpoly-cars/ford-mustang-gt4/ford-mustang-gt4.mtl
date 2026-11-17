@@ -20,11 +20,6 @@ Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_Details_Rubber
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_Decals1
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
@@ -67,11 +62,6 @@ Ns 32
 
 newmtl EXT_exhaust
 Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_WINDSCREEEN
-Kd 0.25 0.25 0.25
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -126,16 +116,6 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Cooler
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl int_rollcage
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl gue_logo
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32

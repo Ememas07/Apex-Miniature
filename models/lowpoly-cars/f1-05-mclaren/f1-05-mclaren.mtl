@@ -40,6 +40,21 @@ Kd 0.079475 0.079547 0.080276
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl LED_VOLANTE_3
+Kd 0.080645 0.087302 0.83871
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LED_VOLANTE_2
+Kd 0.258065 0.992063 0.080645
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LED_VOLANTE
+Kd 0.5 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl INTERNAL
 Kd 0 0 0.016129
 Ks 0.25 0.25 0.25
@@ -77,11 +92,6 @@ Ns 32
 
 newmtl mac_parts
 Kd 0 0 0.016129
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl carbon_steer
-Kd 0.117408 0.117234 0.129662
 Ks 0.25 0.25 0.25
 Ns 32
 

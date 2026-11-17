@@ -1,107 +1,112 @@
 # Exported by Apex Miniature objToLowPoly.mjs
 
-newmtl chassis2
-Kd 0.4 0.4 0.4
+newmtl chrome
+Kd 0.403226 0.404762 0.403226
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl chasis
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl mirrors
-Kd 0.8 0.8 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl negro
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl redbull_detail
-Kd 0.509262 0.476764 0.448337
+newmtl black_s
+Kd 0 0 0.016129
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl carbon
-Kd 0.123432 0.122685 0.123432
+Kd 0.138609 0.141927 0.138609
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl redbull_carbon1
-Kd 0.053963 0.054936 0.053963
+newmtl BLACK
+Kd 0 0 0.016129
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl redbull_carbon3
-Kd 0.053963 0.054936 0.053963
+newmtl fom_car_carbon1
+Kd 0.163873 0.164435 0.16381
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl cockpit_metal
-Kd 0.266507 0.265315 0.266885
+newmtl fom_car_detail
+Kd 0.63905 0.621605 0.5516
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl cockpit_foam
-Kd 0.075983 0.041853 0.035314
+newmtl gp21_cinture
+Kd 0.095231 0.096773 0.067131
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl livery_audi_01
+Kd 0.3 0.3 0.3
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl generics
-Kd 0.266507 0.265315 0.266885
+Kd 0.145706 0.134195 0.135349
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl cockpit
-Kd 0 0.012266 0
+newmtl fom_car_mirror_left
+Kd 0.260144 0.31932 0.322581
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl decal
-Kd 0.608295 0.5946 0.565236
+newmtl fom_car_mirror_right
+Kd 0.260144 0.31932 0.322581
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl livery_audi_01_carbon2
+Kd 0.15 0.16 0.18
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl rear_light
-Kd 0.244928 0.250481 0.245842
+Kd 0.297064 0.296224 0.282006
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl cockpit_black_s
-Kd 0.029045 0.028692 0.030462
+newmtl fom_car_dummy_decal
+Kd 0.5 0.5 0.5
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl rtt_light
-Kd 0.481729 0.476563 0.391129
+newmtl boya
+Kd 0.5 0.5 0.5
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl redbull_wheel_hub
-Kd 0.183908 0.167424 0.151943
+newmtl RIM
+Kd 0.064516 0.063492 0.080645
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl TIRE_TREAD
-Kd 0.080267 0.087255 0.080267
+newmtl hub_nut
+Kd 0.042937 0 0.014018
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl TIRE_SIDES
-Kd 0.080267 0.087255 0.080267
+newmtl livery_audi_01_wheel_hub
+Kd 0.171875 0.097749 0.092364
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl sidewall
+Kd 0.091986 0.065058 0.062185
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl tread_medium
+Kd 0.064516 0.063492 0.064516
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl discs
-Kd 0.152237 0.155607 0.159313
+Kd 0.128179 0.131296 0.133142
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl glass
-Kd 0.5 0.5 0.5
+Kd 0.260144 0.31932 0.322581
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.45

@@ -50,18 +50,8 @@ Kd 0.021579 0.021562 0.037015
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl carbon_cockpit
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl car_chassis
 Kd 0 0.039683 0.306452
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl gp21_cockpit_details
-Kd 0.143901 0.119079 0.054183
 Ks 0.25 0.25 0.25
 Ns 32
 

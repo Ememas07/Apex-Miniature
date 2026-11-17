@@ -15,43 +15,8 @@ Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl gr_badgewrc
-Kd 0.25 0.25 0.25
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl gr_details2
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl 156
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl 136
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl metaldots
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl grille1
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl gr_buttons
-Kd 0.25 0.25 0.25
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl gr_details
-Kd 0.82 0.08 0.08
+newmtl gr_climate
+Kd 0.3 0.3 0.3
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -60,8 +25,18 @@ Kd 0.3 0.3 0.3
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl gr_details
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl EXT_BODY
 Kd 0.45 0.45 0.45
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl brakelight
+Kd 0.82 0.08 0.08
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -77,6 +52,16 @@ Ns 32
 
 newmtl EXT_CHROME_LIGHTS_FLAT
 Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 156
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl grille1
+Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -130,16 +115,6 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_SEATS
-Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_SEATBELT
-Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl m
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
@@ -155,11 +130,6 @@ Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_CHROME
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_CARBON
 Kd 0.15 0.16 0.18
 Ks 0.25 0.25 0.25
@@ -167,31 +137,6 @@ Ns 32
 
 newmtl EXT_CHROME
 Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_AO
-Kd 0.35 0.35 0.35
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_CARPET
-Kd 0.8 0.8 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_LEATHER
-Kd 0.35 0.35 0.35
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_PLASTIC_SKIN
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl INT_PLASITC
-Kd 0.5 0.5 0.5
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -220,7 +165,7 @@ Kd 0.3 0.3 0.3
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl INT_ARROWS
+newmtl CLUSTER_BACK
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
@@ -237,6 +182,11 @@ Ns 32
 
 newmtl Material_#1777
 Kd 0.25 0.25 0.25
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 136
+Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -257,26 +207,6 @@ Ns 32
 
 newmtl Plexi
 Kd 0.5 0.5 0.5
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl int_plastic_gauge
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl int_gauge
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl int_plastic_black
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl int_white_led
-Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -301,18 +231,6 @@ Ks 0.25 0.25 0.25
 Ns 32
 d 0.45
 
-newmtl INT_DASH_GLASS
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
-newmtl INT_WINDOWS
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
 newmtl EXT_WINDOWS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
@@ -326,12 +244,6 @@ Ns 32
 d 0.45
 
 newmtl GOPRO_GLASS
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
-newmtl EXT_glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
@@ -364,5 +276,10 @@ Ns 32
 
 newmtl EXT_tires
 Kd 0.12 0.12 0.13
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_rims_centercap
+Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
