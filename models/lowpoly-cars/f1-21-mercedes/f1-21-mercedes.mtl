@@ -1,0 +1,126 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl black_s
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl chrome
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl BLACK
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl chrome_exhaust
+Kd 0.120048 0.121616 0.120048
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl tvcam
+Kd 0.138609 0.141927 0.138609
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon
+Kd 0.138609 0.141927 0.138609
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl mirror
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 2020_light
+Kd 0.242219 0.247907 0.244298
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl color_light_green
+Kd 0.887097 0.992063 0.145161
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl decals
+Kd 0.021579 0.021562 0.037015
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon_cockpit
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_chassis
+Kd 0 0.039683 0.306452
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl gp21_cockpit_details
+Kd 0.143901 0.119079 0.054183
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl gp21_cinture
+Kd 0.095231 0.096773 0.067131
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl SW
+Kd 0.461127 0.443948 0.404234
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CLEARLED
+Kd 0.128024 0.124008 0.128024
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl TAG_DRS_ON
+Kd 0.11744 0.116195 0.11744
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CLEARLED_PRE
+Kd 0.128024 0.124008 0.128024
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl kers_brown
+Kd 0.790323 0.666667 0.370968
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl kers_green
+Kd 0.078431 0.67451 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl kers_red
+Kd 0.790323 0.071429 0.080645
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tyre_tread
+Kd 0.39261 0.390454 0.370999
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tyre
+Kd 0.39261 0.390454 0.370999
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_disc
+Kd 0.154958 0.154994 0.160975
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl RIM
+Kd 0.364919 0.360693 0.35739
+Ks 0.25 0.25 0.25
+Ns 32

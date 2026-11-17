@@ -1,0 +1,170 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl EXT_GLASS_black
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_Window
+Kd 0.12144 0.140175 0.173167
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_Glass
+Kd 0.12144 0.140175 0.173167
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_Glass_rear_lights
+Kd 0.12144 0.140175 0.173167
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl INT_Glass
+Kd 0.959362 0.959852 0.959362
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_Mirror
+Kd 0.588206 0.57566 0.55286
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Lights_base
+Kd 0.121012 0.068666 0.065675
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Lights_chrom
+Kd 0.121012 0.068666 0.065675
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Button_Engine
+Kd 0.014302 0.014152 0.023501
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Details
+Kd 0.122952 0.089844 0.072833
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Details_crom
+Kd 0.122952 0.089844 0.072833
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Grid
+Kd 0.077652 0.077133 0.085969
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Lights
+Kd 0.121012 0.068666 0.065675
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Light_grid_white
+Kd 0.641531 0.641407 0.641531
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Car_Paint
+Kd 0.78 0.78 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Ext_carpaint_roof
+Kd 0.78 0.78 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Carbon
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Light_DRL
+Kd 0.12144 0.140175 0.173167
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl rear_indicator
+Kd 0.292897 0.289621 0.292897
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT__Engine_noise
+Kd 0.014302 0.014152 0.023501
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Botom_plastic_shiny
+Kd 0.014302 0.014152 0.023501
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Botom_Chrome
+Kd 0.014302 0.014152 0.023501
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Wipers
+Kd 0.014302 0.014152 0.023501
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Camera
+Kd 0.087489 0.084844 0.087267
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Plastic
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_PLATE_plastic
+Kd 0.548139 0.548596 0.548511
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Lights_blend
+Kd 0.121012 0.068666 0.065675
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Caliper
+Kd 0.22 0.22 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl detail
+Kd 0.122952 0.089844 0.072833
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_brake_disk
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WHEEL
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Rim_logo
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_RIM
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32

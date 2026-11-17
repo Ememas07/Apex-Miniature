@@ -1,0 +1,118 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl WCCARBODY
+Kd 1 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.85 0.85 0.85
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon2.001
+Kd 0.273374 0.275189 0.275643
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl FW24_SCREW
+Kd 0.50252 0.478376 0.481414
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MAT_susp
+Kd 0.145949 0.144655 0.154202
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl internal
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CKPARTS
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl gomma
+Kd 0.079475 0.079547 0.080276
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl INTERNAL
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl metal
+Kd 0.33871 0.333333 0.33871
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl oro
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LED_rain_light
+Kd 0.5 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WCEXTRA0.001
+Kd 0.320565 0.08524 0.040606
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl BRAKE
+Kd 0.304845 0.252604 0.256615
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl barke_internal
+Kd 0.437689 0.409366 0.382749
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl mac_parts
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon_steer
+Kd 0.117408 0.117234 0.129662
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl glass
+Kd 0.629032 0.619048 0.629032
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl glass_led
+Kd 0.629032 0.619048 0.629032
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl RIM
+Kd 0.416425 0.391416 0.390278
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl brake_disc
+Kd 0.045426 0.045201 0.058058
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl tyre
+Kd 0.12 0.12 0.13
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl tyre_wall
+Kd 0.12 0.12 0.13
+Ks 0.25 0.25 0.25
+Ns 32

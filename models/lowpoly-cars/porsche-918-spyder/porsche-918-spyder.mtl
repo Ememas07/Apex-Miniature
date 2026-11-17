@@ -1,0 +1,124 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl Details
+Kd 0.002219 0.002219 0.002219
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Plastic_Dark
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Carbon_Mult150
+Kd 0.114321 0.120381 0.114321
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Carpaint
+Kd 0.114321 0.120381 0.114321
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Matte_Black
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Lights
+Kd 0.610761 0.45497 0.457535
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_PLATE
+Kd 0.629347 0.633929 0.638703
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Brake_Caliper
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Mechanicals
+Kd 0.037802 0.031234 0.023627
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Mirror
+Kd 0.588206 0.57566 0.55286
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Mechanicals_Engine
+Kd 0.407983 0.347253 0.299112
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Metal
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Plastic_Light
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Plastic_Lights
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Grid
+Kd 0.306452 0.277778 0.306452
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Glass_Light
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Details_Wing
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Glass
+Kd 0.707843 0.384314 0.42549
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl Window_Glass_Frame
+Kd 0.370968 0.428571 0.370968
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl Window_Glass
+Kd 0.707843 0.384314 0.42549
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl Brake_Disk
+Kd 0.105532 0.105856 0.110068
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Rim_Screw
+Kd 0.135396 0.100105 0.138892
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Rim
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tyre
+Kd 0.12 0.12 0.13
+Ks 0.25 0.25 0.25
+Ns 32

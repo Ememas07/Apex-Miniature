@@ -1,0 +1,173 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl carbon
+Kd 0.032542 0.028537 0.032573
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black_s
+Kd 0.020886 0.021701 0.020886
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl chrome
+Kd 0.327104 0.328483 0.327104
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOWB
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LCOVERS
+Kd 0.035294 0.156863 0.192157
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl light_bulb
+Kd 0.36451 0.396484 0.379095
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl plastic_red
+Kd 0.056263 0 0.011026
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOWC
+Kd 0.854839 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GLOW
+Kd 0.725806 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOW
+Kd 0.36451 0.396484 0.379095
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl grille_alpha
+Kd 0.157951 0.158296 0.157951
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl grille_alpha2
+Kd 0.017011 0.016648 0.025958
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl light_safe
+Kd 0.429246 0.443948 0.444903
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 963_CLEARLED
+Kd 0.128024 0.124008 0.128024
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOWD
+Kd 0.36451 0.396484 0.379095
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LCOVERS_REAR
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GLOW2
+Kd 0.36451 0.396484 0.379095
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_chassis
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl decals
+Kd 0.072014 0.041217 0.055727
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black_matt
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl fabric_lines_red
+Kd 0.638892 0 0.061838
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl cockpit_headrest
+Kd 0.093655 0.067925 0.033676
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl cockpit_chrome
+Kd 0.070861 0.073102 0.070861
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl cockpit_carbon
+Kd 0.050924 0.054179 0.050924
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl cockpit_black_s
+Kd 0.022902 0.022306 0.030998
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CALIPER
+Kd 0.009262 0.009781 0.018618
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WINDOWS
+Kd 0.00315 0.003131 0.019185
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl INTERNAL_GLASS
+Kd 0.966797 0.967293 0.966797
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl NUT
+Kd 0.009262 0.009781 0.018618
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl RIM
+Kd 0.009262 0.009781 0.018618
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl rotor_render
+Kd 0.241557 0.242746 0.24559
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl SCG_TYRE
+Kd 0.612903 0.611111 0.612903
+Ks 0.25 0.25 0.25
+Ns 32

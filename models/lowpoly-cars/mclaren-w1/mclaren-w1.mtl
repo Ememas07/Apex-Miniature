@@ -1,0 +1,155 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl EXT_Mclaren_LOGO
+Kd 0.385805 0.362274 0.363596
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Chrome
+Kd 0.291079 0.292457 0.296119
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Mechanicals_FLAT
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Carpaint
+Kd 0.532888 0.535249 0.532888
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_light_Alfa
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Plastics
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Details_MULTIMAP
+Kd 0.176411 0.171891 0.176254
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Grid1
+Kd 0.065713 0.067398 0.074156
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Headlights
+Kd 0.291079 0.292457 0.296119
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_DriveName
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Mechanicals_PLASTIC
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Brake_LIGHTS_AT
+Kd 0.065241 0.064624 0.071226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Brake_LIGHTS
+Kd 0.065241 0.064624 0.071226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Grid2
+Kd 0.05831 0.061678 0.058531
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Mechanicals_Exhaust_Detail
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Mechanicals_CARBON_relief
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Mechanicals_Exhaust_Tubes
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Mechanicals_METAL
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Carpaint_2
+Kd 0.532888 0.535249 0.532888
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Carpaint_CARBON
+Kd 0.532888 0.535249 0.532888
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Rim
+Kd 0.300309 0.297821 0.296434
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Tyre
+Kd 0.164693 0.165706 0.164598
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Calipers
+Kd 0.547379 0.534614 0.529706
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_DISC
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Banner_Windows
+Kd 0.022272 0.020864 0.035755
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_Windows_alfa
+Kd 0.548387 0.555556 0.548387
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl INT_Glass
+Kd 0.950825 0.950924 0.950825
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl INT_Banner_Windows_Trasp
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_Glass_LIGHTS
+Kd 0.548387 0.555556 0.548387
+Ks 0.25 0.25 0.25
+Ns 32

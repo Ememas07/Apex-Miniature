@@ -1,0 +1,147 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl B11_METAL_INT
+Kd 0.197407 0.195163 0.194835
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_CHROME
+Kd 0.197407 0.195163 0.194835
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_CARBONFIBRE
+Kd 0.197407 0.195163 0.194835
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_PLASTIC
+Kd 0.197407 0.195163 0.194835
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_CABIN_INT
+Kd 0.197407 0.195163 0.194835
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WC_TEAM_BODY2_PL
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_MATT_INT
+Kd 0.666064 0.672539 0.539925
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GLOW
+Kd 0.725806 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WC_TEAM_BODY1_PA
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WC_TEAM_BODY1_PL
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOB
+Kd 0.725806 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOW
+Kd 0.5 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl BLACK
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_LIGHTS
+Kd 0.291337 0.295007 0.314659
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl caliper
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl SWHEEL
+Kd 0.309422 0.298051 0.303833
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl BADGE
+Kd 0.309422 0.298051 0.303833
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl BODY_LOWSHINE
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_SUSP
+Kd 0.139094 0.133009 0.125037
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl B11_GRILLE
+Kd 0.288747 0.333147 0.288684
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CARBON_COCKPIT
+Kd 0.096491 0.094959 0.096491
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WC_TEAM_WINDOWS_FL
+Kd 0.212903 0.20377 0.196909
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl rotor
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Tyre
+Kd 0.164441 0.178633 0.187405
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl rim
+Kd 0.507245 0.497923 0.491431
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl inner_rim
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl wheel_black
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl outer_rim
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32

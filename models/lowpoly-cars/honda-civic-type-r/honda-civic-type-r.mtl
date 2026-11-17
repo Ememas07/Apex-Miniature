@@ -1,0 +1,497 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl Tex_3706_0
+Kd 0 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20610_0
+Kd 0.058824 0.058824 0.058824
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_4603_0
+Kd 0.5 0.031746 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#6898
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#136765
+Kd 0.371994 0.37381 0.371994
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_3806_0
+Kd 0.098039 0.098039 0.098039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_4266_0
+Kd 0.245023 0.193902 0.192509
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20970_0
+Kd 0.290323 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20550_0
+Kd 0.295016 0 0.000095
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#112
+Kd 0.188593 0.189616 0.188593
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#90
+Kd 0.454898 0.458554 0.454898
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#4687
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#23064
+Kd 0.438423 0.43877 0.438423
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#18076
+Kd 0.970814 0.971277 0.970814
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#7076G
+Kd 0.25 0.25 0.25
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_4236_0
+Kd 0.870968 0.865079 0.870968
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_4328_0
+Kd 0.171055 0.17405 0.187454
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_3876_0
+Kd 0.093982 0.09095 0.093665
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20580_0
+Kd 0.134168 0.134896 0.134168
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20670_0
+Kd 0.031373 0.031373 0.498039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_3836_0
+Kd 0.870968 0.865079 0.870968
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_4647_0
+Kd 0.031373 0.047059 0.517647
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CAR_SKIN
+Kd 0.42 0.42 0.42
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#46
+Kd 0.356778 0.35723 0.356778
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#182
+Kd 0.245187 0.246157 0.245187
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_3946_0
+Kd 0.057033 0.057033 0.057033
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#725353
+Kd 0.1546 0.160141 0.1546
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Endless_logo
+Kd 0.137034 0.137292 0.144374
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Endless_calpers
+Kd 0.137034 0.137292 0.144374
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_3786_0
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20880_0
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#71
+Kd 0.250987 0.25162 0.250987
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20730_0
+Kd 0 0.00796 0.243417
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20850_0
+Kd 0.114212 0.112213 0.114212
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#11254
+Kd 0.113018 0.115533 0.113018
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#4857
+Kd 0.083616 0.087427 0.083616
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#683
+Kd 0.06682 0.071874 0.06682
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#158
+Kd 0.35 0.35 0.35
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#159
+Kd 0.35 0.35 0.35
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#37
+Kd 0.462745 0.462745 0.466667
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_4236_0.dds
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#134
+Kd 0.999149 0.999209 0.999149
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#468
+Kd 0.35 0.35 0.35
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#11451
+Kd 0.57276 0.571252 0.57276
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#15619
+Kd 0.120765 0.122617 0.120765
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_20400_0
+Kd 0.588 0.588 0.588
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tex_4026_0
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#296
+Kd 0.003922 0.003922 0.003922
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#233
+Kd 1 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#918
+Kd 0.139225 0.139109 0.139225
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 2017_honda_fk8_grille3
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 2017_honda_fk8_engine__env_14_spec_
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 2017_honda_fk8_engine
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 2017_honda_fk8_carbon__spec_
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl pribors1.004
+Kd 0.8 0.8 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#685
+Kd 0.503584 0.503527 0.503584
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#1328
+Kd 0.064298 0.068426 0.064298
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#15454
+Kd 0.844527 0.839839 0.844527
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#1766
+Kd 0.271712 0.274522 0.271712
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#2208
+Kd 0.071632 0.075303 0.071632
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#1985
+Kd 0.12596 0.127632 0.12596
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#686
+Kd 0.077503 0.080808 0.077503
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#905
+Kd 0.114695 0.114247 0.114695
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#1126
+Kd 0.0832 0.083687 0.0832
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#68ad
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#22231
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#688
+Kd 0.17708 0.177611 0.17708
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#9015
+Kd 0.071661 0.072229 0.071661
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#11261
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#47
+Kd 0.256897 0.259764 0.256897
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#116
+Kd 0.322427 0.323167 0.322427
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#1785
+Kd 0.161638 0.165525 0.161638
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#15868
+Kd 0.486652 0.487411 0.486652
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#94514
+Kd 0.690541 0.691687 0.690541
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#114543
+Kd 0.982044 0.982003 0.982044
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#87687
+Kd 0.048319 0.05263 0.048319
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#69
+Kd 0.058592 0.060513 0.058592
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#68
+Kd 0.580645 0.580952 0.580645
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#901
+Kd 0.069079 0.075893 0.069079
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#1341
+Kd 0.139371 0.140212 0.139371
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#72
+Kd 0.161837 0.163438 0.161837
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#30
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl steel
+Kd 0.447059 0.454902 0.45098
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#117
+Kd 0.199976 0.185285 0.199976
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#10931
+Kd 0.386089 0.387401 0.386089
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl PaintedMetal
+Kd 1 1 1
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl SteelCast
+Kd 0.447059 0.454902 0.45098
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#87412
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Paint
+Kd 0.5 0.031746 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#175dg
+Kd 0.117258 0.119206 0.117258
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#153da
+Kd 0.32072 0.321581 0.32072
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#4642
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#6865
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CAR_GLASS
+Kd 0.032258 0.111111 0.096774
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl Material_#13131
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Tyre
+Kd 0.12 0.12 0.13
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Brake_Disk
+Kd 0.205551 0.200412 0.199691
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Disc
+Kd 0.123866 0.124597 0.125315
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#46313
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32

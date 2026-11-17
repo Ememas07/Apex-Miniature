@@ -1,0 +1,200 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl rimcenter2
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Carbon1
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl rim1
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_WHEEL
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl brakes
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Koenigsegg_JeskoAbsolut_2021_Wheel1A_3DCarbon1_Material
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CalliperBadgeBMtl
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl paint1Mtlgreen
+Kd 0.78 0.78 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl ColouredMtl
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_SpecularTint
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Coloured
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WindowDark
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl Material_#25
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Light
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_InteriorA_Zone2
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Interior_Zone2
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_InteriorA
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Interior
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_InteriorTillingColourZone
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Grille8
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Grille5
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Grille3
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_EngineA
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Engine
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Base
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Badge
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Grille7
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Grille4
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Carbon1M
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CSR2_Carbon1
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#26
+Kd 0.588 0.588 0.588
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GlassRed
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl Lod
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_PLATE
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl plate_bolts
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Plastic
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl plate_1
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Window
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl GlassClear
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45

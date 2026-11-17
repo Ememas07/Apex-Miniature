@@ -1,0 +1,123 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl amg_gt3_tyres
+Kd 0.130891 0.12917 0.118794
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_rims
+Kd 0.08137 0.081737 0.086379
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_disc
+Kd 0.191564 0.189376 0.183814
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_calipers
+Kd 0.18813 0.156157 0.060641
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_logos
+Kd 0.111076 0.081783 0.090978
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_grilles
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_details
+Kd 0.076455 0.073103 0.075321
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_lights
+Kd 0.45 0.45 0.45
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_fiber
+Kd 0.403226 0.436508 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_body
+Kd 0.349074 0.34902 0.349011
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_carbon
+Kd 0.254914 0.255394 0.25567
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_details_high
+Kd 0.307932 0.309338 0.310074
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_chrome
+Kd 0.076455 0.073103 0.075321
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_bolts
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_interior_details_straps
+Kd 0.072392 0.072064 0.072612
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_interior_details_metal
+Kd 0.072392 0.072064 0.072612
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_interior_seatbelt
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_interior_labels
+Kd 0.689327 0.682214 0.682491
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_caps
+Kd 0.094821 0.097253 0.097908
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_underside
+Kd 0.057334 0.056966 0.058783
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_exterior_endur_lights
+Kd 0.307932 0.309338 0.310074
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.590726 0.575893 0.555601
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl amg_gt3_glass
+Kd 0.188235 0.254902 0.270588
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl amg_gt3_interior_glass
+Kd 0.787235 0.787807 0.787235
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45

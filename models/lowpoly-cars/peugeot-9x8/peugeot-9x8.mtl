@@ -1,0 +1,163 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl carbon
+Kd 0.138609 0.141927 0.138609
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl chrome
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black_s
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl BLACK
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_chassis2
+Kd 0.774194 0.785714 0.274194
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl wip_black_s
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl fan
+Kd 0.199912 0.200133 0.199912
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl decals
+Kd 0.43624 0.438942 0.401934
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GLOW
+Kd 0.790323 0.071429 0.080645
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LCOVERS_RED
+Kd 0.725806 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 9X8_2022_logo
+Kd 0.202369 0.202381 0.211757
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOW2
+Kd 0.112903 0.111111 0.112903
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOW
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl LCOVERS
+Kd 0.035294 0.156863 0.192157
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOW4
+Kd 0.774194 0.785714 0.274194
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOW3
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOB
+Kd 0.725806 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl INT_Metal
+Kd 0.109816 0.099873 0.099483
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl INT_Fabric_belts
+Kd 0.112903 0.111111 0.112903
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon_cockpit
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl INT_Carbon
+Kd 0.112903 0.111111 0.112903
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_chassis
+Kd 0.322581 0.31746 0.370968
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl CALIPER
+Kd 0.774194 0.785714 0.274194
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Material_#3697
+Kd 0.109816 0.099873 0.099483
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl decals_stripes
+Kd 0.112903 0.111111 0.112903
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl WINDOWS
+Kd 0.258065 0.293651 0.274194
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl INTERNAL_GLASS
+Kd 0.966797 0.967293 0.966797
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl RIM2
+Kd 0.774194 0.785714 0.274194
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl RIM
+Kd 0.080645 0.087302 0.080645
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _Peugeot_9X8_2022brakes1
+Kd 0.693265 0.691685 0.688414
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl SCG_TYRE
+Kd 0.612903 0.619048 0.612903
+Ks 0.25 0.25 0.25
+Ns 32

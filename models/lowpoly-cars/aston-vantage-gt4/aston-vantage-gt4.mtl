@@ -1,0 +1,118 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl _EXT_Mechanics2
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Caliper
+Kd 0.48 0.48 0.48
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_Carpaint_Inst3
+Kd 0.78 0.78 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_CARBON
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_BLACK_GLOSSY1
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_Emissive_Light_Rear
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_Emissive_Light_Front
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_Banner
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_Grid1
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_PLASTIC1
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_FRAME
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_BELT
+Kd 0.8 0.8 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_Decals1
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_COOLER
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXHAUST
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _MIRROR
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Disc
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_RIM
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl __EXT_Tyre
+Kd 0.12 0.12 0.13
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_BLACK_WINDOW
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl _EXT_REAR_LIGHT_GLASS
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_FRONT_LIGHT_GLASS
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl _EXT_Windows
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45

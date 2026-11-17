@@ -1,0 +1,92 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl Tex_0185_0.dds
+Kd 0.150391 0.135463 0.118101
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GLOW
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GLOW.001
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Body
+Kd 0.350995 0.203125 0.203976
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Body-lights
+Kd 0.097765 0.098696 0.097765
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl SM_Light_Front
+Kd 1 1 1
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl SM_Light_Front_pulse
+Kd 1 1 1
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Bottom
+Kd 0.157006 0.160048 0.16255
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Body_emisive
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Suspension_Calipers
+Kd 0.169292 0.118645 0.124275
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Suspension_Calipers_AT
+Kd 0.169292 0.118645 0.124275
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Specchio
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Glass
+Kd 0.588489 0.575691 0.538653
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl 963_hub
+Kd 0.079528 0.079528 0.079528
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Wheels_Blend
+Kd 0.020697 0.017702 0.023753
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Tyre
+Kd 0.164441 0.178633 0.187405
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Brake_Disc
+Kd 0.041803 0.041062 0.052041
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl RIM_REAR
+Kd 0.020697 0.017702 0.023753
+Ks 0.25 0.25 0.25
+Ns 32
