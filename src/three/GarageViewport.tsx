@@ -192,16 +192,19 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
 
     const requestRender = (immediate = false) => {
       if (disposed) return;
+      if (immediate) {
+        cancelAnimationFrame(rafId);
+        clearTimeout(timerId);
+        renderBusy = true;
+        drawFrame();
+        return;
+      }
       if (renderBusy) {
         renderDirty = true;
         return;
       }
       renderBusy = true;
-      if (immediate) {
-        drawFrame();
-      } else {
-        rafId = requestAnimationFrame(drawFrame);
-      }
+      rafId = requestAnimationFrame(drawFrame);
     };
 
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
@@ -316,15 +319,20 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
       s.targetYaw = Math.PI - 0.35;
       s.targetPitch = 0.3;
     }
-    s.requestRender();
+    s.requestRender(isSoftwareGlCheck(s));
   }, [angle]);
 
   return (
     <div
       ref={containerRef}
       data-testid="garage-viewport"
+      data-car-id={carSpec.id}
       className="w-full h-full cursor-grab active:cursor-grabbing"
       aria-label="Interactive 3D car livery preview turntable"
     />
   );
+}
+
+function isSoftwareGlCheck(s: { renderer: THREE.WebGLRenderer }): boolean {
+  return !s.renderer.shadowMap.enabled;
 }

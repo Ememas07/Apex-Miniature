@@ -316,37 +316,37 @@ export const CARS: CarSpec[] = [
     defaultLivery: makeLivery('#0284c7', '#ffffff', '#dc2626', '708', { template: 'heritage', rimFinish: 'white' }),
   },
 
-  // ================= LMP2 (Oreca 07 Gibson) =================
+  // ================= LMP2 (Oreca 07 & Ligier JS P217 Gibson) =================
   {
     id: 'oreca-07-united',
-    name: 'Oreca 07 Gibson (Low-Drag)',
+    name: 'Oreca 07 Gibson — United Autosports',
     manufacturer: 'Oreca',
     classId: CarClassId.LMP2,
     silhouette: 'lmp2',
-    attributes: { topSpeed: 84, acceleration: 80, corneringGrip: 80, braking: 81, efficiency: 84 },
-    tradeoffNote: 'Le Mans low-drag trim: strong slipstream tow and top speed.',
+    attributes: { topSpeed: 81, acceleration: 81, corneringGrip: 82, braking: 82, efficiency: 84 },
+    tradeoffNote: 'United Autosports Oreca 07 Gibson: balanced Le Mans aero & consistent long-stint pace.',
     engineType: 'v8-hybrid',
     defaultLivery: makeLivery('#f97316', '#0f172a', '#ffffff', '22', { template: 'two-tone', rimFinish: 'gloss-black' }),
   },
   {
     id: 'oreca-07-europol',
-    name: 'Oreca 07 Gibson (High-DF)',
+    name: 'Oreca 07 Gibson — Inter Europol',
     manufacturer: 'Oreca',
     classId: CarClassId.LMP2,
     silhouette: 'lmp2',
-    attributes: { topSpeed: 78, acceleration: 82, corneringGrip: 85, braking: 83, efficiency: 80 },
-    tradeoffNote: 'High-downforce sprint trim: ferocious turn-in bite through technical esses.',
+    attributes: { topSpeed: 80, acceleration: 82, corneringGrip: 83, braking: 82, efficiency: 82 },
+    tradeoffNote: 'Inter Europol Competition chassis: agile mid-corner turn-in and strong corner-exit drive.',
     engineType: 'v8-hybrid',
     defaultLivery: makeLivery('#eab308', '#15803d', '#ffffff', '34', { template: 'geometric', rimFinish: 'silver' }),
   },
   {
     id: 'oreca-07-ao',
-    name: 'Oreca 07 Gibson (Endurance)',
+    name: 'Oreca 07 Gibson — AO Racing',
     manufacturer: 'Oreca',
     classId: CarClassId.LMP2,
     silhouette: 'lmp2',
-    attributes: { topSpeed: 81, acceleration: 81, corneringGrip: 82, braking: 82, efficiency: 88 },
-    tradeoffNote: 'Balanced endurance setup built to double-stint soft/medium rubber.',
+    attributes: { topSpeed: 80, acceleration: 81, corneringGrip: 82, braking: 83, efficiency: 86 },
+    tradeoffNote: 'AO Racing Oreca 07 Gibson: refined brake modulation and forgiving double-stint tire wear.',
     engineType: 'v8-hybrid',
     defaultLivery: makeLivery('#7c3aed', '#22d3ee', '#ffffff', '99', { template: 'racing-stripes', rimFinish: 'white' }),
   },
@@ -356,8 +356,8 @@ export const CARS: CarSpec[] = [
     manufacturer: 'Ligier',
     classId: CarClassId.LMP2,
     silhouette: 'lmp2',
-    attributes: { topSpeed: 83, acceleration: 81, corneringGrip: 81, braking: 81, efficiency: 84 },
-    tradeoffNote: 'Low-drag Ligier aero package; strong straight-line efficiency at Le Mans.',
+    attributes: { topSpeed: 82, acceleration: 81, corneringGrip: 81, braking: 81, efficiency: 84 },
+    tradeoffNote: 'Ligier JS P217 Gibson chassis: clean top-end straight-line efficiency paired with stable aero.',
     engineType: 'v8-hybrid',
     defaultLivery: makeLivery('#1e3a8a', '#ef4444', '#ffffff', '23', { template: 'geometric', rimFinish: 'silver' }),
   },
@@ -1088,3 +1088,20 @@ export function resolveNumberPlateColors(
     }
   }
 }
+
+export function filterCars(
+  cars: CarSpec[],
+  query: string,
+  classFilter: CarClassId | 'ALL',
+): CarSpec[] {
+  const q = query.trim().toLowerCase();
+  const base = classFilter === 'ALL' ? cars : cars.filter((c) => c.classId === classFilter);
+  if (!q) return base;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  return base.filter((c) => {
+    const cls = CAR_CLASSES[c.classId];
+    const haystack = `${c.name} ${c.manufacturer} ${c.id} ${c.classId} ${cls.name} ${cls.shortName} ${c.tradeoffNote}`.toLowerCase();
+    return tokens.every((tok) => haystack.includes(tok));
+  });
+}
+

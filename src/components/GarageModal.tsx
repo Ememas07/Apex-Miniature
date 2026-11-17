@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { X, RotateCcw, Check } from 'lucide-react';
+import { X, RotateCcw, Check, Search } from 'lucide-react';
 import {
   CAR_CLASSES,
   CARS,
   computeBoPEquilibriumScore,
+  filterCars,
   getCarById,
-  getCarsByClass,
   resolveCarSpecial,
   validateDriverNumber,
 } from '../game/cars';
@@ -75,11 +75,14 @@ export function GarageModal({
   onClose,
 }: GarageModalProps) {
   const activeCar = getCarById(selectedCarId);
-  const [activeClass, setActiveClass] = useState<CarClassId>(activeCar.classId);
+  const [activeClass, setActiveClass] = useState<CarClassId | 'ALL'>(activeCar.classId);
+  const [carSearch, setCarSearch] = useState('');
   const [tab, setTab] = useState<StudioTab>('livery');
   const [angle, setAngle] = useState<GarageAngle>('hero');
 
-  const classCars = getCarsByClass(activeClass);
+  const trimmedCarSearch = carSearch.trim();
+  const effectiveClassFilter: CarClassId | 'ALL' = trimmedCarSearch.length > 0 && activeClass !== 'ALL' ? 'ALL' : activeClass;
+  const classCars = filterCars(CARS, carSearch, effectiveClassFilter);
   const classMeta = CAR_CLASSES[activeCar.classId];
   const bopScore = computeBoPEquilibriumScore(activeCar.attributes).toFixed(1);
 
@@ -200,19 +203,62 @@ export function GarageModal({
         <div className="flex-1 overflow-y-auto custom-scroll p-5 space-y-6">
           {tab === 'car' && (
             <>
+              {/* Instant Car Model Search */}
+              <div>
+                <label htmlFor="garage-car-search" className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Search Car Models
+                </label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="garage-car-search"
+                    type="text"
+                    value={carSearch}
+                    onChange={(e) => setCarSearch(e.target.value)}
+                    placeholder={`Search ${CARS.length} cars by model, brand, class, or ID...`}
+                    aria-label="Search car models"
+                    className="w-full pl-8 pr-8 py-2 rounded bg-[#0c1017] border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500"
+                  />
+                  {carSearch.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCarSearch('')}
+                      aria-label="Clear car search"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Class Selector */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-2">
                   Motorsport Class (All Unlocked)
                 </label>
                 <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setActiveClass('ALL')}
+                    className={`px-2.5 py-2 rounded text-left text-xs font-semibold border transition-colors cursor-pointer truncate ${
+                      effectiveClassFilter === 'ALL'
+                        ? 'bg-[#1d2433] border-red-500 text-white'
+                        : 'bg-[#151a24] border-white/10 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    All ({CARS.length})
+                  </button>
                   {Object.values(CAR_CLASSES).map((cls) => (
                     <button
                       key={cls.id}
                       type="button"
-                      onClick={() => setActiveClass(cls.id)}
+                      onClick={() => {
+                        setActiveClass(cls.id);
+                        setCarSearch('');
+                      }}
                       className={`px-2.5 py-2 rounded text-left text-xs font-semibold border transition-colors cursor-pointer truncate ${
-                        activeClass === cls.id
+                        effectiveClassFilter === cls.id
                           ? 'bg-[#1d2433] border-red-500 text-white'
                           : 'bg-[#151a24] border-white/10 text-slate-400 hover:text-white'
                       }`}
@@ -223,40 +269,72 @@ export function GarageModal({
                 </div>
               </div>
 
-              {/* Car List in Active Class */}
+              {/* Filtered Car List */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-semibold text-slate-300">
-                    {CAR_CLASSES[activeClass].name}
+                    {effectiveClassFilter === 'ALL'
+                      ? trimmedCarSearch
+                        ? 'Search Results Across All Classes'
+                        : 'All Motorsport Classes'
+                      : CAR_CLASSES[effectiveClassFilter].name}
                   </span>
-                  <span className="text-xs text-slate-500 tabular-nums">{classCars.length} Cars</span>
+                  <span className="text-xs text-slate-400 tabular-nums">
+                    Showing {classCars.length} of {CARS.length} cars
+                  </span>
                 </div>
-                <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scroll pr-1">
-                  {classCars.map((c) => {
-                    const selected = c.id === activeCar.id;
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => onSelectCar(c.id, { ...c.defaultLivery })}
-                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded border text-left transition-colors cursor-pointer ${
-                          selected
-                            ? 'bg-[#1c2434] border-red-500 text-white'
-                            : 'bg-[#151a23] border-white/5 text-slate-300 hover:bg-[#19202b]'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-3">
-                          <div className="text-sm font-semibold truncate">{c.name}</div>
-                          <div className="text-[11px] text-slate-400 truncate">{c.tradeoffNote}</div>
-                        </div>
-                        <span
-                          className="w-4 h-4 rounded-sm shrink-0 border border-white/20"
-                          style={{ backgroundColor: c.defaultLivery.primaryColor }}
-                        />
-                      </button>
-                    );
-                  })}
-                </div>
+                {classCars.length === 0 ? (
+                  <div className="p-5 rounded border border-dashed border-white/15 bg-[#0e131c] text-center space-y-2.5">
+                    <p className="text-xs text-slate-300">
+                      No car models match &ldquo;{carSearch}&rdquo;.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setCarSearch('')}
+                      className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-xs font-semibold text-white cursor-pointer"
+                    >
+                      Clear search
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scroll pr-1">
+                    {classCars.map((c) => {
+                      const selected = c.id === activeCar.id;
+                      const cMeta = CAR_CLASSES[c.classId];
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => onSelectCar(c.id, { ...c.defaultLivery })}
+                          className={`w-full flex items-center justify-between px-3 py-2.5 rounded border text-left transition-colors cursor-pointer ${
+                            selected
+                              ? 'bg-[#1c2434] border-red-500 text-white'
+                              : 'bg-[#151a23] border-white/5 text-slate-300 hover:bg-[#19202b]'
+                          }`}
+                        >
+                          <div className="min-w-0 pr-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold truncate">{c.name}</span>
+                              {effectiveClassFilter === 'ALL' && (
+                                <span
+                                  className="px-1.5 py-0.5 text-[10px] font-bold rounded-sm shrink-0"
+                                  style={{ backgroundColor: cMeta.plateColor, color: cMeta.badgeTextColor }}
+                                >
+                                  {cMeta.shortName}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-400 truncate">{c.tradeoffNote}</div>
+                          </div>
+                          <span
+                            className="w-4 h-4 rounded-sm shrink-0 border border-white/20"
+                            style={{ backgroundColor: c.defaultLivery.primaryColor }}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Asymmetric BoP 5-Attribute Bars */}

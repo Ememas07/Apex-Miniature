@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SceneryTheme, TrackRegion, TrackSpec, TrackWaypoint } from './types';
 import { getCustomTrackById } from './customTracks';
-import { TRACK_SVG_REGISTRY, svgToTrackPoints, REAL_TRACK_METRICS } from './trackSvgs';
+import { TRACK_SVG_REGISTRY, svgToTrackPoints, REAL_TRACK_METRICS, CCW_CIRCUIT_IDS } from './trackSvgs';
 
 export const TRACKS: TrackSpec[] = [
   {
@@ -831,6 +831,12 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
     );
     curve.arcLengthDivisions = Math.max(1500, n * 30, 1800);
     totalLength = curve.getLength();
+    // Preserve ~8m sample spacing on long circuits (e.g. Le Mans 13.6km -> ~1700 samples) when using default density
+    const effectiveSampleCount =
+      sampleCount >= 720 && totalLength > 7500
+        ? Math.min(2000, Math.round(totalLength / 8.0))
+        : sampleCount;
+    sampleCount = effectiveSampleCount;
     const spaced = curve.getSpacedPoints(sampleCount);
 
     for (let k = 0; k < sampleCount; k++) {
@@ -1165,3 +1171,40 @@ export function projectOntoTrack(
   const lateralOffset = dx * interpSample.nx + dz * interpSample.nz;
   return { sample: interpSample, lateralOffset, distanceSq: chosen.dSq };
 }
+
+export function filterTracks(
+  tracks: TrackSpec[],
+  customTracks: TrackSpec[],
+  regionFilter: 'Flagship' | TrackRegion | 'All',
+  query: string,
+): TrackSpec[] {
+  const q = query.trim().toLowerCase();
+  let pool: TrackSpec[];
+  if (regionFilter === 'Custom') {
+    pool = customTracks;
+  } else if (q.length > 0 || regionFilter === 'All') {
+    // Searching from any non-Custom tab scans all 43 official tracks so matches aren't hidden behind Flagship 10
+    pool = tracks;
+  } else if (regionFilter === 'Flagship') {
+    pool = tracks.filter((t) => t.flagship);
+  } else {
+    pool = tracks.filter((t) => t.region === regionFilter);
+  }
+
+  if (!q) return pool;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  return pool.filter((t) => {
+    const isCCW = CCW_CIRCUIT_IDS.has(t.id);
+    const baseText = `${t.name} ${t.shortName} ${t.country} ${t.id} ${t.seriesTags.join(' ')} ${t.region} ${t.scenery}`.toLowerCase();
+    return tokens.every((tok) => {
+      if (tok === 'ccw' || tok === 'counterclockwise' || tok === 'counter-clockwise' || tok === 'anticlockwise') {
+        return isCCW;
+      }
+      if (tok === 'cw' || tok === 'clockwise') {
+        return !isCCW;
+      }
+      return baseText.includes(tok);
+    });
+  });
+}
+

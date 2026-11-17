@@ -445,7 +445,17 @@ export function RaceHUD({
             ) : hud.aeroDamage > 4 ? (
               <span className="text-amber-300 font-semibold">Aero {hud.aeroDamage}% dmg</span>
             ) : (
-              <span>Cam: {hud.cameraMode} · [L] Limiter</span>
+              <span>
+                Cam:{' '}
+                {hud.cameraMode === 'hood'
+                  ? 'Hood'
+                  : hud.cameraMode === 'chase-34'
+                  ? 'Chase'
+                  : hud.cameraMode === 'high-chase'
+                  ? 'High Chase'
+                  : 'Isometric'}{' '}
+                · [C] · [L] Limiter
+              </span>
             )}
           </div>
         </div>
