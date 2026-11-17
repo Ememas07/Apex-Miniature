@@ -382,6 +382,53 @@ export function GarageModal({
                 Open 3D Livery Studio & UV Painter
               </button>
 
+              {/* Official Team & Factory Liveries (for single-chassis classes like F1 2026, F1 2021, LMP2) */}
+              {activeCar.liveries && activeCar.liveries.length > 0 && (
+                <div className="p-3.5 rounded-lg bg-[#0e131d] border border-white/10 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-200">
+                      Team & Factory Liveries ({activeCar.liveries.length})
+                    </span>
+                    <span className="text-[11px] text-slate-400">Select preset</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 max-h-52 overflow-y-auto custom-scroll pr-1">
+                    {activeCar.liveries.map((preset) => {
+                      const isCurrent =
+                        livery.primaryColor.toLowerCase() === preset.livery.primaryColor.toLowerCase() &&
+                        livery.secondaryColor.toLowerCase() === preset.livery.secondaryColor.toLowerCase() &&
+                        livery.driverNumber === preset.livery.driverNumber;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => onChangeLivery({ ...preset.livery })}
+                          className={`flex items-center gap-2.5 p-2 rounded border text-left transition-colors cursor-pointer ${
+                            isCurrent
+                              ? 'bg-[#1e293b] border-red-500 text-white shadow-sm'
+                              : 'bg-[#131822] border-white/5 text-slate-300 hover:bg-[#192230] hover:text-white'
+                          }`}
+                        >
+                          <div className="flex -space-x-1 shrink-0">
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm"
+                              style={{ backgroundColor: preset.livery.primaryColor }}
+                            />
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm"
+                              style={{ backgroundColor: preset.livery.secondaryColor }}
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-semibold truncate leading-tight">{preset.name}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">#{preset.livery.driverNumber}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Livery Templates */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-2">

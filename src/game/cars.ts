@@ -2,6 +2,7 @@ import {
   BoPAttributes,
   CarClassId,
   CarClassMeta,
+  CarLiveryPreset,
   CarSpec,
   LiveryConfig,
 } from './types';
@@ -316,50 +317,45 @@ export const CARS: CarSpec[] = [
     defaultLivery: makeLivery('#0284c7', '#ffffff', '#dc2626', '708', { template: 'heritage', rimFinish: 'white' }),
   },
 
-  // ================= LMP2 (Oreca 07 & Ligier JS P217 Gibson) =================
+  // ================= LMP2 PROTOTYPE (Oreca 07 Gibson) =================
   {
-    id: 'oreca-07-united',
-    name: 'Oreca 07 Gibson — United Autosports',
+    id: 'oreca-07',
+    name: 'Oreca 07 Gibson',
     manufacturer: 'Oreca',
     classId: CarClassId.LMP2,
     silhouette: 'lmp2',
+    modelId: 'oreca-07-united',
     attributes: { topSpeed: 81, acceleration: 81, corneringGrip: 82, braking: 82, efficiency: 84 },
-    tradeoffNote: 'United Autosports Oreca 07 Gibson: balanced Le Mans aero & consistent long-stint pace.',
+    tradeoffNote: 'Spec benchmark LMP2 prototype with naturally aspirated 4.2L Gibson V8 and versatile aero configuration.',
     engineType: 'v8-hybrid',
+    gears: 6,
     defaultLivery: makeLivery('#f97316', '#0f172a', '#ffffff', '22', { template: 'two-tone', rimFinish: 'gloss-black' }),
-  },
-  {
-    id: 'oreca-07-europol',
-    name: 'Oreca 07 Gibson — Inter Europol',
-    manufacturer: 'Oreca',
-    classId: CarClassId.LMP2,
-    silhouette: 'lmp2',
-    attributes: { topSpeed: 80, acceleration: 82, corneringGrip: 83, braking: 82, efficiency: 82 },
-    tradeoffNote: 'Inter Europol Competition chassis: agile mid-corner turn-in and strong corner-exit drive.',
-    engineType: 'v8-hybrid',
-    defaultLivery: makeLivery('#eab308', '#15803d', '#ffffff', '34', { template: 'geometric', rimFinish: 'silver' }),
-  },
-  {
-    id: 'oreca-07-ao',
-    name: 'Oreca 07 Gibson — AO Racing',
-    manufacturer: 'Oreca',
-    classId: CarClassId.LMP2,
-    silhouette: 'lmp2',
-    attributes: { topSpeed: 80, acceleration: 81, corneringGrip: 82, braking: 83, efficiency: 86 },
-    tradeoffNote: 'AO Racing Oreca 07 Gibson: refined brake modulation and forgiving double-stint tire wear.',
-    engineType: 'v8-hybrid',
-    defaultLivery: makeLivery('#7c3aed', '#22d3ee', '#ffffff', '99', { template: 'racing-stripes', rimFinish: 'white' }),
-  },
-  {
-    id: 'ligier-js-p217',
-    name: 'Ligier JS P217 Gibson',
-    manufacturer: 'Ligier',
-    classId: CarClassId.LMP2,
-    silhouette: 'lmp2',
-    attributes: { topSpeed: 82, acceleration: 81, corneringGrip: 81, braking: 81, efficiency: 84 },
-    tradeoffNote: 'Ligier JS P217 Gibson chassis: clean top-end straight-line efficiency paired with stable aero.',
-    engineType: 'v8-hybrid',
-    defaultLivery: makeLivery('#1e3a8a', '#ef4444', '#ffffff', '23', { template: 'geometric', rimFinish: 'silver' }),
+    liveries: [
+      {
+        id: 'united-autosports',
+        name: 'United Autosports',
+        team: 'United Autosports',
+        livery: makeLivery('#f97316', '#0f172a', '#ffffff', '22', { template: 'two-tone', rimFinish: 'gloss-black' }),
+      },
+      {
+        id: 'inter-europol',
+        name: 'Inter Europol Competition',
+        team: 'Inter Europol Competition',
+        livery: makeLivery('#eab308', '#15803d', '#ffffff', '34', { template: 'geometric', rimFinish: 'silver' }),
+      },
+      {
+        id: 'ao-racing',
+        name: 'AO Racing "Rexy / Spike"',
+        team: 'AO Racing',
+        livery: makeLivery('#7c3aed', '#22d3ee', '#ffffff', '99', { template: 'racing-stripes', rimFinish: 'white' }),
+      },
+      {
+        id: 'ligier-racing',
+        name: 'Ligier European Racing',
+        team: 'Ligier Racing',
+        livery: makeLivery('#1e3a8a', '#ef4444', '#ffffff', '23', { template: 'geometric', rimFinish: 'silver' }),
+      },
+    ],
   },
 
   // ================= GTD Pro / GTD / LMGT3 (10 cars) =================
@@ -609,173 +605,128 @@ export const CARS: CarSpec[] = [
     defaultLivery: makeLivery('#1e3a8a', '#ffffff', '#dc2626', '55', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
   },
 
-  // ================= FORMULA 1 — 2026 SPEC (11 teams) =================
-  {
-    id: 'f1-26-ferrari',
-    name: 'Scuderia Ferrari SF-26',
-    manufacturer: 'Ferrari',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 93, acceleration: 94, corneringGrip: 91, braking: 92, efficiency: 88 },
-    tradeoffNote: 'Fierce 50/50 electric-ICE straight deployment with nimble active aero switching.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#dc2626', '#ffffff', '#facc15', '16', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
-  },
-  {
-    id: 'f1-26-mclaren',
-    name: 'McLaren MCL40 (2026)',
-    manufacturer: 'McLaren',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 91, acceleration: 92, corneringGrip: 95, braking: 93, efficiency: 90 },
-    tradeoffNote: 'Apex-hugging corner mode downforce and crisp tire life.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#f97316', '#0f172a', '#38bdf8', '4', { template: 'two-tone', carbonHood: true }),
-  },
+  // ================= FORMULA 1 — 2026 SPEC =================
   {
     id: 'f1-26-mercedes',
     name: 'Mercedes-AMG W17 (2026)',
     manufacturer: 'Mercedes',
     classId: CarClassId.F1_2026,
     silhouette: 'formula',
-    attributes: { topSpeed: 93, acceleration: 93, corneringGrip: 92, braking: 94, efficiency: 91 },
-    tradeoffNote: 'Clinical braking precision and energy recovery efficiency.',
+    modelId: 'f1-26-mercedes',
+    attributes: { topSpeed: 93, acceleration: 93, corneringGrip: 93, braking: 93, efficiency: 90 },
+    tradeoffNote: 'Active Aero 2026 regulation challenger with 50/50 ICE-MGU-K power unit and Z-mode/X-mode active aerodynamics.',
     engineType: 'v6-hybrid',
+    gears: 8,
     defaultLivery: makeLivery('#111827', '#14b8a6', '#cbd5e1', '63', { template: 'geometric' }),
-  },
-  {
-    id: 'f1-26-redbull',
-    name: 'Red Bull RB22 (2026)',
-    manufacturer: 'Red Bull',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 94, acceleration: 93, corneringGrip: 93, braking: 91, efficiency: 87 },
-    tradeoffNote: 'Ultra-low-drag Z-mode top speed with aggressive front-end bite.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#1e1b4b', '#ef4444', '#facc15', '1', { template: 'heritage' }),
-  },
-  {
-    id: 'f1-26-aston',
-    name: 'Aston Martin AMR26',
-    manufacturer: 'Aston Martin',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 90, acceleration: 93, corneringGrip: 94, braking: 92, efficiency: 90 },
-    tradeoffNote: 'High-traction mechanical grip out of slow corners with strong Honda MGU-K torque.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#065f46', '#a3e635', '#ffffff', '14', { template: 'racing-stripes' }),
-  },
-  {
-    id: 'f1-26-williams',
-    name: 'Williams FW48 (2026)',
-    manufacturer: 'Williams',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 96, acceleration: 92, corneringGrip: 89, braking: 91, efficiency: 89 },
-    tradeoffNote: 'Slippery straight-line rocket built for Monza and Baku tow battles.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#1d4ed8', '#38bdf8', '#f97316', '23', { template: 'two-tone' }),
-  },
-  {
-    id: 'f1-26-alpine',
-    name: 'Alpine A526 (2026)',
-    manufacturer: 'Alpine',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 92, acceleration: 91, corneringGrip: 92, braking: 93, efficiency: 91 },
-    tradeoffNote: 'Balanced mid-speed aero stability and disciplined battery harvesting.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#0284c7', '#ec4899', '#0f172a', '10', { template: 'geometric' }),
-  },
-  {
-    id: 'f1-26-haas',
-    name: 'Haas VF-26 (2026)',
-    manufacturer: 'Haas',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 93, acceleration: 93, corneringGrip: 90, braking: 92, efficiency: 89 },
-    tradeoffNote: 'Snappy corner-exit acceleration with compact low-drag bodywork.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#f8fafc', '#dc2626', '#111827', '87', { template: 'two-tone', carbonHood: true }),
-  },
-  {
-    id: 'f1-26-audi',
-    name: 'Audi R26 (2026)',
-    manufacturer: 'Audi',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 91, acceleration: 94, corneringGrip: 92, braking: 92, efficiency: 90 },
-    tradeoffNote: 'High-efficiency works electric drive unit with crisp traction control.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#cbd5e1', '#ef4444', '#0f172a', '27', { template: 'geometric', carbonHood: true }),
-  },
-  {
-    id: 'f1-26-cadillac',
-    name: 'Cadillac F1 (2026)',
-    manufacturer: 'Cadillac',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 94, acceleration: 92, corneringGrip: 91, braking: 91, efficiency: 89 },
-    tradeoffNote: 'Bold American works challenger with strong high-speed stability.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#0f172a', '#facc15', '#2563eb', '11', { template: 'racing-stripes', rimFinish: 'gold-bronze' }),
-  },
-  {
-    id: 'f1-26-racing-bulls',
-    name: 'Racing Bulls VCARB 03 (2026)',
-    manufacturer: 'Racing Bulls',
-    classId: CarClassId.F1_2026,
-    silhouette: 'formula',
-    attributes: { topSpeed: 91, acceleration: 92, corneringGrip: 94, braking: 93, efficiency: 89 },
-    tradeoffNote: 'Darting turn-in agility suited for tight chicanes and street circuits.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#f8fafc', '#2563eb', '#ef4444', '22', { template: 'heritage', rimFinish: 'white' }),
+    liveries: [
+      {
+        id: 'f1-26-mercedes',
+        name: 'Mercedes-AMG Petronas W17',
+        team: 'Mercedes',
+        livery: makeLivery('#111827', '#14b8a6', '#cbd5e1', '63', { template: 'geometric' }),
+      },
+      {
+        id: 'f1-26-ferrari',
+        name: 'Scuderia Ferrari SF-26',
+        team: 'Ferrari',
+        livery: makeLivery('#dc2626', '#ffffff', '#facc15', '16', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
+      },
+      {
+        id: 'f1-26-mclaren',
+        name: 'McLaren MCL40',
+        team: 'McLaren',
+        livery: makeLivery('#f97316', '#0f172a', '#38bdf8', '4', { template: 'two-tone', carbonHood: true }),
+      },
+      {
+        id: 'f1-26-redbull',
+        name: 'Oracle Red Bull Racing RB22',
+        team: 'Red Bull',
+        livery: makeLivery('#1e1b4b', '#ef4444', '#facc15', '1', { template: 'heritage' }),
+      },
+      {
+        id: 'f1-26-aston',
+        name: 'Aston Martin Aramco AMR26',
+        team: 'Aston Martin',
+        livery: makeLivery('#065f46', '#a3e635', '#ffffff', '14', { template: 'racing-stripes' }),
+      },
+      {
+        id: 'f1-26-williams',
+        name: 'Williams Racing FW48',
+        team: 'Williams',
+        livery: makeLivery('#1d4ed8', '#38bdf8', '#f97316', '23', { template: 'two-tone' }),
+      },
+      {
+        id: 'f1-26-alpine',
+        name: 'BWT Alpine F1 A526',
+        team: 'Alpine',
+        livery: makeLivery('#0284c7', '#ec4899', '#0f172a', '10', { template: 'geometric' }),
+      },
+      {
+        id: 'f1-26-haas',
+        name: 'MoneyGram Haas VF-26',
+        team: 'Haas',
+        livery: makeLivery('#f8fafc', '#dc2626', '#111827', '87', { template: 'two-tone', carbonHood: true }),
+      },
+      {
+        id: 'f1-26-audi',
+        name: 'Audi Revolut R26',
+        team: 'Audi',
+        livery: makeLivery('#cbd5e1', '#ef4444', '#0f172a', '27', { template: 'geometric', carbonHood: true }),
+      },
+      {
+        id: 'f1-26-cadillac',
+        name: 'Cadillac Formula 1',
+        team: 'Cadillac',
+        livery: makeLivery('#0f172a', '#facc15', '#2563eb', '11', { template: 'racing-stripes', rimFinish: 'gold-bronze' }),
+      },
+      {
+        id: 'f1-26-racing-bulls',
+        name: 'Visa Cash App RB VCARB 03',
+        team: 'Racing Bulls',
+        livery: makeLivery('#f8fafc', '#2563eb', '#ef4444', '22', { template: 'heritage', rimFinish: 'white' }),
+      },
+    ],
   },
 
   // ================= FORMULA 1 — 2021 SPEC =================
   {
     id: 'f1-21-mercedes',
-    name: 'Mercedes W12 (2021)',
+    name: 'Mercedes-AMG W12 (2021)',
     manufacturer: 'Mercedes',
     classId: CarClassId.F1_2021,
     silhouette: 'formula',
-    attributes: { topSpeed: 94, acceleration: 94, corneringGrip: 97, braking: 96, efficiency: 88 },
-    tradeoffNote: 'Bargeboard-era high-speed downforce titan with relentless rear stability.',
+    modelId: 'f1-21-mercedes',
+    attributes: { topSpeed: 94, acceleration: 94, corneringGrip: 97, braking: 96, efficiency: 89 },
+    tradeoffNote: 'Peak floor-downforce 2021 titan with complex bargeboards, razor-sharp turn-in and planted rear stability.',
     engineType: 'v6-hybrid',
+    gears: 8,
     defaultLivery: makeLivery('#0f172a', '#14b8a6', '#e2e8f0', '44', { template: 'heritage' }),
-  },
-  {
-    id: 'f1-21-redbull',
-    name: 'Red Bull RB16B (2021)',
-    manufacturer: 'Red Bull',
-    classId: CarClassId.F1_2021,
-    silhouette: 'formula',
-    attributes: { topSpeed: 92, acceleration: 95, corneringGrip: 98, braking: 96, efficiency: 89 },
-    tradeoffNote: 'High-rake front-end precision through fast S-curves.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#1e1b4b', '#facc15', '#dc2626', '33', { template: 'two-tone' }),
-  },
-  {
-    id: 'f1-21-ferrari',
-    name: 'Ferrari SF21 (2021)',
-    manufacturer: 'Ferrari',
-    classId: CarClassId.F1_2021,
-    silhouette: 'formula',
-    attributes: { topSpeed: 91, acceleration: 94, corneringGrip: 97, braking: 97, efficiency: 90 },
-    tradeoffNote: 'Late-braking specialist with huge low-speed mechanical grip.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#991b1b', '#dc2626', '#16a34a', '55', { template: 'two-tone' }),
-  },
-  {
-    id: 'f1-21-mclaren',
-    name: 'McLaren MCL35M (2021)',
-    manufacturer: 'McLaren',
-    classId: CarClassId.F1_2021,
-    silhouette: 'formula',
-    attributes: { topSpeed: 96, acceleration: 93, corneringGrip: 95, braking: 95, efficiency: 89 },
-    tradeoffNote: 'Monza-proven straight speed paired with planted medium-speed aero.',
-    engineType: 'v6-hybrid',
-    defaultLivery: makeLivery('#f97316', '#0284c7', '#111827', '3', { template: 'racing-stripes' }),
+    liveries: [
+      {
+        id: 'f1-21-mercedes',
+        name: 'Mercedes-AMG Petronas W12',
+        team: 'Mercedes',
+        livery: makeLivery('#0f172a', '#14b8a6', '#e2e8f0', '44', { template: 'heritage' }),
+      },
+      {
+        id: 'f1-21-redbull',
+        name: 'Red Bull Racing Honda RB16B',
+        team: 'Red Bull',
+        livery: makeLivery('#1e1b4b', '#facc15', '#dc2626', '33', { template: 'two-tone' }),
+      },
+      {
+        id: 'f1-21-ferrari',
+        name: 'Scuderia Ferrari SF21',
+        team: 'Ferrari',
+        livery: makeLivery('#991b1b', '#dc2626', '#16a34a', '55', { template: 'two-tone' }),
+      },
+      {
+        id: 'f1-21-mclaren',
+        name: 'McLaren F1 Team MCL35M',
+        team: 'McLaren',
+        livery: makeLivery('#f97316', '#0284c7', '#111827', '3', { template: 'racing-stripes' }),
+      },
+    ],
   },
 
   // ================= FORMULA 1 — 2005 SPEC =================
@@ -1040,8 +991,58 @@ export const CARS: CarSpec[] = [
   },
 ];
 
+const CAR_ALIASES: Record<string, { targetCarId: string; liveryPresetId?: string }> = {
+  // Formula 1 2026
+  'f1-26-ferrari': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-ferrari' },
+  'f1-26-mclaren': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-mclaren' },
+  'f1-26-redbull': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-redbull' },
+  'f1-26-aston': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-aston' },
+  'f1-26-williams': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-williams' },
+  'f1-26-alpine': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-alpine' },
+  'f1-26-haas': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-haas' },
+  'f1-26-audi': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-audi' },
+  'f1-26-cadillac': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-cadillac' },
+  'f1-26-racing-bulls': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-racing-bulls' },
+  'f1-2026': { targetCarId: 'f1-26-mercedes' },
+  'f1_2026': { targetCarId: 'f1-26-mercedes' },
+
+  // Formula 1 2021
+  'f1-21-redbull': { targetCarId: 'f1-21-mercedes', liveryPresetId: 'f1-21-redbull' },
+  'f1-21-ferrari': { targetCarId: 'f1-21-mercedes', liveryPresetId: 'f1-21-ferrari' },
+  'f1-21-mclaren': { targetCarId: 'f1-21-mercedes', liveryPresetId: 'f1-21-mclaren' },
+  'f1-2021': { targetCarId: 'f1-21-mercedes' },
+  'f1_2021': { targetCarId: 'f1-21-mercedes' },
+
+  // LMP2
+  'oreca-07-united': { targetCarId: 'oreca-07', liveryPresetId: 'united-autosports' },
+  'oreca-07-europol': { targetCarId: 'oreca-07', liveryPresetId: 'inter-europol' },
+  'oreca-07-ao': { targetCarId: 'oreca-07', liveryPresetId: 'ao-racing' },
+  'ligier-js-p217': { targetCarId: 'oreca-07', liveryPresetId: 'ligier-racing' },
+  'lmp2': { targetCarId: 'oreca-07' },
+};
+
 export function getCarById(id: string): CarSpec {
-  return CARS.find((c) => c.id === id) ?? CARS[0];
+  const direct = CARS.find((c) => c.id === id);
+  if (direct) return direct;
+
+  const alias = CAR_ALIASES[id];
+  if (alias) {
+    const target = CARS.find((c) => c.id === alias.targetCarId);
+    if (target) {
+      if (alias.liveryPresetId && target.liveries) {
+        const preset = target.liveries.find((p) => p.id === alias.liveryPresetId);
+        if (preset) {
+          return {
+            ...target,
+            defaultLivery: { ...preset.livery },
+          };
+        }
+      }
+      return target;
+    }
+  }
+
+  return CARS[0];
 }
 
 export function getCarsByClass(classId: CarClassId): CarSpec[] {

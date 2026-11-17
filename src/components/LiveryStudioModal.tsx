@@ -783,6 +783,56 @@ export function LiveryStudioModal({
               {/* Tab 1: Colors & Paint */}
               {activeTab === 'paint' && (
                 <div className="space-y-6">
+                  {/* Official Team & Factory Liveries (for single-chassis classes) */}
+                  {carSpec.liveries && carSpec.liveries.length > 0 && (
+                    <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-700/60 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                          Team & Factory Liveries ({carSpec.liveries.length})
+                        </span>
+                        <span className="text-[11px] text-slate-400">1-click apply</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scroll pr-1">
+                        {carSpec.liveries.map((preset) => {
+                          const isCurrent =
+                            livery.primaryColor.toLowerCase() === preset.livery.primaryColor.toLowerCase() &&
+                            livery.secondaryColor.toLowerCase() === preset.livery.secondaryColor.toLowerCase() &&
+                            livery.driverNumber === preset.livery.driverNumber;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => {
+                                setLivery({ ...preset.livery });
+                                setHasCustomTexture(false);
+                              }}
+                              className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                                isCurrent
+                                  ? 'bg-slate-800 border-indigo-500 text-white shadow-sm'
+                                  : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                              }`}
+                            >
+                              <div className="flex -space-x-1 shrink-0">
+                                <span
+                                  className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm"
+                                  style={{ backgroundColor: preset.livery.primaryColor }}
+                                />
+                                <span
+                                  className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm"
+                                  style={{ backgroundColor: preset.livery.secondaryColor }}
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-semibold truncate leading-tight">{preset.name}</div>
+                                <div className="text-[10px] text-slate-400 font-mono">#{preset.livery.driverNumber}</div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Primary Color Picker */}
                   <div>
                     <div className="flex items-center justify-between mb-2">

@@ -334,13 +334,22 @@ export function RaceViewport(props: RaceViewportProps) {
           const pick = sortedPool[(aiCursor * 3 + slot) % sortedPool.length];
           const personality = PERSONALITIES[aiCursor % PERSONALITIES.length];
           const jitter = 0.985 + ((aiCursor * 17) % 7) * 0.006;
-          const aiLivery = {
+          let aiLivery = {
             ...pick.defaultLivery,
             driverNumber: String(((aiCursor + 2) * 7) % 98 + 1),
           };
+          let botName = AI_NAMES[aiCursor % AI_NAMES.length];
+
+          // If car has multiple team liveries (F1 2026, F1 2021, LMP2), cycle through them across the AI grid
+          if (pick.liveries && pick.liveries.length > 0) {
+            const preset = pick.liveries[aiCursor % pick.liveries.length];
+            aiLivery = { ...preset.livery };
+            botName = `${preset.name}`;
+          }
+
           const bot = createCarSimState({
             id: `ai-${aiCursor}`,
-            name: AI_NAMES[aiCursor % AI_NAMES.length],
+            name: botName,
             isPlayer: false,
             carId: pick.id,
             livery: aiLivery,

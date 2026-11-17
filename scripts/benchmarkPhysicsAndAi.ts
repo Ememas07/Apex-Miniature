@@ -15,7 +15,7 @@ import { CarClassId } from '../src/game/types';
 const __filename = fileURLToPath(import.meta.url);
 const TSX_CLI_PATH = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
 
-const BENCHMARK_TRACK_IDS = [
+const FLAGSHIP_TRACK_IDS = [
   'spa-francorchamps',
   'monza',
   'suzuka',
@@ -25,42 +25,77 @@ const BENCHMARK_TRACK_IDS = [
   'monaco',
 ] as const;
 
-// Real-world motorsport reference figures (Pole / Race pace + Speed traps)
+// Include flagship tracks first, followed by any additional tracks defined in TRACKS
+const ALL_BENCHMARK_TRACK_IDS: string[] = [
+  ...FLAGSHIP_TRACK_IDS.filter((id) => TRACKS.some((t) => t.id === id)),
+  ...TRACKS.map((t) => t.id).filter(
+    (id) => !(FLAGSHIP_TRACK_IDS as readonly string[]).includes(id),
+  ),
+];
+
+// Real-world motorsport reference figures (Pole / Race pace + Speed traps) across all 10 classes
 const IRL_REFERENCE: Record<
   string,
-  Record<string, { lapSec: string; vmaxKmh: string; sourceNote: string }>
+  Partial<Record<CarClassId, { lapSec: string; vmaxKmh: string; sourceNote: string }>>
 > = {
   'spa-francorchamps': {
-    F1_2026: { lapSec: '102.0–105.0s (1:42–1:45)', vmaxKmh: '335–345', sourceNote: 'F1 Spa GP Quali/Race' },
-    HYPERCAR_GTP: { lapSec: '122.5–126.0s (2:02–2:06)', vmaxKmh: '315–325', sourceNote: 'WEC 6h Spa Hyperpole' },
-    GT3: { lapSec: '136.0–140.0s (2:16–2:20)', vmaxKmh: '275–285', sourceNote: 'GTWC/WEC LMGT3 Spa' },
+    [CarClassId.F1_2026]: { lapSec: '102.0–105.0s (1:42–1:45)', vmaxKmh: '335–345', sourceNote: 'F1 Spa GP Quali/Race' },
+    [CarClassId.F1_2021]: { lapSec: '102.5–106.0s (1:42–1:46)', vmaxKmh: '332–342', sourceNote: 'F1 2021 Spa Quali' },
+    [CarClassId.F1_2005]: { lapSec: '106.0–109.5s (1:46–1:49)', vmaxKmh: '335–345', sourceNote: 'F1 2005 V10 Spa' },
+    [CarClassId.HYPERCAR_GTP]: { lapSec: '122.5–126.0s (2:02–2:06)', vmaxKmh: '315–325', sourceNote: 'WEC 6h Spa Hyperpole' },
+    [CarClassId.LMP2]: { lapSec: '126.5–130.0s (2:06–2:10)', vmaxKmh: '300–310', sourceNote: 'ELMS / WEC LMP2 Spa' },
+    [CarClassId.GT3]: { lapSec: '136.0–140.0s (2:16–2:20)', vmaxKmh: '275–285', sourceNote: 'GTWC/WEC LMGT3 Spa' },
+    [CarClassId.GT4]: { lapSec: '148.0–153.0s (2:28–2:33)', vmaxKmh: '250–262', sourceNote: 'GT4 European Series Spa' },
+    [CarClassId.SUPERCAR]: { lapSec: '142.0–148.0s (2:22–2:28)', vmaxKmh: '295–315', sourceNote: 'Hypercar/Supercar Trackday' },
+    [CarClassId.TRACK_COUPE]: { lapSec: '154.0–160.0s (2:34–2:40)', vmaxKmh: '240–255', sourceNote: 'Clubsport Track Coupe' },
   },
   monza: {
-    F1_2026: { lapSec: '79.5–82.5s (1:19–1:22)', vmaxKmh: '348–356', sourceNote: 'F1 Italian GP Low-Downforce' },
-    HYPERCAR_GTP: { lapSec: '95.0–98.5s (1:35–1:38)', vmaxKmh: '330–340', sourceNote: 'WEC 6h Monza' },
-    GT3: { lapSec: '106.5–109.5s (1:46–1:49)', vmaxKmh: '285–295', sourceNote: 'GTWC/WEC GT3 Monza' },
+    [CarClassId.F1_2026]: { lapSec: '79.5–82.5s (1:19–1:22)', vmaxKmh: '348–356', sourceNote: 'F1 Italian GP Low-Downforce' },
+    [CarClassId.F1_2021]: { lapSec: '79.5–82.0s (1:19–1:22)', vmaxKmh: '345–355', sourceNote: 'F1 2021 Monza Quali' },
+    [CarClassId.F1_2005]: { lapSec: '80.5–83.0s (1:20–1:23)', vmaxKmh: '355–368', sourceNote: 'F1 2005 V10 Monza' },
+    [CarClassId.HYPERCAR_GTP]: { lapSec: '95.0–98.5s (1:35–1:38)', vmaxKmh: '330–340', sourceNote: 'WEC 6h Monza' },
+    [CarClassId.LMP2]: { lapSec: '98.5–102.0s (1:38–1:42)', vmaxKmh: '312–322', sourceNote: 'ELMS LMP2 Monza' },
+    [CarClassId.GT3]: { lapSec: '106.5–109.5s (1:46–1:49)', vmaxKmh: '285–295', sourceNote: 'GTWC/WEC GT3 Monza' },
+    [CarClassId.GT4]: { lapSec: '116.0–120.0s (1:56–2:00)', vmaxKmh: '258–268', sourceNote: 'GT4 European Series Monza' },
+    [CarClassId.SUPERCAR]: { lapSec: '111.0–116.0s (1:51–1:56)', vmaxKmh: '310–330', sourceNote: 'Road Supercar Monza' },
+    [CarClassId.TRACK_COUPE]: { lapSec: '121.0–126.0s (2:01–2:06)', vmaxKmh: '245–260', sourceNote: 'Clubsport Coupe Monza' },
   },
   suzuka: {
-    F1_2026: { lapSec: '88.0–91.5s (1:28–1:31)', vmaxKmh: '322–332', sourceNote: 'F1 Japanese GP' },
-    GT3: { lapSec: '120.0–124.0s (2:00–2:04)', vmaxKmh: '275–285', sourceNote: 'Suzuka 1000km / GT3' },
+    [CarClassId.F1_2026]: { lapSec: '88.0–91.5s (1:28–1:31)', vmaxKmh: '322–332', sourceNote: 'F1 Japanese GP' },
+    [CarClassId.F1_2021]: { lapSec: '87.5–91.0s (1:27–1:31)', vmaxKmh: '320–330', sourceNote: 'F1 High-Downforce Suzuka' },
+    [CarClassId.F1_2005]: { lapSec: '90.0–93.0s (1:30–1:33)', vmaxKmh: '322–332', sourceNote: 'F1 2005 V10 Suzuka' },
+    [CarClassId.HYPERCAR_GTP]: { lapSec: '105.0–109.0s (1:45–1:49)', vmaxKmh: '305–315', sourceNote: 'Super GT / Prototype Suzuka' },
+    [CarClassId.GT3]: { lapSec: '120.0–124.0s (2:00–2:04)', vmaxKmh: '275–285', sourceNote: 'Suzuka 1000km / GT3' },
+    [CarClassId.SUPERCAR]: { lapSec: '126.0–132.0s (2:06–2:12)', vmaxKmh: '290–308', sourceNote: 'Production Supercar Suzuka' },
   },
   silverstone: {
-    F1_2026: { lapSec: '85.5–89.0s (1:25–1:29)', vmaxKmh: '325–336', sourceNote: 'F1 British GP' },
-    HYPERCAR_GTP: { lapSec: '101.0–105.0s (1:41–1:45)', vmaxKmh: '310–320', sourceNote: 'ELMS / WEC Silverstone' },
-    GT3: { lapSec: '117.0–121.0s (1:57–2:01)', vmaxKmh: '272–282', sourceNote: 'British GT / GTWC' },
+    [CarClassId.F1_2026]: { lapSec: '85.5–89.0s (1:25–1:29)', vmaxKmh: '325–336', sourceNote: 'F1 British GP' },
+    [CarClassId.F1_2021]: { lapSec: '86.0–89.5s (1:26–1:29)', vmaxKmh: '322–332', sourceNote: 'F1 2021 British GP' },
+    [CarClassId.F1_2005]: { lapSec: '80.0–83.0s (1:20–1:23)', vmaxKmh: '318–328', sourceNote: 'F1 2005 Silverstone' },
+    [CarClassId.HYPERCAR_GTP]: { lapSec: '101.0–105.0s (1:41–1:45)', vmaxKmh: '310–320', sourceNote: 'ELMS / WEC Silverstone' },
+    [CarClassId.LMP2]: { lapSec: '104.0–108.0s (1:44–1:48)', vmaxKmh: '295–305', sourceNote: 'ELMS 4h Silverstone' },
+    [CarClassId.GT3]: { lapSec: '117.0–121.0s (1:57–2:01)', vmaxKmh: '272–282', sourceNote: 'British GT / GTWC' },
+    [CarClassId.GT4]: { lapSec: '127.0–131.5s (2:07–2:11)', vmaxKmh: '245–258', sourceNote: 'British GT GT4' },
+    [CarClassId.TRACK_COUPE]: { lapSec: '132.0–137.0s (2:12–2:17)', vmaxKmh: '238–252', sourceNote: 'Track Coupe Silverstone' },
   },
   'laguna-seca': {
-    HYPERCAR_GTP: { lapSec: '72.0–75.0s (1:12–1:15)', vmaxKmh: '275–285', sourceNote: 'IMSA WeatherTech Laguna' },
-    GT3: { lapSec: '82.5–85.5s (1:22–1:25)', vmaxKmh: '250–262', sourceNote: 'IMSA GTD Pro Laguna' },
+    [CarClassId.HYPERCAR_GTP]: { lapSec: '72.0–75.0s (1:12–1:15)', vmaxKmh: '275–285', sourceNote: 'IMSA WeatherTech Laguna' },
+    [CarClassId.LMP2]: { lapSec: '75.0–78.0s (1:15–1:18)', vmaxKmh: '265–275', sourceNote: 'IMSA LMP2 Laguna' },
+    [CarClassId.GT3]: { lapSec: '82.5–85.5s (1:22–1:25)', vmaxKmh: '250–262', sourceNote: 'IMSA GTD Pro Laguna' },
+    [CarClassId.GT4]: { lapSec: '89.5–93.0s (1:29–1:33)', vmaxKmh: '232–244', sourceNote: 'IMSA Pilot Challenge GS' },
+    [CarClassId.SUPERCAR]: { lapSec: '86.0–90.0s (1:26–1:30)', vmaxKmh: '262–278', sourceNote: 'MotorTrend / Road Supercar' },
+    [CarClassId.TRACK_COUPE]: { lapSec: '92.0–96.0s (1:32–1:36)', vmaxKmh: '225–238', sourceNote: 'Track Coupe Laguna' },
   },
   'le-mans': {
-    HYPERCAR_GTP: { lapSec: '204.0–209.0s (3:24–3:29)', vmaxKmh: '335–345', sourceNote: '24h Le Mans Hyperpole' },
-    LMP2: { lapSec: '213.0–218.0s (3:33–3:38)', vmaxKmh: '315–325', sourceNote: '24h Le Mans LMP2' },
-    GT3: { lapSec: '234.0–240.0s (3:54–4:00)', vmaxKmh: '285–296', sourceNote: '24h Le Mans LMGT3' },
+    [CarClassId.HYPERCAR_GTP]: { lapSec: '204.0–209.0s (3:24–3:29)', vmaxKmh: '335–345', sourceNote: '24h Le Mans Hyperpole' },
+    [CarClassId.LMP2]: { lapSec: '213.0–218.0s (3:33–3:38)', vmaxKmh: '315–325', sourceNote: '24h Le Mans LMP2' },
+    [CarClassId.GT3]: { lapSec: '234.0–240.0s (3:54–4:00)', vmaxKmh: '285–296', sourceNote: '24h Le Mans LMGT3' },
   },
   monaco: {
-    F1_2026: { lapSec: '70.0–73.5s (1:10–1:13)', vmaxKmh: '288–296', sourceNote: 'F1 Monaco GP' },
-    FORMULA_E: { lapSec: '86.0–90.0s (1:26–1:30)', vmaxKmh: '245–265', sourceNote: 'Monaco E-Prix Gen3 Evo' },
+    [CarClassId.F1_2026]: { lapSec: '70.0–73.5s (1:10–1:13)', vmaxKmh: '288–296', sourceNote: 'F1 Monaco GP' },
+    [CarClassId.F1_2021]: { lapSec: '70.3–73.5s (1:10–1:13)', vmaxKmh: '286–295', sourceNote: 'F1 2021 Monaco Quali' },
+    [CarClassId.F1_2005]: { lapSec: '73.5–76.5s (1:13–1:16)', vmaxKmh: '282–292', sourceNote: 'F1 2005 Monaco GP' },
+    [CarClassId.FORMULA_E]: { lapSec: '86.0–90.0s (1:26–1:30)', vmaxKmh: '245–265', sourceNote: 'Monaco E-Prix Gen3 Evo' },
   },
 };
 
@@ -71,7 +106,7 @@ function fmtTime(sec: number): string {
 }
 
 function measureStraightLineDyno() {
-  const baseTrack = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const baseTrack = compileTrack(TRACKS.find((t) => t.id === 'monza') ?? TRACKS[0]);
   const straightWaypoints = Array.from({ length: 100 }, (_, i) => ({
     x: 0,
     y: 0,
@@ -315,13 +350,17 @@ function simulateCarFlyingLap(
   return null;
 }
 
-function runFlyingLapBenchmark(filterPairs?: Array<{ trackId: string; classId: CarClassId }>) {
+function runFlyingLapBenchmark(
+  trackIdsToRun: string[],
+  filterPairs?: Array<{ trackId: string; classId: CarClassId }>,
+) {
   const trackIds = filterPairs
     ? Array.from(new Set(filterPairs.map((p) => p.trackId)))
-    : [...BENCHMARK_TRACK_IDS];
-  const compiledTracks = trackIds.map((id) =>
-    compileTrack(TRACKS.find((t) => t.id === id)!),
-  );
+    : trackIdsToRun;
+  const compiledTracks = trackIds
+    .map((id) => TRACKS.find((t) => t.id === id))
+    .filter((t): t is NonNullable<typeof t> => Boolean(t))
+    .map((t) => compileTrack(t));
 
   const lapResults: Array<{
     trackId: string;
@@ -353,13 +392,38 @@ function runFlyingLapBenchmark(filterPairs?: Array<{ trackId: string; classId: C
   return lapResults;
 }
 
+// Expanded target matrix covering ALL 10 CarClassIds across diverse track archetypes
 const TARGET_BENCHMARKS = [
+  // GT3
   { trackId: 'spa-francorchamps', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 137.5, targetTrapKmh: 280 },
-  { trackId: 'spa-francorchamps', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 123.0, targetTrapKmh: 320 },
   { trackId: 'monza', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 107.5, targetTrapKmh: 292 },
+  { trackId: 'laguna-seca', classId: CarClassId.GT3, car: 'gt3', targetLapSec: 84.0, targetTrapKmh: 256 },
+  // HYPERCAR_GTP
+  { trackId: 'spa-francorchamps', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 123.0, targetTrapKmh: 320 },
+  { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 206.0, targetTrapKmh: 340 },
+  // LMP2
+  { trackId: 'le-mans', classId: CarClassId.LMP2, car: 'lmp2', targetLapSec: 215.5, targetTrapKmh: 320 },
+  { trackId: 'silverstone', classId: CarClassId.LMP2, car: 'lmp2', targetLapSec: 106.0, targetTrapKmh: 300 },
+  // GT4
+  { trackId: 'silverstone', classId: CarClassId.GT4, car: 'gt4', targetLapSec: 129.0, targetTrapKmh: 252 },
+  { trackId: 'laguna-seca', classId: CarClassId.GT4, car: 'gt4', targetLapSec: 91.0, targetTrapKmh: 238 },
+  // F1_2026
   { trackId: 'suzuka', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 89.5, targetTrapKmh: 332 },
   { trackId: 'monaco', classId: CarClassId.F1_2026, car: 'f1_2026', targetLapSec: 71.0, targetTrapKmh: 292 },
-  { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP, car: 'hypercar_gtp', targetLapSec: 206.0, targetTrapKmh: 340 },
+  // F1_2021
+  { trackId: 'silverstone', classId: CarClassId.F1_2021, car: 'f1_2021', targetLapSec: 87.5, targetTrapKmh: 328 },
+  { trackId: 'monza', classId: CarClassId.F1_2021, car: 'f1_2021', targetLapSec: 80.5, targetTrapKmh: 350 },
+  // F1_2005
+  { trackId: 'monza', classId: CarClassId.F1_2005, car: 'f1_2005', targetLapSec: 81.5, targetTrapKmh: 360 },
+  { trackId: 'suzuka', classId: CarClassId.F1_2005, car: 'f1_2005', targetLapSec: 91.5, targetTrapKmh: 326 },
+  // FORMULA_E
+  { trackId: 'monaco', classId: CarClassId.FORMULA_E, car: 'formula_e', targetLapSec: 87.5, targetTrapKmh: 255 },
+  // SUPERCAR
+  { trackId: 'monza', classId: CarClassId.SUPERCAR, car: 'supercar', targetLapSec: 113.5, targetTrapKmh: 320 },
+  { trackId: 'laguna-seca', classId: CarClassId.SUPERCAR, car: 'supercar', targetLapSec: 88.0, targetTrapKmh: 270 },
+  // TRACK_COUPE
+  { trackId: 'silverstone', classId: CarClassId.TRACK_COUPE, car: 'track_coupe', targetLapSec: 134.5, targetTrapKmh: 245 },
+  { trackId: 'laguna-seca', classId: CarClassId.TRACK_COUPE, car: 'track_coupe', targetLapSec: 94.0, targetTrapKmh: 232 },
 ] as const;
 
 // ==================== WORKER CHILD LOGIC ====================
@@ -384,6 +448,7 @@ if (workerItemArg) {
 
   laps.sort((a, b) => a.totalLap - b.totalLap);
   const best = laps[0];
+  const slowest = laps[laps.length - 1];
   const elapsedMs = Date.now() - startMs;
 
   if (best) {
@@ -399,7 +464,11 @@ if (workerItemArg) {
         track: bench.trackId,
         carClass: bench.classId,
         car: bench.car,
+        carId: best.carId,
         carName: best.carName,
+        carsEvaluated: laps.length,
+        slowestCarId: slowest?.carId ?? best.carId,
+        slowestLapSec: Number((slowest?.totalLap ?? best.totalLap).toFixed(3)),
         lapTime: Number(best.totalLap.toFixed(2)),
         lapSec: Number(best.totalLap.toFixed(3)),
         trapKmh: Number(best.trapKmh.toFixed(2)),
@@ -418,9 +487,11 @@ if (workerItemArg) {
 async function main() {
   const isJson = process.argv.includes('--json');
   const isStream = process.argv.includes('--stream') || isJson;
+  const flagshipOnly = process.argv.includes('--flagship-only');
 
   if (isJson || isStream) {
     const classArg = process.argv.find((a) => a.startsWith('--class='))?.split('=')[1]?.toUpperCase();
+    const trackArg = process.argv.find((a) => a.startsWith('--track='))?.split('=')[1]?.toLowerCase();
     const onlyOutliers = process.argv.includes('--only-outliers');
     const marginArg =
       process.argv.find((a) => a.startsWith('--margin='))?.split('=')[1] ??
@@ -435,17 +506,22 @@ async function main() {
       } catch {}
     }
 
+    const activeBenchmarks = TARGET_BENCHMARKS.filter(
+      (b) => TRACKS.some((t) => t.id === b.trackId) && CARS.some((c) => c.classId === b.classId),
+    );
+
     const tasksToRun: (typeof TARGET_BENCHMARKS)[number][] = [];
     const cachedItems: any[] = [];
 
-    for (const bench of TARGET_BENCHMARKS) {
+    for (const bench of activeBenchmarks) {
       const key = `${bench.trackId}:${bench.classId}`;
       const isClassMatch =
         !classArg ||
         bench.classId.toUpperCase().includes(classArg) ||
         bench.car.toUpperCase().includes(classArg);
+      const isTrackMatch = !trackArg || bench.trackId.toLowerCase().includes(trackArg);
 
-      if (!isClassMatch) {
+      if (!isClassMatch || !isTrackMatch) {
         if (cache[key]) {
           cachedItems.push(cache[key]);
         }
@@ -480,6 +556,7 @@ async function main() {
         car: c.car,
         carClass: c.carClass,
         carName: c.carName,
+        carsEvaluated: c.carsEvaluated,
         lapTime: c.lapTime ?? c.lapSec,
         lapSec: c.lapSec ?? c.lapTime,
         trapKmh: c.trapKmh,
@@ -549,33 +626,44 @@ async function main() {
     } catch {}
 
     // Output final summary JSON in canonical order
-    const jsonRows = TARGET_BENCHMARKS.map((bench) => {
-      const key = `${bench.trackId}:${bench.classId}`;
-      const item = freshMap.get(key) || cache[key];
-      if (!item) return null;
-      return {
-        track: item.track,
-        carClass: item.carClass,
-        lapSec: item.lapSec,
-        trapKmh: item.trapKmh,
-        wallHits: item.wallHits,
-        offTrackPct: item.offTrackPct,
-      };
-    }).filter(Boolean);
+    const jsonRows = activeBenchmarks
+      .map((bench) => {
+        const key = `${bench.trackId}:${bench.classId}`;
+        const item = freshMap.get(key) || cache[key];
+        if (!item) return null;
+        return {
+          track: item.track,
+          carClass: item.carClass,
+          carId: item.carId,
+          carsEvaluated: item.carsEvaluated,
+          lapSec: item.lapSec,
+          slowestLapSec: item.slowestLapSec,
+          trapKmh: item.trapKmh,
+          wallHits: item.wallHits,
+          offTrackPct: item.offTrackPct,
+        };
+      })
+      .filter(Boolean);
 
     console.log(JSON.stringify(jsonRows));
     return;
   }
 
+  const tracksForReport = flagshipOnly
+    ? FLAGSHIP_TRACK_IDS.filter((id) => TRACKS.some((t) => t.id === id))
+    : ALL_BENCHMARK_TRACK_IDS;
+
   console.log(`Running straight-line dyno across all ${CARS.length} cars...`);
   const dyno = measureStraightLineDyno();
-  console.log(`Running AI flying laps (${CARS.length} cars × ${BENCHMARK_TRACK_IDS.length} circuits = ${CARS.length * BENCHMARK_TRACK_IDS.length} laps)...`);
-  const laps = runFlyingLapBenchmark();
+  console.log(
+    `Running AI flying laps (${CARS.length} cars × ${tracksForReport.length} circuits = ${CARS.length * tracksForReport.length} laps)...`,
+  );
+  const laps = runFlyingLapBenchmark(tracksForReport);
 
   const lines: string[] = [
     '# Apex Miniature — Multi-Car Physics & AI Benchmark Report',
     '',
-    `Audited **all ${CARS.length} vehicles** in \`CARS\` across **${BENCHMARK_TRACK_IDS.length} flagship circuits** (\`spa-francorchamps\`, \`monza\`, \`suzuka\`, \`silverstone\`, \`laguna-seca\`, \`le-mans\`, \`monaco\`) running at \`Alien\` (1.07× pace) flying-lap pace at \`60 Hz\`.`,
+    `Audited **all ${CARS.length} vehicles** in \`CARS\` across **${tracksForReport.length} circuits** (${tracksForReport.map((id) => `\`${id}\``).join(', ')}) running at \`Alien\` (1.07× pace) flying-lap pace at \`60 Hz\`.`,
     '',
     '## 1. Class-Level Performance Summary vs Real-World Targets',
     '',
@@ -610,7 +698,7 @@ async function main() {
     '|---|---|---|---:|---:|---:|---:|---:|---|',
   );
 
-  for (const trackId of BENCHMARK_TRACK_IDS) {
+  for (const trackId of tracksForReport) {
     const trackRefs = IRL_REFERENCE[trackId] || {};
     for (const cls of Object.values(CarClassId)) {
       const sub = laps.filter((l) => l.trackId === trackId && l.classId === cls);
@@ -627,7 +715,7 @@ async function main() {
 
   lines.push(
     '',
-    `## 3. Complete Matrix — All ${CARS.length} Cars × ${BENCHMARK_TRACK_IDS.length} Circuits (${laps.length} Flying Laps)`,
+    `## 3. Complete Matrix — All ${CARS.length} Cars × ${tracksForReport.length} Circuits (${laps.length} Flying Laps)`,
     '',
     '| Track | Class | Car | 0–100 | 0–200 | Base Vmax | S1 | S2 | S3 | Lap Time | Trap | Max Lat / HalfW |',
     '|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|',

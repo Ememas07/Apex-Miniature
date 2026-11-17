@@ -6,6 +6,7 @@ import {
   CARS,
   CAR_CLASSES,
   computeBoPEquilibriumScore,
+  getCarById,
   getCarsByClass,
   resolveCarSpecial,
   resolveNumberPlateColors,
@@ -47,16 +48,33 @@ import {
 
 test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.HYPERCAR_GTP).length, 12);
-  assert.equal(getCarsByClass(CarClassId.LMP2).length, 4);
+  assert.equal(getCarsByClass(CarClassId.LMP2).length, 1);
   assert.equal(getCarsByClass(CarClassId.GT3).length, 14);
   assert.equal(getCarsByClass(CarClassId.GT4).length, 8);
-  assert.equal(getCarsByClass(CarClassId.F1_2026).length, 11);
-  assert.equal(getCarsByClass(CarClassId.F1_2021).length, 4);
+  assert.equal(getCarsByClass(CarClassId.F1_2026).length, 1);
+  assert.equal(getCarsByClass(CarClassId.F1_2021).length, 1);
   assert.equal(getCarsByClass(CarClassId.F1_2005).length, 4);
   assert.equal(getCarsByClass(CarClassId.FORMULA_E).length, 4);
   assert.equal(getCarsByClass(CarClassId.TRACK_COUPE).length, 7);
   assert.equal(getCarsByClass(CarClassId.SUPERCAR).length, 8);
-  assert.ok(CARS.length >= 76);
+  assert.ok(CARS.length >= 60);
+
+  // Single-model classes have authentic team livery presets
+  const lmp2 = getCarsByClass(CarClassId.LMP2)[0];
+  assert.ok((lmp2.liveries?.length ?? 0) >= 4);
+  const f1_26 = getCarsByClass(CarClassId.F1_2026)[0];
+  assert.ok((f1_26.liveries?.length ?? 0) >= 11);
+  assert.equal(f1_26.modelId, 'f1-26-mercedes');
+  const f1_21 = getCarsByClass(CarClassId.F1_2021)[0];
+  assert.ok((f1_21.liveries?.length ?? 0) >= 4);
+  assert.equal(f1_21.modelId, 'f1-21-mercedes');
+
+  // Alias lookup resolves to consolidated cars with preset liveries
+  assert.equal(getCarById('f1-26-ferrari').classId, CarClassId.F1_2026);
+  assert.equal(getCarById('f1-26-ferrari').defaultLivery.primaryColor, '#dc2626');
+  assert.equal(getCarById('f1-21-redbull').classId, CarClassId.F1_2021);
+  assert.equal(getCarById('oreca-07-ao').classId, CarClassId.LMP2);
+  assert.equal(getCarById('oreca-07-ao').defaultLivery.primaryColor, '#7c3aed');
 });
 
 test('Asymmetric intra-class BoP keeps overall class scores balanced while preserving trade-offs', () => {
@@ -102,7 +120,7 @@ test('Track catalog has all 43 circuits including 10 flagship circuits with vali
 
 test('Sim-cade physics accelerates, triggers slipstream, and enforces Active Aero drag/grip trade-off', () => {
   const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
-  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const f1 = getCarById('f1-26-ferrari');
   const car = createCarSimState({
     id: 'p1',
     name: 'Player',
@@ -245,7 +263,7 @@ test('Driver number validation and standings calculation work cleanly', () => {
 
 test('Issue 1: Pit Speed Limiter smoothly ramps speed down (~14-18 m/s^2) and holds 60 km/h (16.67 m/s)', () => {
   const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
-  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const f1 = getCarById('f1-26-ferrari');
   const car = createCarSimState({
     id: 'p1',
     name: 'Player',
@@ -681,7 +699,7 @@ test('Custom Track Persistence & Import/Export: round-trips JSON, degree banking
 test('AI Pathfinding & Control on Custom Track: navigates, brakes for corners, and clamps lateral offset', () => {
   const customSpec = CUSTOM_TRACK_TEMPLATES.find((t) => t.id === 'template-street-night')!;
   const compiled = compileTrack(customSpec);
-  const f1CarSpec = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const f1CarSpec = getCarById('f1-26-ferrari');
 
   const aiCar = createCarSimState({
     id: 'ai-custom-tester',
@@ -761,7 +779,7 @@ test('All 43 Circuits: high-density waypoints (>=50), zero 3D ribbon folds, minR
 test('AI Spatial Avoidance & Strict Asphalt Containment: avoids braking player, respects side-by-side doors, stays on asphalt', () => {
   const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
   const monaco = compileTrack(TRACKS.find((t) => t.id === 'monaco')!);
-  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const f1 = getCarById('f1-26-ferrari');
   const gt3 = CARS.find((c) => c.id === 'ferrari-296-gt3')!;
 
   // 1. Forward Braking Cone + Overtaking: Player brakes hard right ahead of F1 AI on Monza straight
@@ -906,7 +924,7 @@ test('Track Studio Helpers: generous node hit-testing (>= 14px & >= 1.8x collide
 
 test('Smooth Wall-Sliding Collisions, Depenetration & 25 km/h Damage Threshold', () => {
   const spa = compileTrack(TRACKS[0]);
-  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const f1 = getCarById('f1-26-ferrari');
   const car = createCarSimState({
     id: 'wall-test-car',
     name: 'Wall Tester',
@@ -954,7 +972,7 @@ test('Smooth Wall-Sliding Collisions, Depenetration & 25 km/h Damage Threshold',
 
 test('Invisible Pit-Lane Collision Walls & Strict Entry/Exit Openings', () => {
   const spa = compileTrack(TRACKS[0]);
-  const f1 = CARS.find((c) => c.id === 'f1-26-ferrari')!;
+  const f1 = getCarById('f1-26-ferrari');
   const car = createCarSimState({
     id: 'pit-wall-car',
     name: 'Pit Wall Tester',

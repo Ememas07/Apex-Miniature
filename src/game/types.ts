@@ -80,6 +80,13 @@ export interface LiveryConfig {
   customTexture?: string; // Optional data URL or texture path for custom painted liveries
 }
 
+export interface CarLiveryPreset {
+  id: string;
+  name: string;
+  team?: string;
+  livery: LiveryConfig;
+}
+
 export interface CarSpec {
   id: string;
   name: string;
@@ -93,6 +100,8 @@ export interface CarSpec {
   specialTypeOverride?: ClassSpecialType;
   specialLabelOverride?: string;
   defaultLivery: LiveryConfig;
+  modelId?: string; // override model folder if different from carSpec.id
+  liveries?: CarLiveryPreset[]; // multiple selectable liveries for single-chassis classes (e.g. F1 2026, F1 2021, LMP2)
 }
 
 export type TrackRegion = 'Americas' | 'Europe' | 'Asia-Pacific & Middle East' | 'Custom';

@@ -66,7 +66,21 @@ export function clearLowPolyModelCache(): void {
 
 export async function findLowPolyModelForCar(carId: string): Promise<LowPolyCarManifestEntry | null> {
   const map = await getLowPolyManifestMap();
-  return map.get(normalizeCarKey(carId)) ?? null;
+  const key = normalizeCarKey(carId);
+  const direct = map.get(key);
+  if (direct) return direct;
+
+  // Single-model class fallback aliases
+  if (key.includes('oreca07') || key === 'lmp2' || key.includes('ligier')) {
+    return map.get('oreca07united') ?? map.get('oreca07ao') ?? map.get('oreca07europol') ?? null;
+  }
+  if (key.startsWith('f126') || key === 'f12026') {
+    return map.get('f126mercedes') ?? null;
+  }
+  if (key.startsWith('f121') || key === 'f12021') {
+    return map.get('f121mercedes') ?? null;
+  }
+  return null;
 }
 
 const templateCache = new Map<string, Promise<THREE.Group>>();
@@ -448,7 +462,8 @@ export async function buildCarRigAsync(
   livery: LiveryConfig,
   maxAniso = 4,
 ): Promise<BuiltCarRig> {
-  const entry = await findLowPolyModelForCar(carSpec.id);
+  const modelTarget = carSpec.modelId || carSpec.id;
+  const entry = await findLowPolyModelForCar(modelTarget);
   if (entry) {
     try {
       const template = await loadObjTemplate(entry);

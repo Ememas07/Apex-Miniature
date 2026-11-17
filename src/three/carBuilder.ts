@@ -327,6 +327,25 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
   },
 
   // ================= LMP2 (Oreca 07 + Ligier JS P217) =================
+  'oreca-07': {
+    cabinStyle: 'proto-teardrop',
+    cabinOffsetZ: 0.03,
+    cabinScaleW: 0.92,
+    cabinScaleH: 0.96,
+    cabinScaleL: 1.0,
+    noseHeightRatio: 0.52,
+    tailHeightRatio: 0.82,
+    widthScale: 1.0,
+    lengthScale: 1.0,
+    hoodStyle: 'pontoon-channel',
+    grilleStyle: 'lmp-intake',
+    headlightStyle: 'vertical-stack',
+    sidepodStyle: 'undercut',
+    rearDeckStyle: 'strut-race',
+    exhaustStyle: 'top-exit',
+    sharkFinStyle: 'tall-proto',
+    caliperColor: '#f97316',
+  },
   'oreca-07-united': {
     cabinStyle: 'proto-teardrop',
     cabinOffsetZ: 0.03,
