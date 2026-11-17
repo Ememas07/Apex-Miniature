@@ -4,6 +4,31 @@ newmtl Grid_Mult18
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl Glass
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl _EXT_Windows
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl Lights_Texture_transp
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl cs_glass
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl Details2
 Kd 0.82 0.08 0.08
@@ -37,11 +62,6 @@ Ns 32
 
 newmtl Plastic
 Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Lights_Texture_transp
-Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -119,24 +139,6 @@ newmtl EXT_Mirror
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
-
-newmtl Glass
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
-newmtl _EXT_Windows
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
-newmtl cs_glass
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
 
 newmtl _EXT_Tyre
 Kd 0.12 0.12 0.13

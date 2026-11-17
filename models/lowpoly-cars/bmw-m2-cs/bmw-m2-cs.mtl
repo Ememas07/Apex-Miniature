@@ -100,11 +100,6 @@ Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl LightsR_RedKatafot
-Kd 0.435484 0 0
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl LightsR_AO3_squares
 Kd 1 1 1
 Ks 0.25 0.25 0.25
@@ -124,12 +119,6 @@ newmtl LightsR_AO3_ridges
 Kd 1 1 1
 Ks 0.25 0.25 0.25
 Ns 32
-
-newmtl RL_REDGLASS
-Kd 0.435484 0 0
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
 
 newmtl plstic_AOFara
 Kd 1 1 1
@@ -160,7 +149,6 @@ newmtl ext_blackglass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
 
 newmtl grillHex_1
 Kd 0.974263 0.974113 0.974263
@@ -227,11 +215,6 @@ Kd 0.026619 0.026649 0.026619
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl FL_LIGHT_NM
-Kd 0.605532 0.60474 0.605532
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl FL_LIGHT
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
@@ -262,6 +245,11 @@ Kd 0.631604 0.629745 0.631604
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl LightBlueLogo
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl RedCSLogoCenterConsole
 Kd 0.82 0.08 0.08
 Ks 0.25 0.25 0.25
@@ -289,11 +277,6 @@ Ns 32
 
 newmtl PianoBlackBadges
 Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl LightBlueLogo
-Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -341,72 +324,91 @@ newmtl glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl light_Glass
 Kd 0.096774 0.103175 0.096774
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl ext_glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl LightsR_RedKatafot
+Kd 0.435484 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl LightsR_glass_squares
 Kd 0.096774 0.103175 0.096774
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl RL_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl LightsR_BakedGabarit
 Kd 0.447133 0.445767 0.447581
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl LightsR_clearglass
 Kd 0.096774 0.103175 0.096774
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl RL_REDGLASS
+Kd 0.435484 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl ext_onvisu
 Kd 0.790323 0.789819 0.790323
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl FL_OUTER_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl FL_GLASS_LIGHT
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl FL_LIGHT_NM
+Kd 0.605532 0.60474 0.605532
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl FL_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl FL_LINZA_GLASS
 Kd 0.274194 0.277778 0.274194
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
-
-newmtl PianoBlackEXT
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
+d 0.42
 
 newmtl Material_#2238984
 Kd 0.2 0.2 0.2
@@ -445,6 +447,11 @@ Ns 32
 
 newmtl Brake_Disk
 Kd 0.233684 0.230404 0.23128
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl PianoBlackEXT
+Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 

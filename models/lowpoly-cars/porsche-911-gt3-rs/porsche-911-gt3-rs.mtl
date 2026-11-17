@@ -40,11 +40,6 @@ Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl red_noalpha
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl knopki_tex
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
@@ -109,6 +104,7 @@ newmtl ledsiplayicon
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl logo
 Kd 0.3 0.3 0.3
@@ -129,6 +125,7 @@ newmtl ledsiplayicon.001
 Kd 0.8 0.8 0.8
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl ledyellow
 Kd 0.8 0.8 0.8
@@ -165,12 +162,6 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl glassblinkersfrontrear
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
 newmtl Carlight_line_chrome_white
 Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
@@ -191,21 +182,10 @@ Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl exhaust
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl carbonroofhood
 Kd 0.15 0.16 0.18
 Ks 0.25 0.25 0.25
 Ns 32
-
-newmtl GlassRS
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
 
 newmtl glassheadlighttaillight
 Kd 0.82 0.08 0.08
@@ -372,22 +352,47 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl red_noalpha
+Kd 0.82 0.08 0.08
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
 newmtl glass_head
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl glassblinkersfrontrear
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl glass_reartrunkstoplight
 Kd 0.82 0.08 0.08
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl exhaust
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl GlassRS
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl Glass_-_Clear.001
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl rimmapnew
 Kd 0.76 0.78 0.82

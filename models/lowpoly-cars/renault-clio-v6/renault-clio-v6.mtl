@@ -4,56 +4,67 @@ newmtl EXT_glass_lamp
 Kd 0.909804 0.917647 0.921569
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_lights_glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_glass_projector
 Kd 0.239454 0.239715 0.239454
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_lights_glass_pattern
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_lights_glass_turn
 Kd 0.469506 0.469246 0.469506
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_glass_rear
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_lights_glass_rear
 Kd 1 0 0
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_black_glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_glass_dark
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl EXT_defrost
+Kd 0.981855 0.949405 0.949597
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_lights_bulb_turn
 Kd 1 0.713725 0.043137
@@ -252,11 +263,6 @@ Ns 32
 
 newmtl EXT_aluminum_noise
 Kd 0.528037 0.527406 0.556924
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_defrost
-Kd 0.981855 0.949405 0.949597
 Ks 0.25 0.25 0.25
 Ns 32
 

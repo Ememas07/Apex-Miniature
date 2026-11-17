@@ -34,6 +34,7 @@ newmtl BLACK
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl B11_LIGHTS
 Kd 0.291337 0.295007 0.314659
@@ -79,7 +80,7 @@ newmtl WC_TEAM_WINDOWS_FL
 Kd 0.212903 0.20377 0.196909
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl rotor
 Kd 0.3 0.3 0.3

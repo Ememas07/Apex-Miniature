@@ -4,30 +4,31 @@ newmtl _EXT_Windows
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl _EXT_Glass__Front_light
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl _EXT_BLACK_WINDOW1
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl _EXT_Glass_Emissive_Rear
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass_Emissive_Front
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl _blinn4
 Kd 0.85 0.85 0.85

@@ -24,6 +24,7 @@ newmtl EXT_Grid
 Kd 0.259703 0.262463 0.259703
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_Mechanics
 Kd 0.3 0.3 0.3
@@ -79,19 +80,19 @@ newmtl EXT_Glass_Emissive_Front
 Kd 0.188235 0.254902 0.270588
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass_Emissive_Rear
 Kd 0.188235 0.254902 0.270588
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Windows
 Kd 0.177419 0.238095 0.193548
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Tyres
 Kd 0.161637 0.161985 0.161479

@@ -85,11 +85,6 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl amg_gt3_interior_labels
-Kd 0.689327 0.682214 0.682491
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl amg_gt3_exterior_caps
 Kd 0.094821 0.097253 0.097908
 Ks 0.25 0.25 0.25
@@ -114,4 +109,10 @@ newmtl amg_gt3_glass
 Kd 0.188235 0.254902 0.270588
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl amg_gt3_interior_labels
+Kd 0.689327 0.682214 0.682491
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42

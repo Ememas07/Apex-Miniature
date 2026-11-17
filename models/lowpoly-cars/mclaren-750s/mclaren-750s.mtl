@@ -114,24 +114,25 @@ newmtl EXT_Glass_Rear
 Kd 0.017799 0.063632 0.09564
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Mirror
 Kd 0.588206 0.57566 0.55286
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_Glass
 Kd 0.017799 0.063632 0.09564
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_GLASS_black
 Kd 0.017799 0.063632 0.09564
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Wheel
 Kd 0.3 0.3 0.3

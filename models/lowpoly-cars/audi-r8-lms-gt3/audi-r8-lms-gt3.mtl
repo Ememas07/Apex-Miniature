@@ -49,6 +49,7 @@ newmtl EXT_Details1
 Kd 0.453818 0.387897 0.391602
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_Grid
 Kd 0.103264 0.103671 0.104177
@@ -119,19 +120,19 @@ newmtl EXT_GLASS_black
 Kd 0.092395 0.08755 0.056641
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass
 Kd 0.092395 0.08755 0.056641
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass_Bumper
 Kd 0.092395 0.08755 0.056641
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Tyre
 Kd 0.156628 0.159009 0.156282

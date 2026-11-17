@@ -39,6 +39,7 @@ newmtl chrome
 Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl mirrors
 Kd 0.4 0.4 0.4
@@ -104,19 +105,19 @@ newmtl r_glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl /Glass_Crystal@mtl_0
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl rim_chrome
 Kd 0.76 0.78 0.82

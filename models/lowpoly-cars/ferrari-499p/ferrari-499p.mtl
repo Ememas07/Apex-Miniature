@@ -40,11 +40,6 @@ Kd 0.157006 0.160048 0.16255
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Body_emisive
-Kd 0 0 0.016129
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_Suspension_Calipers
 Kd 0.169292 0.118645 0.124275
 Ks 0.25 0.25 0.25
@@ -64,7 +59,13 @@ newmtl Glass
 Kd 0.588489 0.575691 0.538653
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl Body_emisive
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl 963_hub
 Kd 0.079528 0.079528 0.079528

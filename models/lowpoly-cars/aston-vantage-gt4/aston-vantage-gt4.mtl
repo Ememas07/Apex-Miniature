@@ -25,22 +25,12 @@ Kd 0.5 0.5 0.5
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl _EXT_Emissive_Light_Rear
-Kd 0.5 0.5 0.5
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl _EXT_Emissive_Light_Front
 Kd 0.5 0.5 0.5
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl _EXT_Banner
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl _EXT_Grid1
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
@@ -64,6 +54,12 @@ newmtl _EXT_Decals1
 Kd 0.3 0.3 0.3
 Ks 0.25 0.25 0.25
 Ns 32
+
+newmtl _EXT_Emissive_Light_Rear
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_COOLER
 Kd 0.2 0.2 0.2
@@ -99,20 +95,28 @@ newmtl _EXT_BLACK_WINDOW
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl _EXT_REAR_LIGHT_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl _EXT_FRONT_LIGHT_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl _EXT_Grid1
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl _EXT_Windows
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42

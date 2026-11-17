@@ -35,16 +35,6 @@ Kd 0.25 0.25 0.25
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl _EXT_Banner
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl _EXT_Grid
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_BELT
 Kd 0.26 0.26 0.26
 Ks 0.25 0.25 0.25
@@ -105,26 +95,38 @@ Kd 0.82 0.08 0.08
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl _EXT_Banner
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
 newmtl _EXT_BLACK_WINDOW
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl _EXT_Windows
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl _EXT_Glass_Emissive_Front
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl _EXT_Glass_Emissive_Rear
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl _EXT_Grid
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42

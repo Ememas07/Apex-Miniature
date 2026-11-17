@@ -127,94 +127,16 @@
       "mtl": "f1-05-williams.mtl"
     },
     {
-      "id": "f1-21-ferrari",
-      "folder": "f1-21-ferrari",
-      "obj": "f1-21-ferrari.obj",
-      "mtl": "f1-21-ferrari.mtl"
-    },
-    {
-      "id": "f1-21-mclaren",
-      "folder": "f1-21-mclaren",
-      "obj": "f1-21-mclaren.obj",
-      "mtl": "f1-21-mclaren.mtl"
-    },
-    {
       "id": "f1-21-mercedes",
       "folder": "f1-21-mercedes",
       "obj": "f1-21-mercedes.obj",
       "mtl": "f1-21-mercedes.mtl"
     },
     {
-      "id": "f1-21-redbull",
-      "folder": "f1-21-redbull",
-      "obj": "f1-21-redbull.obj",
-      "mtl": "f1-21-redbull.mtl"
-    },
-    {
-      "id": "f1-26-alpine",
-      "folder": "f1-26-alpine",
-      "obj": "f1-26-alpine.obj",
-      "mtl": "f1-26-alpine.mtl"
-    },
-    {
-      "id": "f1-26-aston",
-      "folder": "f1-26-aston",
-      "obj": "f1-26-aston.obj",
-      "mtl": "f1-26-aston.mtl"
-    },
-    {
-      "id": "f1-26-audi",
-      "folder": "f1-26-audi",
-      "obj": "f1-26-audi.obj",
-      "mtl": "f1-26-audi.mtl"
-    },
-    {
-      "id": "f1-26-cadillac",
-      "folder": "f1-26-cadillac",
-      "obj": "f1-26-cadillac.obj",
-      "mtl": "f1-26-cadillac.mtl"
-    },
-    {
-      "id": "f1-26-ferrari",
-      "folder": "f1-26-ferrari",
-      "obj": "f1-26-ferrari.obj",
-      "mtl": "f1-26-ferrari.mtl"
-    },
-    {
-      "id": "f1-26-haas",
-      "folder": "f1-26-haas",
-      "obj": "f1-26-haas.obj",
-      "mtl": "f1-26-haas.mtl"
-    },
-    {
-      "id": "f1-26-mclaren",
-      "folder": "f1-26-mclaren",
-      "obj": "f1-26-mclaren.obj",
-      "mtl": "f1-26-mclaren.mtl"
-    },
-    {
       "id": "f1-26-mercedes",
       "folder": "f1-26-mercedes",
       "obj": "f1-26-mercedes.obj",
       "mtl": "f1-26-mercedes.mtl"
-    },
-    {
-      "id": "f1-26-racing-bulls",
-      "folder": "f1-26-racing-bulls",
-      "obj": "f1-26-racing-bulls.obj",
-      "mtl": "f1-26-racing-bulls.mtl"
-    },
-    {
-      "id": "f1-26-redbull",
-      "folder": "f1-26-redbull",
-      "obj": "f1-26-redbull.obj",
-      "mtl": "f1-26-redbull.mtl"
-    },
-    {
-      "id": "f1-26-williams",
-      "folder": "f1-26-williams",
-      "obj": "f1-26-williams.obj",
-      "mtl": "f1-26-williams.mtl"
     },
     {
       "id": "fe-jaguar-itype7",
@@ -377,24 +299,6 @@
       "folder": "oreca-07",
       "obj": "oreca-07.obj",
       "mtl": "oreca-07.mtl"
-    },
-    {
-      "id": "oreca-07-ao",
-      "folder": "oreca-07-ao",
-      "obj": "oreca-07-ao.obj",
-      "mtl": "oreca-07-ao.mtl"
-    },
-    {
-      "id": "oreca-07-europol",
-      "folder": "oreca-07-europol",
-      "obj": "oreca-07-europol.obj",
-      "mtl": "oreca-07-europol.mtl"
-    },
-    {
-      "id": "oreca-07-united",
-      "folder": "oreca-07-united",
-      "obj": "oreca-07-united.obj",
-      "mtl": "oreca-07-united.mtl"
     },
     {
       "id": "peugeot-9x8",

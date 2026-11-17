@@ -115,11 +115,6 @@ Kd 0.478431 0.478431 0.478431
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl carrosserie__Untitled_012
-Kd 0.012011 0.015366 0.012011
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl METAL_NOIR_001__METAL_NOIR_png_001
 Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
@@ -210,6 +205,16 @@ Kd 0.15 0.16 0.18
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl Material_014__Untitled_024
+Kd 0.049931 0.048704 0.049931
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Brake_Caliper__Brake_Caliper_dds_001
+Kd 0.321163 0.32115 0.316343
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl None__HARNAIS_OFF_png_001
 Kd 0.209866 0.210023 0.216387
 Ks 0.25 0.25 0.25
@@ -227,16 +232,6 @@ Ns 32
 
 newmtl KEN_F
 Kd 0.6 0.6 0.6
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl KEN_H
-Kd 0.209829 0.207082 0.221676
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl KEN_G
-Kd 0.206586 0.203202 0.217523
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -270,28 +265,41 @@ Kd 0.113596 0.112909 0.121031
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl carrosserie__Untitled_012
+Kd 0.012011 0.015366 0.012011
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
 newmtl windows_ext
 Kd 0.393198 0.367315 0.361784
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl black_windows
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl windows_ext_front
 Kd 0.225806 0.230159 0.241935
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
-newmtl Material_014__Untitled_024
-Kd 0.049931 0.048704 0.049931
+newmtl KEN_H
+Kd 0.209829 0.207082 0.221676
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl KEN_G
+Kd 0.206586 0.203202 0.217523
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl Rim
 Kd 0.014806 0.015641 0.022429
@@ -305,11 +313,6 @@ Ns 32
 
 newmtl Tyre__Tyre_D_dds_001
 Kd 0.137128 0.147523 0.14409
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Brake_Caliper__Brake_Caliper_dds_001
-Kd 0.321163 0.32115 0.316343
 Ks 0.25 0.25 0.25
 Ns 32
 

@@ -4,12 +4,13 @@ newmtl red_zad_fara
 Kd 0.435484 0 0
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl glass
 Kd 0.290323 0.285714 0.306452
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl body2
 Kd 0.365014 0.365033 0.372511

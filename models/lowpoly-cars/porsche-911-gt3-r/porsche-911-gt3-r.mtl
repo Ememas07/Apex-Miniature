@@ -19,19 +19,25 @@ newmtl EXT_Glass_Emissive_Rear
 Kd 0.42849 0.433098 0.428522
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass_Emissive_Front
 Kd 0.42849 0.433098 0.428522
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Windows
 Kd 0.177419 0.238095 0.193548
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl EXT_Grid_2
+Kd 0.090379 0.078094 0.090379
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_Emissive_Light_Rear
 Kd 0.42849 0.433098 0.428522
@@ -45,11 +51,6 @@ Ns 32
 
 newmtl EXT_Banner
 Kd 0.161605 0.181362 0.095199
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Grid_2
-Kd 0.090379 0.078094 0.090379
 Ks 0.25 0.25 0.25
 Ns 32
 

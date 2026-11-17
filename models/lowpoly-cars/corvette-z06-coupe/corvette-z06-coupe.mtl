@@ -4,6 +4,7 @@ newmtl EXT_Lights_base
 Kd 0.862745 0.862745 0.862745
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl CALIPER
 Kd 0.581748 0.104461 0.090096
@@ -60,11 +61,6 @@ Kd 0.23658 0.231445 0.234753
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_Lights_base2
-Kd 0.862745 0.862745 0.862745
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl PLATE
 Kd 0.503119 0.533405 0.619771
 Ks 0.25 0.25 0.25
@@ -94,15 +90,22 @@ newmtl EXT_Glass
 Kd 0.213678 0.204737 0.201361
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_GLASS_black
 Kd 0.213678 0.204737 0.201361
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl EXT_Lights_base2
+Kd 0.862745 0.862745 0.862745
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_Mirror
 Kd 0.588206 0.57566 0.55286
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42

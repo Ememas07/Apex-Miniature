@@ -40,11 +40,6 @@ Kd 0.82 0.08 0.08
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_GLS_NM
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl reflector
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
@@ -55,11 +50,6 @@ Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl 156
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl grille1
 Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
@@ -67,16 +57,6 @@ Ns 32
 
 newmtl alcantara_black
 Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl golf_tags
-Kd 0.25 0.25 0.25
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl golf_symbols
-Kd 0.25 0.25 0.25
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -99,6 +79,12 @@ newmtl paint_mgrey
 Kd 0.78 0.78 0.8
 Ks 0.25 0.25 0.25
 Ns 32
+
+newmtl EXT_GLS_NM
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl vehicle_generic_detail2
 Kd 0.82 0.08 0.08
@@ -170,23 +156,8 @@ Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl gr_spido
-Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl gr_obc
 Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material_#1777
-Kd 0.25 0.25 0.25
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl 136
-Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -202,11 +173,6 @@ Ns 32
 
 newmtl red
 Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Plexi
-Kd 0.5 0.5 0.5
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -229,25 +195,67 @@ newmtl EXT_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl 156
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl golf_tags
+Kd 0.25 0.25 0.25
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl golf_symbols
+Kd 0.25 0.25 0.25
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_WINDOWS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_BLACK_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl gr_spido
+Kd 0.3 0.3 0.3
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl Material_#1777
+Kd 0.25 0.25 0.25
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl 136
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl Plexi
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl GOPRO_GLASS
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl Brake_disc
 Kd 0.82 0.08 0.08

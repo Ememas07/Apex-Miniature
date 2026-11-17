@@ -84,14 +84,16 @@ newmtl EXT_Glass
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl Lights_Glass_Front
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl Lights_Glass_Rear
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42

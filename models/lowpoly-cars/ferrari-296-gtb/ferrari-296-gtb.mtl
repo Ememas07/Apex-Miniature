@@ -4,29 +4,37 @@ newmtl EXT_GLASS_black
 Kd 0.5 0.5 0.5
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Window
 Kd 0.12144 0.140175 0.173167
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass
 Kd 0.12144 0.140175 0.173167
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass_rear_lights
 Kd 0.12144 0.140175 0.173167
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl EXT_Lights_blend
+Kd 0.121012 0.068666 0.065675
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_Mirror
 Kd 0.588206 0.57566 0.55286
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_Lights_base
 Kd 0.121012 0.068666 0.065675
@@ -125,11 +133,6 @@ Ns 32
 
 newmtl EXT_PLATE_plastic
 Kd 0.548139 0.548596 0.548511
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Lights_blend
-Kd 0.121012 0.068666 0.065675
 Ks 0.25 0.25 0.25
 Ns 32
 

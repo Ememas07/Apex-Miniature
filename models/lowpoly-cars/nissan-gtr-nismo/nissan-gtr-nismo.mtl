@@ -5,31 +5,6 @@ Kd 0.147965 0.113188 0.094034
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_Mechanicals
-Kd 0.116116 0.118133 0.118227
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Details
-Kd 0.351562 0.330435 0.33682
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Rim_Base
-Kd 0.150107 0.155165 0.150643
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Brake_disk
-Kd 0.220609 0.21503 0.213741
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Tyre
-Kd 0.139144 0.137726 0.140089
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl EXT_Lights
 Kd 0.182838 0.107701 0.107485
 Ks 0.25 0.25 0.25
@@ -45,6 +20,16 @@ Kd 0.78 0.78 0.8
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl EXT_Mechanicals
+Kd 0.116116 0.118133 0.118227
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Details
+Kd 0.351562 0.330435 0.33682
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl EXT_Carbon
 Kd 0.15 0.16 0.18
 Ks 0.25 0.25 0.25
@@ -52,11 +37,6 @@ Ns 32
 
 newmtl EXT_Red_Wires
 Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Grid_Octagon
-Kd 0.458102 0.456287 0.458102
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -90,24 +70,47 @@ Kd 0.588206 0.57566 0.55286
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl EXT_Rim_Base
+Kd 0.150107 0.155165 0.150643
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Brake_disk
+Kd 0.220609 0.21503 0.213741
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Tyre
+Kd 0.139144 0.137726 0.140089
+Ks 0.25 0.25 0.25
+Ns 32
+
 newmtl EXT_Light_Glass_Extra
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl EXT_Glass_Lights
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
+
+newmtl EXT_Grid_Octagon
+Kd 0.458102 0.456287 0.458102
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_Windows_Black
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Windows_Trasp
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42

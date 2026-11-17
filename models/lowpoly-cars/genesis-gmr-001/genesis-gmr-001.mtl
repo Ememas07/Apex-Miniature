@@ -4,7 +4,19 @@ newmtl PositionPanelGlass
 Kd 0.235635 0.24011 0.236454
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl ext_glass
+Kd 0.225806 0.222222 0.225806
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl Glass
+Kd 0.035294 0.156863 0.192157
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl MECANIL_PARTS2
 Kd 0.131206 0.128019 0.131206
@@ -145,15 +157,3 @@ newmtl BRAKE_DISC.001
 Kd 0.223837 0.219269 0.223837
 Ks 0.25 0.25 0.25
 Ns 32
-
-newmtl ext_glass
-Kd 0.225806 0.222222 0.225806
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45
-
-newmtl Glass
-Kd 0.035294 0.156863 0.192157
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.45

@@ -84,7 +84,7 @@ newmtl Glass_Clear
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl Brake_Disk
 Kd 0.193832 0.194832 0.197707

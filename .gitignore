@@ -14,4 +14,5 @@ scripts/.dem_cache.json
 /models/raw-cars/
 !/models/**/.gitkeep
 !/models/**/.gitignore
-
+!/models/raw-cars/porsche-cayman-gt4-rs.kn5
+!/models/raw-cars/porsche-963.kn5

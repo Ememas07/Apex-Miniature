@@ -4,19 +4,25 @@ newmtl EXT_DETAIL_Glass_Alfa
 Kd 0.263892 0.139695 0.131237
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass
 Kd 0 0 0.016129
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Glass_Black
 Kd 0 0 0.016129
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl EXT_Grid_A
+Kd 0.294292 0.30013 0.294292
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl EXT_PLASTIC_Black
 Kd 0.035881 0.035637 0.049427
@@ -25,11 +31,6 @@ Ns 32
 
 newmtl EXT_DETAIL_chrome
 Kd 0.263892 0.139695 0.131237
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Grid_A
-Kd 0.294292 0.30013 0.294292
 Ks 0.25 0.25 0.25
 Ns 32
 

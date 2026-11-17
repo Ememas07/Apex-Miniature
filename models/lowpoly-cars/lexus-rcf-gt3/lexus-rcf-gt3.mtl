@@ -25,11 +25,6 @@ Kd 0.083701 0.085069 0.091702
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl RCF_GT3_REAR_GRID
-Kd 0.083701 0.085069 0.091702
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl RCF_GT3_CLOTH_STRAP_RED
 Kd 0.539189 0.142175 0.141759
 Ks 0.25 0.25 0.25
@@ -37,11 +32,6 @@ Ns 32
 
 newmtl RCF_GT3_CHASSIS
 Kd 0.046262 0.045035 0.046303
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl RCF_GT3_FRONT_GRID
-Kd 0.083701 0.085069 0.091702
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -67,11 +57,6 @@ Ns 32
 
 newmtl RCF_GT3_TANK_DETAILS
 Kd 0.646925 0.613111 0.611675
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl RCF_GT3_LOCKS
-Kd 0.262078 0.239958 0.18643
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -155,11 +140,6 @@ Kd 0.059129 0.058268 0.058342
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Motec_LCD
-Kd 0 0 0
-Ks 0.25 0.25 0.25
-Ns 32
-
 newmtl FBX_MATERIAL
 Kd 0.612903 0.619048 0.629032
 Ks 0.25 0.25 0.25
@@ -185,39 +165,65 @@ Kd 0 0 0.016129
 Ks 0.25 0.25 0.25
 Ns 32
 
+newmtl RCF_GT3_REAR_GRID
+Kd 0.083701 0.085069 0.091702
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl RCF_GT3_FRONT_GRID
+Kd 0.083701 0.085069 0.091702
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl RCF_GT3_LOCKS
+Kd 0.262078 0.239958 0.18643
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
 newmtl banner_windows
 Kd 0 0 0.016129
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl windows
 Kd 0.225806 0.230159 0.241935
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl glass_lightrear
 Kd 0.596774 0 0
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl front_glass_light
 Kd 0.225806 0.230159 0.241935
 Ks 0.25 0.25 0.25
 Ns 32
+d 0.42
 
 newmtl glass_mirror
 Kd 0.12 0.16 0.22
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
+
+newmtl Motec_LCD
+Kd 0 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
 
 newmtl lumi_rank_glass
 Kd 0.063886 0.089937 0.060232
 Ks 0.25 0.25 0.25
 Ns 32
-d 0.45
+d 0.42
 
 newmtl EXT_Rims_Decals
 Kd 0.48428 0.361173 0.369676
