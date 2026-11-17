@@ -381,12 +381,11 @@ function convertSourceMaterial(
       lowerMat,
     )
   ) {
-    const customizedPrimary =
-      ctx.livery.primaryColor.toLowerCase() !== ctx.carSpec.defaultLivery.primaryColor.toLowerCase();
-    const paintColor =
-      isNeutralColor(srcColor) || customizedPrimary
-        ? new THREE.Color(ctx.livery.primaryColor)
-        : srcColor;
+    const paintColor = ctx.livery.primaryColor
+      ? new THREE.Color(ctx.livery.primaryColor)
+      : isNeutralColor(srcColor)
+      ? new THREE.Color(ctx.livery.primaryColor)
+      : srcColor;
 
     let liveryTexture: THREE.Texture | null = null;
     if (ctx.livery.customTexture) {
@@ -403,7 +402,7 @@ function convertSourceMaterial(
 
     built = new THREE.MeshPhysicalMaterial({
       name: matName,
-      color: liveryTexture ? (customizedPrimary ? paintColor : 0xffffff) : paintColor,
+      color: liveryTexture ? 0xffffff : paintColor,
       map: liveryTexture,
       roughness: 0.24,
       metalness: 0.18,
@@ -772,7 +771,7 @@ export function applyCustomTextureToRig(
       const isLight = /light|emissive/i.test(lower);
       if (!isGlass && !isLight) {
         mat.map = texture;
-        if (pColor) mat.color.copy(pColor);
+        mat.color.set(0xffffff);
         mat.needsUpdate = true;
       }
     }

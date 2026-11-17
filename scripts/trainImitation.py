@@ -1,209 +1,177 @@
-#!/usr/bin/env python3
-"""
-Behavioral Cloning (BC) Warm-Start & Imitation Training Script.
-
-Loads recorded clean human driving telemetry from audit/human_demos.jsonl,
-warm-starts policy MLP [43 -> 64 -> 64 -> 3] with existing src/game/aiPolicyWeights.json,
-trains supervised BC (AdamW + MSELoss) for 10-15 epochs to adopt human apex-hitting
-and braking markers, exports updated weights, and supports chaining directly
-into scripts/trainAiPolicy.py for PPO reinforcement fine-tuning.
-"""
-
 import argparse
+import glob
 import json
 import os
-import subprocess
-import sys
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+WEIGHTS_PATH = "src/game/aiPolicyWeights.json"
+ROLLING_CKPT = "checkpoints/bc_rolling.pt"
 OBS_DIM = 43
-ACTION_DIM = 3
-DEFAULT_DEMOS_PATH = "audit/human_demos.jsonl"
-DEFAULT_WEIGHTS_PATH = "src/game/aiPolicyWeights.json"
+ACT_DIM = 3
 
 
-class DriverMlpPolicy(nn.Module):
-    def __init__(self, obs_dim=OBS_DIM, action_dim=ACTION_DIM):
+class PolicyNet(nn.Module):
+    def __init__(self, obs_dim: int = OBS_DIM, act_dim: int = ACT_DIM):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(obs_dim, 64),
+            nn.Linear(obs_dim, 128),
             nn.Tanh(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
+            nn.Tanh(),
+            nn.Linear(128, act_dim),
             nn.Tanh(),
         )
-        self.action_net = nn.Linear(64, action_dim)
 
-    def forward(self, x):
-        features = self.net(x)
-        return self.action_net(features)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
 
-def load_existing_weights(model: DriverMlpPolicy, weights_path: str) -> bool:
-    if not os.path.exists(weights_path):
-        print(f"No existing weights found at {weights_path}; initializing randomly.")
+def load_json_weights(model: PolicyNet, path: str) -> bool:
+    if not os.path.exists(path):
         return False
+    with open(path, "r", encoding="utf-8") as f:
+        d = json.load(f)
+    if d.get("obsDim") != OBS_DIM:
+        return False
+    layers = [m for m in model.net if isinstance(m, nn.Linear)]
+    with torch.no_grad():
+        layers[0].weight.copy_(torch.tensor(d["w0"], dtype=torch.float32))
+        layers[0].bias.copy_(torch.tensor(d["b0"], dtype=torch.float32))
+        layers[1].weight.copy_(torch.tensor(d["w1"], dtype=torch.float32))
+        layers[1].bias.copy_(torch.tensor(d["b1"], dtype=torch.float32))
+        layers[2].weight.copy_(torch.tensor(d["w2"], dtype=torch.float32))
+        layers[2].bias.copy_(torch.tensor(d["b2"], dtype=torch.float32))
+    return True
 
-    try:
-        with open(weights_path, "r", encoding="utf-8") as f:
+
+def export_json_weights(model: PolicyNet, path: str):
+    layers = [m for m in model.net if isinstance(m, nn.Linear)]
+    payload = {
+        "obsDim": OBS_DIM,
+        "actDim": ACT_DIM,
+        "w0": layers[0].weight.detach().cpu().numpy().tolist(),
+        "b0": layers[0].bias.detach().cpu().numpy().tolist(),
+        "w1": layers[1].weight.detach().cpu().numpy().tolist(),
+        "b1": layers[1].bias.detach().cpu().numpy().tolist(),
+        "w2": layers[2].weight.detach().cpu().numpy().tolist(),
+        "b2": layers[2].bias.detach().cpu().numpy().tolist(),
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def load_telemetry_files(pattern: str):
+    files = sorted(glob.glob(pattern))
+    if not files:
+        raise FileNotFoundError(f"No player telemetry files matched '{pattern}'")
+
+    obs_list, act_list, weight_list = [], [], []
+    for fp in files:
+        with open(fp, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        w0 = torch.tensor(data["w0"], dtype=torch.float32)
-        b0 = torch.tensor(data["b0"], dtype=torch.float32)
-        w1 = torch.tensor(data["w1"], dtype=torch.float32)
-        b1 = torch.tensor(data["b1"], dtype=torch.float32)
-        w2 = torch.tensor(data["w2"], dtype=torch.float32)
-        b2 = torch.tensor(data["b2"], dtype=torch.float32)
+        frames = data if isinstance(data, list) else data.get("frames", [])
+        lap_skill = float(data.get("skill", 1.0)) if isinstance(data, dict) else 1.0
 
-        with torch.no_grad():
-            old_in = w0.shape[1]
-            model.net[0].weight.zero_()
-            model.net[0].weight[:, :old_in].copy_(w0)
-            if old_in < OBS_DIM:
-                model.net[0].weight[:, old_in:].normal_(mean=0.0, std=0.01)
-            model.net[0].bias.copy_(b0)
-            model.net[2].weight.copy_(w1)
-            model.net[2].bias.copy_(b1)
-            model.action_net.weight.copy_(w2)
-            model.action_net.bias.copy_(b2)
-
-        print(f"Loaded existing weights from {weights_path} (obs_dim: {old_in})")
-        return True
-    except Exception as e:
-        print(f"Warning: Failed to load existing weights from {weights_path}: {e}")
-        return False
-
-
-def export_weights_to_json(model: DriverMlpPolicy, out_path: str):
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    weights = {
-        "obsDim": OBS_DIM,
-        "w0": model.net[0].weight.detach().cpu().numpy().round(5).tolist(),
-        "b0": model.net[0].bias.detach().cpu().numpy().round(5).tolist(),
-        "w1": model.net[2].weight.detach().cpu().numpy().round(5).tolist(),
-        "b1": model.net[2].bias.detach().cpu().numpy().round(5).tolist(),
-        "w2": model.action_net.weight.detach().cpu().numpy().round(5).tolist(),
-        "b2": model.action_net.bias.detach().cpu().numpy().round(5).tolist(),
-    }
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(weights, f, indent=2)
-    print(f"Exported updated weights to {out_path}")
-
-
-def load_dataset(demos_path: str):
-    if not os.path.exists(demos_path):
-        print(f"Notice: Telemetry file {demos_path} does not exist yet.")
-        return None, None
-
-    all_obs = []
-    all_acts = []
-
-    with open(demos_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-                samples = record.get("samples", [])
-                for sample in samples:
-                    if len(sample) >= OBS_DIM + ACTION_DIM:
-                        all_obs.append(sample[:OBS_DIM])
-                        all_acts.append(sample[OBS_DIM : OBS_DIM + ACTION_DIM])
-            except json.JSONDecodeError:
+        for fr in frames:
+            obs = fr.get("obs") or fr.get("observation")
+            act = fr.get("action")
+            if not obs or len(obs) != OBS_DIM or not act or len(act) != ACT_DIM:
                 continue
 
-    if not all_obs:
-        print(f"No valid telemetry samples found in {demos_path}")
-        return None, None
+            obs_vec = list(obs)
+            # Ensure skillTarget slot (#42) reflects fast expert pace
+            obs_vec[42] = max(obs_vec[42], lap_skill)
 
-    x = torch.tensor(all_obs, dtype=torch.float32)
-    y = torch.tensor(all_acts, dtype=torch.float32)
-    print(f"Loaded {len(x):,} valid human demonstration samples from {demos_path}")
-    return x, y
+            steer = float(np.clip(act[0], -1.0, 1.0))
+            # Convert [0..1] pedal inputs from game recorder to [-1..1] policy outputs if needed
+            thr_raw = float(act[1])
+            brk_raw = float(act[2])
+            thr = thr_raw * 2.0 - 1.0 if 0.0 <= thr_raw <= 1.0 and fr.get("normalized", True) else thr_raw
+            brk = brk_raw * 2.0 - 1.0 if 0.0 <= brk_raw <= 1.0 and fr.get("normalized", True) else brk_raw
+
+            obs_list.append(obs_vec)
+            act_list.append([steer, np.clip(thr, -1.0, 1.0), np.clip(brk, -1.0, 1.0)])
+            # Upweight heavy braking & cornering frames so AI learns apex entry aggressively
+            corner_weight = 1.0 + 1.5 * abs(steer) + 1.5 * max(0.0, (brk + 1.0) * 0.5)
+            weight_list.append(corner_weight)
+
+    if not obs_list:
+        raise ValueError("Telemetry files contained 0 valid 43-dim frames.")
+
+    print(f"Loaded {len(obs_list):,} human frames from {len(files)} file(s).")
+    return (
+        np.array(obs_list, dtype=np.float32),
+        np.array(act_list, dtype=np.float32),
+        np.array(weight_list, dtype=np.float32),
+    )
 
 
-def train_imitation(
-    demos_path: str = DEFAULT_DEMOS_PATH,
-    weights_path: str = DEFAULT_WEIGHTS_PATH,
-    epochs: int = 12,
-    lr: float = 1e-3,
-    batch_size: int = 256,
-    chain_ppo: bool = False,
-):
+def main():
+    parser = argparse.ArgumentParser(description="Behavioral Cloning from player telemetry")
+    parser.add_argument("--data", default="telemetry/*.json", help="Glob path to exported telemetry JSONs")
+    parser.add_argument("--epochs", type=int, default=60)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--scratch", action="store_true", help="Train from scratch instead of warm-starting")
+    args = parser.parse_args()
+
+    obs_np, act_np, w_np = load_telemetry_files(args.data)
+
+    # Augment with small lateral/heading jitter so cloned policy recovers if nudged off-line
+    aug_obs = obs_np.copy()
+    aug_act = act_np.copy()
+    aug_w = w_np.copy()
+    rng = np.random.default_rng(42)
+    aug_obs[:, 2] = np.clip(aug_obs[:, 2] + rng.normal(0.0, 0.04, size=len(aug_obs)), -1.2, 1.2)
+    aug_obs[:, 3] = np.clip(aug_obs[:, 3] + rng.normal(0.0, 0.015, size=len(aug_obs)), -1.0, 1.0)
+    # Corrective counter-steer label proportional to injected lateral/heading perturbation
+    aug_act[:, 0] = np.clip(
+        aug_act[:, 0] - (aug_obs[:, 2] - obs_np[:, 2]) * 0.65 - (aug_obs[:, 3] - obs_np[:, 3]) * 1.4,
+        -1.0,
+        1.0,
+    )
+
+    all_obs = torch.tensor(np.concatenate([obs_np, aug_obs], axis=0))
+    all_act = torch.tensor(np.concatenate([act_np, aug_act], axis=0))
+    all_w = torch.tensor(np.concatenate([w_np, aug_w], axis=0))
+
+    ds = TensorDataset(all_obs, all_act, all_w)
+    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = DriverMlpPolicy().to(device)
+    model = PolicyNet().to(device)
+    if not args.scratch and load_json_weights(model, WEIGHTS_PATH):
+        print(f"Warm-started from existing {WEIGHTS_PATH}")
 
-    load_existing_weights(model, weights_path)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-    x, y = load_dataset(demos_path)
-    if x is None or len(x) == 0:
-        print("Supervised BC: No demonstration dataset available to train.")
-        export_weights_to_json(model, weights_path)
-        if chain_ppo:
-            chain_into_ppo()
-        return
-
-    dataset = TensorDataset(x, y)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    loss_fn = nn.MSELoss()
-
-    model.train()
-    print(f"Starting Behavioral Cloning for {epochs} epochs on {len(x):,} samples (device: {device})...")
-    for epoch in range(1, epochs + 1):
-        epoch_loss = 0.0
-        batches = 0
-        for batch_x, batch_y in dataloader:
-            batch_x = batch_x.to(device)
-            batch_y = batch_y.to(device)
-
-            pred_y = model(batch_x)
-            loss = loss_fn(pred_y, batch_y)
-
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        total_loss = 0.0
+        for bx, by, bw in loader:
+            bx, by, bw = bx.to(device), by.to(device), bw.to(device)
+            pred = model(bx)
+            per_sample = ((pred - by) ** 2).mean(dim=1)
+            loss = (per_sample * bw).mean()
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            total_loss += loss.item() * len(bx)
+        scheduler.step()
+        if epoch % 10 == 0 or epoch == 1:
+            print(f"Epoch {epoch:02d}/{args.epochs} | Weighted MSE: {total_loss / len(ds):.5f}")
 
-            epoch_loss += loss.item()
-            batches += 1
-
-        avg_loss = epoch_loss / max(1, batches)
-        print(f"Epoch {epoch:2d}/{epochs:2d} - Loss: {avg_loss:.6f}")
-
-    export_weights_to_json(model, weights_path)
-
-    if chain_ppo:
-        chain_into_ppo()
-
-
-def chain_into_ppo():
-    ppo_script = os.path.join(os.path.dirname(__file__), "trainAiPolicy.py")
-    if os.path.exists(ppo_script):
-        print(f"\nChaining into PPO reinforcement training: {ppo_script}...")
-        subprocess.run([sys.executable, ppo_script], check=True)
-    else:
-        print(f"Error: {ppo_script} not found to chain PPO.")
+    os.makedirs(os.path.dirname(ROLLING_CKPT), exist_ok=True)
+    torch.save(model.state_dict(), ROLLING_CKPT)
+    export_json_weights(model, WEIGHTS_PATH)
+    print(f"Exported cloned policy weights to {WEIGHTS_PATH} (rolling ckpt: {ROLLING_CKPT})")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Behavioral Cloning policy trainer")
-    parser.add_argument("--demos", default=DEFAULT_DEMOS_PATH, help="Path to human demos jsonl")
-    parser.add_argument("--weights", default=DEFAULT_WEIGHTS_PATH, help="Path to weights json")
-    parser.add_argument("--epochs", type=int, default=12, help="Number of training epochs (10-15)")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--batch-size", type=int, default=256, help="Batch size")
-    parser.add_argument("--chain-ppo", action="store_true", help="Chain into trainAiPolicy.py after BC")
-    args = parser.parse_args()
-
-    train_imitation(
-        demos_path=args.demos,
-        weights_path=args.weights,
-        epochs=args.epochs,
-        lr=args.lr,
-        batch_size=args.batch_size,
-        chain_ppo=args.chain_ppo,
-    )
+    main()

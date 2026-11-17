@@ -60,7 +60,8 @@ export type NumberPlateStyle =
   | 'gt3-green'
   | 'gt4-cyan'
   | 'gtd-amber'
-  | 'formula-white';
+  | 'formula-white'
+  | 'none';
 
 export type HeadlightTint = 'crystal-white' | 'endurance-yellow' | 'ice-blue';
 
@@ -157,7 +158,7 @@ export type AIDifficulty = 'Rookie' | 'Amateur' | 'Pro' | 'Alien';
 
 export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffic-Smart';
 
-export type CameraMode = 'chase-34' | 'hood' | 'high-chase' | 'isometric';
+export type CameraMode = 'chase-34' | 'hood' | 'high-chase' | 'isometric' | 'orbit';
 
 export type PitServiceType = 'splash-go' | 'full-service';
 

@@ -38,8 +38,9 @@ export function createCarbonTexture(maxAniso = 4): THREE.CanvasTexture {
 }
 
 /**
- * Creates a crisp 512x512 top/side body livery CanvasTexture matching the active template,
- * 3 colors, carbon hood toggle, and hood racing number plate.
+ * Creates a crisp 512x512 UV-atlas livery CanvasTexture mapped 1:1 to SIX_ZONE_UV_ATLAS.
+ * Correctly renders the active template, 3 color channels, exposed carbon panels,
+ * authentic single-seater nose numbers, and endurance/GT/touring class numberplates directly on the UV atlas.
  */
 export function createLiveryTexture(
   livery: LiveryConfig,
@@ -53,110 +54,234 @@ export function createLiveryTexture(
 
   const { primaryColor, secondaryColor, tertiaryColor, template } = livery;
 
-  // Base primary coat
+  // 1. Base primary coat across entire UV canvas
   ctx.fillStyle = primaryColor;
   ctx.fillRect(0, 0, 512, 512);
 
+  // 2. Atlas-Aligned Livery Patterns
+  // TOP zone: x: 10..225 (center 118), y: 10..502 (front/nose < 180, roof 180..330, rear > 330)
+  // LEFT_SIDE zone: x: 236..502, y: 10..123
+  // RIGHT_SIDE zone: x: 236..502, y: 133..246
+  // FRONT bumper: x: 236..364, y: 256..374
+  // REAR bumper: x: 374..502, y: 256..374
+  // WINGS / AERO: x: 236..502, y: 384..502
+
   if (template === 'racing-stripes') {
-    // Classic twin center racing stripes + side rocker accent
+    // Twin center longitudinal racing stripes down TOP zone
     ctx.fillStyle = secondaryColor;
-    ctx.fillRect(204, 0, 42, 512);
-    ctx.fillRect(266, 0, 42, 512);
+    ctx.fillRect(104, 10, 11, 492);
+    ctx.fillRect(121, 10, 11, 492);
+
     ctx.fillStyle = tertiaryColor;
-    ctx.fillRect(192, 0, 8, 512);
-    ctx.fillRect(312, 0, 8, 512);
-    // Subtle lower rocker trim
-    ctx.fillRect(0, 0, 10, 512);
-    ctx.fillRect(502, 0, 10, 512);
+    ctx.fillRect(99, 10, 3, 492);
+    ctx.fillRect(134, 10, 3, 492);
+
+    // Front & rear bumper stripe continuations
+    ctx.fillStyle = secondaryColor;
+    ctx.fillRect(295, 256, 10, 118);
+    ctx.fillRect(433, 256, 10, 118);
+
+    // Flank rocker / side accent stripes
+    ctx.fillRect(240, 102, 255, 12);
+    ctx.fillRect(240, 226, 255, 12);
+    ctx.fillStyle = tertiaryColor;
+    ctx.fillRect(240, 98, 255, 3);
+    ctx.fillRect(240, 222, 255, 3);
   } else if (template === 'two-tone') {
-    // Front/rear diagonal split + sharp secondary flank
+    // Top zone diagonal / longitudinal split
     ctx.fillStyle = secondaryColor;
     ctx.beginPath();
-    ctx.moveTo(0, 260);
-    ctx.lineTo(512, 175);
-    ctx.lineTo(512, 512);
-    ctx.lineTo(0, 512);
+    ctx.moveTo(10, 220);
+    ctx.lineTo(225, 150);
+    ctx.lineTo(225, 502);
+    ctx.lineTo(10, 502);
     ctx.closePath();
     ctx.fill();
 
     ctx.fillStyle = tertiaryColor;
     ctx.beginPath();
-    ctx.moveTo(0, 250);
-    ctx.lineTo(512, 165);
-    ctx.lineTo(512, 185);
-    ctx.lineTo(0, 270);
+    ctx.moveTo(10, 214);
+    ctx.lineTo(225, 144);
+    ctx.lineTo(225, 150);
+    ctx.lineTo(10, 220);
     ctx.closePath();
     ctx.fill();
+
+    // Side flanks two-tone fill
+    ctx.fillStyle = secondaryColor;
+    ctx.beginPath();
+    ctx.moveTo(330, 10);
+    ctx.lineTo(502, 10);
+    ctx.lineTo(502, 123);
+    ctx.lineTo(280, 123);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(330, 133);
+    ctx.lineTo(502, 133);
+    ctx.lineTo(502, 246);
+    ctx.lineTo(280, 246);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = tertiaryColor;
+    ctx.fillRect(240, 115, 260, 6);
+    ctx.fillRect(240, 238, 260, 6);
   } else if (template === 'geometric') {
-    // Bold angular motorsport blocks
+    // Bold angular motorsport blocks on hood, roof & flank wedges
     ctx.fillStyle = secondaryColor;
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(190, 0);
-    ctx.lineTo(80, 340);
-    ctx.lineTo(0, 340);
+    ctx.moveTo(25, 30);
+    ctx.lineTo(118, 140);
+    ctx.lineTo(80, 260);
+    ctx.lineTo(10, 260);
     ctx.closePath();
     ctx.fill();
 
     ctx.beginPath();
-    ctx.moveTo(512, 0);
-    ctx.lineTo(322, 0);
-    ctx.lineTo(432, 340);
-    ctx.lineTo(512, 340);
+    ctx.moveTo(210, 30);
+    ctx.lineTo(118, 140);
+    ctx.lineTo(156, 260);
+    ctx.lineTo(225, 260);
     ctx.closePath();
     ctx.fill();
 
     ctx.fillStyle = tertiaryColor;
     ctx.beginPath();
-    ctx.moveTo(150, 512);
-    ctx.lineTo(256, 330);
-    ctx.lineTo(362, 512);
+    ctx.moveTo(60, 320);
+    ctx.lineTo(118, 240);
+    ctx.lineTo(176, 320);
+    ctx.lineTo(118, 290);
     ctx.closePath();
     ctx.fill();
 
-    // Nose chevron
-    ctx.fillRect(216, 42, 80, 14);
+    // Flank geometric chevrons
+    ctx.fillStyle = secondaryColor;
+    ctx.beginPath();
+    ctx.moveTo(260, 10);
+    ctx.lineTo(380, 10);
+    ctx.lineTo(330, 123);
+    ctx.lineTo(236, 123);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(260, 133);
+    ctx.lineTo(380, 133);
+    ctx.lineTo(330, 246);
+    ctx.lineTo(236, 246);
+    ctx.closePath();
+    ctx.fill();
   } else if (template === 'heritage') {
-    // Iconic horizontal/longitudinal triple heritage bands
+    // Iconic triple heritage band across center of TOP zone
     ctx.fillStyle = secondaryColor;
-    ctx.fillRect(0, 185, 512, 120);
+    ctx.fillRect(94, 10, 48, 492);
     ctx.fillStyle = tertiaryColor;
-    ctx.fillRect(0, 168, 512, 14);
-    ctx.fillRect(0, 308, 512, 14);
-    // Center pinstripe
+    ctx.fillRect(86, 10, 6, 492);
+    ctx.fillRect(144, 10, 6, 492);
+
+    // Side heritage bands
+    ctx.fillStyle = secondaryColor;
+    ctx.fillRect(240, 55, 255, 26);
+    ctx.fillRect(240, 178, 255, 26);
     ctx.fillStyle = tertiaryColor;
-    ctx.fillRect(248, 0, 16, 512);
+    ctx.fillRect(240, 48, 255, 5);
+    ctx.fillRect(240, 83, 255, 5);
+    ctx.fillRect(240, 171, 255, 5);
+    ctx.fillRect(240, 206, 255, 5);
   }
 
-  // Exposed carbon fiber hood panel (upper hood UV area)
+  // 3. Exposed carbon fiber hood panel (in TOP zone hood region)
   if (livery.carbonHood) {
-    drawCarbonWeave(ctx, 130, 315, 252, 175);
+    drawCarbonWeave(ctx, 42, 35, 152, 140);
     ctx.strokeStyle = tertiaryColor;
-    ctx.lineWidth = 4;
-    ctx.strokeRect(130, 315, 252, 175);
+    ctx.lineWidth = 3;
+    ctx.strokeRect(42, 35, 152, 140);
   }
 
-  // Subtle panel shutlines for die-cast scale realism
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(118, 305, 276, 192);
-
-  // Hood racing number plate
+  // 4. Competition Racing Numbers & Class Numberplates
+  const isSingleSeater =
+    classId === CarClassId.F1_2026 ||
+    classId === CarClassId.F1_2021 ||
+    classId === CarClassId.F1_2005 ||
+    classId === CarClassId.FORMULA_E;
+  const isRoadSupercar = classId === CarClassId.SUPERCAR;
   const num = validateDriverNumber(livery.driverNumber);
-  const plate = resolveNumberPlateColors(classId, livery.numberPlateStyle);
-  ctx.save();
-  ctx.fillStyle = plate.bg;
-  ctx.fillRect(202, 348, 108, 86);
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(202, 348, 108, 86);
+  const plateStyle = livery.numberPlateStyle ?? 'auto';
 
-  ctx.fillStyle = plate.text;
-  ctx.font = '800 50px "Oxanium", "Arial Black", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(num, 256, 394);
-  ctx.restore();
+  if (plateStyle !== 'none') {
+    if (isSingleSeater) {
+      // Single-seaters (F1 / Formula E): Bold stylized racing number on the nose cone without a boxed plate
+      ctx.save();
+      ctx.font = '900 42px "Oxanium", "Arial Black", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // Crisp contrast outline
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 6;
+      ctx.strokeText(num, 118, 65);
+
+      // Inner number color
+      ctx.fillStyle = tertiaryColor.toLowerCase() !== primaryColor.toLowerCase() ? tertiaryColor : '#ffffff';
+      ctx.fillText(num, 118, 65);
+      ctx.restore();
+    } else if (!isRoadSupercar || plateStyle !== 'auto') {
+      // Endurance / GT / Prototype / Touring (GT3, GT4, LMP2, GTP, Track Coupe): Boxed category numberplates
+      const plate = resolveNumberPlateColors(classId, plateStyle);
+      const categoryLabel =
+        classId === CarClassId.HYPERCAR_GTP
+          ? 'GTP'
+          : classId === CarClassId.LMP2
+          ? 'LMP2'
+          : classId === CarClassId.GT3
+          ? 'GT3'
+          : classId === CarClassId.GT4
+          ? 'GT4'
+          : 'PRO';
+
+      // Helper to draw clean class numberplate directly onto UV canvas
+      const drawPlate = (px: number, py: number, pw: number, ph: number) => {
+        ctx.save();
+        // White plate background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(px, py, pw, ph);
+
+        // Dark outer stroke
+        ctx.strokeStyle = '#0a0d14';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(px, py, pw, ph);
+
+        // Top category colored header strip
+        const headerH = Math.round(ph * 0.28);
+        ctx.fillStyle = plate.bg;
+        ctx.fillRect(px, py, pw, headerH);
+
+        // Header label
+        ctx.fillStyle = plate.text;
+        ctx.font = `800 ${Math.round(headerH * 0.72)}px "Oxanium", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(categoryLabel, px + pw * 0.5, py + headerH * 0.52);
+
+        // Driver number in lower plate area
+        ctx.fillStyle = '#0a0d14';
+        ctx.font = `900 ${Math.round(ph * 0.58)}px "Oxanium", "Arial Black", sans-serif`;
+        ctx.fillText(num, px + pw * 0.5, py + headerH + (ph - headerH) * 0.54);
+        ctx.restore();
+      };
+
+      // Top / Hood Numberplate (centered on hood)
+      drawPlate(86, 75, 64, 46);
+
+      // Left Door Numberplate (in LEFT_SIDE zone)
+      drawPlate(345, 38, 68, 48);
+
+      // Right Door Numberplate (in RIGHT_SIDE zone)
+      drawPlate(345, 162, 68, 48);
+    }
+  }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;

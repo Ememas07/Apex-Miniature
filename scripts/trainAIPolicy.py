@@ -1,99 +1,25 @@
-import glob
+import argparse
 import json
 import os
 import subprocess
+import gymnasium as gym
 import numpy as np
 import torch
-import gymnasium as gym
-from gymnasium import spaces
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
+WEIGHTS_PATH = "src/game/aiPolicyWeights.json"
+ROLLING_CKPT = "checkpoints/ppo_rolling.zip"
 OBS_DIM = 43
-ACTION_DIM = 3
-WEIGHTS_OUT_PATH = "src/game/aiPolicyWeights.json"
+ACT_DIM = 3
 
 
-def export_weights_to_json(model: PPO, out_path: str):
-    policy = model.policy
-    net = policy.mlp_extractor.policy_net
-    action_net = policy.action_net
-
-    weights = {
-        "obsDim": OBS_DIM,
-        "w0": net[0].weight.detach().cpu().numpy().round(5).tolist(),
-        "b0": net[0].bias.detach().cpu().numpy().round(5).tolist(),
-        "w1": net[2].weight.detach().cpu().numpy().round(5).tolist(),
-        "b1": net[2].bias.detach().cpu().numpy().round(5).tolist(),
-        "w2": action_net.weight.detach().cpu().numpy().round(5).tolist(),
-        "b2": action_net.bias.detach().cpu().numpy().round(5).tolist(),
-    }
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(weights, f)
-
-
-class RollingCheckpointCallback(BaseCallback):
-    """Saves a single rolling .zip backup and deletes all previous .zip checkpoints."""
-
-    def __init__(self, save_freq: int, save_path: str, name_prefix: str = "rl_model", verbose: int = 1):
-        super().__init__(verbose)
-        self.save_freq = save_freq
-        self.save_path = save_path
-        self.name_prefix = name_prefix
-
-    def _init_callback(self) -> None:
-        os.makedirs(self.save_path, exist_ok=True)
-
-    def _on_step(self) -> bool:
-        if self.n_calls % self.save_freq == 0:
-            new_path = os.path.join(
-                self.save_path, f"{self.name_prefix}_{self.num_timesteps}_steps.zip"
-            )
-            self.model.save(new_path)
-
-            pattern = os.path.join(self.save_path, "*.zip")
-            for old_file in glob.glob(pattern):
-                if os.path.abspath(old_file) != os.path.abspath(new_path):
-                    try:
-                        os.remove(old_file)
-                    except OSError:
-                        pass
-
-            if self.verbose:
-                print(f"[{self.num_timesteps:,} steps] Saved single backup {new_path}")
-        return True
-
-
-class PeriodicJsonExportCallback(BaseCallback):
-    def __init__(self, export_freq_steps: int, out_path: str, verbose: int = 1):
-        super().__init__(verbose)
-        self.export_freq_steps = export_freq_steps
-        self.out_path = out_path
-        self.last_export = 0
-
-    def _on_step(self) -> bool:
-        if self.num_timesteps - self.last_export >= self.export_freq_steps:
-            self.last_export = self.num_timesteps
-            export_weights_to_json(self.model, self.out_path)
-            if self.verbose:
-                print(f"[{self.num_timesteps:,} steps] Updated {self.out_path}")
-        return True
-
-
-class ApexRacingEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self, worker_id: int = 0):
+class ApexSimEnv(gym.Env):
+    def __init__(self):
         super().__init__()
-        self.worker_id = worker_id
-        self.observation_space = spaces.Box(
-            low=-5.0, high=5.0, shape=(OBS_DIM,), dtype=np.float32
-        )
-        self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(ACTION_DIM,), dtype=np.float32
-        )
+        self.observation_space = gym.spaces.Box(low=-5.0, high=5.0, shape=(OBS_DIM,), dtype=np.float32)
+        self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(ACT_DIM,), dtype=np.float32)
         tsx_cli = os.path.abspath("node_modules/tsx/dist/cli.mjs")
         sim_script = os.path.abspath("scripts/rlSimServer.ts")
         self.proc = subprocess.Popen(
@@ -109,10 +35,9 @@ class ApexRacingEnv(gym.Env):
         assert self.proc.stdin and self.proc.stdout
         self.proc.stdin.write(json.dumps(payload) + "\n")
         self.proc.stdin.flush()
-        line = self.proc.stdout.readline()
-        return json.loads(line)
+        return json.loads(self.proc.stdout.readline())
 
-    def reset(self, seed=None, options=None):
+    def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         res = self._rpc({"type": "reset"})
         return np.array(res["obs"], dtype=np.float32), {}
@@ -120,103 +45,107 @@ class ApexRacingEnv(gym.Env):
     def step(self, action):
         res = self._rpc({"type": "step", "action": action.tolist()})
         obs = np.array(res["obs"], dtype=np.float32)
-        return (
-            obs,
-            float(res["reward"]),
-            bool(res["terminated"]),
-            bool(res["truncated"]),
-            {},
-        )
+        reward = float(res["reward"])
+        # Extra high-speed apex/straightaway bonus when skillTarget is high
+        speed_ms = float(res.get("speed", 0.0))
+        if obs[42] >= 0.95 and speed_ms > 35.0:
+            reward += (speed_ms - 35.0) * 0.012
+        return obs, reward, bool(res["terminated"]), bool(res["truncated"]), {}
 
     def close(self):
         if self.proc:
             self.proc.terminate()
 
 
-def make_env(rank: int):
-    def _init():
-        return ApexRacingEnv(worker_id=rank)
-    return _init
+def load_json_into_ppo(model: PPO, path: str) -> bool:
+    if not os.path.exists(path):
+        return False
+    with open(path, "r", encoding="utf-8") as f:
+        d = json.load(f)
+    if d.get("obsDim") != OBS_DIM:
+        return False
 
-
-def warm_start_from_json(model: PPO, json_path: str):
-    """Transfers 26-, 42-, or 43-input weights cleanly into the 43-input skill-calibrated policy."""
-    if not os.path.exists(json_path):
-        print("No prior weights found — starting fresh.")
-        return
-
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    w0_old = torch.tensor(data["w0"], dtype=torch.float32)
-    old_in = w0_old.shape[1]
-    if old_in not in (26, 42, OBS_DIM):
-        print(f"Skipping warm-start: incompatible input dim {old_in}")
-        return
-
+    pi_net = model.policy.mlp_extractor.policy_net
+    action_net = model.policy.action_net
     with torch.no_grad():
-        net = model.policy.mlp_extractor.policy_net
-        action_net = model.policy.action_net
+        pi_net[0].weight.copy_(torch.tensor(d["w0"], dtype=torch.float32))
+        pi_net[0].bias.copy_(torch.tensor(d["b0"], dtype=torch.float32))
+        pi_net[2].weight.copy_(torch.tensor(d["w1"], dtype=torch.float32))
+        pi_net[2].bias.copy_(torch.tensor(d["b1"], dtype=torch.float32))
+        action_net.weight.copy_(torch.tensor(d["w2"], dtype=torch.float32))
+        action_net.bias.copy_(torch.tensor(d["b2"], dtype=torch.float32))
+    return True
 
-        net[0].weight.zero_()
-        net[0].weight[:, :old_in].copy_(w0_old)
-        if old_in < OBS_DIM:
-            net[0].weight[:, old_in:].normal_(mean=0.0, std=0.01)
-        net[0].bias.copy_(torch.tensor(data["b0"], dtype=torch.float32))
 
-        net[2].weight.copy_(torch.tensor(data["w1"], dtype=torch.float32))
-        net[2].bias.copy_(torch.tensor(data["b1"], dtype=torch.float32))
-        action_net.weight.copy_(torch.tensor(data["w2"], dtype=torch.float32))
-        action_net.bias.copy_(torch.tensor(data["b2"], dtype=torch.float32))
+def export_ppo_to_json(model: PPO, path: str):
+    pi_net = model.policy.mlp_extractor.policy_net
+    action_net = model.policy.action_net
+    payload = {
+        "obsDim": OBS_DIM,
+        "actDim": ACT_DIM,
+        "w0": pi_net[0].weight.detach().cpu().numpy().tolist(),
+        "b0": pi_net[0].bias.detach().cpu().numpy().tolist(),
+        "w1": pi_net[2].weight.detach().cpu().numpy().tolist(),
+        "b1": pi_net[2].bias.detach().cpu().numpy().tolist(),
+        "w2": action_net.weight.detach().cpu().numpy().tolist(),
+        "b2": action_net.bias.detach().cpu().numpy().tolist(),
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
 
-    print(f"Warm-started 43-input policy from {json_path} (transferred {old_in} features)!")
+
+class RollingExportCallback(BaseCallback):
+    def __init__(self, save_freq: int):
+        super().__init__()
+        self.save_freq = save_freq
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.save_freq == 0:
+            os.makedirs(os.path.dirname(ROLLING_CKPT), exist_ok=True)
+            self.model.save(ROLLING_CKPT)
+            export_ppo_to_json(self.model, WEIGHTS_PATH)
+        return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Train/Fine-tune PPO racing policy")
+    parser.add_argument("--steps", type=int, default=3_000_000)
+    parser.add_argument("--envs", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=1.2e-4)
+    parser.add_argument("--resume", action="store_true", help="Warm-start from aiPolicyWeights.json")
+    args = parser.parse_args()
+
+    vec_env = SubprocVecEnv([lambda: ApexSimEnv() for _ in range(args.envs)])
+    try:
+        model = PPO(
+            "MlpPolicy",
+            vec_env,
+            learning_rate=args.lr,
+            n_steps=2048,
+            batch_size=512,
+            n_epochs=6,
+            gamma=0.992,
+            gae_lambda=0.95,
+            clip_range=0.18,
+            ent_coef=0.003,
+            policy_kwargs=dict(net_arch=dict(pi=[128, 128], vf=[128, 128]), activation_fn=torch.nn.Tanh),
+            verbose=1,
+        )
+
+        if args.resume and load_json_into_ppo(model, WEIGHTS_PATH):
+            # Lower initial exploration std so fine-tuning refines human lines without forgetting braking
+            with torch.no_grad():
+                model.policy.log_std.fill_(-1.4)
+            print(f"Resumed PPO policy from {WEIGHTS_PATH} with tight exploration std")
+
+        model.learn(total_timesteps=args.steps, callback=RollingExportCallback(save_freq=50_000))
+        model.save(ROLLING_CKPT)
+        export_ppo_to_json(model, WEIGHTS_PATH)
+        print(f"Saved final weights to {WEIGHTS_PATH} and single rolling checkpoint {ROLLING_CKPT}")
+    finally:
+        vec_env.close()
 
 
 if __name__ == "__main__":
-    NUM_ENVS = 12
-    env = VecMonitor(SubprocVecEnv([make_env(i) for i in range(NUM_ENVS)]))
-
-    model = PPO(
-        "MlpPolicy",
-        env,
-        learning_rate=2e-4,
-        n_steps=2048,
-        batch_size=512,
-        n_epochs=10,
-        gamma=0.995,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.004,
-        tensorboard_log="./audit/rl_logs/",
-        policy_kwargs=dict(net_arch=dict(pi=[64, 64], vf=[64, 64])),
-        device="cpu",
-        verbose=1,
-    )
-
-    warm_start_from_json(model, WEIGHTS_OUT_PATH)
-
-    callbacks = CallbackList([
-        RollingCheckpointCallback(
-            save_freq=500_000 // NUM_ENVS,
-            save_path="./audit/rl_checkpoints/",
-            name_prefix="apex_skill_ppo",
-        ),
-        PeriodicJsonExportCallback(
-            export_freq_steps=500_000,
-            out_path=WEIGHTS_OUT_PATH,
-        ),
-    ])
-
-    try:
-        model.learn(
-            total_timesteps=1_000_000_000,
-            callback=callbacks,
-            tb_log_name="apex_skill_driver",
-            progress_bar=True,
-        )
-    except KeyboardInterrupt:
-        print("\nTraining stopped by user — exporting latest weights...")
-    finally:
-        export_weights_to_json(model, WEIGHTS_OUT_PATH)
-        print(f"Final weights saved to {WEIGHTS_OUT_PATH}")
-        env.close()
+    main()

@@ -5,7 +5,6 @@ import {
   createCarbonTexture,
   createContactShadowTexture,
   createLiveryTexture,
-  createNumberPlateTexture,
   createWindshieldBannerTexture,
 } from './proceduralTextures';
 
@@ -2050,7 +2049,6 @@ export function buildDiecastCar(
   } else {
     liveryTex = track(createLiveryTexture(livery, classId, maxAniso));
   }
-  const numberPlateTex = track(createNumberPlateTexture(livery, classId, maxAniso));
   const bannerTex = track(createWindshieldBannerTexture(livery.windshieldBanner, livery.secondaryColor, maxAniso));
   const carbonTex = track(createCarbonTexture(maxAniso));
 
@@ -2148,17 +2146,6 @@ export function buildDiecastCar(
       color: new THREE.Color(rimInfo.color),
       metalness: rimInfo.metalness,
       roughness: rimInfo.roughness,
-    }),
-  );
-
-  const plateMat = track(
-    new THREE.MeshStandardMaterial({
-      map: numberPlateTex,
-      roughness: 0.38,
-      metalness: 0.05,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
     }),
   );
 
@@ -2377,12 +2364,6 @@ export function buildDiecastCar(
         bodyGroup.add(winglet);
       }
 
-      const nosePlateGeo = track(new THREE.PlaneGeometry(0.32, 0.24));
-      nosePlateGeo.rotateX(-Math.PI / 2 + 0.15);
-      const nosePlate = new THREE.Mesh(nosePlateGeo, plateMat);
-      nosePlate.position.set(0, 0.60, 1.25);
-      bodyGroup.add(nosePlate);
-
       [-0.14, 0.14].forEach((hx, idx) => {
         const hlGeo = track(new THREE.BoxGeometry(0.09, 0.045, 0.05));
         const hl = new THREE.Mesh(hlGeo, headlightMats[idx]);
@@ -2556,12 +2537,6 @@ export function buildDiecastCar(
         rwe.position.set(sx, rwHeight, -1.68);
         bodyGroup.add(rwe);
       }
-
-      const nosePlateGeo = track(new THREE.PlaneGeometry(0.34, 0.26));
-      nosePlateGeo.rotateX(-Math.PI / 2 + 0.14);
-      const nosePlate = new THREE.Mesh(nosePlateGeo, plateMat);
-      nosePlate.position.set(0, 0.62, 1.15);
-      bodyGroup.add(nosePlate);
 
       const rainGeo = track(new THREE.BoxGeometry(0.14, 0.11, 0.05));
       const rainLight = new THREE.Mesh(rainGeo, brakeLightMat);
@@ -3127,31 +3102,6 @@ export function buildDiecastCar(
     }
 
     // 10. Flush Door Number Plates (strictly between wheel arches on door panels)
-    if (!isStreetCar) {
-      const doorZ = 0.04;
-      const doorY = 0.40;
-      const doorHalfSpan = 0.24;
-      const sampleSideX = (zQ: number) => {
-        const st = sampleHullAtZ(zQ);
-        const vFrac = Math.max(0, Math.min(1, (doorY - st.ySill) / Math.max(0.05, st.yBelt - st.ySill)));
-        return st.halfW * 1.015 * (1 - vFrac) + st.wBelt * vFrac;
-      };
-      const xBack = sampleSideX(doorZ - doorHalfSpan);
-      const xMid = sampleSideX(doorZ);
-      const xFront = sampleSideX(doorZ + doorHalfSpan);
-      const flushX = Math.max(xBack, xMid, xFront) + 0.009;
-      const sideSlopeAngle = Math.atan2(xFront - xBack, doorHalfSpan * 2);
-
-      const doorPlateGeo = track(new THREE.PlaneGeometry(doorHalfSpan * 2, 0.30));
-      const leftPlate = new THREE.Mesh(doorPlateGeo, plateMat);
-      leftPlate.rotation.y = -Math.PI / 2 - sideSlopeAngle * 0.5;
-      leftPlate.position.set(-flushX, doorY, doorZ);
-      bodyGroup.add(leftPlate);
-
-      const rightPlate = new THREE.Mesh(doorPlateGeo, plateMat);
-      rightPlate.rotation.y = Math.PI / 2 + sideSlopeAngle * 0.5;
-      rightPlate.position.set(flushX, doorY, doorZ);
-      bodyGroup.add(rightPlate);
     }
 
     // 11. Flush Sculpted Headlights & Rear LED Light Bar (recessed into front/rear fender fascia)

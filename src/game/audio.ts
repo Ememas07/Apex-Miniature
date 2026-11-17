@@ -7,6 +7,7 @@ export type AcousticProfileType =
   | 'V8_FLATPLANE'
   | 'FLAT6_BOXER'
   | 'V6_TURBO_HYBRID'
+  | 'INLINE6_TURBO'
   | 'INLINE4_TURBO'
   | 'ELECTRIC_EV';
 
@@ -17,9 +18,10 @@ export interface AcousticProfile {
   idleRpm: number;
   redlineRpm: number;
   baseIdleHz: number; // warm fundamental at idle (70..85 Hz)
-  maxRedlineHz: number; // warm fundamental at redline (190..240 Hz)
+  maxRedlineHz: number; // warm fundamental at redline (190..255 Hz)
   subRatio: number; // sub-octave crankshaft rumble (0.5x)
   midHarmonicRatio: number; // midrange harmonic layer (1.5x, 2.0x, or 2.5x)
+  highHarmonicRatio?: number; // high scream layer (e.g. 3.0x or 3.5x for F1 / V10 / V12)
   oscCombustionType: OscillatorType;
   oscHarmonicType: OscillatorType;
   oscSubType: OscillatorType;
@@ -28,10 +30,15 @@ export interface AcousticProfile {
   filterQ: number;
   distortionDrive: number;
   combustionGain: number;
+  profileGain: number; // Output gain calibration for loudness normalization
   hasHybridWhine: boolean;
   hybridWhineLevel: number;
   hasTurboFlutter: boolean;
+  turboSpoolPitch: number;
+  turboSpoolLevel: number;
+  gearWhineLevel: number; // Straight-cut dog-ring transmission whine
   hasExhaustCrackles: boolean;
+  crackleIntensity: number;
 }
 
 /**
@@ -57,7 +64,7 @@ export function resolveAcousticProfile(
   classId?: CarClassId,
 ): AcousticProfile {
   // 1. Formula E: strictly pure electric inverter whine + straight-cut reduction gears
-  if (classId === CarClassId.FORMULA_E || engineType === 'electric') {
+  if (classId === CarClassId.FORMULA_E || engineType === 'electric' || carId.startsWith('fe-')) {
     return {
       type: 'ELECTRIC_EV',
       name: 'Formula E Inverter & Reduction Gearbox',
@@ -68,6 +75,7 @@ export function resolveAcousticProfile(
       maxRedlineHz: 0,
       subRatio: 0,
       midHarmonicRatio: 0,
+      highHarmonicRatio: 0,
       oscCombustionType: 'sine',
       oscHarmonicType: 'triangle',
       oscSubType: 'sine',
@@ -76,44 +84,66 @@ export function resolveAcousticProfile(
       filterQ: 2.2,
       distortionDrive: 8,
       combustionGain: 0.0, // Strictly zero combustion noise!
+      profileGain: 1.25,
       hasHybridWhine: true,
-      hybridWhineLevel: 0.22,
+      hybridWhineLevel: 0.24,
       hasTurboFlutter: false,
+      turboSpoolPitch: 0,
+      turboSpoolLevel: 0,
+      gearWhineLevel: 0.20,
       hasExhaustCrackles: false,
+      crackleIntensity: 0,
     };
   }
 
-  // 2. 2005 F1 & High-Revving V10 NA (McLaren MP4-20, Renault R25, Audi R8, Lamborghini Temerario)
-  const is2005F1 = classId === CarClassId.F1_2005;
-  const isV10 = engineType === 'v10' || carId.includes('r8') || carId.includes('temerario') || carId.includes('huracan');
+  const isF1Modern =
+    classId === CarClassId.F1_2026 ||
+    classId === CarClassId.F1_2021 ||
+    carId.startsWith('f1-26') ||
+    carId.startsWith('f1-21');
+
+  // 2. 2005 F1 & High-Revving V10 NA (McLaren MP4-20, Renault R25, Audi R8, Lamborghini Temerario, Huracan)
+  const is2005F1 = classId === CarClassId.F1_2005 || carId.startsWith('f1-05');
+  const isV10 =
+    !isF1Modern &&
+    (engineType === 'v10' ||
+      carId.includes('r8') ||
+      carId.includes('temerario') ||
+      carId.includes('huracan'));
   if (is2005F1 || isV10) {
     return {
       type: 'V10_NA',
-      name: 'V10 Naturally Aspirated Resonant Howl',
+      name: is2005F1 ? 'F1 3.0L V10 19,000 RPM Screamer' : 'V10 Naturally Aspirated Resonant Howl',
       cylinders: 10,
       idleRpm: is2005F1 ? 4000 : 950,
       redlineRpm: is2005F1 ? 19000 : 8800,
-      baseIdleHz: 80,
-      maxRedlineHz: 240,
+      baseIdleHz: is2005F1 ? 88 : 80,
+      maxRedlineHz: is2005F1 ? 255 : 240,
       subRatio: 0.5,
       midHarmonicRatio: 2.5,
+      highHarmonicRatio: is2005F1 ? 3.5 : 3.0,
       oscCombustionType: 'sawtooth',
       oscHarmonicType: 'sawtooth',
       oscSubType: 'triangle',
-      idleFilterCutoff: 280,
-      wotFilterCutoff: 2200,
-      filterQ: 3.2,
+      idleFilterCutoff: is2005F1 ? 320 : 280,
+      wotFilterCutoff: is2005F1 ? 2400 : 2200,
+      filterQ: is2005F1 ? 3.5 : 3.2,
       distortionDrive: 24,
-      combustionGain: 0.20,
+      combustionGain: is2005F1 ? 0.22 : 0.20,
+      profileGain: 1.05,
       hasHybridWhine: false,
       hybridWhineLevel: 0.0,
       hasTurboFlutter: false,
+      turboSpoolPitch: 0,
+      turboSpoolLevel: 0,
+      gearWhineLevel: is2005F1 ? 0.16 : 0.08,
       hasExhaustCrackles: true,
+      crackleIntensity: 1.4,
     };
   }
 
-  // 3. V12 NA Screaming Harmonic Wail (Aston Valkyrie LMH, Ferrari F80, SCG 007)
-  const isV12 = engineType === 'v12' || carId.includes('valkyrie') || carId.includes('f80');
+  // 3. V12 NA Screaming Harmonic Wail (Aston Valkyrie LMH & Road)
+  const isV12 = !isF1Modern && (engineType === 'v12' || carId.includes('valkyrie'));
   if (isV12) {
     return {
       type: 'V12_NA',
@@ -125,6 +155,7 @@ export function resolveAcousticProfile(
       maxRedlineHz: 238,
       subRatio: 0.5,
       midHarmonicRatio: 2.0,
+      highHarmonicRatio: 3.0,
       oscCombustionType: 'sawtooth',
       oscHarmonicType: 'sawtooth',
       oscSubType: 'sine',
@@ -132,21 +163,31 @@ export function resolveAcousticProfile(
       wotFilterCutoff: 2100,
       filterQ: 2.5,
       distortionDrive: 22,
-      combustionGain: 0.19,
+      combustionGain: 0.20,
+      profileGain: 1.02,
       hasHybridWhine: false,
       hybridWhineLevel: 0.0,
       hasTurboFlutter: false,
+      turboSpoolPitch: 0,
+      turboSpoolLevel: 0,
+      gearWhineLevel: 0.12,
       hasExhaustCrackles: true,
+      crackleIntensity: 1.25,
     };
   }
 
   // 4. Flat-6 Boxer Metallic Pulse (Porsche 911 GT3 R, 718 Cayman GT4, 992 GT3 RS)
   const isFlat6 =
-    engineType === 'flat6' ||
-    (carId.includes('porsche') && engineType !== 'v8-hybrid') ||
-    carId.includes('911') ||
-    carId.includes('718') ||
-    carId.includes('cayman');
+    !isF1Modern &&
+    (engineType === 'flat6' ||
+      (carId.includes('porsche') &&
+        !carId.includes('963') &&
+        !carId.includes('918') &&
+        engineType !== 'v8-hybrid' &&
+        !carId.startsWith('fe-')) ||
+      carId.includes('911') ||
+      carId.includes('718') ||
+      carId.includes('cayman'));
   if (isFlat6) {
     return {
       type: 'FLAT6_BOXER',
@@ -158,6 +199,7 @@ export function resolveAcousticProfile(
       maxRedlineHz: 218,
       subRatio: 0.5,
       midHarmonicRatio: 1.5,
+      highHarmonicRatio: 2.2,
       oscCombustionType: 'sawtooth',
       oscHarmonicType: 'triangle',
       oscSubType: 'sawtooth',
@@ -165,22 +207,69 @@ export function resolveAcousticProfile(
       wotFilterCutoff: 1750,
       filterQ: 2.8,
       distortionDrive: 20,
-      combustionGain: 0.18,
+      combustionGain: 0.19,
+      profileGain: 1.08,
       hasHybridWhine: false,
       hybridWhineLevel: 0.0,
       hasTurboFlutter: false,
+      turboSpoolPitch: 0,
+      turboSpoolLevel: 0,
+      gearWhineLevel: 0.10,
       hasExhaustCrackles: true,
+      crackleIntensity: 1.20,
     };
   }
 
-  // 5. V8 Crossplane Deep Bass Burble (Cadillac V-Series.R, Corvette Z06, Mustang, AMG GT3)
+  // 5. Inline-6 Turbo Resonant Growl + Spool (BMW M4 GT3, BMW M4 GT4, BMW M2 CS, Toyota Supra GT4, Nissan GT-R Nismo)
+  const isI6 =
+    !isF1Modern &&
+    (engineType === 'turbo-i6' ||
+      carId.includes('bmw-m4') ||
+      carId.includes('m2-cs') ||
+      carId.includes('supra') ||
+      carId.includes('gtr-nismo'));
+  if (isI6) {
+    return {
+      type: 'INLINE6_TURBO',
+      name: 'Inline-6 Turbo Resonant Growl & Spool',
+      cylinders: 6,
+      idleRpm: 820,
+      redlineRpm: 7600,
+      baseIdleHz: 72,
+      maxRedlineHz: 208,
+      subRatio: 0.5,
+      midHarmonicRatio: 2.0,
+      highHarmonicRatio: 2.5,
+      oscCombustionType: 'sawtooth',
+      oscHarmonicType: 'triangle',
+      oscSubType: 'sine',
+      idleFilterCutoff: 260,
+      wotFilterCutoff: 1550,
+      filterQ: 2.0,
+      distortionDrive: 22,
+      combustionGain: 0.19,
+      profileGain: 1.08,
+      hasHybridWhine: false,
+      hybridWhineLevel: 0.0,
+      hasTurboFlutter: true,
+      turboSpoolPitch: 1.05,
+      turboSpoolLevel: 0.12,
+      gearWhineLevel: 0.09,
+      hasExhaustCrackles: true,
+      crackleIntensity: 1.15,
+    };
+  }
+
+  // 6. V8 Crossplane Deep Bass Burble (Cadillac V-Series.R, Corvette Z06 GT3/Coupe, Mustang GT3/GT4, AMG GT3/GT4, Lexus RC F, Bentley)
   const isV8Crossplane =
-    carId.includes('cadillac-vseries') ||
-    carId.includes('corvette') ||
-    carId.includes('mustang') ||
-    carId.includes('amg') ||
-    carId.includes('bmw-m4') ||
-    carId.includes('aston-vantage');
+    !isF1Modern &&
+    (carId.includes('cadillac-vseries') ||
+      carId.includes('corvette') ||
+      carId.includes('mustang') ||
+      carId.includes('amg') ||
+      carId.includes('lexus-rcf') ||
+      carId.includes('bentley') ||
+      carId.includes('aston-vantage'));
   if (isV8Crossplane) {
     return {
       type: 'V8_CROSSPLANE',
@@ -192,6 +281,7 @@ export function resolveAcousticProfile(
       maxRedlineHz: 195,
       subRatio: 0.5,
       midHarmonicRatio: 2.0,
+      highHarmonicRatio: 2.5,
       oscCombustionType: 'sawtooth',
       oscHarmonicType: 'square',
       oscSubType: 'triangle',
@@ -199,33 +289,51 @@ export function resolveAcousticProfile(
       wotFilterCutoff: 1250,
       filterQ: 1.6,
       distortionDrive: 26,
-      combustionGain: 0.20,
+      combustionGain: 0.21,
+      profileGain: 1.10,
       hasHybridWhine: carId.includes('cadillac'),
-      hybridWhineLevel: 0.05,
-      hasTurboFlutter: false,
+      hybridWhineLevel: 0.06,
+      hasTurboFlutter: carId.includes('amg') || carId.includes('aston'),
+      turboSpoolPitch: 0.95,
+      turboSpoolLevel: 0.08,
+      gearWhineLevel: 0.08,
       hasExhaustCrackles: true,
+      crackleIntensity: 1.30,
     };
   }
 
-  // 6. V8 Flatplane Crisp Bark (Ferrari 499P, Porsche 963/918, McLaren 720S/750S/W1/Artura, Koenigsegg Jesko)
-  const isF1Modern = classId === CarClassId.F1_2026 || classId === CarClassId.F1_2021;
+  // 7. V8 Flatplane Crisp Bark (Ferrari 499P, Porsche 963/918, McLaren 720S/750S/W1, Koenigsegg Jesko, BMW M Hybrid V8, Oreca 07)
   const isV8Flatplane =
-    engineType === 'v8-hybrid' ||
-    carId.includes('499p') ||
-    (!isF1Modern && carId.includes('mclaren')) ||
-    carId.includes('jesko');
+    !isF1Modern &&
+    (engineType === 'v8-hybrid' ||
+      carId.includes('499p') ||
+      carId.includes('963') ||
+      carId.includes('918') ||
+      carId.includes('bmw-m-hybrid') ||
+      carId.includes('oreca') ||
+      carId.includes('mclaren') ||
+      carId.includes('jesko') ||
+      carId.includes('lamborghini-sc63') ||
+      carId.includes('genesis-gmr') ||
+      carId.includes('glickenhaus') ||
+      carId.includes('sf90'));
   if (isV8Flatplane) {
-    const isNonHybrid = carId.includes('valkyrie') || carId.includes('glickenhaus') || carId.includes('scg-007');
+    const isNonHybrid =
+      carId.includes('valkyrie') ||
+      carId.includes('glickenhaus') ||
+      carId.includes('scg-007') ||
+      carId.includes('oreca');
     return {
       type: 'V8_FLATPLANE',
       name: 'V8 Flatplane Crisp Bark',
       cylinders: 8,
       idleRpm: 920,
-      redlineRpm: 8500,
+      redlineRpm: 8600,
       baseIdleHz: 72,
-      maxRedlineHz: 215,
+      maxRedlineHz: 216,
       subRatio: 0.5,
       midHarmonicRatio: 2.0,
+      highHarmonicRatio: 2.5,
       oscCombustionType: 'sawtooth',
       oscHarmonicType: 'sawtooth',
       oscSubType: 'sine',
@@ -233,21 +341,27 @@ export function resolveAcousticProfile(
       wotFilterCutoff: 1650,
       filterQ: 2.0,
       distortionDrive: 22,
-      combustionGain: 0.18,
-      hasHybridWhine: !isNonHybrid && (carId.includes('499p') || engineType === 'v8-hybrid'),
-      hybridWhineLevel: 0.06,
+      combustionGain: 0.19,
+      profileGain: 1.05,
+      hasHybridWhine: !isNonHybrid,
+      hybridWhineLevel: 0.08,
       hasTurboFlutter: !isNonHybrid,
+      turboSpoolPitch: 1.10,
+      turboSpoolLevel: 0.10,
+      gearWhineLevel: 0.10,
       hasExhaustCrackles: true,
+      crackleIntensity: 1.25,
     };
   }
 
-  // 7. Inline-4 Turbo Punchy Growl (Toyota GR Yaris, Honda Civic Type R, Renault Clio, Alpine A110)
+  // 8. Inline-4 Turbo Punchy Growl (Toyota GR Yaris, Honda Civic Type R, Alpine A110 GT4)
   const isI4 =
-    engineType === 'turbo-i4' ||
-    carId.includes('yaris') ||
-    carId.includes('civic') ||
-    carId.includes('clio') ||
-    carId.includes('alpine-a110');
+    !isF1Modern &&
+    (engineType === 'turbo-i4' ||
+      carId.includes('yaris') ||
+      carId.includes('civic') ||
+      (carId.includes('clio') && !carId.includes('clio-v6')) ||
+      carId.includes('alpine-a110'));
   if (isI4) {
     return {
       type: 'INLINE4_TURBO',
@@ -259,6 +373,7 @@ export function resolveAcousticProfile(
       maxRedlineHz: 198,
       subRatio: 0.5,
       midHarmonicRatio: 2.0,
+      highHarmonicRatio: 2.2,
       oscCombustionType: 'sawtooth',
       oscHarmonicType: 'triangle',
       oscSubType: 'sawtooth',
@@ -266,37 +381,48 @@ export function resolveAcousticProfile(
       wotFilterCutoff: 1400,
       filterQ: 1.8,
       distortionDrive: 20,
-      combustionGain: 0.17,
+      combustionGain: 0.18,
+      profileGain: 1.12,
       hasHybridWhine: false,
       hybridWhineLevel: 0.0,
       hasTurboFlutter: true,
+      turboSpoolPitch: 1.15,
+      turboSpoolLevel: 0.14,
+      gearWhineLevel: 0.06,
       hasExhaustCrackles: true,
+      crackleIntensity: 1.20,
     };
   }
 
-  // 8. V6 Turbo Hybrid Deep Baritone + MGU-K Spool (F1 2026/2021, Ferrari 296, Acura ARX-06, Peugeot 9X8, Toyota GR010)
+  // 9. V6 Turbo Hybrid Deep Baritone + MGU-K Spool (F1 2026/2021, Ferrari 296, Acura ARX-06, Peugeot 9X8, Toyota GR010, Alpine A424, Renault RS01, Clio V6)
   return {
     type: 'V6_TURBO_HYBRID',
-    name: 'V6 Turbo Hybrid Deep Baritone & Spool',
+    name: isF1Modern ? 'Formula 1 1.6L V6 Turbo Hybrid' : 'V6 Turbo Hybrid Deep Baritone & Spool',
     cylinders: 6,
-    idleRpm: 900,
-    redlineRpm: 8200,
-    baseIdleHz: 70,
-    maxRedlineHz: 205,
+    idleRpm: isF1Modern ? 3800 : 900,
+    redlineRpm: isF1Modern ? 15000 : 8300,
+    baseIdleHz: isF1Modern ? 80 : 70,
+    maxRedlineHz: isF1Modern ? 228 : 205,
     subRatio: 0.5,
     midHarmonicRatio: 2.0,
+    highHarmonicRatio: isF1Modern ? 3.0 : 2.5,
     oscCombustionType: 'sawtooth',
     oscHarmonicType: 'triangle',
     oscSubType: 'sine',
     idleFilterCutoff: 260,
-    wotFilterCutoff: 1350,
+    wotFilterCutoff: isF1Modern ? 1800 : 1350,
     filterQ: 1.8,
     distortionDrive: 21,
-    combustionGain: 0.17,
+    combustionGain: isF1Modern ? 0.20 : 0.18,
+    profileGain: 1.06,
     hasHybridWhine: true,
-    hybridWhineLevel: 0.07,
+    hybridWhineLevel: isF1Modern ? 0.14 : 0.09,
     hasTurboFlutter: true,
+    turboSpoolPitch: 1.25,
+    turboSpoolLevel: 0.15,
+    gearWhineLevel: isF1Modern ? 0.14 : 0.08,
     hasExhaustCrackles: true,
+    crackleIntensity: 1.30,
   };
 }
 

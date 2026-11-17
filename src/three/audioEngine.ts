@@ -8,6 +8,7 @@ import {
 export class MotorsportAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private masterLimiter: DynamicsCompressorNode | null = null;
   private engineGain: GainNode | null = null;
 
   // Combustion nodes with soft-clipping saturation
@@ -38,8 +39,27 @@ export class MotorsportAudioEngine {
   private prevThrottle = 0;
   private lastCrackleTime = 0;
   private currentProfileType: string | null = null;
+  private masterVolume = 0.80;
   private muted = false;
   private initialized = false;
+
+  constructor() {
+    try {
+      const savedVol = localStorage.getItem('apex_audio_volume');
+      if (savedVol !== null) {
+        const v = parseFloat(savedVol);
+        if (!isNaN(v) && v >= 0 && v <= 1) {
+          this.masterVolume = v;
+        }
+      }
+      const savedMute = localStorage.getItem('apex_audio_muted');
+      if (savedMute !== null) {
+        this.muted = savedMute === 'true';
+      }
+    } catch {
+      // LocalStorage access fallback
+    }
+  }
 
   init() {
     if (this.initialized) return;
@@ -52,9 +72,19 @@ export class MotorsportAudioEngine {
       const ctx = new AudioCtx();
       this.ctx = ctx;
 
+      // Soft Dynamics Limiter / Master Compressor to eliminate clipping & normalize all 76 cars
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.setValueAtTime(-12, ctx.currentTime);
+      limiter.knee.setValueAtTime(8, ctx.currentTime);
+      limiter.ratio.setValueAtTime(6, ctx.currentTime);
+      limiter.attack.setValueAtTime(0.003, ctx.currentTime);
+      limiter.release.setValueAtTime(0.08, ctx.currentTime);
+      limiter.connect(ctx.destination);
+      this.masterLimiter = limiter;
+
       const master = ctx.createGain();
-      master.gain.value = this.muted ? 0 : 0.20;
-      master.connect(ctx.destination);
+      master.gain.value = this.muted ? 0 : 0.20 * this.masterVolume;
+      master.connect(limiter);
       this.masterGain = master;
 
       const mainEngine = ctx.createGain();
@@ -195,13 +225,32 @@ export class MotorsportAudioEngine {
 
   setMuted(mute: boolean) {
     this.muted = mute;
+    try {
+      localStorage.setItem('apex_audio_muted', String(mute));
+    } catch {}
     if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setTargetAtTime(mute ? 0 : 0.20, this.ctx.currentTime, 0.04);
+      const targetGain = mute ? 0 : 0.20 * this.masterVolume;
+      this.masterGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.04);
     }
   }
 
   isMuted(): boolean {
     return this.muted;
+  }
+
+  setMasterVolume(vol: number) {
+    this.masterVolume = Math.max(0, Math.min(1, vol));
+    try {
+      localStorage.setItem('apex_audio_volume', String(this.masterVolume));
+    } catch {}
+    if (this.masterGain && this.ctx) {
+      const targetGain = this.muted ? 0 : 0.20 * this.masterVolume;
+      this.masterGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.04);
+    }
+  }
+
+  getMasterVolume(): number {
+    return this.masterVolume;
   }
 
   /**
@@ -267,15 +316,17 @@ export class MotorsportAudioEngine {
     let inverterHz = 1200;
     let gearHz = 2200;
 
+    const speedNum = speedKmh ?? 0;
+
     if (profile.type === 'ELECTRIC_EV') {
       // === FORMULA E (GEN3 EVO): PURE ELECTRIC INVERTER WHINE + STRAIGHT-CUT GEARS ===
       combGainLevel = 0.0; // Strictly zero combustion noise!
-      elGainLevel = 0.12 + throttle * 0.14 + (speedKmh ? Math.min(0.08, speedKmh / 300) : 0);
+      elGainLevel = 0.12 + throttle * 0.14 + Math.min(0.08, speedNum / 300);
       inverterHz = 850 + rpmNorm * 2200;
-      gearHz = 1600 + (speedKmh ? speedKmh * 14 : rpmNorm * 2800);
+      gearHz = 1600 + speedNum * 14;
       this.electricFilter.frequency.setTargetAtTime(gearHz, now, 0.03);
     } else {
-      // === WARM MULTI-CYLINDER COMBUSTION SYNTHESIS (68..240 Hz fundamental + soft clipping) ===
+      // === WARM MULTI-CYLINDER COMBUSTION SYNTHESIS (68..255 Hz fundamental + soft clipping) ===
       const { baseHz, subHz, midHz, filterHz } = computeWarmFundamentalHz(profile, rpmNorm, throttle);
       this.oscCombustion.frequency.setTargetAtTime(baseHz, now, 0.03);
       this.oscHarmonic.frequency.setTargetAtTime(midHz, now, 0.03);
@@ -286,12 +337,18 @@ export class MotorsportAudioEngine {
       if (profile.hasHybridWhine && !isNonHybridHypercar) {
         const isHypercar = classId === CarClassId.HYPERCAR_GTP;
         elGainLevel = isHypercar
-          ? throttle > 0.4 || (speedKmh !== undefined && speedKmh < 90)
+          ? throttle > 0.4 || speedNum < 90
             ? profile.hybridWhineLevel
             : 0.02
           : profile.hybridWhineLevel * (0.65 + throttle * 0.9);
         inverterHz = (isHypercar ? 900 : 1350) + rpmNorm * 1650;
         gearHz = (isHypercar ? 1800 : 2300) + rpmNorm * 2000;
+        this.electricFilter.frequency.setTargetAtTime(inverterHz, now, 0.03);
+      } else if (profile.gearWhineLevel > 0) {
+        // Procedural straight-cut transmission gear whine layer
+        elGainLevel = profile.gearWhineLevel * Math.min(1.0, 0.2 + (speedNum / 260) * 0.8);
+        inverterHz = 1100 + speedNum * 12;
+        gearHz = 1900 + speedNum * 18;
         this.electricFilter.frequency.setTargetAtTime(inverterHz, now, 0.03);
       }
     }
@@ -301,11 +358,11 @@ export class MotorsportAudioEngine {
     this.oscElectricGear.frequency.setTargetAtTime(gearHz, now, 0.03);
     this.electricGain.gain.setTargetAtTime(elGainLevel, now, 0.04);
 
-    const overallEngineGain = 0.10 + throttle * 0.12;
+    // Per-Car Gain / Loudness Normalization across all 76 cars
+    const overallEngineGain = (0.10 + throttle * 0.12) * profile.profileGain;
     this.engineGain.gain.setTargetAtTime(overallEngineGain, now, 0.04);
 
     // Live Tire Scrub Audio (lateralSlip > 0.14 at speed)
-    const speedNum = speedKmh ?? 0;
     if (this.scrubGain && this.scrubFilter) {
       const slipIntensity = speedNum > 22 && lateralSlip > 0.14 ? Math.min(1, (lateralSlip - 0.14) * 1.45) : 0;
       this.scrubFilter.frequency.setTargetAtTime(1050 + slipIntensity * 850, now, 0.04);
@@ -323,9 +380,9 @@ export class MotorsportAudioEngine {
     if (this.prevThrottle > 0.65 && throttle < 0.25 && rpmNorm > 0.45 && now - this.lastCrackleTime > 0.5) {
       this.lastCrackleTime = now;
       if (profile.hasTurboFlutter) {
-        this.triggerWastegateFlutter();
+        this.triggerWastegateFlutter(profile.crackleIntensity);
       } else if (profile.hasExhaustCrackles) {
-        this.triggerExhaustCrackles();
+        this.triggerExhaustCrackles(profile.crackleIntensity);
       }
     }
     this.prevThrottle = throttle;
@@ -334,7 +391,7 @@ export class MotorsportAudioEngine {
   /**
    * Turbo wastegate flutter noise burst on throttle lift
    */
-  private triggerWastegateFlutter() {
+  private triggerWastegateFlutter(intensity = 1.0) {
     if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
     const now = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
@@ -346,7 +403,7 @@ export class MotorsportAudioEngine {
     filter.Q.setValueAtTime(4.0, now);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.setValueAtTime(0.14 * intensity, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
 
     src.connect(filter);
@@ -360,7 +417,7 @@ export class MotorsportAudioEngine {
   /**
    * Exhaust pop/crackle sequence on throttle overrun
    */
-  private triggerExhaustCrackles() {
+  private triggerExhaustCrackles(intensity = 1.0) {
     if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
     const now = this.ctx.currentTime;
     const popCount = 2 + Math.floor(Math.random() * 3);
@@ -375,7 +432,7 @@ export class MotorsportAudioEngine {
       filter.frequency.setValueAtTime(800 + Math.random() * 600, popTime);
 
       const gain = this.ctx.createGain();
-      gain.gain.setValueAtTime(0.16 + Math.random() * 0.08, popTime);
+      gain.gain.setValueAtTime((0.16 + Math.random() * 0.08) * intensity, popTime);
       gain.gain.exponentialRampToValueAtTime(0.001, popTime + 0.045);
 
       src.connect(filter);

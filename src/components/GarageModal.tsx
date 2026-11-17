@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { X, RotateCcw, Check, Search, Paintbrush } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { X, RotateCcw, Check, Search, Paintbrush, ArrowLeft } from 'lucide-react';
 import {
   CAR_CLASSES,
   CARS,
   computeBoPEquilibriumScore,
   filterCars,
+  getAllSelectableCars,
   getCarById,
   resolveCarSpecial,
   validateDriverNumber,

@@ -1217,6 +1217,9 @@ export function getCarById(id: string): CarSpec {
           const dims = getRealWorldCarDimensions(id, target.classId);
           return {
             ...target,
+            id,
+            name: preset.name,
+            manufacturer: preset.team ?? target.manufacturer,
             dimensions: dims,
             length: dims.length,
             defaultLivery: { ...preset.livery },
@@ -1228,6 +1231,34 @@ export function getCarById(id: string): CarSpec {
   }
 
   return CARS[0];
+}
+
+/**
+ * Returns all selectable cars and team variants across all classes,
+ * cleanly expanding multi-team classes like F1 2026, F1 2021, and LMP2
+ * into individual manufacturer/team selectable entries.
+ */
+export function getAllSelectableCars(): CarSpec[] {
+  const result: CarSpec[] = [];
+  for (const car of CARS) {
+    if (car.liveries && car.liveries.length > 1) {
+      for (const preset of car.liveries) {
+        const dims = getRealWorldCarDimensions(preset.id, car.classId);
+        result.push({
+          ...car,
+          id: preset.id,
+          name: preset.name,
+          manufacturer: preset.team ?? car.manufacturer,
+          dimensions: dims,
+          length: dims.length,
+          defaultLivery: { ...preset.livery },
+        });
+      }
+    } else {
+      result.push(car);
+    }
+  }
+  return result;
 }
 
 export function getCarsByClass(classId: CarClassId): CarSpec[] {
