@@ -1,0 +1,362 @@
+{
+  "ferrari-499p": {
+    "topSpeedMult": 1.0149,
+    "gripMult": 1.0399,
+    "downforceMult": 1.0249,
+    "brakingMult": 1.0199
+  },
+  "toyota-gr010": {
+    "topSpeedMult": 0.9766,
+    "gripMult": 1.008,
+    "downforceMult": 0.993,
+    "brakingMult": 0.9944
+  },
+  "porsche-963": {
+    "topSpeedMult": 0.9999,
+    "gripMult": 1.0274,
+    "downforceMult": 1.0124,
+    "brakingMult": 1.0099
+  },
+  "cadillac-vseries-r": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "bmw-m-hybrid-v8": {
+    "topSpeedMult": 0.9461,
+    "gripMult": 0.9826,
+    "downforceMult": 0.9676,
+    "brakingMult": 0.9741
+  },
+  "acura-arx-06": {
+    "topSpeedMult": 0.991,
+    "gripMult": 0.9925,
+    "downforceMult": 0.9925,
+    "brakingMult": 0.994
+  },
+  "alpine-a424": {
+    "topSpeedMult": 0.9464,
+    "gripMult": 1.0103,
+    "downforceMult": 0.9803,
+    "brakingMult": 0.9843
+  },
+  "peugeot-9x8": {
+    "topSpeedMult": 0.9636,
+    "gripMult": 0.9697,
+    "downforceMult": 0.9697,
+    "brakingMult": 0.9757
+  },
+  "aston-valkyrie-lmh": {
+    "topSpeedMult": 1.015,
+    "gripMult": 1.0125,
+    "downforceMult": 1.0125,
+    "brakingMult": 1.01
+  },
+  "lamborghini-sc63": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0275,
+    "downforceMult": 1.0125,
+    "brakingMult": 1.01
+  },
+  "genesis-gmr-001": {
+    "topSpeedMult": 1.0153,
+    "gripMult": 1.0402,
+    "downforceMult": 1.0252,
+    "brakingMult": 1.0202
+  },
+  "glickenhaus-scg-007": {
+    "topSpeedMult": 0.9552,
+    "gripMult": 1.0176,
+    "downforceMult": 0.9876,
+    "brakingMult": 0.9901
+  },
+  "oreca-07": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "porsche-911-gt3-r": {
+    "topSpeedMult": 0.9848,
+    "gripMult": 1.0148,
+    "downforceMult": 0.9998,
+    "brakingMult": 0.9999
+  },
+  "ferrari-296-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "corvette-z06-gt3r": {
+    "topSpeedMult": 0.9697,
+    "gripMult": 1.0298,
+    "downforceMult": 0.9998,
+    "brakingMult": 0.9998
+  },
+  "bmw-m4-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "ford-mustang-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "aston-vantage-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "lamborghini-temerario-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "mercedes-amg-gt3": {
+    "topSpeedMult": 0.9703,
+    "gripMult": 1.0303,
+    "downforceMult": 1.0003,
+    "brakingMult": 1.0003
+  },
+  "lexus-rcf-gt3": {
+    "topSpeedMult": 0.9549,
+    "gripMult": 1.0449,
+    "downforceMult": 0.9999,
+    "brakingMult": 0.9999
+  },
+  "mclaren-720s-gt3": {
+    "topSpeedMult": 0.9705,
+    "gripMult": 1.0304,
+    "downforceMult": 1.0004,
+    "brakingMult": 1.0002
+  },
+  "renault-rs01-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "bentley-continental-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "audi-r8-lms-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "acura-nsx-gt3": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "porsche-cayman-gt4-rs": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "bmw-m4-gt4": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "aston-vantage-gt4": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "toyota-supra-gt4": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "mclaren-artura-gt4": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "mercedes-amg-gt4": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "alpine-a110-gt4": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "ford-mustang-gt4": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "f1-26-mercedes": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "f1-21-mercedes": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "f1-05-renault": {
+    "topSpeedMult": 1.0448,
+    "gripMult": 1.0374,
+    "downforceMult": 1.0374,
+    "brakingMult": 1.0299
+  },
+  "f1-05-mclaren": {
+    "topSpeedMult": 0.97,
+    "gripMult": 0.975,
+    "downforceMult": 0.975,
+    "brakingMult": 0.98
+  },
+  "f1-05-ferrari": {
+    "topSpeedMult": 1.0152,
+    "gripMult": 1.0126,
+    "downforceMult": 1.0126,
+    "brakingMult": 1.0101
+  },
+  "f1-05-williams": {
+    "topSpeedMult": 0.9554,
+    "gripMult": 0.9629,
+    "downforceMult": 0.9629,
+    "brakingMult": 0.9703
+  },
+  "fe-porsche-99x": {
+    "topSpeedMult": 0.985,
+    "gripMult": 1.015,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "fe-jaguar-itype7": {
+    "topSpeedMult": 0.985,
+    "gripMult": 1.0149,
+    "downforceMult": 0.9999,
+    "brakingMult": 1.0
+  },
+  "fe-nissan-e4orce": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "fe-maserati-folgore": {
+    "topSpeedMult": 0.94,
+    "gripMult": 1.06,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "bmw-m2-cs": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "porsche-911-gt3-rs": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "corvette-z06-coupe": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "nissan-gtr-nismo": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "renault-clio-v6": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "honda-civic-type-r": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "toyota-gr-yaris": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "ferrari-296-gtb": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "mclaren-750s": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "ferrari-sf90": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "porsche-918-spyder": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "aston-valkyrie-road": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "koenigsegg-jesko": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "ferrari-f80": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  },
+  "mclaren-w1": {
+    "topSpeedMult": 1.0,
+    "gripMult": 1.0,
+    "downforceMult": 1.0,
+    "brakingMult": 1.0
+  }
+}

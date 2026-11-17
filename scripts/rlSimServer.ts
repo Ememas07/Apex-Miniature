@@ -35,6 +35,10 @@ let prevDamage = 0;
 let stepCount = 0;
 const MAX_EPISODE_STEPS = 60 * 150;
 
+function getCarClass(c: any): string {
+  return c?.classId ?? c?.carClass ?? c?.category ?? c?.class ?? 'UNKNOWN';
+}
+
 function sampleTrackAtDistance(baseT: number, distMeters: number) {
   const dt = distMeters / Math.max(1, activeTrack.totalLength);
   const t = (((baseT + dt) % 1) + 1) % 1;
@@ -115,6 +119,8 @@ function getObservation(): number[] {
     sameClass: number;
   }[] = [];
 
+  const activeClass = getCarClass(activeCarSpec);
+
   for (const other of trafficCars) {
     let dt = other.trackT - car.trackT;
     if (dt > 0.5) dt -= 1;
@@ -124,7 +130,9 @@ function getObservation(): number[] {
 
     const otherClass = trafficClasses.get(other.id);
     const sameClass =
-      otherClass !== undefined && otherClass === (activeCarSpec as any).carClass ? 1.0 : 0.0;
+      otherClass !== undefined && otherClass !== 'UNKNOWN' && otherClass === activeClass
+        ? 1.0
+        : 0.0;
 
     nearby.push({
       absDist: Math.abs(relLong),
@@ -247,7 +255,7 @@ function resetEpisode(opts: {
     tCar.lateralOffset = ((i % 3) - 1) * (tHalfW * 0.55);
 
     trafficTargetLanes.set(tCar.id, tCar.lateralOffset);
-    trafficClasses.set(tCar.id, (tSpec as any).carClass ?? '');
+    trafficClasses.set(tCar.id, getCarClass(tSpec));
     trafficCars.push(tCar);
     prevTrafficSignedDists.set(tCar.id, offsetMeters);
   }
@@ -331,9 +339,6 @@ function stepEpisode(action: [number, number, number]) {
   const halfW = Math.max(1, (sp.width ?? activeTrack.spec.trackWidth) * 0.5);
   const absLat = Math.abs(car.lateralOffset);
 
-  // Skill-conditioned reward:
-  // At skillTarget = 1.0 -> full reward for max speed.
-  // At skillTarget < 1.0 -> penalizes exceeding target pace so AI brakes earlier & drives naturally slower.
   const anySpec = activeCarSpec as any;
   const stats = anySpec.stats ?? anySpec;
   const refMaxSpeedMs = ((stats.topSpeedKmh ?? 300) / SPEED_KMH_FACTOR) * 0.82;
@@ -418,7 +423,7 @@ process.stdin.on('data', (chunk: string) => {
         index: idx,
         id: c.id,
         name: c.name,
-        carClass: c.carClass ?? 'UNKNOWN',
+        carClass: getCarClass(c),
       }));
       process.stdout.write(JSON.stringify({ cars: list, numTracks: compiledTracks.length }) + '\n');
     }
