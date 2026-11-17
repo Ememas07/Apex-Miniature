@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import subprocess
@@ -7,7 +8,7 @@ import gymnasium as gym
 from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
-from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, CallbackList
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 
 OBS_DIM = 43
 ACTION_DIM = 3
@@ -31,6 +32,38 @@ def export_weights_to_json(model: PPO, out_path: str):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(weights, f)
+
+
+class RollingCheckpointCallback(BaseCallback):
+    """Saves a single rolling .zip backup and deletes all previous .zip checkpoints."""
+
+    def __init__(self, save_freq: int, save_path: str, name_prefix: str = "rl_model", verbose: int = 1):
+        super().__init__(verbose)
+        self.save_freq = save_freq
+        self.save_path = save_path
+        self.name_prefix = name_prefix
+
+    def _init_callback(self) -> None:
+        os.makedirs(self.save_path, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.save_freq == 0:
+            new_path = os.path.join(
+                self.save_path, f"{self.name_prefix}_{self.num_timesteps}_steps.zip"
+            )
+            self.model.save(new_path)
+
+            pattern = os.path.join(self.save_path, "*.zip")
+            for old_file in glob.glob(pattern):
+                if os.path.abspath(old_file) != os.path.abspath(new_path):
+                    try:
+                        os.remove(old_file)
+                    except OSError:
+                        pass
+
+            if self.verbose:
+                print(f"[{self.num_timesteps:,} steps] Saved single backup {new_path}")
+        return True
 
 
 class PeriodicJsonExportCallback(BaseCallback):
@@ -163,7 +196,7 @@ if __name__ == "__main__":
     warm_start_from_json(model, WEIGHTS_OUT_PATH)
 
     callbacks = CallbackList([
-        CheckpointCallback(
+        RollingCheckpointCallback(
             save_freq=500_000 // NUM_ENVS,
             save_path="./audit/rl_checkpoints/",
             name_prefix="apex_skill_ppo",
