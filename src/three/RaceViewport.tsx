@@ -28,6 +28,7 @@ import { MotorsportAudioEngine } from './audioEngine';
 import { BuiltCarRig } from './carBuilder';
 import { buildCarRigAsync } from './objCarLoader';
 import { buildTrackEnvironment, BuiltTrackScene } from './trackBuilder';
+import { telemetryRecorder } from '../game/telemetryRecorder';
 
 interface RaceViewportProps {
   phase: GamePhase;
@@ -412,6 +413,12 @@ export function RaceViewport(props: RaceViewportProps) {
       sim.trauma = 0;
       sim.finishEmitted = false;
 
+      // Reset behavioral cloning telemetry recorder for playable sessions
+      const playerAnchor = newCars.find((c) => c.isPlayer);
+      if (playerAnchor && currentPhase !== 'title') {
+        telemetryRecorder.resetSession();
+      }
+
       // Position camera initially behind player or lead car
       const anchor = newCars.find((c) => c.isPlayer) ?? newCars[0];
       if (anchor) {
@@ -682,16 +689,17 @@ export function RaceViewport(props: RaceViewportProps) {
             const c = sim.cars[i];
             if (c.isPlayer) {
               c.pitStrategy = p.pitStrategy;
+              const playerInput = {
+                throttle,
+                brake,
+                steer,
+                specialPressed,
+                specialJustPressed: sim.specialJustPressed,
+                pitLimiterToggle: sim.pitLimiterToggle,
+              };
               stepCarPhysics(
                 c,
-                {
-                  throttle,
-                  brake,
-                  steer,
-                  specialPressed,
-                  specialJustPressed: sim.specialJustPressed,
-                  pitLimiterToggle: sim.pitLimiterToggle,
-                },
+                playerInput,
                 sim.compiledTrack,
                 dt,
                 {
@@ -701,6 +709,7 @@ export function RaceViewport(props: RaceViewportProps) {
                   allCars: sim.cars,
                 },
               );
+              telemetryRecorder.recordStep(c, sim.compiledTrack, sim.cars, playerInput, dt);
               sim.specialJustPressed = false;
               sim.pitLimiterToggle = false;
             } else if (c.isHumanPeer) {
@@ -801,8 +810,8 @@ export function RaceViewport(props: RaceViewportProps) {
             _camDesiredPos.set(rawCamX, clampedCamY, rawCamZ);
             _camDesiredLook.set(targetLookX, targetLookY, targetLookZ);
 
-            _camCurrPos.lerp(_camDesiredPos, 1 - Math.exp(-14 * dt));
-            _camCurrLook.lerp(_camDesiredLook, 1 - Math.exp(-16 * dt));
+            _camCurrPos.set(rawCamX, clampedCamY, rawCamZ);
+            _camCurrLook.set(targetLookX, targetLookY, targetLookZ);
 
             camera.position.copy(_camCurrPos);
             camera.lookAt(_camCurrLook);

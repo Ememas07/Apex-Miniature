@@ -52,7 +52,7 @@ function broadcastRoom(room, payload, excludePeerId) {
 }
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, activeRooms: rooms.size });
   });
@@ -186,7 +186,6 @@ async function startServer() {
     ws.on("close", cleanup);
     ws.on("error", cleanup);
   });
-  app.use(express.json({ limit: "50mb" }));
   app.post("/api/telemetry", (req, res) => {
     try {
       const demo = req.body;
