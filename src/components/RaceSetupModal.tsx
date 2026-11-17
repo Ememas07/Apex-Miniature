@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { X, Users, Flag, CloudRain, Sun, CheckCircle, Clock, Plus, Edit3, Trash2, Share2, Upload, Search } from 'lucide-react';
-import { CAR_CLASSES, CARS, filterCars, getCarById } from '../game/cars';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, X, Users, Flag, CloudRain, Sun, CheckCircle, Clock, Plus, Edit3, Trash2, Share2, Upload, Search } from 'lucide-react';
+import { CAR_CLASSES, CARS, filterCars, getAllSelectableCars, getCarById } from '../game/cars';
 import { TRACKS, compileTrack, filterTracks, getTrackById } from '../game/tracks';
 import {
   deleteCustomTrack,
@@ -19,6 +19,7 @@ import {
   TrackRegion,
   TrackSpec,
 } from '../game/types';
+import { GarageViewport } from '../three/GarageViewport';
 
 interface RaceSetupModalProps {
   config: RaceConfig;
@@ -93,6 +94,7 @@ export function RaceSetupModal({
   onUpdatePeer,
   onOpenStudio,
 }: RaceSetupModalProps) {
+  const initialConfigRef = useRef(config);
   const [tab, setTab] = useState<SetupTab>('track');
   const [regionFilter, setRegionFilter] = useState<'Flagship' | TrackRegion | 'All'>('Flagship');
   const [trackSearch, setTrackSearch] = useState('');
@@ -126,8 +128,9 @@ export function RaceSetupModal({
     refreshCustomTracks();
   }, [customTracksNonce]);
 
+  const allSelectableCars = useMemo(() => getAllSelectableCars(), []);
   const filteredTracks = filterTracks(TRACKS, customTracks, regionFilter, trackSearch);
-  const filteredPaddockCars = filterCars(CARS, paddockCarSearch, 'ALL');
+  const filteredPaddockCars = filterCars(allSelectableCars, paddockCarSearch, 'ALL');
 
   const toggleClass = (cid: CarClassId) => {
     const exists = config.activeClasses.includes(cid);
@@ -192,6 +195,26 @@ export function RaceSetupModal({
             </p>
           </div>
           <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (room) {
+                  if (window.confirm('Leave multiplayer room and discard changes?')) {
+                    onLeaveRoom();
+                    onUpdateConfig(initialConfigRef.current);
+                    onClose();
+                  }
+                } else {
+                  onUpdateConfig(initialConfigRef.current);
+                  onClose();
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 hover:text-white cursor-pointer whitespace-nowrap"
+              title="Discard changes and return to menu"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back to Menu (Discard)
+            </button>
             <button
               type="button"
               onClick={onStartFromLobby}
@@ -838,6 +861,14 @@ export function RaceSetupModal({
                         </span>
                       </div>
 
+                      {/* 3D Turntable Car & Livery Preview */}
+                      <div className="h-44 w-full rounded-lg overflow-hidden relative bg-[#090c12] border border-white/10 shadow-inner">
+                        <GarageViewport carSpec={playerCar} livery={config.playerLivery} autoRotate={true} />
+                        <div className="absolute bottom-2 right-2 text-[10px] text-slate-400 bg-black/60 px-2 py-0.5 rounded backdrop-blur pointer-events-none">
+                          Drag to spin · 3D Turntable
+                        </div>
+                      </div>
+
                       {/* Searchable Car Picker */}
                       <div className="space-y-2" data-testid="paddock-car-select">
                         <div className="flex items-center justify-between">
@@ -845,7 +876,7 @@ export function RaceSetupModal({
                             Select Car Model ({playerCar.name})
                           </label>
                           <span className="text-[11px] text-slate-400 tabular-nums">
-                            Showing {filteredPaddockCars.length} of {CARS.length} cars
+                            Showing {filteredPaddockCars.length} of {allSelectableCars.length} cars
                           </span>
                         </div>
                         <div className="relative">

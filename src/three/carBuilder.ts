@@ -3101,8 +3101,7 @@ export function buildDiecastCar(
       }
     }
 
-    // 10. Flush Door Number Plates (strictly between wheel arches on door panels)
-    }
+    // 10. Flush Door Number Plates (integrated directly onto UV canvas via procedural textures)
 
     // 11. Flush Sculpted Headlights & Rear LED Light Bar (recessed into front/rear fender fascia)
     const hlSample = sampleHullAtZ(bodyLen * 0.455);

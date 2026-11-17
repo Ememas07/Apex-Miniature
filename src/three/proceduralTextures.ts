@@ -229,57 +229,14 @@ export function createLiveryTexture(
       ctx.restore();
     } else if (!isRoadSupercar || plateStyle !== 'auto') {
       // Endurance / GT / Prototype / Touring (GT3, GT4, LMP2, GTP, Track Coupe): Boxed category numberplates
-      const plate = resolveNumberPlateColors(classId, plateStyle);
-      const categoryLabel =
-        classId === CarClassId.HYPERCAR_GTP
-          ? 'GTP'
-          : classId === CarClassId.LMP2
-          ? 'LMP2'
-          : classId === CarClassId.GT3
-          ? 'GT3'
-          : classId === CarClassId.GT4
-          ? 'GT4'
-          : 'PRO';
-
-      // Helper to draw clean class numberplate directly onto UV canvas
-      const drawPlate = (px: number, py: number, pw: number, ph: number) => {
-        ctx.save();
-        // White plate background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(px, py, pw, ph);
-
-        // Dark outer stroke
-        ctx.strokeStyle = '#0a0d14';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(px, py, pw, ph);
-
-        // Top category colored header strip
-        const headerH = Math.round(ph * 0.28);
-        ctx.fillStyle = plate.bg;
-        ctx.fillRect(px, py, pw, headerH);
-
-        // Header label
-        ctx.fillStyle = plate.text;
-        ctx.font = `800 ${Math.round(headerH * 0.72)}px "Oxanium", sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(categoryLabel, px + pw * 0.5, py + headerH * 0.52);
-
-        // Driver number in lower plate area
-        ctx.fillStyle = '#0a0d14';
-        ctx.font = `900 ${Math.round(ph * 0.58)}px "Oxanium", "Arial Black", sans-serif`;
-        ctx.fillText(num, px + pw * 0.5, py + headerH + (ph - headerH) * 0.54);
-        ctx.restore();
-      };
-
       // Top / Hood Numberplate (centered on hood)
-      drawPlate(86, 75, 64, 46);
+      drawNumberplateToContext(ctx, 86, 75, 64, 46, classId, plateStyle, num);
 
       // Left Door Numberplate (in LEFT_SIDE zone)
-      drawPlate(345, 38, 68, 48);
+      drawNumberplateToContext(ctx, 345, 38, 68, 48, classId, plateStyle, num);
 
       // Right Door Numberplate (in RIGHT_SIDE zone)
-      drawPlate(345, 162, 68, 48);
+      drawNumberplateToContext(ctx, 345, 162, 68, 48, classId, plateStyle, num);
     }
   }
 
@@ -287,6 +244,61 @@ export function createLiveryTexture(
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAniso;
   return tex;
+}
+
+/**
+ * Draws an authentic motorsport category numberplate onto any 2D canvas context.
+ */
+export function drawNumberplateToContext(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  pw: number,
+  ph: number,
+  classId: CarClassId,
+  plateStyle: LiveryConfig['numberPlateStyle'] = 'auto',
+  driverNumber = '1',
+): void {
+  ctx.save();
+  const plate = resolveNumberPlateColors(classId, plateStyle);
+  const num = validateDriverNumber(driverNumber);
+  const categoryLabel =
+    classId === CarClassId.HYPERCAR_GTP
+      ? 'GTP'
+      : classId === CarClassId.LMP2
+      ? 'LMP2'
+      : classId === CarClassId.GT3
+      ? 'GT3'
+      : classId === CarClassId.GT4
+      ? 'GT4'
+      : 'PRO';
+
+  // White plate background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(px, py, pw, ph);
+
+  // Dark outer stroke
+  ctx.strokeStyle = '#0a0d14';
+  ctx.lineWidth = Math.max(2, Math.round(pw * 0.04));
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Top category colored header strip
+  const headerH = Math.round(ph * 0.28);
+  ctx.fillStyle = plate.bg;
+  ctx.fillRect(px, py, pw, headerH);
+
+  // Header label
+  ctx.fillStyle = plate.text;
+  ctx.font = `800 ${Math.max(8, Math.round(headerH * 0.72))}px "Oxanium", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(categoryLabel, px + pw * 0.5, py + headerH * 0.52);
+
+  // Driver number in lower plate area
+  ctx.fillStyle = '#0a0d14';
+  ctx.font = `900 ${Math.max(12, Math.round(ph * 0.58))}px "Oxanium", "Arial Black", sans-serif`;
+  ctx.fillText(num, px + pw * 0.5, py + headerH + (ph - headerH) * 0.54);
+  ctx.restore();
 }
 
 export function createNumberPlateTexture(

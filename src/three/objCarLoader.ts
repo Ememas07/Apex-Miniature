@@ -9,7 +9,7 @@ import {
   createCarGlassMaterial,
   getRealWorldCarLength,
 } from './carBuilder';
-import { createContactShadowTexture } from './proceduralTextures';
+import { createContactShadowTexture, createNumberPlateTexture } from './proceduralTextures';
 
 export interface LowPolyCarManifestEntry {
   id: string;
@@ -377,7 +377,7 @@ function convertSourceMaterial(
       metalness: /disc|brake/i.test(lowerMat) ? 0.78 : 0.25,
     });
   } else if (
-    /(?:car_?paint|body_?paint|chassis_?paint|^paint|ext_chassis|_ext_carpaint|ext_body|^body$|^chassis$|skin\d*|livery)/i.test(
+    /(?:car_?paint|body_?paint|chassis_?paint|^paint|ext_chassis|_ext_carpaint|ext_body|^body$|^chassis$|^chasis$|car_chassis|skin\d*|livery)/i.test(
       lowerMat,
     )
   ) {
@@ -409,7 +409,45 @@ function convertSourceMaterial(
       clearcoat: 1.0,
       clearcoatRoughness: 0.12,
     });
-  } else if (/chrome|mirror|steel|alum|magnesium|metal|exhaust/i.test(lowerMat)) {
+  } else if (/(?:chassis2|redbull_detail|color_light_green|accent|secondary)/i.test(lowerMat)) {
+    const accentColor = ctx.livery.secondaryColor
+      ? new THREE.Color(ctx.livery.secondaryColor)
+      : srcColor;
+    built = new THREE.MeshPhysicalMaterial({
+      name: matName,
+      color: accentColor,
+      roughness: 0.28,
+      metalness: 0.22,
+      clearcoat: 0.9,
+      clearcoatRoughness: 0.15,
+    });
+  } else if (/^mirror$|^mirrors$/i.test(lowerMat)) {
+    const mirrorColor = ctx.livery.tertiaryColor
+      ? new THREE.Color(ctx.livery.tertiaryColor)
+      : ctx.livery.secondaryColor
+      ? new THREE.Color(ctx.livery.secondaryColor)
+      : srcColor;
+    built = new THREE.MeshStandardMaterial({
+      name: matName,
+      color: mirrorColor,
+      roughness: 0.22,
+      metalness: 0.78,
+    });
+  } else if (/numberplate|num_plate|^plate$/i.test(lowerMat)) {
+    const plateTexture = ctx.track(
+      createNumberPlateTexture(
+        ctx.livery,
+        ctx.carSpec.classId,
+        4,
+      ),
+    );
+    built = new THREE.MeshStandardMaterial({
+      name: matName,
+      map: plateTexture,
+      roughness: 0.35,
+      metalness: 0.05,
+    });
+  } else if (/chrome|steel|alum|magnesium|metal|exhaust/i.test(lowerMat)) {
     built = new THREE.MeshStandardMaterial({
       name: matName,
       color: srcColor,

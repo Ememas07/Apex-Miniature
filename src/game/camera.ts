@@ -94,6 +94,23 @@ export function computeCameraFrame(
     };
   }
 
+  if (mode === 'orbit') {
+    return {
+      position: {
+        x: car.x - Math.sin(car.heading) * 12.0,
+        y: Math.max(car.y + 0.45, car.y + 5.2),
+        z: car.z - Math.cos(car.heading) * 12.0,
+      },
+      lookAt: {
+        x: car.x,
+        y: car.y + 0.8,
+        z: car.z,
+      },
+      fov: 52,
+      isLocked: false,
+    };
+  }
+
   // Chase camera modes ('chase-34' | 'high-chase')
   const isChase34 = mode === 'chase-34';
   const backDist = isChase34 ? 14.5 : 21.0;

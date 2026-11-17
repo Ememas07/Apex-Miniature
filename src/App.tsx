@@ -178,7 +178,15 @@ export default function App() {
 
   const handleCycleCamera = useCallback(() => {
     setCameraMode((prev) =>
-      prev === 'chase-34' ? 'hood' : prev === 'hood' ? 'high-chase' : prev === 'high-chase' ? 'isometric' : 'chase-34',
+      prev === 'chase-34'
+        ? 'hood'
+        : prev === 'hood'
+        ? 'high-chase'
+        : prev === 'high-chase'
+        ? 'orbit'
+        : prev === 'orbit'
+        ? 'isometric'
+        : 'chase-34',
     );
   }, []);
 

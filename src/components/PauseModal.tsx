@@ -47,6 +47,7 @@ export function PauseModal({
     try {
       localStorage.setItem('apex_audio_volume', String(newVol));
     } catch {}
+    window.dispatchEvent(new CustomEvent('apex-audio-volume', { detail: { volume: newVol } }));
     onVolumeChange?.(newVol);
   };
 
@@ -56,6 +57,7 @@ export function PauseModal({
     try {
       localStorage.setItem('apex_audio_muted', String(nextMute));
     } catch {}
+    window.dispatchEvent(new CustomEvent('apex-audio-mute', { detail: { muted: nextMute } }));
     onToggleMute?.();
   };
 

@@ -453,6 +453,8 @@ export function RaceHUD({
                   ? 'Chase'
                   : hud.cameraMode === 'high-chase'
                   ? 'High Chase'
+                  : hud.cameraMode === 'orbit'
+                  ? 'Orbit'
                   : 'Isometric'}{' '}
                 · [C] · [L] Limiter
               </span>

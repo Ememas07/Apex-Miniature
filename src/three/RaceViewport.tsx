@@ -111,6 +111,13 @@ export function RaceViewport(props: RaceViewportProps) {
     specialJustPressed: boolean;
     pitLimiterToggle: boolean;
     worldVersion: number;
+    orbitYaw: number;
+    orbitPitch: number;
+    orbitDist: number;
+    targetOrbitYaw: number;
+    targetOrbitPitch: number;
+    targetOrbitDist: number;
+    isDraggingOrbit: boolean;
     rebuildWorld: () => void;
   } | null>(null);
 
@@ -225,6 +232,13 @@ export function RaceViewport(props: RaceViewportProps) {
       specialJustPressed: false,
       pitLimiterToggle: false,
       worldVersion: 0,
+      orbitYaw: 0,
+      orbitPitch: 0.35,
+      orbitDist: 12.0,
+      targetOrbitYaw: 0,
+      targetOrbitPitch: 0.35,
+      targetOrbitDist: 12.0,
+      isDraggingOrbit: false,
       rebuildWorld: () => {},
     };
 
@@ -463,6 +477,60 @@ export function RaceViewport(props: RaceViewportProps) {
     window.addEventListener('blur', clearKeys);
     document.addEventListener('visibilitychange', clearKeys);
 
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (propsRef.current.cameraMode === 'orbit') {
+        sim.isDraggingOrbit = true;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+      }
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (sim.isDraggingOrbit && propsRef.current.cameraMode === 'orbit') {
+        const dx = e.clientX - lastMouseX;
+        const dy = e.clientY - lastMouseY;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        sim.targetOrbitYaw -= dx * 0.008;
+        sim.targetOrbitPitch = Math.max(0.08, Math.min(1.22, sim.targetOrbitPitch + dy * 0.006));
+      }
+    };
+
+    const onPointerUp = () => {
+      sim.isDraggingOrbit = false;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (propsRef.current.cameraMode === 'orbit') {
+        e.preventDefault();
+        sim.targetOrbitDist = Math.max(5.0, Math.min(32.0, sim.targetOrbitDist + e.deltaY * 0.015));
+      }
+    };
+
+    const onAudioVol = (e: Event) => {
+      const custom = e as CustomEvent<{ volume: number }>;
+      if (custom.detail && typeof custom.detail.volume === 'number') {
+        sim.audio.setVolume(custom.detail.volume);
+      }
+    };
+
+    const onAudioMute = (e: Event) => {
+      const custom = e as CustomEvent<{ muted: boolean }>;
+      if (custom.detail && typeof custom.detail.muted === 'boolean') {
+        sim.audio.setMuted(custom.detail.muted);
+      }
+    };
+
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('apex-audio-volume', onAudioVol);
+    window.addEventListener('apex-audio-mute', onAudioMute);
+
     const onResize = () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
@@ -685,41 +753,93 @@ export function RaceViewport(props: RaceViewportProps) {
           });
         }
 
-        // Camera Rig: Rigid Hood Cam or Spring-Damped Chase Cam with Speed FOV & Trauma Shake
+        // Camera Rig: Rigid Hood Cam, Interactive Orbit Cam, or Spring-Damped Chase Cam
         if (playerCar) {
           const mode = p.cameraMode;
+          const targetNear = mode === 'hood' ? 0.06 : 0.4;
+          if (Math.abs(camera.near - targetNear) > 0.01) {
+            camera.near = targetNear;
+            camera.updateProjectionMatrix();
+          }
+
           const trkSample = sampleTrackAtT(sim.compiledTrack, playerCar.trackT);
           const fallbackTilt = computeRoadSurfaceTilt(trkSample, playerCar.heading);
           const pPitch = playerCar.pitch ?? fallbackTilt.pitchRad;
           const pRoll = playerCar.roll ?? fallbackTilt.rollRad;
 
-          const camFrame = computeCameraFrame(mode, playerCar, pPitch, pRoll);
+          if (mode === 'orbit') {
+            // Driving follow damping when moving and not actively dragging
+            if (!sim.isDraggingOrbit && playerCar.speed > 2.0) {
+              const desiredYaw = playerCar.heading + Math.PI;
+              let diff = desiredYaw - sim.targetOrbitYaw;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              sim.targetOrbitYaw += diff * Math.min(2.5 * dt, 0.15);
+            }
 
-          if (camFrame.isLocked) {
-            // Hood Cam: locked rigidly to hood/nose transform, zero velocity-based lag or backward trailing
-            _camCurrPos.set(camFrame.position.x, camFrame.position.y, camFrame.position.z);
-            _camCurrLook.set(camFrame.lookAt.x, camFrame.lookAt.y, camFrame.lookAt.z);
+            const damp = 1 - Math.exp(-12 * dt);
+            sim.orbitYaw += (sim.targetOrbitYaw - sim.orbitYaw) * damp;
+            sim.orbitPitch += (sim.targetOrbitPitch - sim.orbitPitch) * damp;
+            sim.orbitDist += (sim.targetOrbitDist - sim.orbitDist) * damp;
+
+            const targetLookX = playerCar.x;
+            const targetLookY = playerCar.y + 0.8;
+            const targetLookZ = playerCar.z;
+
+            const cosP = Math.cos(sim.orbitPitch);
+            const sinP = Math.sin(sim.orbitPitch);
+            const sinY = Math.sin(sim.orbitYaw);
+            const cosY = Math.cos(sim.orbitYaw);
+
+            const rawCamX = targetLookX + sinY * cosP * sim.orbitDist;
+            const rawCamY = targetLookY + sinP * sim.orbitDist;
+            const rawCamZ = targetLookZ + cosY * cosP * sim.orbitDist;
+
+            // Ground-plane clamping: prevent clipping through track/grass plane
+            const clampedCamY = Math.max(playerCar.y + 0.45, rawCamY);
+
+            _camDesiredPos.set(rawCamX, clampedCamY, rawCamZ);
+            _camDesiredLook.set(targetLookX, targetLookY, targetLookZ);
+
+            _camCurrPos.lerp(_camDesiredPos, 1 - Math.exp(-14 * dt));
+            _camCurrLook.lerp(_camDesiredLook, 1 - Math.exp(-16 * dt));
+
             camera.position.copy(_camCurrPos);
             camera.lookAt(_camCurrLook);
-            if (Math.abs(camera.fov - camFrame.fov) > 0.05) {
-              camera.fov = camFrame.fov;
+
+            if (Math.abs(camera.fov - 52) > 0.1) {
+              camera.fov += (52 - camera.fov) * Math.min(1, dt * 6);
               camera.updateProjectionMatrix();
             }
           } else {
-            _camDesiredPos.set(camFrame.position.x, camFrame.position.y, camFrame.position.z);
-            _camDesiredLook.set(camFrame.lookAt.x, camFrame.lookAt.y, camFrame.lookAt.z);
+            const camFrame = computeCameraFrame(mode, playerCar, pPitch, pRoll);
 
-            const dampPos = 1 - Math.exp(-8.5 * dt);
-            const dampLook = 1 - Math.exp(-12 * dt);
-            _camCurrPos.lerp(_camDesiredPos, dampPos);
-            _camCurrLook.lerp(_camDesiredLook, dampLook);
+            if (camFrame.isLocked) {
+              // Hood Cam: locked rigidly to hood/nose transform, zero velocity-based lag or backward trailing
+              _camCurrPos.set(camFrame.position.x, camFrame.position.y, camFrame.position.z);
+              _camCurrLook.set(camFrame.lookAt.x, camFrame.lookAt.y, camFrame.lookAt.z);
+              camera.position.copy(_camCurrPos);
+              camera.lookAt(_camCurrLook);
+              if (Math.abs(camera.fov - camFrame.fov) > 0.05) {
+                camera.fov = camFrame.fov;
+                camera.updateProjectionMatrix();
+              }
+            } else {
+              _camDesiredPos.set(camFrame.position.x, camFrame.position.y, camFrame.position.z);
+              _camDesiredLook.set(camFrame.lookAt.x, camFrame.lookAt.y, camFrame.lookAt.z);
 
-            camera.position.copy(_camCurrPos);
-            camera.lookAt(_camCurrLook);
+              const dampPos = 1 - Math.exp(-8.5 * dt);
+              const dampLook = 1 - Math.exp(-12 * dt);
+              _camCurrPos.lerp(_camDesiredPos, dampPos);
+              _camCurrLook.lerp(_camDesiredLook, dampLook);
 
-            if (Math.abs(camera.fov - camFrame.fov) > 0.1) {
-              camera.fov += (camFrame.fov - camera.fov) * Math.min(1, dt * 6);
-              camera.updateProjectionMatrix();
+              camera.position.copy(_camCurrPos);
+              camera.lookAt(_camCurrLook);
+
+              if (Math.abs(camera.fov - camFrame.fov) > 0.1) {
+                camera.fov += (camFrame.fov - camera.fov) * Math.min(1, dt * 6);
+                camera.updateProjectionMatrix();
+              }
             }
           }
 
@@ -942,6 +1062,12 @@ export function RaceViewport(props: RaceViewportProps) {
       window.removeEventListener('blur', clearKeys);
       document.removeEventListener('visibilitychange', clearKeys);
       window.removeEventListener('resize', onResize);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('wheel', onWheel);
+      window.removeEventListener('apex-audio-volume', onAudioVol);
+      window.removeEventListener('apex-audio-mute', onAudioMute);
       sim.carRigs.forEach((rig) => rig.dispose());
       sim.trackScene?.dispose();
       slipGeo.dispose();

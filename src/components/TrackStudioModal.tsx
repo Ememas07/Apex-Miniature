@@ -1255,6 +1255,19 @@ export function TrackStudioModal({
 
           <button
             type="button"
+            onClick={() => {
+              if (window.confirm('Discard unsaved circuit edits and return to menu?')) {
+                onClose();
+              }
+            }}
+            className="px-3 py-1.5 text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded font-medium text-slate-300 hover:text-white cursor-pointer transition-colors"
+            title="Discard changes and return to menu"
+          >
+            Back to Menu (Discard)
+          </button>
+
+          <button
+            type="button"
             data-testid="btn-studio-save"
             onClick={handleSave}
             className="px-3.5 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-display font-bold rounded shadow cursor-pointer transition-colors"

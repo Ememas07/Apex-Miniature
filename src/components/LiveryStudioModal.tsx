@@ -16,6 +16,7 @@ import {
   Sparkles,
   Sliders,
   Paintbrush,
+  ArrowLeft,
 } from 'lucide-react';
 import { CARS, getCarById } from '../game/cars';
 import {
@@ -31,6 +32,7 @@ import {
   buildCarRigAsync,
   renderUVWireframeToCanvas,
 } from '../three/objCarLoader';
+import { drawNumberplateToContext } from '../three/proceduralTextures';
 
 interface LiveryStudioModalProps {
   initialCarId: string;
@@ -482,19 +484,14 @@ export function LiveryStudioModal({
         ctx.fill();
       }
     } else if (type === 'plate') {
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.5, w * 0.12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 6;
-      ctx.strokeStyle = '#0f172a';
-      ctx.stroke();
-
-      ctx.fillStyle = '#0f172a';
-      ctx.font = `bold ${Math.round(w * 0.11)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(livery.driverNumber || '99', w * 0.5, h * 0.5);
+      // Stamp authentic motorsport category numberplates onto standard UV zones: hood and door flanks
+      const num = livery.driverNumber || '99';
+      // Hood plate (top zone)
+      drawNumberplateToContext(ctx, Math.round(w * 0.168), Math.round(h * 0.146), Math.round(w * 0.125), Math.round(h * 0.09), carSpec.classId, livery.numberPlateStyle, num);
+      // Left door plate
+      drawNumberplateToContext(ctx, Math.round(w * 0.674), Math.round(h * 0.074), Math.round(w * 0.133), Math.round(h * 0.094), carSpec.classId, livery.numberPlateStyle, num);
+      // Right door plate
+      drawNumberplateToContext(ctx, Math.round(w * 0.674), Math.round(h * 0.316), Math.round(w * 0.133), Math.round(h * 0.094), carSpec.classId, livery.numberPlateStyle, num);
     }
 
     const dataUrl = canvas.toDataURL('image/png');
@@ -621,6 +618,23 @@ export function LiveryStudioModal({
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (hasCustomTexture) {
+                  if (window.confirm('Discard unsaved livery edits and return to menu?')) {
+                    onClose();
+                  }
+                } else {
+                  onClose();
+                }
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium text-xs border border-slate-700 transition-colors cursor-pointer"
+              title="Discard changes and return to menu"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back to Menu (Discard)
+            </button>
             <button
               onClick={handleSaveAndApply}
               className="flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-lg shadow-emerald-900/30 transition-all text-sm"

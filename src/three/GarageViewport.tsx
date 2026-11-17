@@ -10,7 +10,8 @@ export type GarageAngle = 'hero' | 'front' | 'side' | 'rear';
 interface GarageViewportProps {
   carSpec: CarSpec;
   livery: LiveryConfig;
-  angle: GarageAngle;
+  angle?: GarageAngle;
+  autoRotate?: boolean;
 }
 
 function detectSoftwareGl(): boolean {
@@ -27,8 +28,10 @@ function detectSoftwareGl(): boolean {
   }
 }
 
-export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) {
+export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = false }: GarageViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const autoRotateRef = useRef(autoRotate);
+  autoRotateRef.current = autoRotate;
   const stateRef = useRef<{
     scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
@@ -167,6 +170,10 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
       renderDirty = false;
       const s = stateRef.current;
       if (s) {
+        if (autoRotateRef.current && !dragging) {
+          s.targetYaw += 0.007;
+          renderDirty = true;
+        }
         const factor = isSoftwareGl ? 1 : 0.22;
         s.yaw += (s.targetYaw - s.yaw) * factor;
         s.pitch += (s.targetPitch - s.pitch) * factor;

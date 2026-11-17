@@ -77,6 +77,9 @@ export function GarageModal({
   onChangeLivery,
   onClose,
 }: GarageModalProps) {
+  const initialCarIdRef = useRef(selectedCarId);
+  const initialLiveryRef = useRef({ ...livery });
+
   const activeCar = getCarById(selectedCarId);
   const [activeClass, setActiveClass] = useState<CarClassId | 'ALL'>(activeCar.classId);
   const [carSearch, setCarSearch] = useState('');
@@ -84,11 +87,27 @@ export function GarageModal({
   const [angle, setAngle] = useState<GarageAngle>('hero');
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
 
+  const allSelectableCars = useMemo(() => getAllSelectableCars(), []);
   const trimmedCarSearch = carSearch.trim();
   const effectiveClassFilter: CarClassId | 'ALL' = trimmedCarSearch.length > 0 && activeClass !== 'ALL' ? 'ALL' : activeClass;
-  const classCars = filterCars(CARS, carSearch, effectiveClassFilter);
+  const classCars = filterCars(allSelectableCars, carSearch, effectiveClassFilter);
   const classMeta = CAR_CLASSES[activeCar.classId];
   const bopScore = computeBoPEquilibriumScore(activeCar.attributes).toFixed(1);
+
+  const handleDiscardAndExit = () => {
+    const isChanged =
+      selectedCarId !== initialCarIdRef.current ||
+      JSON.stringify(livery) !== JSON.stringify(initialLiveryRef.current);
+    if (isChanged) {
+      if (window.confirm('Discard car/livery changes and return to menu?')) {
+        onSelectCar(initialCarIdRef.current, initialLiveryRef.current);
+        onChangeLivery(initialLiveryRef.current);
+        onClose();
+      }
+    } else {
+      onClose();
+    }
+  };
 
   const updateLivery = (patch: Partial<LiveryConfig>) => {
     onChangeLivery({ ...livery, ...patch });
@@ -162,6 +181,15 @@ export function GarageModal({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={handleDiscardAndExit}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 hover:text-white cursor-pointer whitespace-nowrap"
+              title="Discard changes and return to menu"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back to Menu (Discard)
+            </button>
+            <button
+              type="button"
               onClick={() => onChangeLivery({ ...activeCar.defaultLivery })}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 cursor-pointer whitespace-nowrap"
               title="Reset to factory livery"
@@ -219,7 +247,7 @@ export function GarageModal({
                     type="text"
                     value={carSearch}
                     onChange={(e) => setCarSearch(e.target.value)}
-                    placeholder={`Search ${CARS.length} cars by model, brand, class, or ID...`}
+                    placeholder={`Search ${allSelectableCars.length} cars by model, brand, class, or ID...`}
                     aria-label="Search car models"
                     className="w-full pl-8 pr-8 py-2 rounded bg-[#0c1017] border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500"
                   />

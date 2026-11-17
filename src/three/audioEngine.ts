@@ -459,6 +459,19 @@ export class MotorsportAudioEngine {
     osc.stop(now + duration);
   }
 
+  setVolume(vol: number) {
+    this.setMasterVolume(vol);
+  }
+
+  getVolume(): number {
+    return this.getMasterVolume();
+  }
+
+  toggleMute(): boolean {
+    this.setMuted(!this.muted);
+    return this.muted;
+  }
+
   dispose() {
     try {
       this.oscCombustion?.stop();

@@ -863,9 +863,9 @@ export const REAL_DEM_ELEVATIONS: Record<string, number[]> = {
     // t = 0.00..0.03: Main Straight into La Source (0m -> -2.0m)
     0.0, -0.6, -1.3, -2.0,
     // t = 0.04..0.11: Descent down old pit straight into Eau Rouge bottom (-2m -> -25.5m)
-    -3.5, -5.8, -8.6, -11.9, -15.5, -19.2, -22.8, -25.5,
+    -5.0, -11.0, -18.0, -24.0, -25.5,
     // t = 0.12..0.18: Steep climb through Eau Rouge compression & Raidillon crest (-25.5m -> +56.0m)
-    -20.0, -10.0, 3.5, 18.0, 32.5, 45.0, 56.0,
+    -10.0, 10.0, 32.0, 48.0, 56.0, 57.0, 57.5, 58.0, 58.0, 57.8,
     // t = 0.19..0.32: Kemmel Straight crest (+56m -> +58.7m -> +57m)
     57.2, 57.8, 58.3, 58.7, 58.7, 58.5, 58.2, 57.8, 57.3, 56.8, 56.5, 56.2, 56.0,
     // t = 0.33..0.44: Les Combes & Bruxelles / Rivage downhill (56m -> 47m)
@@ -891,16 +891,16 @@ export const REAL_DEM_ELEVATIONS: Record<string, number[]> = {
     19.5, 21.2, 22.8, 24.0, 24.2, 23.8,
     // t = 0.32..0.38: Degner 1 & 2 descent into underpass (23.8m -> 16.5m)
     22.5, 20.8, 19.0, 17.5, 16.5,
-    // t = 0.39..0.43: Underpass under bridge (ground level: 13.8m)
-    15.0, 14.2, 13.8, 14.0, 14.6,
-    // t = 0.44..0.52: Hairpin (14.6m -> 15.5m)
-    15.0, 15.3, 15.5, 15.5, 15.4, 15.5, 15.8,
+    // t = 0.39..0.43: Underpass under bridge (ground level: 10.5m)
+    13.5, 11.8, 10.5, 11.2, 12.8,
+    // t = 0.44..0.52: Hairpin (12.8m -> 15.5m)
+    14.0, 14.8, 15.5, 15.5, 15.4, 15.5, 15.8,
     // t = 0.53..0.66: 200R & Spoon Curve climb (15.8m -> 22.0m)
     16.5, 17.5, 18.6, 19.8, 20.8, 21.6, 22.0, 22.2, 22.0, 21.8, 21.9, 22.2,
-    // t = 0.67..0.75: Back Straight & Overpass Bridge (crossing above underpass at 23.0m!)
-    22.5, 22.8, 23.0, 23.0, 22.8, 22.5, 22.0,
-    // t = 0.76..0.86: 130R downhill sweeper (22.0m -> 14.5m)
-    21.0, 19.8, 18.5, 17.2, 16.0, 15.0, 14.5,
+    // t = 0.67..0.75: Back Straight climb up to Overpass Bridge
+    22.5, 22.8, 23.2, 23.5, 23.8, 24.0, 24.2,
+    // t = 0.76..0.86: Overpass Bridge crossing at 24.2m & 130R downhill descent (24.2m -> 14.5m)
+    24.2, 24.0, 23.5, 22.0, 19.5, 17.0, 14.5,
     // t = 0.87..0.94: Casio Triangle chicane (14.5m -> 11.5m)
     13.8, 13.0, 12.4, 11.8, 11.5, 11.2,
     // t = 0.95..1.00: Main Straight back to S/F line (11.2m -> 10.0m)
