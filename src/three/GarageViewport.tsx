@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { CarSpec, LiveryConfig } from '../game/types';
-import { buildDiecastCar, BuiltCarRig } from './carBuilder';
+import { BuiltCarRig } from './carBuilder';
+import { buildCarRigAsync } from './objCarLoader';
 
 export type GarageAngle = 'hero' | 'front' | 'side' | 'rear';
 
@@ -292,14 +293,23 @@ export function GarageViewport({ carSpec, livery, angle }: GarageViewportProps) 
   useEffect(() => {
     const s = stateRef.current;
     if (!s) return;
-    if (s.carRig) {
-      s.carAnchor.remove(s.carRig.root);
-      s.carRig.dispose();
-    }
-    const built = buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, s.maxAniso, carSpec.id);
-    s.carRig = built;
-    s.carAnchor.add(built.root);
-    s.requestRender(true);
+    let cancelled = false;
+    buildCarRigAsync(carSpec, livery, s.maxAniso).then((built) => {
+      if (cancelled || !stateRef.current) {
+        built.dispose();
+        return;
+      }
+      if (stateRef.current.carRig) {
+        stateRef.current.carAnchor.remove(stateRef.current.carRig.root);
+        stateRef.current.carRig.dispose();
+      }
+      stateRef.current.carRig = built;
+      stateRef.current.carAnchor.add(built.root);
+      stateRef.current.requestRender(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [carSpec, livery]);
 
   // Update preset camera angle

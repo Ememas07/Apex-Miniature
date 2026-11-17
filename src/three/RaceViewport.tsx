@@ -25,7 +25,8 @@ import {
   RoomPeer,
 } from '../game/types';
 import { MotorsportAudioEngine } from './audioEngine';
-import { buildDiecastCar, BuiltCarRig } from './carBuilder';
+import { BuiltCarRig } from './carBuilder';
+import { buildCarRigAsync } from './objCarLoader';
 import { buildTrackEnvironment, BuiltTrackScene } from './trackBuilder';
 
 interface RaceViewportProps {
@@ -109,6 +110,7 @@ export function RaceViewport(props: RaceViewportProps) {
     keysPressed: Set<string>;
     specialJustPressed: boolean;
     pitLimiterToggle: boolean;
+    worldVersion: number;
     rebuildWorld: () => void;
   } | null>(null);
 
@@ -222,10 +224,13 @@ export function RaceViewport(props: RaceViewportProps) {
       keysPressed,
       specialJustPressed: false,
       pitLimiterToggle: false,
+      worldVersion: 0,
       rebuildWorld: () => {},
     };
 
     const rebuildWorld = () => {
+      sim.worldVersion++;
+      const worldVersion = sim.worldVersion;
       const cfg = propsRef.current.raceConfig;
       const currentPhase = propsRef.current.phase;
       const trackSpec = cfg.customTrack || getTrackById(cfg.trackId);
@@ -365,11 +370,16 @@ export function RaceViewport(props: RaceViewportProps) {
 
       sim.cars = newCars;
       for (const c of newCars) {
-        const rig = buildDiecastCar(c.carSpec.silhouette, c.carSpec.classId, c.livery, maxAniso, c.carSpec.id);
-        rig.root.position.set(c.x, c.y, c.z);
-        rig.root.rotation.y = c.heading;
-        scene.add(rig.root);
-        sim.carRigs.set(c.id, rig);
+        buildCarRigAsync(c.carSpec, c.livery, maxAniso).then((rig) => {
+          if (disposed || worldVersion !== sim.worldVersion) {
+            rig.dispose();
+            return;
+          }
+          rig.root.position.set(c.x, c.y, c.z);
+          rig.root.rotation.y = c.heading;
+          scene.add(rig.root);
+          sim.carRigs.set(c.id, rig);
+        });
       }
 
       const isAutostart = typeof window !== 'undefined' && window.location.search.includes('autostart=1');

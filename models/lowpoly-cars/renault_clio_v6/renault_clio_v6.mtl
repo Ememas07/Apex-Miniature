@@ -1,0 +1,241 @@
+# Exported by Apex Miniature objToLowPoly.mjs
+
+newmtl EXT_lights_glass
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_glass_projector
+Kd 0.239454 0.239715 0.239454
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_lights_glass_int
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_lights_glass_pattern
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_lights_glass_turn
+Kd 0.469506 0.469246 0.469506
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_glass_rear
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_lights_glass_rear
+Kd 1 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_black_glass
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_glass_dark
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_glass
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.45
+
+newmtl EXT_lights_bulb_turn
+Kd 1 0.713725 0.043137
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_metal
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_rubber
+Kd 0.098039 0.098039 0.098039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_steel
+Kd 0.8 0.8 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_carpaint
+Kd 0.78 0.78 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_magnesium
+Kd 0.528037 0.527406 0.556924
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_undercarriage
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_backfacing_geo
+Kd 0.098039 0.098039 0.098039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_rubber_trim
+Kd 0.098039 0.098039 0.098039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_keyhole
+Kd 0.668347 0.667907 0.668347
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_carpaint2
+Kd 1 1 1
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl INT_aluminium_brushed
+Kd 0.528037 0.527406 0.556924
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_exhaust
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_plastic_shiny
+Kd 0.113124 0.113855 0.113187
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_mirror
+Kd 0.588206 0.57566 0.55286
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_lights_signal
+Kd 0.171103 0.173401 0.171103
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_lights_reverse
+Kd 0.469506 0.469246 0.469506
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_plastic_metal
+Kd 0.098039 0.098039 0.098039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_lights_side_turn
+Kd 0.935484 0.952381 0.935484
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_plastic_smooth
+Kd 0.113124 0.113855 0.113187
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_plastic
+Kd 0.155777 0.15611 0.155777
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_plastic_grid
+Kd 0.098039 0.098039 0.098039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_PLATE_plastic
+Kd 0.6445 0.650236 0.657006
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl INT_aluminium_polished
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_cast_aluminum
+Kd 0.528037 0.527406 0.556924
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_aluminum_rgh
+Kd 0.528037 0.527406 0.556924
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_aluminum_noise
+Kd 0.528037 0.527406 0.556924
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_defrost
+Kd 0.981855 0.949405 0.949597
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_emblem
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_chrome_polished
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_lights_plate
+Kd 0.098039 0.098039 0.098039
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_caliper
+Kd 0.215686 0.215686 0.215686
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_disc
+Kd 0.162456 0.162047 0.161668
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_tyre
+Kd 0.12 0.12 0.13
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_aluminium_brushed
+Kd 0.528037 0.527406 0.556924
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_inner_rim
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_tyre_bump
+Kd 0.138168 0.131526 0.138168
+Ks 0.25 0.25 0.25
+Ns 32

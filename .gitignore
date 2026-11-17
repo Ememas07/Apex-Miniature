@@ -9,3 +9,9 @@ coverage/
 track images/
 .dem_cache.json
 scripts/.dem_cache.json
+
+# Ignore contents of /models and its subfolders, but keep directory structure
+/models/raw-cars/
+!/models/**/.gitkeep
+!/models/**/.gitignore
+

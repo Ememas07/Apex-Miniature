@@ -1,0 +1,10 @@
+{
+  "cars": [
+    {
+      "id": "renault-clio-v6",
+      "folder": "renault_clio_v6",
+      "obj": "renault_clio_v6.obj",
+      "mtl": "renault_clio_v6.mtl"
+    }
+  ]
+}
