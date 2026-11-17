@@ -1,5 +1,6 @@
 import { CAR_CLASSES, getCarById, resolveCarSpecial } from './cars';
 import { CompiledTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
+import tuningConfigRaw from './tuningConfig.json';
 import {
   AIDifficulty,
   AIPersonality,
@@ -11,6 +12,27 @@ import {
   TireCompound,
 } from './types';
 
+export interface TuningConfig {
+  downforceScale: number;
+  brakeForceScale: number;
+  dragScale: number;
+  lowSpeedGripScale: number;
+  aiCornerSpeedScale: number;
+  aiBrakeMarginScale: number;
+}
+
+const clampNum = (v: number | undefined, min: number, max: number, fallback = 1.0) =>
+  Math.max(min, Math.min(max, typeof v === 'number' && Number.isFinite(v) ? v : fallback));
+
+export const ACTIVE_TUNING_CONFIG: TuningConfig = {
+  downforceScale: clampNum(tuningConfigRaw.downforceScale, 0.55, 1.35),
+  brakeForceScale: clampNum(tuningConfigRaw.brakeForceScale, 0.55, 1.35),
+  dragScale: clampNum(tuningConfigRaw.dragScale, 0.65, 1.45),
+  lowSpeedGripScale: clampNum(tuningConfigRaw.lowSpeedGripScale, 0.65, 1.30),
+  aiCornerSpeedScale: clampNum(tuningConfigRaw.aiCornerSpeedScale, 0.75, 1.00),
+  aiBrakeMarginScale: clampNum(tuningConfigRaw.aiBrakeMarginScale, 0.85, 1.40),
+};
+
 export const SPEED_KMH_FACTOR = 3.6;
 
 export interface ControlInput {
@@ -20,6 +42,8 @@ export interface ControlInput {
   specialPressed: boolean; // edge-triggered or held depending on class
   specialJustPressed?: boolean; // edge-triggered activation
   pitLimiterToggle?: boolean; // toggle 60 km/h pit speed limiter
+  shiftUp?: boolean;
+  shiftDown?: boolean;
 }
 
 export interface CarSimState {
@@ -30,6 +54,7 @@ export interface CarSimState {
   carSpec: CarSpec;
   livery: LiveryConfig;
   personality?: AIPersonality;
+  transmissionMode?: 'auto' | 'manual';
   x: number;
   y: number;
   z: number;
@@ -129,49 +154,50 @@ export function computeClassGripProfile(
   classId: CarClassId,
   speed: number,
 ): { classGripMult: number; classDownforceBonus: number } {
+  const dfScale = ACTIVE_TUNING_CONFIG.downforceScale;
   switch (classId) {
     case CarClassId.F1_2026:
     case CarClassId.F1_2021:
     case CarClassId.F1_2005:
       return {
-        classGripMult: 1.12,
-        classDownforceBonus: 1.0 + Math.min(0.75, (speed / 58.0) * 0.75),
+        classGripMult: 1.08,
+        classDownforceBonus: 1.0 + Math.min(0.55, (speed / 65.0) * 0.55) * dfScale,
       };
     case CarClassId.HYPERCAR_GTP:
       return {
-        classGripMult: 0.98,
-        classDownforceBonus: 1.0 + Math.min(0.46, speed / 62.0),
+        classGripMult: 0.88,
+        classDownforceBonus: 1.0 + Math.min(0.22, speed / 78.0) * dfScale,
       };
     case CarClassId.LMP2:
       return {
-        classGripMult: 0.95,
-        classDownforceBonus: 1.0 + Math.min(0.40, speed / 65.0),
+        classGripMult: 0.86,
+        classDownforceBonus: 1.0 + Math.min(0.20, speed / 80.0) * dfScale,
       };
     case CarClassId.FORMULA_E:
       return {
-        classGripMult: 0.88,
-        classDownforceBonus: 1.0 + Math.min(0.22, speed / 78.0),
+        classGripMult: 0.85,
+        classDownforceBonus: 1.0 + Math.min(0.16, speed / 82.0) * dfScale,
       };
     case CarClassId.GT3:
       return {
-        classGripMult: 0.86,
-        classDownforceBonus: 1.0 + Math.min(0.26, speed / 72.0),
+        classGripMult: 0.84,
+        classDownforceBonus: 1.0 + Math.min(0.18, speed / 76.0) * dfScale,
       };
     case CarClassId.SUPERCAR:
       return {
-        classGripMult: 0.82,
-        classDownforceBonus: 1.0 + Math.min(0.18, speed / 85.0),
+        classGripMult: 0.80,
+        classDownforceBonus: 1.0 + Math.min(0.15, speed / 85.0) * dfScale,
       };
     case CarClassId.GT4:
       return {
-        classGripMult: 0.78,
-        classDownforceBonus: 1.0 + Math.min(0.16, speed / 82.0),
+        classGripMult: 0.77,
+        classDownforceBonus: 1.0 + Math.min(0.13, speed / 85.0) * dfScale,
       };
     case CarClassId.TRACK_COUPE:
     default:
       return {
-        classGripMult: 0.76,
-        classDownforceBonus: 1.0 + Math.min(0.12, speed / 90.0),
+        classGripMult: 0.75,
+        classDownforceBonus: 1.0 + Math.min(0.10, speed / 90.0) * dfScale,
       };
   }
 }
@@ -188,6 +214,7 @@ export function createCarSimState(params: {
   compound: TireCompound;
   personality?: AIPersonality;
   aiPaceMultiplier?: number;
+  transmissionMode?: 'auto' | 'manual';
 }): CarSimState {
   const carSpec = getCarById(params.carId);
   const row = Math.floor(params.gridSlot / 2);
@@ -258,6 +285,7 @@ export function createCarSimState(params: {
     finished: false,
     gear: 1,
     rpmNormalized: 0.18,
+    transmissionMode: params.transmissionMode ?? 'auto',
     aiTargetOffset: lat * 0.4,
     aiPassTimer: 0,
     aiPaceMultiplier: params.aiPaceMultiplier ?? 1.0,
@@ -625,9 +653,16 @@ export function stepCarPhysics(
     ? 6.2 + Math.max(0, attrs.acceleration - 64) * 0.18
     : 12.2 + accelAttrNorm * 1.4;
 
-  const gripBase = (1.42 + (attrs.corneringGrip / 100) * 1.15) * (0.75 + paceScale * 0.25);
+  const gripBase =
+    (1.42 + (attrs.corneringGrip / 100) * 1.15) *
+    (0.75 + paceScale * 0.25) *
+    ACTIVE_TUNING_CONFIG.lowSpeedGripScale;
   const brakeMultiplier = isSupercar ? 0.85 : isCoupe ? 0.85 : isGT4 ? 0.88 : 1.0;
-  const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35) * brakeMultiplier;
+  const brakeBase =
+    (24 + (attrs.braking / 100) * 15) *
+    (0.65 + paceScale * 0.35) *
+    brakeMultiplier *
+    ACTIVE_TUNING_CONFIG.brakeForceScale;
 
   const compoundMod = getCompoundModifiers(car.compound, opts.trackWetness);
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
@@ -681,6 +716,7 @@ export function stepCarPhysics(
 
   // Speed ceiling (AI gains pace via cornering commitment/skill rather than unrealistic +7% straight-line Vmax)
   const aiStraightScale = car.isPlayer ? 1.0 : 1.0 + (car.aiPaceMultiplier - 1.0) * 0.25;
+  const dragVmaxFactor = Math.pow(ACTIVE_TUNING_CONFIG.dragScale, -0.22);
   let effectiveMaxSpeed =
     maxSpeedBase *
     specialSpeedMult *
@@ -689,7 +725,8 @@ export function stepCarPhysics(
     fuelFactor *
     offTrackDrag *
     penaltyCap *
-    aiStraightScale;
+    aiStraightScale *
+    dragVmaxFactor;
 
   // Sample current 3D road normal tilt (slope + banking) for longitudinal gravity and lateral banking forces
   const currentRoadSample = sampleTrackAtT(compiledTrack, car.trackT);
@@ -712,72 +749,168 @@ export function stepCarPhysics(
     effectiveMaxSpeed = Math.min(effectiveMaxSpeed, PIT_LIMIT_SPEED);
   }
 
-  // Longitudinal acceleration & braking
+  // Longitudinal acceleration, braking & transmission drivetrain
   const throttle = Math.max(0, Math.min(1, input.throttle));
   const brake = Math.max(0, Math.min(1, input.brake));
+  const isManual = car.transmissionMode === 'manual';
+  const totalGears = car.carSpec.gears ?? classMeta.forwardGears ?? 6;
 
-  if (throttle > 0 && brake < 0.1) {
-    if (car.pitLimiterActive && car.speed >= PIT_LIMIT_SPEED) {
-      // Throttle rev-limited at 60 km/h once deceleration reaches target; never snap downward here
-    } else {
-      const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
-      // Downforce builds rear traction above 100 km/h in F1/Prototypes, while aerodynamic drag tapers acceleration toward Vmax
-      const aeroTraction = isFormula && !isFE
-        ? 0.72 + 0.60 * Math.min(1, car.speed / 25.0)
-        : isGTP || isLMP2
-        ? 0.88 + 0.22 * Math.min(1, car.speed / 30.0)
-        : isFE
-        ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
-        : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
-      const torqueCurve = Math.max(0.05, 1.0 - 0.92 * Math.pow(speedRatio, 1.18));
-      let nextSpeed = car.speed + accelBase * aeroTraction * specialAccelMult * fuelFactor * throttle * torqueCurve * dt;
-      if (car.pitLimiterActive && car.speed <= PIT_LIMIT_SPEED) {
-        nextSpeed = Math.min(PIT_LIMIT_SPEED, nextSpeed);
+  // Manual transmission shifting:
+  if (isManual) {
+    if (input.shiftUp) {
+      if (car.gear === -1 && car.speed < 4.0) {
+        car.gear = 1;
+      } else if (car.gear > 0 && car.gear < totalGears) {
+        car.gear += 1;
       }
-      car.speed = nextSpeed;
+    } else if (input.shiftDown) {
+      if (car.gear === 1 && car.speed < 3.0) {
+        car.gear = -1;
+      } else if (car.gear > 1) {
+        car.gear -= 1;
+      }
     }
   }
 
-  if (brake > 0) {
-    car.speed = Math.max(0, car.speed - brakeBase * compoundMod.grip * brake * dt);
+  // Automatic transmission mode reverse engagement & forward shift:
+  if (!isManual) {
+    if (car.gear === -1) {
+      if (throttle > 0.1) {
+        // Pressing Throttle shifts back to 1st gear and resets reverse momentum
+        car.gear = 1;
+        car.speed = 0;
+      }
+    } else {
+      // Holding Brake once speed < 1.5 m/s smoothly engages R (gear = -1)
+      if (brake > 0.1 && throttle < 0.05 && car.speed < 1.5) {
+        car.gear = -1;
+        car.speed = 0;
+      }
+    }
   }
+
+  if (car.gear === -1) {
+    // ==================== REVERSE GEAR (R = -1) ====================
+    // Accelerates backward up to ~35 km/h (9.72 m/s)
+    const maxReverseSpeed = 35 / SPEED_KMH_FACTOR;
+    const reverseThrottle = isManual ? throttle : brake;
+    const reverseBrake = isManual ? brake : (throttle > 0.1 ? 1.0 : 0.0);
+
+    if (reverseThrottle > 0.05) {
+      car.speed = Math.min(maxReverseSpeed, car.speed + 5.5 * reverseThrottle * dt);
+    } else if (reverseBrake > 0.05) {
+      car.speed = Math.max(0, car.speed - 18.0 * reverseBrake * dt);
+    } else {
+      car.speed = Math.max(0, car.speed - 3.5 * dt);
+    }
+
+    car.rpmNormalized = Math.round(Math.min(1.0, 0.22 + (car.speed / maxReverseSpeed) * 0.58) * 100) / 100;
+  } else {
+    // ==================== FORWARD GEARS (1..N) ====================
+    if (throttle > 0 && brake < 0.1) {
+      if (car.pitLimiterActive && car.speed >= PIT_LIMIT_SPEED - 0.05 && car.speed <= PIT_LIMIT_SPEED + 0.1) {
+        // Throttle rev-limited at 60 km/h once target speed reached; holds 60 km/h (16.67 m/s)
+        car.speed = PIT_LIMIT_SPEED;
+      } else {
+        const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
+        const aeroTraction = isFormula && !isFE
+          ? 0.72 + 0.60 * Math.min(1, car.speed / 25.0)
+          : isGTP || isLMP2
+          ? 0.88 + 0.22 * Math.min(1, car.speed / 30.0)
+          : isFE
+          ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
+          : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
+        const torqueCurve = Math.max(0.12, 1.0 - 0.78 * Math.pow(speedRatio, 1.35));
+        const engineAccel = accelBase * aeroTraction * specialAccelMult * fuelFactor * throttle * torqueCurve;
+        // Quadratic aero drag F_drag = c_drag * v^2 smoothly balancing engine power near target Vmax
+        const cAeroDrag =
+          ((accelBase * 0.12) / (effectiveMaxSpeed * effectiveMaxSpeed)) * ACTIVE_TUNING_CONFIG.dragScale;
+        const aeroDragDecel = cAeroDrag * car.speed * car.speed;
+        const netAccel = engineAccel - aeroDragDecel;
+        let nextSpeed = Math.max(0, car.speed + netAccel * dt);
+        if (car.pitLimiterActive && car.speed <= PIT_LIMIT_SPEED) {
+          nextSpeed = Math.min(PIT_LIMIT_SPEED, nextSpeed);
+        }
+        car.speed = nextSpeed;
+      }
+    }
+
+    if (brake > 0) {
+      car.speed = Math.max(0, car.speed - brakeBase * compoundMod.grip * brake * dt);
+    }
+
+    // Natural aero/rolling drag when coasting or above effectiveMaxSpeed
+    const dragCoeff =
+      (car.specialActive && specialType === 'active-aero' ? 0.34 : 0.46) * ACTIVE_TUNING_CONFIG.dragScale;
+    if (!car.pitLimiterActive && car.speed > effectiveMaxSpeed) {
+      car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
+    } else if (throttle < 0.05 && brake < 0.05 && !car.pitLimiterActive) {
+      car.speed = Math.max(
+        0,
+        car.speed - (car.speed * dragCoeff + 0.00032 * ACTIVE_TUNING_CONFIG.dragScale * car.speed * car.speed) * dt,
+      );
+    }
+
+    // Forward Gearing Simulation & Top-Gear RPM Plateau:
+    if (totalGears === 1) {
+      car.gear = 1;
+      const motorRatio = Math.min(1.0, car.speed / Math.max(1, maxSpeedBase));
+      car.rpmNormalized = car.speed < 1.0 ? 0.15 : Math.min(1.0, 0.15 + motorRatio * 0.85);
+    } else if (isManual) {
+      car.gear = Math.max(1, Math.min(totalGears, car.gear));
+      if (car.speed < 1.0 && car.gear === 1) {
+        car.rpmNormalized = 0.18;
+      } else {
+        const topSpeedRef = Math.max(45, maxSpeedBase * specialSpeedMult);
+        const speedRatio = Math.min(1.0, car.speed / topSpeedRef);
+        const gearMinRatio = Math.pow((car.gear - 1) / totalGears, 1 / 0.74);
+        const gearMaxRatio = Math.pow(car.gear / totalGears, 1 / 0.74);
+        const band = Math.max(0.05, gearMaxRatio - gearMinRatio);
+        let gearRpm: number;
+        if (car.gear === totalGears) {
+          const topRatio = Math.min(1.0, car.speed / effectiveMaxSpeed);
+          gearRpm = 0.52 + 0.40 * Math.pow(topRatio, 0.82);
+        } else {
+          const inGearFrac = Math.max(-0.25, Math.min(1.08, (speedRatio - gearMinRatio) / band));
+          gearRpm = Math.max(0.18, Math.min(1.0, 0.38 + 0.58 * inGearFrac));
+        }
+        if (car.gear < totalGears && speedRatio > gearMaxRatio) {
+          car.speed = Math.min(car.speed, topSpeedRef * gearMaxRatio);
+          gearRpm = 1.0;
+        }
+        car.rpmNormalized = Math.round(gearRpm * 100) / 100;
+      }
+    } else {
+      if (car.speed < 1.0) {
+        car.gear = 1;
+        car.rpmNormalized = 0.18;
+      } else {
+        const topSpeedRef = Math.max(45, maxSpeedBase * specialSpeedMult);
+        const speedRatio = Math.min(0.999, car.speed / topSpeedRef);
+        const gearProgress = Math.pow(speedRatio, 0.74) * totalGears;
+        const currentGear = Math.max(1, Math.min(totalGears, Math.floor(gearProgress) + 1));
+        const inGearFraction = gearProgress - (currentGear - 1);
+        // Top-gear RPM plateaus naturally at 89%-94% of redline on flat straights at target Vmax
+        let gearRpm: number;
+        if (currentGear === totalGears) {
+          const topRatio = Math.min(1.0, car.speed / effectiveMaxSpeed);
+          gearRpm = 0.52 + 0.40 * Math.pow(topRatio, 0.82);
+        } else {
+          gearRpm = 0.38 + 0.58 * Math.max(0, Math.min(1.0, inGearFraction));
+        }
+        car.gear = currentGear;
+        car.rpmNormalized = Math.round(gearRpm * 100) / 100;
+      }
+    }
+  }
+
+  const isReversing = car.gear === -1;
+  const moveSign = isReversing ? -1 : 1;
 
   // Slope gravity force (-g * sinSlope): climbing slows car, downhill accelerates car smoothly
-  if (car.speed > 0.5 || throttle > 0.05) {
-    const slopeGravity = -9.81 * roadTilt.sinSlope;
+  if ((car.speed > 0.5 || throttle > 0.05) && (!car.pitLimiterActive || throttle < 0.5)) {
+    const slopeGravity = -9.81 * roadTilt.sinSlope * moveSign;
     car.speed = Math.max(0, car.speed + slopeGravity * dt);
-  }
-
-  // Natural aero/rolling drag when coasting or above effectiveMaxSpeed (note: pit limiter uses smoothRampDecel above)
-  const dragCoeff = car.specialActive && specialType === 'active-aero' ? 0.34 : 0.46;
-  if (!car.pitLimiterActive && car.speed > effectiveMaxSpeed) {
-    car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
-  } else if (throttle < 0.05 && brake < 0.05 && !car.pitLimiterActive) {
-    car.speed = Math.max(0, car.speed - car.speed * dragCoeff * dt);
-  }
-
-  // Authentic Powertrain & Gearing Simulation per Class / Car Spec:
-  const totalGears = car.carSpec.gears ?? classMeta.forwardGears ?? 6;
-  if (totalGears === 1) {
-    // Formula E: direct-drive single reduction gear
-    car.gear = 1;
-    const motorRatio = Math.min(1.0, car.speed / Math.max(1, maxSpeedBase));
-    car.rpmNormalized = car.speed < 1.0 ? 0.15 : Math.min(1.0, 0.15 + motorRatio * 0.85);
-  } else {
-    // Multi-gear transmission (6-8 forward gears)
-    if (car.speed < 1.0) {
-      car.gear = 1;
-      car.rpmNormalized = 0.18;
-    } else {
-      const topSpeedRef = Math.max(45, maxSpeedBase * specialSpeedMult);
-      const speedRatio = Math.min(0.999, car.speed / topSpeedRef);
-      const gearProgress = Math.pow(speedRatio, 0.74) * totalGears;
-      const currentGear = Math.max(1, Math.min(totalGears, Math.floor(gearProgress) + 1));
-      const inGearFraction = gearProgress - (currentGear - 1);
-      const gearRpm = 0.38 + 0.58 * Math.max(0, Math.min(1.0, inGearFraction));
-      car.gear = currentGear;
-      car.rpmNormalized = Math.round(gearRpm * 100) / 100;
-    }
   }
 
   // Sim-Cade Steering, Centripetal Cornering Limit, Trail-Braking & Understeer Scrub
@@ -827,11 +960,11 @@ export function stepCarPhysics(
   const lowSpeedScale = Math.min(1, car.speed / 6.0);
   // Lateral banking centripetal gravity assist (+sinBank pulls toward -R_car = left = +heading)
   const bankingTurnAssist = car.speed > 4.0 ? (9.81 * roadTilt.sinBank) / Math.max(10.0, car.speed) * 0.35 : 0;
-  car.heading -= (steerInput * maxTurnRate * turnEffectiveness * lowSpeedScale - bankingTurnAssist) * dt;
+  car.heading -= (steerInput * moveSign * maxTurnRate * turnEffectiveness * lowSpeedScale - bankingTurnAssist) * dt;
 
   // Lateral velocity blend & lateral slip calculation for tire scrub audio
-  const desiredVx = Math.sin(car.heading) * car.speed;
-  const desiredVz = Math.cos(car.heading) * car.speed;
+  const desiredVx = Math.sin(car.heading) * car.speed * moveSign;
+  const desiredVz = Math.cos(car.heading) * car.speed * moveSign;
   const lateralBlend = Math.min(1, dt * (6.5 + availableGrip * 3.5) * (1 - Math.min(0.45, understeer * 0.4)));
   car.vx += (desiredVx - car.vx) * lateralBlend;
   car.vz += (desiredVz - car.vz) * lateralBlend;
@@ -961,7 +1094,7 @@ export function stepCarPhysics(
   car.totalTime += dt;
 
   // Detect start/finish crossing forward (prevTrackT > 0.85 && trackT < 0.15)
-  if (car.prevTrackT > 0.85 && car.trackT < 0.15) {
+  if (!isReversing && car.prevTrackT > 0.85 && car.trackT < 0.15) {
     if (car.totalDistance < 0) {
       // Initial start/finish crossing from pre-start grid
       car.lap = 1;
@@ -1184,12 +1317,23 @@ export function computeAIControl(
   const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
   const damageFactor = 1 - (car.aeroDamage / 100) * 0.18;
 
-  const gripBase = (1.42 + (attrs.corneringGrip / 100) * 1.15) * (0.75 + paceScale * 0.25);
-  const brakeBase = (34 + (attrs.braking / 100) * 20) * (0.65 + paceScale * 0.35) * classBrakeMult;
+  const gripBase =
+    (1.42 + (attrs.corneringGrip / 100) * 1.15) *
+    (0.75 + paceScale * 0.25) *
+    ACTIVE_TUNING_CONFIG.lowSpeedGripScale;
+  const brakeBase =
+    (24 + (attrs.braking / 100) * 15) *
+    (0.65 + paceScale * 0.35) *
+    classBrakeMult *
+    ACTIVE_TUNING_CONFIG.brakeForceScale;
   const personalityBrakeFactor =
     personality === 'Late-Braker' ? 0.94 : personality === 'Tire-Saver' ? 0.82 : 0.88;
   const brakeDecel = Math.max(12, brakeBase * compoundMod.grip * personalityBrakeFactor);
-  const skillFactor = Math.max(0.84, Math.min(1.01, 0.93 * (0.5 + 0.5 * car.aiPaceMultiplier)));
+  // Cornering speed utilization capped strictly <= 1.00 (100% of physical tire grip)
+  const skillFactor = Math.max(
+    0.75,
+    Math.min(1.0, 0.96 * (0.45 + 0.55 * car.aiPaceMultiplier) * ACTIVE_TUNING_CONFIG.aiCornerSpeedScale),
+  );
 
   const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
   const halfW = (currentSample.width || compiledTrack.spec.trackWidth) * 0.5;
@@ -1360,9 +1504,9 @@ export function computeAIControl(
     const bankBonus = 1.0 + Math.sin(Math.abs(sample.banking || 0)) * 0.35;
     const { classGripMult, classDownforceBonus } = computeClassGripProfile(car.carSpec.classId, car.speed);
     const sampleGrip = effectiveLatGripBase * classGripMult * bankBonus * classDownforceBonus;
-    // Calibrated centripetal safe cornering speed (tightened slightly on extreme R<10m hairpins)
-    const minCornerSpeed = absK > 0.10 ? 7.2 : 9.0;
-    const curvScale = absK > 0.10 ? 10.5 : 21.5;
+    // Calibrated centripetal safe cornering speed with boosted exit aggression
+    const minCornerSpeed = absK > 0.10 ? 7.6 : 9.5;
+    const curvScale = absK > 0.10 ? 11.2 : 23.4;
     const vSafe = Math.max(minCornerSpeed, Math.sqrt((sampleGrip * curvScale) / absK) * skillFactor);
 
     if (dMeters < 20) {
@@ -1374,7 +1518,7 @@ export function computeAIControl(
       const avgTy = (currentSample.ty + sample.ty) * 0.5;
       const slopeAwareBrake = Math.max(8.0, brakeDecel + 9.81 * avgTy * 0.85);
       const reqBrakeDist = (car.speed * car.speed - vSafe * vSafe) / (2 * slopeAwareBrake);
-      const ratio = reqBrakeDist / Math.max(1.2, dMeters - 1.0);
+      const ratio = (reqBrakeDist * ACTIVE_TUNING_CONFIG.aiBrakeMarginScale) / Math.max(1.2, dMeters - 1.0);
       if (ratio > maxBrakeRatio) {
         maxBrakeRatio = ratio;
       }
@@ -1384,18 +1528,18 @@ export function computeAIControl(
   let cornerThrottle = 1.0;
   let cornerBrake = 0.0;
 
-  if (car.speed > immediateCornerSpeed * 1.02) {
+  if (car.speed > immediateCornerSpeed * 1.03) {
     const over = (car.speed - immediateCornerSpeed) / 7.5;
-    cornerBrake = Math.min(1.0, 0.45 + over * 0.55);
+    cornerBrake = Math.min(1.0, 0.40 + over * 0.60);
     cornerThrottle = 0.0;
-  } else if (maxBrakeRatio >= 0.86) {
-    cornerBrake = Math.min(1.0, 0.22 + (maxBrakeRatio - 0.86) * 2.6);
+  } else if (maxBrakeRatio >= 0.88) {
+    cornerBrake = Math.min(1.0, 0.20 + (maxBrakeRatio - 0.88) * 3.0);
     cornerThrottle = 0.0;
-  } else if (maxBrakeRatio >= 0.72) {
-    cornerThrottle = Math.max(0.20, 1.0 - (maxBrakeRatio - 0.72) * 5.0);
-  } else if (car.understeerFactor > 0.28) {
+  } else if (maxBrakeRatio >= 0.76) {
+    cornerThrottle = Math.max(0.40, 1.0 - (maxBrakeRatio - 0.76) * 4.5);
+  } else if (car.understeerFactor > 0.32) {
     // Modulate corner-exit throttle cleanly when pushing wide
-    cornerThrottle = Math.max(0.55, 1.0 - (car.understeerFactor - 0.28) * 0.7);
+    cornerThrottle = Math.max(0.65, 1.0 - (car.understeerFactor - 0.32) * 0.6);
   }
 
   // ==================== 4. COLLISION-AVOIDANCE BRAKING ====================

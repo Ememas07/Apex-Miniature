@@ -1,15 +1,21 @@
 import { CarClassId, CarSpec } from '../game/types';
+import {
+  computeWarmFundamentalHz,
+  makeSoftClippingCurve,
+  resolveAcousticProfile,
+} from '../game/audio';
 
 export class MotorsportAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private engineGain: GainNode | null = null;
 
-  // Combustion nodes
+  // Combustion nodes with soft-clipping saturation
   private oscCombustion: OscillatorNode | null = null;
   private oscHarmonic: OscillatorNode | null = null;
   private oscSub: OscillatorNode | null = null;
   private combustionFilter: BiquadFilterNode | null = null;
+  private waveShaper: WaveShaperNode | null = null;
   private combustionGain: GainNode | null = null;
 
   // Electric / Hybrid / MGU-K nodes
@@ -31,6 +37,7 @@ export class MotorsportAudioEngine {
 
   private prevThrottle = 0;
   private lastCrackleTime = 0;
+  private currentProfileType: string | null = null;
   private muted = false;
   private initialized = false;
 
@@ -55,33 +62,39 @@ export class MotorsportAudioEngine {
       mainEngine.connect(master);
       this.engineGain = mainEngine;
 
-      // 1. Combustion Engine Synthesizer
+      // 1. Combustion Engine Synthesizer with soft-clipping saturation
       const combGain = ctx.createGain();
-      combGain.gain.value = 0.16;
+      combGain.gain.value = 0.18;
       this.combustionGain = combGain;
 
       const combFilter = ctx.createBiquadFilter();
       combFilter.type = 'lowpass';
-      combFilter.frequency.value = 1400;
+      combFilter.frequency.value = 450;
       combFilter.Q.value = 1.8;
       this.combustionFilter = combFilter;
 
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = makeSoftClippingCurve(22) as unknown as Float32Array<ArrayBuffer>;
+      shaper.oversample = '2x';
+      this.waveShaper = shaper;
+
       const osc1 = ctx.createOscillator();
       osc1.type = 'sawtooth';
-      osc1.frequency.value = 90;
+      osc1.frequency.value = 75;
 
       const osc2 = ctx.createOscillator();
       osc2.type = 'triangle';
-      osc2.frequency.value = 180;
+      osc2.frequency.value = 150;
 
       const osc3 = ctx.createOscillator();
       osc3.type = 'sawtooth';
-      osc3.frequency.value = 45;
+      osc3.frequency.value = 37.5;
 
       osc1.connect(combFilter);
       osc2.connect(combFilter);
       osc3.connect(combFilter);
-      combFilter.connect(combGain);
+      combFilter.connect(shaper);
+      shaper.connect(combGain);
       combGain.connect(mainEngine);
 
       osc1.start();
@@ -235,144 +248,55 @@ export class MotorsportAudioEngine {
       return;
     }
 
+    const profile = resolveAcousticProfile(carId, engineType, classId);
     const isNonHybridHypercar = carId === 'aston-valkyrie-lmh' || carId === 'glickenhaus-scg-007';
-    const isF1_2005 = classId === CarClassId.F1_2005 || (engineType === 'v10' && classId === undefined);
-    const isF1Modern = classId === CarClassId.F1_2026 || classId === CarClassId.F1_2021;
-    const isFormulaE = classId === CarClassId.FORMULA_E || engineType === 'electric';
-    const isHypercar = classId === CarClassId.HYPERCAR_GTP;
-    const isGT = classId === CarClassId.GT3 || classId === CarClassId.GT4;
-    const isRoadCar = classId === CarClassId.TRACK_COUPE || classId === CarClassId.SUPERCAR;
 
-    let baseHz = 75;
-    let spanHz = 240;
-    let harmRatio = 2.0;
-    let subRatio = 0.5;
-    let filterCutoff = 1400;
-    let combGainLevel = 0.18;
+    if (this.currentProfileType !== profile.type) {
+      this.currentProfileType = profile.type;
+      this.oscCombustion.type = profile.oscCombustionType;
+      this.oscHarmonic.type = profile.oscHarmonicType;
+      this.oscSub.type = profile.oscSubType;
+      this.combustionFilter.Q.setTargetAtTime(profile.filterQ, now, 0.04);
+      if (this.waveShaper) {
+        this.waveShaper.curve = makeSoftClippingCurve(profile.distortionDrive) as unknown as Float32Array<ArrayBuffer>;
+      }
+    }
+
+    let combGainLevel = 0.0;
     let elGainLevel = 0.0;
     let inverterHz = 1200;
     let gearHz = 2200;
 
-    if (isFormulaE) {
+    if (profile.type === 'ELECTRIC_EV') {
       // === FORMULA E (GEN3 EVO): PURE ELECTRIC INVERTER WHINE + STRAIGHT-CUT GEARS ===
       combGainLevel = 0.0; // Strictly zero combustion noise!
       elGainLevel = 0.12 + throttle * 0.14 + (speedKmh ? Math.min(0.08, speedKmh / 300) : 0);
       inverterHz = 850 + rpmNorm * 2200;
       gearHz = 1600 + (speedKmh ? speedKmh * 14 : rpmNorm * 2800);
       this.electricFilter.frequency.setTargetAtTime(gearHz, now, 0.03);
-    } else if (isF1_2005) {
-      // === 2005 F1: HIGH-PITCHED SCREAMING V10 (UP TO 19,000 RPM) ===
-      this.oscCombustion.type = 'sawtooth';
-      this.oscHarmonic.type = 'sawtooth';
-      baseHz = 190;
-      spanHz = 760; // Peak fundamental up to ~950Hz
-      harmRatio = 2.5; // 2.5x harmonic howling up to ~2,375Hz
-      subRatio = 1.0;
-      filterCutoff = 3600; // Bright, open exhaust scream
-      combGainLevel = 0.22 + throttle * 0.10;
-      elGainLevel = 0.0;
-    } else if (isF1Modern) {
-      // === 2021 & 2026 F1: LOWER V6 TURBO RUMBLE + MGU-K ELECTRIC WHINE ===
-      this.oscCombustion.type = 'sawtooth';
-      this.oscHarmonic.type = 'triangle';
-      baseHz = 68;
-      spanHz = 210;
-      harmRatio = 2.0;
-      subRatio = 0.5;
-      filterCutoff = 1150;
-      combGainLevel = 0.16 + throttle * 0.09;
-      // High-frequency MGU-K electric boost whine
-      elGainLevel = 0.06 + throttle * 0.08;
-      inverterHz = 1400 + rpmNorm * 1800;
-      gearHz = 2400 + rpmNorm * 2200;
-      this.electricFilter.frequency.setTargetAtTime(inverterHz, now, 0.03);
-    } else if (isHypercar) {
-      // === WEC HYPERCAR / GTP: DEEP V8/V6/V12 GROWL + HYBRID ACCELERATION WHINE ===
-      this.oscCombustion.type = 'sawtooth';
-      this.oscHarmonic.type = 'sawtooth';
-      baseHz = engineType === 'v12' ? 95 : 64;
-      spanHz = engineType === 'v12' ? 320 : 220;
-      harmRatio = engineType === 'v12' ? 2.25 : 2.0;
-      subRatio = 0.5;
-      filterCutoff = 1350;
-      combGainLevel = 0.18 + throttle * 0.10;
-      // Hybrid electric pit-exit & launch whine (strictly suppressed for non-hybrid V12/ICE entries)
-      elGainLevel = isNonHybridHypercar
-        ? 0.0
-        : throttle > 0.4 || (speedKmh !== undefined && speedKmh < 90)
-        ? 0.07
-        : 0.02;
-      inverterHz = 900 + rpmNorm * 1400;
-      gearHz = 1800 + rpmNorm * 1600;
-      this.electricFilter.frequency.setTargetAtTime(inverterHz, now, 0.03);
-    } else if (isGT) {
-      // === GT3 / GT4: DISTINCT ENGINE CHARACTER (FLAT-6, V8, V10, TURBO-I4/I6) ===
-      if (engineType === 'flat6') {
-        // Porsche flat-6 rasp
-        this.oscCombustion.type = 'sawtooth';
-        this.oscHarmonic.type = 'triangle';
-        baseHz = 82;
-        spanHz = 280;
-        harmRatio = 3.0;
-        filterCutoff = 1600;
-        this.combustionFilter.Q.setTargetAtTime(3.2, now, 0.03);
-      } else if (engineType === 'v10') {
-        // Audi / Lamborghini V10 howl
-        this.oscCombustion.type = 'sawtooth';
-        this.oscHarmonic.type = 'sawtooth';
-        baseHz = 110;
-        spanHz = 360;
-        harmRatio = 2.5;
-        filterCutoff = 2200;
-      } else if (engineType === 'turbo-i4') {
-        // Inline-4 turbo (Alpine A110, FL5 Civic)
-        this.oscCombustion.type = 'sawtooth';
-        this.oscHarmonic.type = 'triangle';
-        baseHz = 66;
-        spanHz = 220;
-        harmRatio = 2.0;
-        filterCutoff = 1350;
-      } else {
-        // Cross-plane V8 rumble (AMG, Corvette, Mustang)
-        this.oscCombustion.type = 'sawtooth';
-        this.oscHarmonic.type = 'square';
-        baseHz = 58;
-        spanHz = 195;
-        harmRatio = 2.0;
-        subRatio = 0.5;
-        filterCutoff = 1200;
-      }
-      combGainLevel = 0.18 + throttle * 0.09;
-      elGainLevel = 0.0;
-    } else if (isRoadCar) {
-      // === ROAD COUPES & SUPERCARS: STREET-MUFFLED EXHAUST NOTE ===
-      this.oscCombustion.type = 'sawtooth';
-      this.oscHarmonic.type = 'triangle';
-      baseHz = 55;
-      spanHz = 180;
-      harmRatio = 2.0;
-      subRatio = 0.5;
-      filterCutoff = 580; // Street mufflers attenuate higher harmonics
-      combGainLevel = 0.13 + throttle * 0.07;
-      elGainLevel = 0.0;
     } else {
-      // Default Prototype / Generic
-      baseHz = 72;
-      spanHz = 210;
-      harmRatio = 2.0;
-      subRatio = 0.5;
-      filterCutoff = 1300;
-      combGainLevel = 0.16 + throttle * 0.08;
-      elGainLevel = 0.0;
+      // === WARM MULTI-CYLINDER COMBUSTION SYNTHESIS (68..240 Hz fundamental + soft clipping) ===
+      const { baseHz, subHz, midHz, filterHz } = computeWarmFundamentalHz(profile, rpmNorm, throttle);
+      this.oscCombustion.frequency.setTargetAtTime(baseHz, now, 0.03);
+      this.oscHarmonic.frequency.setTargetAtTime(midHz, now, 0.03);
+      this.oscSub.frequency.setTargetAtTime(subHz, now, 0.03);
+      this.combustionFilter.frequency.setTargetAtTime(filterHz, now, 0.04);
+      combGainLevel = profile.combustionGain * (0.72 + throttle * 0.45);
+
+      if (profile.hasHybridWhine && !isNonHybridHypercar) {
+        const isHypercar = classId === CarClassId.HYPERCAR_GTP;
+        elGainLevel = isHypercar
+          ? throttle > 0.4 || (speedKmh !== undefined && speedKmh < 90)
+            ? profile.hybridWhineLevel
+            : 0.02
+          : profile.hybridWhineLevel * (0.65 + throttle * 0.9);
+        inverterHz = (isHypercar ? 900 : 1350) + rpmNorm * 1650;
+        gearHz = (isHypercar ? 1800 : 2300) + rpmNorm * 2000;
+        this.electricFilter.frequency.setTargetAtTime(inverterHz, now, 0.03);
+      }
     }
 
-    const freq = baseHz + rpmNorm * spanHz;
-    this.oscCombustion.frequency.setTargetAtTime(freq, now, 0.03);
-    this.oscHarmonic.frequency.setTargetAtTime(freq * harmRatio, now, 0.03);
-    this.oscSub.frequency.setTargetAtTime(freq * subRatio, now, 0.03);
-    this.combustionFilter.frequency.setTargetAtTime(filterCutoff + throttle * 600, now, 0.04);
     this.combustionGain.gain.setTargetAtTime(combGainLevel, now, 0.03);
-
     this.oscElectricInverter.frequency.setTargetAtTime(inverterHz, now, 0.03);
     this.oscElectricGear.frequency.setTargetAtTime(gearHz, now, 0.03);
     this.electricGain.gain.setTargetAtTime(elGainLevel, now, 0.04);
@@ -398,9 +322,9 @@ export class MotorsportAudioEngine {
     // Throttle Lift-Off Detection: Exhaust Crackles & Wastegate Flutter
     if (this.prevThrottle > 0.65 && throttle < 0.25 && rpmNorm > 0.45 && now - this.lastCrackleTime > 0.5) {
       this.lastCrackleTime = now;
-      if (isF1Modern) {
+      if (profile.hasTurboFlutter) {
         this.triggerWastegateFlutter();
-      } else if (isF1_2005 || isGT || isHypercar) {
+      } else if (profile.hasExhaustCrackles) {
         this.triggerExhaustCrackles();
       }
     }

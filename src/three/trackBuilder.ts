@@ -303,95 +303,107 @@ export function buildTrackEnvironment(
     }
   }
 
-  const KERB_WIDTH = 1.8;
-  const RUNOFF_MARGIN = 4.6;
-  const EMBANKMENT_SPAN = 36.0; // Smooth 36m embankment transition outward from outer curb/runoff edge
+  const getNearestRoadSegment = (vx: number, vz: number) => {
+    const c = Math.floor(vx / CELL_SIZE);
+    const r = Math.floor(vz / CELL_SIZE);
+    let minDistSq = Infinity;
+    let bestSeg: RoadSegment | null = null;
+    let bestT = 0;
+    let bestPx = 0;
+    let bestPz = 0;
+    let lowestCorridorY = Infinity;
+    let inAnyCorridor = false;
+
+    // Check 3x3 neighborhood around cell so segment queries never miss near cell boundaries
+    const checked = new Set<number>();
+    for (let dc = -1; dc <= 1; dc++) {
+      for (let dr = -1; dr <= 1; dr++) {
+        const key = ((c + dc) * 73856093) ^ ((r + dr) * 19349663);
+        const candidateIdxs = spatialMap.get(key);
+        if (!candidateIdxs) continue;
+        for (let j = 0; j < candidateIdxs.length; j++) {
+          const segIdx = candidateIdxs[j];
+          if (checked.has(segIdx)) continue;
+          checked.add(segIdx);
+          const seg = roadSegments[segIdx];
+          const dx = seg.bx - seg.ax;
+          const dz = seg.bz - seg.az;
+          const lenSq = dx * dx + dz * dz;
+          let t = 0;
+          if (lenSq > 1e-6) {
+            t = Math.max(0, Math.min(1, ((vx - seg.ax) * dx + (vz - seg.az) * dz) / lenSq));
+          }
+          const px = seg.ax + t * dx;
+          const pz = seg.az + t * dz;
+          const rx = vx - px;
+          const rz = vz - pz;
+          const dSq = rx * rx + rz * rz;
+
+          const segW = seg.aw + t * (seg.bw - seg.aw);
+          const segHalfW = segW * 0.5;
+          const segCorridor = segHalfW + 1.5;
+          if (dSq <= segCorridor * segCorridor) {
+            inAnyCorridor = true;
+            const segY = seg.ay + t * (seg.by - seg.ay);
+            const segBank = seg.abank + t * (seg.bbank - seg.abank);
+            const segLowEdge = segY - segHalfW * Math.abs(Math.sin(segBank));
+            if (segLowEdge < lowestCorridorY) lowestCorridorY = segLowEdge;
+          }
+
+          if (dSq < minDistSq) {
+            minDistSq = dSq;
+            bestSeg = seg;
+            bestT = t;
+            bestPx = px;
+            bestPz = pz;
+          }
+        }
+      }
+    }
+    return { bestSeg, bestT, bestDist: Math.sqrt(minDistSq), bestPx, bestPz, lowestCorridorY, inAnyCorridor };
+  };
+
+  const clampTerrainHeight = (vx: number, vz: number, rawY: number): number => {
+    const { bestSeg, bestT, bestDist, bestPx, bestPz, lowestCorridorY, inAnyCorridor } = getNearestRoadSegment(vx, vz);
+    let vy = rawY;
+    if (bestSeg) {
+      const roadW = bestSeg.aw + bestT * (bestSeg.bw - bestSeg.aw);
+      const roadHalfW = roadW * 0.5;
+      const roadY = bestSeg.ay + bestT * (bestSeg.by - bestSeg.ay);
+      const roadBank = bestSeg.abank + bestT * (bestSeg.bbank - bestSeg.abank);
+      const segNx = bestSeg.anx + bestT * (bestSeg.bnx - bestSeg.anx);
+      const segNz = bestSeg.anz + bestT * (bestSeg.bnz - bestSeg.anz);
+
+      const isOverpass = roadY - rawY > 4.2;
+      if (!isOverpass) {
+        const latSign = Math.sign((vx - bestPx) * segNx + (vz - bestPz) * segNz) || 1;
+        const roadLowestEdgeY = roadY - roadHalfW * Math.abs(Math.sin(roadBank));
+        const roadEdgeY = roadY + latSign * (roadHalfW + 1.5) * Math.sin(roadBank);
+
+        const dClamp = roadHalfW + 1.5;
+        const dOuter = roadHalfW + 35.0;
+
+        if (inAnyCorridor || bestDist < dClamp) {
+          // Zero grass triangles ever poke above the asphalt or curbs
+          const clampCeil = (lowestCorridorY < Infinity ? lowestCorridorY : roadLowestEdgeY) - 0.18;
+          vy = Math.min(vy, clampCeil);
+        } else if (bestDist <= dOuter) {
+          // Smoothstep outer embankment transition from exact outer curb elevation out to surrounding DEM terrain
+          const u = (bestDist - dClamp) / (dOuter - dClamp);
+          const s = u * u * (3 - 2 * u);
+          vy = roadEdgeY * (1 - s) + rawY * s;
+        }
+      }
+    }
+    return vy;
+  };
 
   const posAttr = groundGeo.attributes.position;
   for (let k = 0; k < posAttr.count; k++) {
     const vx = posAttr.getX(k);
     const vz = posAttr.getZ(k);
     const bgY = sampleBaseGroundY(vx, vz);
-    let vy = bgY;
-
-    const c = Math.floor(vx / CELL_SIZE);
-    const r = Math.floor(vz / CELL_SIZE);
-    const key = (c * 73856093) ^ (r * 19349663);
-    const candidateIdxs = spatialMap.get(key);
-
-    if (candidateIdxs && candidateIdxs.length > 0) {
-      let minDistSq = Infinity;
-      let bestSeg: RoadSegment | null = null;
-      let bestT = 0;
-      let bestPx = 0;
-      let bestPz = 0;
-      let lowestCorridorY = Infinity;
-      let inAnyCorridor = false;
-
-      for (let j = 0; j < candidateIdxs.length; j++) {
-        const seg = roadSegments[candidateIdxs[j]];
-        const dx = seg.bx - seg.ax;
-        const dz = seg.bz - seg.az;
-        const lenSq = dx * dx + dz * dz;
-        let t = 0;
-        if (lenSq > 1e-6) {
-          t = Math.max(0, Math.min(1, ((vx - seg.ax) * dx + (vz - seg.az) * dz) / lenSq));
-        }
-        const px = seg.ax + t * dx;
-        const pz = seg.az + t * dz;
-        const rx = vx - px;
-        const rz = vz - pz;
-        const dSq = rx * rx + rz * rz;
-
-        const segW = seg.aw + t * (seg.bw - seg.aw);
-        const segHalfW = segW * 0.5;
-        const segCorridor = segHalfW + KERB_WIDTH + RUNOFF_MARGIN + 3.0;
-        if (dSq <= segCorridor * segCorridor) {
-          inAnyCorridor = true;
-          const segY = seg.ay + t * (seg.by - seg.ay);
-          const segBank = seg.abank + t * (seg.bbank - seg.abank);
-          const segLowEdge = segY - segHalfW * Math.abs(Math.sin(segBank));
-          if (segLowEdge < lowestCorridorY) lowestCorridorY = segLowEdge;
-        }
-
-        if (dSq < minDistSq) {
-          minDistSq = dSq;
-          bestSeg = seg;
-          bestT = t;
-          bestPx = px;
-          bestPz = pz;
-        }
-      }
-
-      if (bestSeg) {
-        const dist = Math.sqrt(minDistSq);
-        const roadW = bestSeg.aw + bestT * (bestSeg.bw - bestSeg.aw);
-        const roadHalfW = roadW * 0.5;
-        const roadY = bestSeg.ay + bestT * (bestSeg.by - bestSeg.ay);
-        const roadBank = bestSeg.abank + bestT * (bestSeg.bbank - bestSeg.abank);
-        const segNx = bestSeg.anx + bestT * (bestSeg.bnx - bestSeg.anx);
-        const segNz = bestSeg.anz + bestT * (bestSeg.bnz - bestSeg.anz);
-        const latSign = Math.sign((vx - bestPx) * segNx + (vz - bestPz) * segNz) || 1;
-        const bankEdgeY = roadY + latSign * (roadHalfW + 4.8) * Math.sin(roadBank);
-        const lowestEdgeY = roadY - roadHalfW * Math.abs(Math.sin(roadBank));
-
-        const innerCorridor = roadHalfW + KERB_WIDTH + RUNOFF_MARGIN + 2.5;
-        const outerEmbankment = innerCorridor + EMBANKMENT_SPAN;
-
-        if (inAnyCorridor || dist <= innerCorridor) {
-          // Deterministic vertex clamping strictly beneath lowest road/apron/kerb edge -> ZERO grass-over-surface clipping
-          const clampCeil = (lowestCorridorY < Infinity ? lowestCorridorY : lowestEdgeY) - 0.24;
-          vy = clampCeil;
-        } else if (dist < outerEmbankment) {
-          // Smoothstep outer embankment blend over 36m from bank-aware road edge out to continuous surrounding DEM terrain
-          const u = (dist - innerCorridor) / EMBANKMENT_SPAN;
-          const smooth = u * u * (3 - 2 * u);
-          const innerAnchorY = Math.min(bankEdgeY, lowestEdgeY) - 0.20;
-          vy = innerAnchorY * (1 - smooth) + bgY * smooth;
-        }
-      }
-    }
-
+    const vy = clampTerrainHeight(vx, vz, bgY);
     posAttr.setY(k, vy);
   }
   groundGeo.computeVertexNormals();
@@ -483,6 +495,15 @@ export function buildTrackEnvironment(
         const d = c + 1;
         indices.push(a, b, c, b, d, c);
       }
+    }
+
+    // Strict post-generation height clamp across all skirt mesh vertices:
+    // Ensures zero skirt triangles ever poke above the asphalt or curbs
+    for (let k = 0; k < vertCount; k++) {
+      const vx = positions[k * 3];
+      const vy = positions[k * 3 + 1];
+      const vz = positions[k * 3 + 2];
+      positions[k * 3 + 1] = clampTerrainHeight(vx, vz, vy);
     }
 
     const geo = new THREE.BufferGeometry();

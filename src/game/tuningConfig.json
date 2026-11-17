@@ -1,0 +1,8 @@
+{
+  "downforceScale": 0.9862,
+  "brakeForceScale": 1,
+  "dragScale": 1.0893,
+  "lowSpeedGripScale": 0.9904,
+  "aiCornerSpeedScale": 0.9825,
+  "aiBrakeMarginScale": 1.0609
+}

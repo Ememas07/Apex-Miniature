@@ -22,6 +22,7 @@ import {
   importTrackFromString,
 } from './customTracks';
 import {
+  ACTIVE_TUNING_CONFIG,
   computeAIControl,
   computeClassGripProfile,
   computeRoadSurfaceTilt,
@@ -33,6 +34,12 @@ import {
   stepCarPhysics,
 } from './physics';
 import { isPositionSafeFromTrack } from '../three/trackBuilder';
+import { computeCameraFrame } from './camera';
+import {
+  computeWarmFundamentalHz,
+  makeSoftClippingCurve,
+  resolveAcousticProfile,
+} from './audio';
 
 test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.HYPERCAR_GTP).length, 12);
@@ -1335,6 +1342,212 @@ test('Class Grip/Downforce Hierarchy & Monaco Hairpin Clean AI Navigation', () =
   assert.ok(eff(lmp2) > eff(gt3), 'LMP2 must outperform GT3 in high-speed grip');
   assert.ok(eff(gt3) > eff(gt4), 'GT3 must outperform GT4 in high-speed grip');
   assert.ok(eff(gt4) > eff(coupe), 'GT4 must outperform Track Coupe in high-speed grip');
+});
+
+test('Functional Reverse Gear (R): Automatic and Manual shifting with ~35 km/h backward acceleration', () => {
+  const spa = compileTrack(TRACKS.find((t) => t.id === 'spa-francorchamps')!);
+  const carSpec = CARS.find((c) => c.id === 'porsche-911-gt3-r')!;
+
+  // 1. Automatic mode
+  const autoCar = createCarSimState({
+    id: 'auto-rev',
+    name: 'Auto Tester',
+    isPlayer: true,
+    carId: carSpec.id,
+    livery: carSpec.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+    transmissionMode: 'auto',
+  });
+
+  // Stationary car holding brake engages Reverse (gear = -1)
+  stepCarPhysics(autoCar, { throttle: 0, brake: 1, steer: 0, specialPressed: false }, spa, 1 / 60, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [autoCar],
+  });
+  assert.equal(autoCar.gear, -1, 'Holding brake when stationary must engage Reverse gear (-1)');
+
+  // Accelerates backward up to ~35 km/h (~9.72 m/s)
+  for (let i = 0; i < 180; i++) {
+    stepCarPhysics(autoCar, { throttle: 0, brake: 1, steer: 0, specialPressed: false }, spa, 1 / 60, {
+      trackWetness: 0,
+      totalLaps: 5,
+      isQualifying: false,
+      allCars: [autoCar],
+    });
+  }
+  const speedKmh = autoCar.speed * 3.6;
+  assert.ok(speedKmh >= 30 && speedKmh <= 36, `Reverse speed should plateau near 35 km/h, got ${speedKmh.toFixed(1)} km/h`);
+
+  // Pressing throttle shifts back to 1st gear
+  stepCarPhysics(autoCar, { throttle: 1, brake: 0, steer: 0, specialPressed: false }, spa, 1 / 60, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [autoCar],
+  });
+  assert.equal(autoCar.gear, 1, 'Pressing throttle while in Reverse must shift back to 1st gear');
+
+  // 2. Manual mode
+  const manCar = createCarSimState({
+    id: 'man-rev',
+    name: 'Manual Tester',
+    isPlayer: true,
+    carId: carSpec.id,
+    livery: carSpec.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+    transmissionMode: 'manual',
+  });
+  assert.equal(manCar.gear, 1);
+
+  // Shift down below 1 when stationary engages R
+  stepCarPhysics(manCar, { throttle: 0, brake: 0, steer: 0, specialPressed: false, shiftDown: true }, spa, 1 / 60, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [manCar],
+  });
+  assert.equal(manCar.gear, -1, 'Shifting down from 1st gear below 3 m/s must engage Reverse gear (-1)');
+
+  // Shift up returns to 1st gear
+  stepCarPhysics(manCar, { throttle: 0, brake: 0, steer: 0, specialPressed: false, shiftUp: true }, spa, 1 / 60, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [manCar],
+  });
+  assert.equal(manCar.gear, 1, 'Shifting up from Reverse must return to 1st gear');
+});
+
+test('Hood Cam Rig: locked directly to hood/nose transform at 0 km/h and 350 km/h with zero velocity lag', () => {
+  const dummyCar0 = { x: 100, y: 10, z: 200, heading: 0.5, speed: 0 };
+  const dummyCarFast = { x: 100, y: 10, z: 200, heading: 0.5, speed: 350 / 3.6 };
+
+  const frame0 = computeCameraFrame('hood', dummyCar0, 0, 0);
+  const frameFast = computeCameraFrame('hood', dummyCarFast, 0, 0);
+
+  // When locked, positions at 0 km/h and 350 km/h for the same transform are identical (zero velocity lag)
+  assert.ok(frame0.isLocked, 'Hood camera must be rigidly locked');
+  assert.ok(frameFast.isLocked, 'Hood camera must be rigidly locked at high speed');
+  assert.equal(frame0.fov, frameFast.fov, 'FOV must remain constant at 65 with zero backward speed kick');
+  assert.equal(frame0.position.x, frameFast.position.x, 'Position must not lag backward with velocity');
+  assert.equal(frame0.position.y, frameFast.position.y);
+  assert.equal(frame0.position.z, frameFast.position.z);
+
+  // Verify hood mount offset matches carPos + forward * (carLength * 0.24) + up * (carHeight * 0.68)
+  const expectedForward = 4.4 * 0.24;
+  const expectedUp = 1.18 * 0.68;
+  const expX = dummyCar0.x + Math.sin(0.5) * expectedForward;
+  const expY = dummyCar0.y + expectedUp;
+  const expZ = dummyCar0.z + Math.cos(0.5) * expectedForward;
+
+  assert.ok(Math.abs(frame0.position.x - expX) < 0.01);
+  assert.ok(Math.abs(frame0.position.y - expY) < 0.01);
+  assert.ok(Math.abs(frame0.position.z - expZ) < 0.01);
+});
+
+test('Manual Transmission Forward Gear Persistence & Tuning Bounds Safety', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const gt3 = CARS.find((c) => c.id === 'porsche-911-gt3-r')!;
+  const car = createCarSimState({
+    id: 'manual-fwd',
+    name: 'Manual Forward Tester',
+    isPlayer: true,
+    carId: gt3.id,
+    livery: gt3.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monza,
+    compound: 'soft',
+    transmissionMode: 'manual',
+  });
+
+  // Shift 1 -> 2 -> 3 and ensure gear persists across subsequent physics ticks
+  stepCarPhysics(car, { throttle: 0.4, brake: 0, steer: 0, specialPressed: false, shiftUp: true }, monza, 1 / 60, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [car],
+  });
+  assert.equal(car.gear, 2, 'Manual shiftUp from 1 must enter 2nd gear');
+
+  stepCarPhysics(car, { throttle: 0.4, brake: 0, steer: 0, specialPressed: false, shiftUp: true }, monza, 1 / 60, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [car],
+  });
+  assert.equal(car.gear, 3, 'Manual shiftUp from 2 must enter 3rd gear');
+
+  for (let i = 0; i < 30; i++) {
+    stepCarPhysics(car, { throttle: 0.6, brake: 0, steer: 0, specialPressed: false }, monza, 1 / 60, {
+      trackWetness: 0,
+      totalLaps: 5,
+      isQualifying: false,
+      allCars: [car],
+    });
+  }
+  assert.equal(car.gear, 3, 'Manual gear 3 must not be overwritten by auto-shift logic');
+
+  stepCarPhysics(car, { throttle: 0.4, brake: 0, steer: 0, specialPressed: false, shiftDown: true }, monza, 1 / 60, {
+    trackWetness: 0,
+    totalLaps: 5,
+    isQualifying: false,
+    allCars: [car],
+  });
+  assert.equal(car.gear, 2, 'Manual shiftDown from 3 must return to 2nd gear');
+
+  // Verify tuning bounds enforce physical realism (AI never exceeds 100% physical tire grip)
+  assert.ok(ACTIVE_TUNING_CONFIG.aiCornerSpeedScale >= 0.75 && ACTIVE_TUNING_CONFIG.aiCornerSpeedScale <= 1.0);
+  assert.ok(ACTIVE_TUNING_CONFIG.aiBrakeMarginScale >= 0.85 && ACTIVE_TUNING_CONFIG.aiBrakeMarginScale <= 1.4);
+  assert.ok(ACTIVE_TUNING_CONFIG.downforceScale >= 0.55 && ACTIVE_TUNING_CONFIG.downforceScale <= 1.35);
+  assert.ok(ACTIVE_TUNING_CONFIG.brakeForceScale >= 0.55 && ACTIVE_TUNING_CONFIG.brakeForceScale <= 1.35);
+  assert.ok(ACTIVE_TUNING_CONFIG.dragScale >= 0.65 && ACTIVE_TUNING_CONFIG.dragScale <= 1.45);
+  assert.ok(ACTIVE_TUNING_CONFIG.lowSpeedGripScale >= 0.65 && ACTIVE_TUNING_CONFIG.lowSpeedGripScale <= 1.3);
+});
+
+test('Acoustic Engine Synthesis & Spa Eau Rouge DEM Alignment', () => {
+  // 1. Formula E has strictly zero combustion gain
+  const feProfile = resolveAcousticProfile('fe-porsche-99x', 'electric', CarClassId.FORMULA_E);
+  assert.equal(feProfile.type, 'ELECTRIC_EV');
+  assert.equal(feProfile.combustionGain, 0);
+  assert.equal(computeWarmFundamentalHz(feProfile, 0.8).baseHz, 0);
+
+  // 2. Non-hybrid Hypercars (Valkyrie V12 & Glickenhaus SCG 007) suppress hybrid whine
+  const valk = resolveAcousticProfile('aston-valkyrie-lmh', 'v12', CarClassId.HYPERCAR_GTP);
+  const scg = resolveAcousticProfile('glickenhaus-scg-007', 'v8-hybrid', CarClassId.HYPERCAR_GTP);
+  assert.equal(valk.type, 'V12_NA');
+  assert.equal(valk.hasHybridWhine, false);
+  assert.equal(scg.hasHybridWhine, false);
+
+  // 3. 2005 V10 & Flat-6 stay strictly within warm 68..240 Hz fundamental band and sweep smoothly across RPM
+  const v10 = resolveAcousticProfile('f1-05-renault', 'v10', CarClassId.F1_2005);
+  const v10Idle = computeWarmFundamentalHz(v10, 0.0, 0.0);
+  const v10Mid = computeWarmFundamentalHz(v10, 0.5, 0.8);
+  const v10Red = computeWarmFundamentalHz(v10, 1.0, 1.0);
+  assert.ok(v10Idle.baseHz >= 68 && v10Red.baseHz <= 240, `Fundamental Hz out of warm band: ${v10Idle.baseHz}..${v10Red.baseHz}`);
+  assert.ok(v10Idle.baseHz < v10Mid.baseHz && v10Mid.baseHz < v10Red.baseHz, 'Fundamental Hz must rise smoothly across full RPM range');
+  assert.ok(v10Red.filterHz > v10Idle.filterHz, 'WOT filter cutoff must open smoothly above idle');
+
+  const flat6 = resolveAcousticProfile('porsche-911-gt3-r', 'flat6', CarClassId.GT3);
+  assert.equal(flat6.type, 'FLAT6_BOXER');
+
+  // 4. Soft-clipping curve bounds & symmetry
+  const curve = makeSoftClippingCurve(22);
+  assert.equal(curve.length, 1024);
+  assert.ok(curve[0] < 0 && curve[curve.length - 1] > 0);
+  assert.ok(curve[0] >= -1.01 && curve[curve.length - 1] <= 1.01);
+
+  // 5. Spa Eau Rouge valley & Raidillon climb alignment
+  const spa = compileTrack(TRACKS.find((t) => t.id === 'spa-francorchamps')!);
+  const eauRougeSample = sampleTrackAtT(spa, 0.082);
+  const raidillonCrest = sampleTrackAtT(spa, 0.145);
+  assert.ok(eauRougeSample.y <= -20, `Expected Eau Rouge valley <= -20m, got ${eauRougeSample.y.toFixed(1)}m`);
+  assert.ok(raidillonCrest.y >= 52, `Expected Raidillon crest >= +52m, got ${raidillonCrest.y.toFixed(1)}m`);
 });
 
 

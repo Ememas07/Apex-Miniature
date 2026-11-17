@@ -65,7 +65,7 @@ export default function App() {
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
     const cam = params.get('camera') as CameraMode;
-    return cam === 'isometric' || cam === 'high-chase' || cam === 'chase-34' ? cam : 'chase-34';
+    return cam === 'isometric' || cam === 'high-chase' || cam === 'chase-34' || cam === 'hood' ? cam : 'chase-34';
   });
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
@@ -176,7 +176,7 @@ export default function App() {
 
   const handleCycleCamera = useCallback(() => {
     setCameraMode((prev) =>
-      prev === 'chase-34' ? 'high-chase' : prev === 'high-chase' ? 'isometric' : 'chase-34',
+      prev === 'chase-34' ? 'hood' : prev === 'hood' ? 'high-chase' : prev === 'high-chase' ? 'isometric' : 'chase-34',
     );
   }, []);
 

@@ -339,7 +339,7 @@ export function RaceHUD({
             <div className="text-center">
               <span className="text-[10px] text-slate-400 uppercase block">Gear</span>
               <span className="text-2xl font-display font-bold text-amber-400 tabular-nums leading-none">
-                {hud.gear}
+                {hud.gear === -1 ? 'R' : hud.gear}
               </span>
             </div>
 

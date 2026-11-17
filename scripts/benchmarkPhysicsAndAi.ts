@@ -198,8 +198,11 @@ function measureStraightLineDyno() {
   return results;
 }
 
-function runFlyingLapBenchmark() {
-  const compiledTracks = BENCHMARK_TRACK_IDS.map((id) =>
+function runFlyingLapBenchmark(filterPairs?: Array<{ trackId: string; classId: CarClassId }>) {
+  const trackIds = filterPairs
+    ? Array.from(new Set(filterPairs.map((p) => p.trackId)))
+    : [...BENCHMARK_TRACK_IDS];
+  const compiledTracks = trackIds.map((id) =>
     compileTrack(TRACKS.find((t) => t.id === id)!),
   );
 
@@ -221,7 +224,10 @@ function runFlyingLapBenchmark() {
 
   for (const track of compiledTracks) {
     const halfW = track.spec.trackWidth * 0.5;
-    for (const spec of CARS) {
+    const carsForTrack = filterPairs
+      ? CARS.filter((c) => filterPairs.some((p) => p.trackId === track.spec.id && p.classId === c.classId))
+      : CARS;
+    for (const spec of carsForTrack) {
       const car = createCarSimState({
         id: spec.id,
         name: spec.name,
@@ -333,6 +339,37 @@ function runFlyingLapBenchmark() {
 }
 
 function main() {
+  if (process.argv.includes('--json')) {
+    const targetPairs: Array<{ trackId: string; classId: CarClassId }> = [
+      { trackId: 'spa-francorchamps', classId: CarClassId.GT3 },
+      { trackId: 'spa-francorchamps', classId: CarClassId.HYPERCAR_GTP },
+      { trackId: 'monza', classId: CarClassId.GT3 },
+      { trackId: 'suzuka', classId: CarClassId.F1_2026 },
+      { trackId: 'monaco', classId: CarClassId.F1_2026 },
+      { trackId: 'le-mans', classId: CarClassId.HYPERCAR_GTP },
+    ];
+    const laps = runFlyingLapBenchmark(targetPairs);
+    const jsonRows = targetPairs
+      .map((pair) => {
+        const sub = laps
+          .filter((l) => l.trackId === pair.trackId && l.classId === pair.classId)
+          .sort((a, b) => a.totalLap - b.totalLap);
+        const best = sub[0];
+        if (!best) return null;
+        return {
+          track: pair.trackId,
+          carClass: pair.classId,
+          lapSec: Number(best.totalLap.toFixed(3)),
+          trapKmh: Number(best.trapKmh.toFixed(2)),
+          wallHits: sub.reduce((s, r) => s + r.wallHits, 0),
+          offTrackPct: Number(Math.max(...sub.map((r) => r.offTrackPct)).toFixed(3)),
+        };
+      })
+      .filter(Boolean);
+    console.log(JSON.stringify(jsonRows));
+    return;
+  }
+
   console.log(`Running straight-line dyno across all ${CARS.length} cars...`);
   const dyno = measureStraightLineDyno();
   console.log(`Running AI flying laps (${CARS.length} cars × ${BENCHMARK_TRACK_IDS.length} circuits = ${CARS.length * BENCHMARK_TRACK_IDS.length} laps)...`);

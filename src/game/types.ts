@@ -138,7 +138,7 @@ export type AIDifficulty = 'Rookie' | 'Amateur' | 'Pro' | 'Alien';
 
 export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffic-Smart';
 
-export type CameraMode = 'chase-34' | 'high-chase' | 'isometric';
+export type CameraMode = 'chase-34' | 'hood' | 'high-chase' | 'isometric';
 
 export type PitServiceType = 'splash-go' | 'full-service';
 

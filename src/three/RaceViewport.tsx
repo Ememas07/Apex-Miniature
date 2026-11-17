@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { computeCameraFrame } from '../game/camera';
 import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from '../game/cars';
 import { MultiplayerClient } from '../game/multiplayer';
 import {
@@ -381,12 +382,9 @@ export function RaceViewport(props: RaceViewportProps) {
       // Position camera initially behind player or lead car
       const anchor = newCars.find((c) => c.isPlayer) ?? newCars[0];
       if (anchor) {
-        _camCurrPos.set(
-          anchor.x - Math.sin(anchor.heading) * 14,
-          anchor.y + 9,
-          anchor.z - Math.cos(anchor.heading) * 14,
-        );
-        _camCurrLook.set(anchor.x, anchor.y + 0.5, anchor.z);
+        const initFrame = computeCameraFrame(propsRef.current.cameraMode, anchor, 0, 0);
+        _camCurrPos.set(initFrame.position.x, initFrame.position.y, initFrame.position.z);
+        _camCurrLook.set(initFrame.lookAt.x, initFrame.lookAt.y, initFrame.lookAt.z);
         camera.position.copy(_camCurrPos);
         camera.lookAt(_camCurrLook);
       }
@@ -668,54 +666,58 @@ export function RaceViewport(props: RaceViewportProps) {
           });
         }
 
-        // Camera Rig with Exponential Damping + Speed FOV + Trauma Shake
+        // Camera Rig: Rigid Hood Cam or Spring-Damped Chase Cam with Speed FOV & Trauma Shake
         if (playerCar) {
           const mode = p.cameraMode;
-          const backDist = mode === 'chase-34' ? 14.5 : mode === 'high-chase' ? 21 : 24;
-          const height = mode === 'chase-34' ? 9.5 : mode === 'high-chase' ? 16.5 : 22;
-          const lookAhead = mode === 'isometric' ? 4 : 8.5;
+          const trkSample = sampleTrackAtT(sim.compiledTrack, playerCar.trackT);
+          const fallbackTilt = computeRoadSurfaceTilt(trkSample, playerCar.heading);
+          const pPitch = playerCar.pitch ?? fallbackTilt.pitchRad;
+          const pRoll = playerCar.roll ?? fallbackTilt.rollRad;
 
-          if (mode === 'isometric') {
-            _camDesiredPos.set(playerCar.x - 16, playerCar.y + height, playerCar.z - 16);
+          const camFrame = computeCameraFrame(mode, playerCar, pPitch, pRoll);
+
+          if (camFrame.isLocked) {
+            // Hood Cam: locked rigidly to hood/nose transform, zero velocity-based lag or backward trailing
+            _camCurrPos.set(camFrame.position.x, camFrame.position.y, camFrame.position.z);
+            _camCurrLook.set(camFrame.lookAt.x, camFrame.lookAt.y, camFrame.lookAt.z);
+            camera.position.copy(_camCurrPos);
+            camera.lookAt(_camCurrLook);
+            if (Math.abs(camera.fov - camFrame.fov) > 0.05) {
+              camera.fov = camFrame.fov;
+              camera.updateProjectionMatrix();
+            }
           } else {
-            _camDesiredPos.set(
-              playerCar.x - Math.sin(playerCar.heading) * backDist,
-              playerCar.y + height,
-              playerCar.z - Math.cos(playerCar.heading) * backDist,
-            );
+            _camDesiredPos.set(camFrame.position.x, camFrame.position.y, camFrame.position.z);
+            _camDesiredLook.set(camFrame.lookAt.x, camFrame.lookAt.y, camFrame.lookAt.z);
+
+            const dampPos = 1 - Math.exp(-8.5 * dt);
+            const dampLook = 1 - Math.exp(-12 * dt);
+            _camCurrPos.lerp(_camDesiredPos, dampPos);
+            _camCurrLook.lerp(_camDesiredLook, dampLook);
+
+            camera.position.copy(_camCurrPos);
+            camera.lookAt(_camCurrLook);
+
+            if (Math.abs(camera.fov - camFrame.fov) > 0.1) {
+              camera.fov += (camFrame.fov - camera.fov) * Math.min(1, dt * 6);
+              camera.updateProjectionMatrix();
+            }
           }
-          _camDesiredLook.set(
-            playerCar.x + Math.sin(playerCar.heading) * lookAhead,
-            playerCar.y + 0.6,
-            playerCar.z + Math.cos(playerCar.heading) * lookAhead,
-          );
 
-          const dampPos = 1 - Math.exp(-8.5 * dt);
-          const dampLook = 1 - Math.exp(-12 * dt);
-          _camCurrPos.lerp(_camDesiredPos, dampPos);
-          _camCurrLook.lerp(_camDesiredLook, dampLook);
-
-          camera.position.copy(_camCurrPos);
           if (sim.trauma > 0.005) {
             const shake = sim.trauma * sim.trauma * 0.45;
             camera.position.x += (Math.random() - 0.5) * shake;
             camera.position.y += (Math.random() - 0.5) * shake;
             sim.trauma = Math.max(0, sim.trauma - dt * 2.4);
           }
-          camera.lookAt(_camCurrLook);
-
-          // Speed FOV kick
-          const targetFov = mode === 'isometric' ? 42 : 48 + Math.min(12, (playerCar.speed / 55) * 10);
-          if (Math.abs(camera.fov - targetFov) > 0.1) {
-            camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
-            camera.updateProjectionMatrix();
-          }
 
           // Engine audio synthesis
           const liveSpeedKmh = Math.round(playerCar.speed * SPEED_KMH_FACTOR);
+          const engineLoad =
+            playerCar.gear === -1 && playerCar.transmissionMode !== 'manual' ? brake : throttle;
           sim.audio.updateEngine(
             playerCar.rpmNormalized,
-            throttle,
+            engineLoad,
             playerCar.carSpec.engineType,
             sim.countdown <= 0,
             playerCar.carSpec.classId,
@@ -751,7 +753,7 @@ export function RaceViewport(props: RaceViewportProps) {
         // Subtle die-cast suspension roll in corners
         rig.bodyGroup.rotation.z = -c.steerAngle * Math.min(1, c.speed / 30) * 0.09;
 
-        const wheelSpin = (c.speed / 0.35) * dt;
+        const wheelSpin = (((c.gear === -1 ? -1 : 1) * c.speed) / 0.35) * dt;
         for (const w of rig.allWheels) {
           w.rotation.x += wheelSpin;
         }
