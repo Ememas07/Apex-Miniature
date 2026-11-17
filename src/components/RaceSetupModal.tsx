@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { X, Users, Flag, CloudRain, Sun, CheckCircle, Clock, Plus, Edit3, Trash2, Share2, Upload } from 'lucide-react';
-import { CAR_CLASSES, CARS, getCarById } from '../game/cars';
-import { TRACKS, compileTrack, getTrackById } from '../game/tracks';
+import { X, Users, Flag, CloudRain, Sun, CheckCircle, Clock, Plus, Edit3, Trash2, Share2, Upload, Search } from 'lucide-react';
+import { CAR_CLASSES, CARS, filterCars, getCarById } from '../game/cars';
+import { TRACKS, compileTrack, filterTracks, getTrackById } from '../game/tracks';
 import {
   deleteCustomTrack,
   exportTrackToShareCode,
@@ -95,6 +95,8 @@ export function RaceSetupModal({
 }: RaceSetupModalProps) {
   const [tab, setTab] = useState<SetupTab>('track');
   const [regionFilter, setRegionFilter] = useState<'Flagship' | TrackRegion | 'All'>('Flagship');
+  const [trackSearch, setTrackSearch] = useState('');
+  const [paddockCarSearch, setPaddockCarSearch] = useState('');
   const [driverName, setDriverName] = useState('Player 1');
   const [joinCode, setJoinCode] = useState('');
   const [isReady, setIsReady] = useState(false);
@@ -124,12 +126,8 @@ export function RaceSetupModal({
     refreshCustomTracks();
   }, [customTracksNonce]);
 
-  const filteredTracks = TRACKS.filter((t) => {
-    if (regionFilter === 'Flagship') return t.flagship;
-    if (regionFilter === 'All') return true;
-    if (regionFilter === 'Custom') return false;
-    return t.region === regionFilter;
-  });
+  const filteredTracks = filterTracks(TRACKS, customTracks, regionFilter, trackSearch);
+  const filteredPaddockCars = filterCars(CARS, paddockCarSearch, 'ALL');
 
   const toggleClass = (cid: CarClassId) => {
     const exists = config.activeClasses.includes(cid);
@@ -237,67 +235,92 @@ export function RaceSetupModal({
         <div className="flex-1 overflow-y-auto custom-scroll p-6">
           {tab === 'track' && (
             <div className="space-y-4">
-              {/* Region Filters */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {(['Flagship', 'Americas', 'Europe', 'Asia-Pacific & Middle East', 'Custom', 'All'] as const).map(
-                    (rf) => {
-                      const count = rf === 'Custom' ? customTracks.length : rf === 'All' ? TRACKS.length : undefined;
-                      return (
-                        <button
-                          key={rf}
-                          type="button"
-                          onClick={() => {
-                            setRegionFilter(rf);
-                            if (rf === 'Custom') refreshCustomTracks();
-                          }}
-                          className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                            regionFilter === rf
-                              ? 'bg-red-600 text-white'
-                              : 'bg-[#171c26] text-slate-300 hover:bg-[#1f2634]'
-                          }`}
-                        >
-                          <span>{rf === 'Flagship' ? 'Flagship 10' : rf === 'Custom' ? 'Custom CAD' : rf}</span>
-                          {count !== undefined && (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/40 text-slate-300 font-mono">
-                              {count}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    },
+              {/* Track Search Bar & Region Filters */}
+              <div className="space-y-3">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="track-search-input"
+                    type="text"
+                    value={trackSearch}
+                    onChange={(e) => setTrackSearch(e.target.value)}
+                    placeholder="Search circuits by name, country, series (F1, WEC, IMSA), or direction (CW / CCW)..."
+                    aria-label="Search circuits"
+                    className="w-full pl-8 pr-8 py-2 rounded bg-[#0c1017] border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500"
+                  />
+                  {trackSearch.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setTrackSearch('')}
+                      aria-label="Clear circuit search"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
-                  {regionFilter === 'Custom' && onOpenStudio && (
-                    <button
-                      type="button"
-                      data-testid="btn-new-custom-track"
-                      onClick={() => onOpenStudio()}
-                      className="flex items-center gap-1 px-3 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      New in Studio
-                    </button>
-                  )}
-                  {regionFilter === 'Custom' && (
-                    <button
-                      type="button"
-                      data-testid="btn-import-custom-track"
-                      onClick={() => {
-                        setImportErr(null);
-                        setImportCodeInput('');
-                        setImportModalOpen(true);
-                      }}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#202737] hover:bg-[#283247] border border-white/10 text-slate-200 text-xs font-medium cursor-pointer"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      Import
-                    </button>
-                  )}
-                  <span className="text-xs text-slate-400 tabular-nums">
-                    Showing {regionFilter === 'Custom' ? customTracks.length : filteredTracks.length} circuits
-                  </span>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {(['Flagship', 'Americas', 'Europe', 'Asia-Pacific & Middle East', 'Custom', 'All'] as const).map(
+                      (rf) => {
+                        const count = rf === 'Custom' ? customTracks.length : rf === 'All' ? TRACKS.length : undefined;
+                        return (
+                          <button
+                            key={rf}
+                            type="button"
+                            onClick={() => {
+                              setRegionFilter(rf);
+                              if (rf === 'Custom') refreshCustomTracks();
+                            }}
+                            className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                              regionFilter === rf
+                                ? 'bg-red-600 text-white'
+                                : 'bg-[#171c26] text-slate-300 hover:bg-[#1f2634]'
+                            }`}
+                          >
+                            <span>{rf === 'Flagship' ? 'Flagship 10' : rf === 'Custom' ? 'Custom CAD' : rf}</span>
+                            {count !== undefined && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/40 text-slate-300 font-mono">
+                                {count}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      },
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {regionFilter === 'Custom' && onOpenStudio && (
+                      <button
+                        type="button"
+                        data-testid="btn-new-custom-track"
+                        onClick={() => onOpenStudio()}
+                        className="flex items-center gap-1 px-3 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        New in Studio
+                      </button>
+                    )}
+                    {regionFilter === 'Custom' && (
+                      <button
+                        type="button"
+                        data-testid="btn-import-custom-track"
+                        onClick={() => {
+                          setImportErr(null);
+                          setImportCodeInput('');
+                          setImportModalOpen(true);
+                        }}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#202737] hover:bg-[#283247] border border-white/10 text-slate-200 text-xs font-medium cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Import
+                      </button>
+                    )}
+                    <span className="text-xs text-slate-400 tabular-nums">
+                      Showing {filteredTracks.length} of {regionFilter === 'Custom' ? customTracks.length : TRACKS.length} circuits
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -321,9 +344,22 @@ export function RaceSetupModal({
                       </button>
                     )}
                   </div>
+                ) : filteredTracks.length === 0 ? (
+                  <div className="p-8 border border-dashed border-white/15 rounded-lg text-center space-y-3 bg-[#131822]/60">
+                    <div className="text-sm font-semibold text-white">
+                      No custom tracks match &ldquo;{trackSearch}&rdquo;
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTrackSearch('')}
+                      className="px-4 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      Clear search
+                    </button>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {customTracks.map((trk) => {
+                    {filteredTracks.map((trk) => {
                       const active = trk.id === config.trackId;
                       return (
                         <div
@@ -412,6 +448,22 @@ export function RaceSetupModal({
                     })}
                   </div>
                 )
+              ) : filteredTracks.length === 0 ? (
+                <div className="p-8 border border-dashed border-white/15 rounded-lg text-center space-y-3 bg-[#131822]/60">
+                  <div className="text-sm font-semibold text-white">
+                    No circuits match &ldquo;{trackSearch}&rdquo;
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Try a circuit name, country, series tag (F1, WEC, IMSA), or direction (CW / CCW).
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setTrackSearch('')}
+                    className="px-4 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-semibold cursor-pointer"
+                  >
+                    Clear search
+                  </button>
+                </div>
               ) : (
                 /* Standard Track Grid */
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -786,23 +838,79 @@ export function RaceSetupModal({
                         </span>
                       </div>
 
-                      {/* Car Picker */}
-                      <div>
-                        <label htmlFor="paddock-car-select" className="block text-[11px] text-slate-400 mb-1">
-                          Select Car Model
-                        </label>
-                        <select
-                          id="paddock-car-select"
-                          value={config.playerCarId}
-                          onChange={(e) => handleSelectCarInLobby(e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded bg-[#151a24] border border-white/15 text-xs text-white focus:outline-none focus:border-red-500"
-                        >
-                          {CARS.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name} ({CAR_CLASSES[c.classId].shortName})
-                            </option>
-                          ))}
-                        </select>
+                      {/* Searchable Car Picker */}
+                      <div className="space-y-2" data-testid="paddock-car-select">
+                        <div className="flex items-center justify-between">
+                          <label htmlFor="paddock-car-search" className="text-[11px] text-slate-400">
+                            Select Car Model ({playerCar.name})
+                          </label>
+                          <span className="text-[11px] text-slate-400 tabular-nums">
+                            Showing {filteredPaddockCars.length} of {CARS.length} cars
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            id="paddock-car-search"
+                            type="text"
+                            value={paddockCarSearch}
+                            onChange={(e) => setPaddockCarSearch(e.target.value)}
+                            placeholder="Search car model, brand, or class..."
+                            aria-label="Search paddock car models"
+                            className="w-full pl-8 pr-8 py-1.5 rounded bg-[#151a24] border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500"
+                          />
+                          {paddockCarSearch.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setPaddockCarSearch('')}
+                              aria-label="Clear paddock car search"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        {filteredPaddockCars.length === 0 ? (
+                          <div className="p-3 rounded border border-dashed border-white/15 bg-[#131822] text-center space-y-2">
+                            <p className="text-[11px] text-slate-300">
+                              No cars match &ldquo;{paddockCarSearch}&rdquo;.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setPaddockCarSearch('')}
+                              className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-[11px] font-semibold text-white cursor-pointer"
+                            >
+                              Clear search
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="max-h-40 overflow-y-auto custom-scroll space-y-1 pr-1">
+                            {filteredPaddockCars.map((c) => {
+                              const selected = c.id === config.playerCarId;
+                              const clsMeta = CAR_CLASSES[c.classId];
+                              return (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  onClick={() => handleSelectCarInLobby(c.id)}
+                                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-left text-xs transition-colors cursor-pointer ${
+                                    selected
+                                      ? 'bg-[#1c2434] border-red-500 text-white'
+                                      : 'bg-[#151a24] border-white/5 text-slate-300 hover:bg-[#19202b]'
+                                  }`}
+                                >
+                                  <span className="truncate pr-2 font-medium">{c.name}</span>
+                                  <span
+                                    className="px-1.5 py-0.5 text-[10px] font-bold rounded-sm shrink-0"
+                                    style={{ backgroundColor: clsMeta.plateColor, color: clsMeta.badgeTextColor }}
+                                  >
+                                    {clsMeta.shortName}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
 
                       {/* Primary Livery Color Picker */}

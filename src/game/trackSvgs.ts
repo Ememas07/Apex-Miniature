@@ -527,5 +527,24 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
     });
   }
 
+  // Final 3D perimeter normalization preserving DEM elevation Y values untouched
+  if (smoothedWaypoints.length >= 4) {
+    for (let pass = 0; pass < 2; pass++) {
+      const curvePts = smoothedWaypoints.map((p) => new THREE.Vector3(p.x, p.y, p.z));
+      const checkCurve = new THREE.CatmullRomCurve3(curvePts, true, 'centripetal', 0.5);
+      checkCurve.arcLengthDivisions = Math.max(1500, smoothedWaypoints.length * 30, 1800);
+      const len3D = checkCurve.getLength();
+      if (len3D > 10) {
+        const ratio = targetLengthMeters / len3D;
+        if (Math.abs(ratio - 1) > 0.0002) {
+          for (let i = 0; i < smoothedWaypoints.length; i++) {
+            smoothedWaypoints[i].x = Math.round(smoothedWaypoints[i].x * ratio * 100) / 100;
+            smoothedWaypoints[i].z = Math.round(smoothedWaypoints[i].z * ratio * 100) / 100;
+          }
+        }
+      }
+    }
+  }
+
   return smoothedWaypoints;
 }
