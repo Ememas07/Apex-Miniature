@@ -23,6 +23,8 @@ const FLAGSHIP_TRACK_IDS = [
   'laguna-seca',
   'le-mans',
   'monaco',
+  'daytona-road',
+  'watkins-glen'
 ] as const;
 
 // Include flagship tracks first, followed by any additional tracks defined in TRACKS
