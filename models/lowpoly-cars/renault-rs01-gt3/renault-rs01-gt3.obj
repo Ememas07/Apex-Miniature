@@ -1,7 +1,7 @@
 # Exported by Apex Miniature objToLowPoly.mjs (.kn5 -> low-poly .obj)
-# Car: rs_01_gt3
+# Car: renault-rs01-gt3
 # Coordinate convention: +Z forward, +Y up, y=0 ground plane
-mtllib rs_01_gt3.mtl
+mtllib renault-rs01-gt3.mtl
 o BODY
 v 0.508229 0.358645 -1.902924
 vt 0 3

@@ -1,7 +1,7 @@
 # Exported by Apex Miniature objToLowPoly.mjs (.kn5 -> low-poly .obj)
-# Car: acura_nsx_gt3
+# Car: acura-nsx-gt3
 # Coordinate convention: +Z forward, +Y up, y=0 ground plane
-mtllib acura_nsx_gt3.mtl
+mtllib acura-nsx-gt3.mtl
 o WHEEL_RR
 v -0.838151 0.384588 -0.949332
 vt 0.991771 2.577889

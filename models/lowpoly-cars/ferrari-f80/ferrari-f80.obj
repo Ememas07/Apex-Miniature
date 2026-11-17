@@ -1,7 +1,7 @@
 # Exported by Apex Miniature objToLowPoly.mjs (.kn5 -> low-poly .obj)
-# Car: exmods_ferrari_f80_26
+# Car: ferrari-f80
 # Coordinate convention: +Z forward, +Y up, y=0 ground plane
-mtllib exmods_ferrari_f80_26.mtl
+mtllib ferrari-f80.mtl
 o BODY
 v 0.132302 0.507098 -1.856536
 vt 0.903248 -0.734311

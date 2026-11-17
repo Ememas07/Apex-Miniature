@@ -1,7 +1,7 @@
 # Exported by Apex Miniature objToLowPoly.mjs (.kn5 -> low-poly .obj)
-# Car: trr_ford_mustang_gt3
+# Car: ford-mustang-gt3
 # Coordinate convention: +Z forward, +Y up, y=0 ground plane
-mtllib trr_ford_mustang_gt3.mtl
+mtllib ford-mustang-gt3.mtl
 o WHEEL_LR
 v 0.685679 0.298482 -1.054635
 vt 0.539843 1.555945

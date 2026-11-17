@@ -1652,8 +1652,19 @@ test('KN5 to OBJ Converter & Livery Visualizer: smooth normals, 4 wheels on Orec
   };
 
   checkObj('oreca-07-ao');
+  checkObj('oreca-07');
   checkObj('aston-vantage-gt4');
   checkObj('aston-vantage-gt3');
+  checkObj('bentley-continental-gt3');
+  checkObj('bmw-m2-cs');
+  checkObj('ferrari-f80');
+  checkObj('genesis-gmr-001');
+  checkObj('ford-mustang-gt3');
+  checkObj('renault-rs01-gt3');
+  checkObj('lexus-rcf-gt3');
+  checkObj('bmw-m4-gt3');
+  checkObj('acura-nsx-gt3');
+  checkObj('corvette-z06-gt3r');
 
   // 2. Custom Livery Texture Support in LiveryConfig
   const customLivery: LiveryConfig = {

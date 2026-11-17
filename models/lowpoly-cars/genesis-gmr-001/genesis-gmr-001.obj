@@ -1,7 +1,7 @@
 # Exported by Apex Miniature objToLowPoly.mjs (.kn5 -> low-poly .obj)
-# Car: acf_genesis_gmr_001
+# Car: genesis-gmr-001
 # Coordinate convention: +Z forward, +Y up, y=0 ground plane
-mtllib acf_genesis_gmr_001.mtl
+mtllib genesis-gmr-001.mtl
 o BODY
 v -0.774742 0.185032 -0.755214
 vt 0.437756 1.147135

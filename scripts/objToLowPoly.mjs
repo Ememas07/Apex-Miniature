@@ -30,6 +30,23 @@ const GLASS_RE =
 const AERO_WING_RE =
   /(?:^|[_\-\s.])(WING|REAR_WING|FRONT_WING|SPOILER|AERO)(?:$|[_\-\s.\d])/i;
 
+export const CANONICAL_CAR_NAMES = {
+  acf_genesis_gmr_001: 'genesis-gmr-001',
+  acura_nsx_gt3: 'acura-nsx-gt3',
+  bentley_continental_gt3_18_acc: 'bentley-continental-gt3',
+  bmw_m4_gt3: 'bmw-m4-gt3',
+  corvette_z06_gt3r: 'corvette-z06-gt3r',
+  exmods_ferrari_f80_26: 'ferrari-f80',
+  g87: 'bmw-m2-cs',
+  lexus_rcf_gt3: 'lexus-rcf-gt3',
+  rs_01_gt3: 'renault-rs01-gt3',
+  trr_ford_mustang_gt3: 'ford-mustang-gt3',
+};
+
+export function resolveCanonicalCarName(rawName) {
+  return CANONICAL_CAR_NAMES[rawName] || rawName;
+}
+
 function printHelp() {
   console.log(`
 Apex Miniature — Batch .KN5 Car -> Low-Poly .OBJ Converter
@@ -1342,23 +1359,24 @@ function convertCarFile(kn5Path, outputDir, opts) {
     }
   }
 
-  const carOutDir = path.join(outputDir, baseName);
+  const canonicalName = resolveCanonicalCarName(baseName);
+  const carOutDir = path.join(outputDir, canonicalName);
   fs.mkdirSync(carOutDir, { recursive: true });
 
   // Clean up any legacy flat files from earlier converter versions
-  for (const legacyFile of [`${baseName}.obj`, `${baseName}.mtl`]) {
+  for (const legacyFile of [`${baseName}.obj`, `${baseName}.mtl`, `${canonicalName}.obj`, `${canonicalName}.mtl`]) {
     const legacyPath = path.join(outputDir, legacyFile);
     if (fs.existsSync(legacyPath) && fs.statSync(legacyPath).isFile()) {
       fs.unlinkSync(legacyPath);
     }
   }
 
-  const outObjPath = path.join(carOutDir, `${baseName}.obj`);
-  const outMtlPath = path.join(carOutDir, `${baseName}.mtl`);
+  const outObjPath = path.join(carOutDir, `${canonicalName}.obj`);
+  const outMtlPath = path.join(carOutDir, `${canonicalName}.mtl`);
   const outTris = writeObjAndMtl(
     outObjPath,
     outMtlPath,
-    baseName,
+    canonicalName,
     [...groupedOut.values()],
     materials,
     opts.flat,
@@ -1366,7 +1384,7 @@ function convertCarFile(kn5Path, outputDir, opts) {
 
   const wheelCount = wheelCornersSeen.size > 0 ? wheelCornersSeen.size : wheelGroupsSeen.size;
   return {
-    car: baseName,
+    car: canonicalName,
     inTris: totalInputTris,
     outTris,
     wheels: wheelCount,
