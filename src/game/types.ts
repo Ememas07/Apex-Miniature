@@ -80,6 +80,13 @@ export interface LiveryConfig {
   customTexture?: string; // Optional data URL or texture path for custom painted liveries
 }
 
+export interface CarDimensions {
+  length: number; // in meters (e.g. 5.00 for Hypercars, 4.75 for GT3, 3.84 for Clio V6, 5.50 for F1)
+  width?: number; // in meters
+  height?: number; // in meters
+  wheelbase?: number; // in meters
+}
+
 export interface CarLiveryPreset {
   id: string;
   name: string;
@@ -102,6 +109,8 @@ export interface CarSpec {
   defaultLivery: LiveryConfig;
   modelId?: string; // override model folder if different from carSpec.id
   liveries?: CarLiveryPreset[]; // multiple selectable liveries for single-chassis classes (e.g. F1 2026, F1 2021, LMP2)
+  dimensions?: CarDimensions;
+  length?: number; // Real-world car length in meters
 }
 
 export type TrackRegion = 'Americas' | 'Europe' | 'Asia-Pacific & Middle East' | 'Custom';

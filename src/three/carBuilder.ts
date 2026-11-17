@@ -9,6 +9,229 @@ import {
   createWindshieldBannerTexture,
 } from './proceduralTextures';
 
+import {
+  REAL_WORLD_CAR_DIMENSIONS,
+  REAL_WORLD_CAR_LENGTHS,
+  getRealWorldCarDimensions,
+  getRealWorldCarLength,
+} from '../game/cars';
+
+export {
+  REAL_WORLD_CAR_DIMENSIONS,
+  REAL_WORLD_CAR_LENGTHS,
+  getRealWorldCarDimensions,
+  getRealWorldCarLength,
+};
+
+export type CarUVZone = 'TOP' | 'LEFT_SIDE' | 'RIGHT_SIDE' | 'FRONT' | 'REAR' | 'WINGS_AERO_TRIM';
+
+export interface UVZoneRect {
+  uMin: number;
+  uMax: number;
+  vMin: number;
+  vMax: number;
+  label: string;
+}
+
+/**
+ * Deterministic 6-zone non-overlapping UV atlas layout inside [0, 1] x [0, 1] with 0.02 zone margins.
+ * Matches scripts/objToLowPoly.mjs 1:1 so procedural and converted cars share identical UV templates.
+ */
+export const SIX_ZONE_UV_ATLAS: Record<CarUVZone, UVZoneRect> = {
+  TOP: { uMin: 0.02, uMax: 0.44, vMin: 0.02, vMax: 0.98, label: 'Top (Roof / Hood / Decklid)' },
+  LEFT_SIDE: { uMin: 0.46, uMax: 0.98, vMin: 0.76, vMax: 0.98, label: 'Left Side' },
+  RIGHT_SIDE: { uMin: 0.46, uMax: 0.98, vMin: 0.52, vMax: 0.74, label: 'Right Side' },
+  FRONT: { uMin: 0.46, uMax: 0.71, vMin: 0.27, vMax: 0.50, label: 'Front Bumper / Nose' },
+  REAR: { uMin: 0.73, uMax: 0.98, vMin: 0.27, vMax: 0.50, label: 'Rear Bumper / Diffuser' },
+  WINGS_AERO_TRIM: { uMin: 0.46, uMax: 0.98, vMin: 0.02, vMax: 0.25, label: 'Wings / Aero / Trim' },
+};
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+function projectPointToSixZoneUV(
+  x: number,
+  y: number,
+  z: number,
+  zone: CarUVZone,
+  bounds: THREE.Box3,
+  isUnderside: boolean,
+): [number, number] {
+  const minX = bounds.min.x;
+  const maxX = bounds.max.x;
+  const minY = bounds.min.y;
+  const maxY = bounds.max.y;
+  const minZ = bounds.min.z;
+  const maxZ = bounds.max.z;
+  const spanX = Math.max(1e-4, maxX - minX);
+  const spanY = Math.max(1e-4, maxY - minY);
+  const spanZ = Math.max(1e-4, maxZ - minZ);
+
+  let rect = SIX_ZONE_UV_ATLAS[zone];
+  let nu = 0.5;
+  let nv = 0.5;
+
+  if (zone === 'TOP') {
+    // Nose (+Z) toward top of UV (vMax), left/right (+X/-X) across u
+    nu = (maxX - x) / spanX;
+    nv = (z - minZ) / spanZ;
+  } else if (zone === 'LEFT_SIDE') {
+    nu = (z - minZ) / spanZ;
+    nv = (y - minY) / spanY;
+  } else if (zone === 'RIGHT_SIDE') {
+    nu = (maxZ - z) / spanZ;
+    nv = (y - minY) / spanY;
+  } else if (zone === 'FRONT') {
+    nu = (maxX - x) / spanX;
+    nv = (y - minY) / spanY;
+  } else if (zone === 'REAR') {
+    nu = (x - minX) / spanX;
+    nv = (y - minY) / spanY;
+  } else {
+    // WINGS_AERO_TRIM: sub-partition aero/wings (left half) vs underside/trim (right half) so they never overlap
+    rect = isUnderside
+      ? { uMin: 0.73, uMax: 0.98, vMin: 0.02, vMax: 0.25, label: rect.label }
+      : { uMin: 0.46, uMax: 0.71, vMin: 0.02, vMax: 0.25, label: rect.label };
+    nu = (maxX - x) / spanX;
+    nv = (z - minZ) / spanZ;
+  }
+
+  const innerPad = 0.006;
+  const uLo = rect.uMin + innerPad;
+  const uHi = rect.uMax - innerPad;
+  const vLo = rect.vMin + innerPad;
+  const vHi = rect.vMax - innerPad;
+  const u = uLo + clamp01(nu) * (uHi - uLo);
+  const v = vLo + clamp01(nv) * (vHi - vLo);
+  return [u, v];
+}
+
+export function classifyTriangleSixZone(
+  nx: number,
+  ny: number,
+  nz: number,
+  isAero = false,
+): { zone: CarUVZone; isUnderside: boolean } {
+  const isUnderside = ny < -0.55;
+  if (isAero || isUnderside) {
+    return { zone: 'WINGS_AERO_TRIM', isUnderside };
+  }
+  const ax = Math.abs(nx);
+  const ay = Math.abs(ny);
+  const az = Math.abs(nz);
+  if (ay >= ax && ay >= az) {
+    return { zone: 'TOP', isUnderside: false };
+  }
+  if (ax >= ay && ax >= az) {
+    return { zone: nx >= 0 ? 'LEFT_SIDE' : 'RIGHT_SIDE', isUnderside: false };
+  }
+  return { zone: nz >= 0 ? 'FRONT' : 'REAR', isUnderside: false };
+}
+
+/**
+ * Applies deterministic 6-zone orthographic box/atlas UVs to a BufferGeometry.
+ * Splits shared vertices across zone seams while preserving existing normals so triangles
+ * never stretch across atlas zones or wrap outside [0, 1].
+ */
+export function applySixZoneCarUVs(
+  geometry: THREE.BufferGeometry,
+  carBounds?: THREE.Box3,
+  options?: { isAero?: boolean; forceZone?: CarUVZone },
+): THREE.BufferGeometry {
+  const posAttr = geometry.getAttribute('position');
+  if (!posAttr || posAttr.count < 3) return geometry;
+
+  if (!geometry.getAttribute('normal')) {
+    geometry.computeVertexNormals();
+  }
+  const normAttr = geometry.getAttribute('normal');
+  const indexAttr = geometry.getIndex();
+
+  const bounds = carBounds ? carBounds.clone() : new THREE.Box3().setFromBufferAttribute(posAttr as THREE.BufferAttribute);
+  if (bounds.isEmpty()) return geometry;
+
+  const triCount = indexAttr ? Math.floor(indexAttr.count / 3) : Math.floor(posAttr.count / 3);
+  if (triCount === 0) return geometry;
+
+  const newPos: number[] = [];
+  const newNorm: number[] = [];
+  const newUV: number[] = [];
+  const newIndices: number[] = [];
+  const dedup = new Map<string, number>();
+
+  const getIdx = (t: number, corner: number) => (indexAttr ? indexAttr.getX(t * 3 + corner) : t * 3 + corner);
+
+  for (let t = 0; t < triCount; t++) {
+    const i0 = getIdx(t, 0);
+    const i1 = getIdx(t, 1);
+    const i2 = getIdx(t, 2);
+
+    const ax = posAttr.getX(i0), ay = posAttr.getY(i0), az = posAttr.getZ(i0);
+    const bx = posAttr.getX(i1), by = posAttr.getY(i1), bz = posAttr.getZ(i1);
+    const cx = posAttr.getX(i2), cy = posAttr.getY(i2), cz = posAttr.getZ(i2);
+
+    const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+    const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+    let fnx = e1y * e2z - e1z * e2y;
+    let fny = e1z * e2x - e1x * e2z;
+    let fnz = e1x * e2y - e1y * e2x;
+    const len = Math.hypot(fnx, fny, fnz) || 1;
+    fnx /= len;
+    fny /= len;
+    fnz /= len;
+
+    const classified = options?.forceZone
+      ? { zone: options.forceZone, isUnderside: fny < -0.55 }
+      : classifyTriangleSixZone(fnx, fny, fnz, Boolean(options?.isAero));
+
+    const zoneTag = `${classified.zone}:${classified.isUnderside ? 1 : 0}`;
+    for (const vi of [i0, i1, i2]) {
+      const key = `${vi}:${zoneTag}`;
+      let outVi = dedup.get(key);
+      if (outVi === undefined) {
+        const px = posAttr.getX(vi);
+        const py = posAttr.getY(vi);
+        const pz = posAttr.getZ(vi);
+        const [u, v] = projectPointToSixZoneUV(px, py, pz, classified.zone, bounds, classified.isUnderside);
+        outVi = newPos.length / 3;
+        newPos.push(px, py, pz);
+        newNorm.push(normAttr.getX(vi), normAttr.getY(vi), normAttr.getZ(vi));
+        newUV.push(u, v);
+        dedup.set(key, outVi);
+      }
+      newIndices.push(outVi);
+    }
+  }
+
+  const outGeo = new THREE.BufferGeometry();
+  outGeo.setAttribute('position', new THREE.Float32BufferAttribute(newPos, 3));
+  outGeo.setAttribute('normal', new THREE.Float32BufferAttribute(newNorm, 3));
+  outGeo.setAttribute('uv', new THREE.Float32BufferAttribute(newUV, 2));
+  outGeo.setIndex(newIndices);
+  return outGeo;
+}
+
+export function createCarGlassMaterial(
+  tintColor: THREE.ColorRepresentation = 0x0b1220,
+  opacity = 0.46,
+  name = 'GLASS',
+): THREE.MeshPhysicalMaterial {
+  const mat = new THREE.MeshPhysicalMaterial({
+    name,
+    color: tintColor,
+    roughness: 0.08,
+    metalness: 0.14,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.06,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+  });
+  mat.userData.isGlass = true;
+  return mat;
+}
+
 export interface BuiltCarRig {
   root: THREE.Group;
   bodyGroup: THREE.Group;
@@ -1279,7 +1502,9 @@ export function createLoftedHullGeometry(
   geo.setIndex(indices);
   const creased = toCreasedNormals(geo, 0.72);
   geo.dispose();
-  return creased;
+  const sixZone = applySixZoneCarUVs(creased);
+  creased.dispose();
+  return sixZone;
 }
 
 export function buildHullStations(
@@ -1883,15 +2108,7 @@ export function buildDiecastCar(
     }),
   );
 
-  const canopyMat = track(
-    new THREE.MeshPhysicalMaterial({
-      color: 0x0a111d,
-      roughness: 0.08,
-      metalness: 0.12,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.06,
-    }),
-  );
+  const canopyMat = track(createCarGlassMaterial(0x0a111d, 0.84, 'CANOPY_GLASS'));
 
   const tireMat = track(
     new THREE.MeshStandardMaterial({
@@ -2046,12 +2263,20 @@ export function buildDiecastCar(
     }),
   );
 
-  const length = (isFormula ? (isFormulaE ? 3.7 : 3.92) : isProto ? 3.78 : 3.68) * (isFormula ? 1 : design.lengthScale);
-  const width = (isFormula ? 1.88 : isGT3 ? 1.95 : 1.90) * (isFormula ? 1 : design.widthScale);
-  const wheelRadius = isFormula ? 0.36 : isProto || classId === CarClassId.SUPERCAR ? 0.295 : 0.302;
-  const wheelWidth = isFormula ? 0.38 : 0.24;
-  const wheelBaseZ = isFormula ? 1.26 : length * 0.275;
-  const trackHalfX = isFormula ? 0.86 : Math.min(0.75, width * 0.445 - wheelWidth * 0.5);
+  const realLength = getRealWorldCarLength(carId, classId);
+  const baseClosedLen = isProto ? 4.88 : 4.62;
+  const length = isFormula
+    ? isFormulaE
+      ? 3.70
+      : 3.92
+    : realLength * (design.lengthScale || 1);
+  const width = (isFormula ? 1.88 : isGT3 ? 1.96 : isProto ? 1.99 : 1.88) * (isFormula ? 1 : design.widthScale);
+  const wheelRadius = isFormula ? 0.36 : isProto || classId === CarClassId.SUPERCAR ? 0.315 : 0.325;
+  const wheelWidth = isFormula ? 0.38 : 0.26;
+  const wheelBaseZ = isFormula ? 1.26 : length * 0.285;
+  const trackHalfX = isFormula ? 0.86 : Math.min(0.79, width * 0.445 - wheelWidth * 0.5);
+  const formulaLengthStretch = isFormula ? realLength / (isFormulaE ? 3.85 : 3.92) : 1.0;
+  const closedLengthScale = isFormula ? 1.0 : length / baseClosedLen;
 
   let frontWingFlap: THREE.Mesh | null = null;
   let rearWingFlap: THREE.Mesh | null = null;
@@ -2077,7 +2302,7 @@ export function buildDiecastCar(
       deltaShape.lineTo(0.28, -1.60);
       deltaShape.closePath();
 
-      const feHullGeo = track(
+      const rawFeHullGeo = track(
         new THREE.ExtrudeGeometry(deltaShape, {
           depth: 0.32,
           bevelEnabled: true,
@@ -2086,12 +2311,8 @@ export function buildDiecastCar(
           bevelSegments: 2,
         }),
       );
-      feHullGeo.rotateX(Math.PI / 2);
-      const posAttr = feHullGeo.attributes.position;
-      const uvAttr = feHullGeo.attributes.uv;
-      for (let i = 0; i < posAttr.count; i++) {
-        uvAttr.setXY(i, (posAttr.getX(i) + 0.8) / 1.6, (posAttr.getZ(i) + 1.8) / 3.6);
-      }
+      rawFeHullGeo.rotateX(Math.PI / 2);
+      const feHullGeo = track(applySixZoneCarUVs(rawFeHullGeo));
       const feHullMesh = new THREE.Mesh(feHullGeo, bodyMat);
       feHullMesh.position.y = 0.58;
       feHullMesh.castShadow = true;
@@ -2181,7 +2402,7 @@ export function buildDiecastCar(
       hullShape.lineTo(0.30, -1.65);
       hullShape.closePath();
 
-      const hullGeo = track(
+      const rawHullGeo = track(
         new THREE.ExtrudeGeometry(hullShape, {
           depth: 0.34,
           bevelEnabled: true,
@@ -2190,12 +2411,8 @@ export function buildDiecastCar(
           bevelSegments: 2,
         }),
       );
-      hullGeo.rotateX(Math.PI / 2);
-      const posAttr = hullGeo.attributes.position;
-      const uvAttr = hullGeo.attributes.uv;
-      for (let i = 0; i < posAttr.count; i++) {
-        uvAttr.setXY(i, (posAttr.getX(i) + 0.9) / 1.8, (posAttr.getZ(i) + 1.8) / 3.6);
-      }
+      rawHullGeo.rotateX(Math.PI / 2);
+      const hullGeo = track(applySixZoneCarUVs(rawHullGeo));
       const hullMesh = new THREE.Mesh(hullGeo, bodyMat);
       hullMesh.position.y = 0.60;
       hullMesh.castShadow = true;
@@ -2990,15 +3207,21 @@ export function buildDiecastCar(
     bodyGroup.add(tailBar);
   }
 
+  // Apply real-world length stretch to Formula chassis while keeping wheels perfectly circular
+  if (isFormula && Math.abs(formulaLengthStretch - 1) > 1e-4) {
+    bodyGroup.scale.z = formulaLengthStretch;
+  }
+
   // Four Rotating & Steering Wheels + Wishbones for Open-Wheelers
   const frontWheels: THREE.Group[] = [];
   const allWheels: THREE.Group[] = [];
 
+  const effWheelBaseZ = isFormula ? wheelBaseZ * formulaLengthStretch : wheelBaseZ;
   const wheelCoords: Array<{ x: number; z: number; isFront: boolean }> = [
-    { x: -trackHalfX, z: wheelBaseZ, isFront: true },
-    { x: trackHalfX, z: wheelBaseZ, isFront: true },
-    { x: -trackHalfX, z: -wheelBaseZ, isFront: false },
-    { x: trackHalfX, z: -wheelBaseZ, isFront: false },
+    { x: -trackHalfX, z: effWheelBaseZ, isFront: true },
+    { x: trackHalfX, z: effWheelBaseZ, isFront: true },
+    { x: -trackHalfX, z: -effWheelBaseZ, isFront: false },
+    { x: trackHalfX, z: -effWheelBaseZ, isFront: false },
   ];
 
   for (const wc of wheelCoords) {
@@ -3029,10 +3252,10 @@ export function buildDiecastCar(
       const suspension = createSuspensionArms(
         chassisX,
         wheelRadius,
-        wc.z,
+        wc.z / formulaLengthStretch,
         wc.x < 0 ? wc.x + wheelWidth * 0.45 : wc.x - wheelWidth * 0.45,
         wheelRadius,
-        wc.z,
+        wc.z / formulaLengthStretch,
         matteTrimMat,
         track,
       );

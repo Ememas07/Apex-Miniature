@@ -2,10 +2,36 @@ import {
   BoPAttributes,
   CarClassId,
   CarClassMeta,
+  CarDimensions,
   CarLiveryPreset,
   CarSpec,
   LiveryConfig,
 } from './types';
+import bopConfigRaw from './bopConfig.json';
+
+export interface BoPMultipliers {
+  topSpeedMult: number;
+  gripMult: number;
+  downforceMult: number;
+  brakingMult: number;
+}
+
+export const BOP_CONFIG: Record<string, BoPMultipliers> = bopConfigRaw as Record<string, BoPMultipliers>;
+
+export function getCarBoP(carId: string): BoPMultipliers {
+  const direct = BOP_CONFIG[carId];
+  if (direct) return direct;
+  const alias = CAR_ALIASES[carId];
+  if (alias && BOP_CONFIG[alias.targetCarId]) {
+    return BOP_CONFIG[alias.targetCarId];
+  }
+  return {
+    topSpeedMult: 1.0,
+    gripMult: 1.0,
+    downforceMult: 1.0,
+    brakingMult: 1.0,
+  };
+}
 
 export const CAR_CLASSES: Record<CarClassId, CarClassMeta> = {
   [CarClassId.HYPERCAR_GTP]: {
@@ -175,6 +201,155 @@ export function computeBoPEquilibriumScore(attrs: BoPAttributes): number {
     attrs.braking * 0.17 +
     attrs.efficiency * 0.10
   );
+}
+
+/**
+ * Real-world car metric dimensions (length, width, height, wheelbase in meters).
+ * Retains true real-world scale across prototypes, GTs, single-seaters, and road cars.
+ */
+export const REAL_WORLD_CAR_DIMENSIONS: Record<string, CarDimensions> = {
+  // WEC Hypercar / IMSA GTP (~4.90 - 5.05 m)
+  'ferrari-499p': { length: 5.00, width: 2.00, height: 1.05, wheelbase: 3.15 },
+  'toyota-gr010': { length: 4.90, width: 2.00, height: 1.05, wheelbase: 3.14 },
+  'porsche-963': { length: 5.02, width: 2.00, height: 1.05, wheelbase: 3.148 },
+  'cadillac-vseries-r': { length: 5.03, width: 2.00, height: 1.05, wheelbase: 3.148 },
+  'bmw-m-hybrid-v8': { length: 5.02, width: 2.00, height: 1.05, wheelbase: 3.148 },
+  'acura-arx-06': { length: 5.00, width: 2.00, height: 1.05, wheelbase: 3.148 },
+  'alpine-a424': { length: 5.00, width: 2.00, height: 1.05, wheelbase: 3.148 },
+  'peugeot-9x8': { length: 4.995, width: 2.00, height: 1.05, wheelbase: 3.045 },
+  'aston-valkyrie-lmh': { length: 5.00, width: 2.00, height: 1.05, wheelbase: 3.15 },
+  'lamborghini-sc63': { length: 5.00, width: 2.00, height: 1.05, wheelbase: 3.148 },
+  'genesis-gmr-001': { length: 5.00, width: 2.00, height: 1.05, wheelbase: 3.148 },
+  'glickenhaus-scg-007': { length: 4.99, width: 2.00, height: 1.05, wheelbase: 3.15 },
+
+  // LMP2 (~4.75 m)
+  'oreca-07': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-united': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-europol': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-ao': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'ligier-js-p217': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.01 },
+
+  // GTD Pro / LMGT3 (~4.55 - 4.78 m)
+  'porsche-911-gt3-r': { length: 4.62, width: 2.04, height: 1.28, wheelbase: 2.51 },
+  'ferrari-296-gt3': { length: 4.565, width: 2.05, height: 1.23, wheelbase: 2.60 },
+  'corvette-z06-gt3r': { length: 4.71, width: 2.05, height: 1.22, wheelbase: 2.73 },
+  'bmw-m4-gt3': { length: 4.75, width: 2.04, height: 1.31, wheelbase: 2.92 },
+  'ford-mustang-gt3': { length: 4.78, width: 2.04, height: 1.33, wheelbase: 2.72 },
+  'aston-vantage-gt3': { length: 4.55, width: 2.04, height: 1.27, wheelbase: 2.71 },
+  'lamborghini-temerario-gt3': { length: 4.70, width: 2.03, height: 1.20, wheelbase: 2.66 },
+  'mercedes-amg-gt3': { length: 4.746, width: 2.05, height: 1.24, wheelbase: 2.63 },
+  'lexus-rcf-gt3': { length: 4.75, width: 2.03, height: 1.27, wheelbase: 2.73 },
+  'mclaren-720s-gt3': { length: 4.664, width: 2.04, height: 1.20, wheelbase: 2.67 },
+  'renault-rs01-gt3': { length: 4.71, width: 2.00, height: 1.12, wheelbase: 2.73 },
+  'bentley-continental-gt3': { length: 4.76, width: 2.04, height: 1.36, wheelbase: 2.85 },
+  'audi-r8-lms-gt3': { length: 4.568, width: 1.995, height: 1.17, wheelbase: 2.65 },
+  'acura-nsx-gt3': { length: 4.612, width: 2.04, height: 1.24, wheelbase: 2.63 },
+
+  // GT4 (~4.25 - 4.78 m)
+  'porsche-cayman-gt4-rs': { length: 4.456, width: 1.82, height: 1.27, wheelbase: 2.48 },
+  'bmw-m4-gt4': { length: 4.76, width: 1.92, height: 1.37, wheelbase: 2.86 },
+  'aston-vantage-gt4': { length: 4.49, width: 1.94, height: 1.27, wheelbase: 2.71 },
+  'toyota-supra-gt4': { length: 4.46, width: 1.87, height: 1.29, wheelbase: 2.47 },
+  'mclaren-artura-gt4': { length: 4.54, width: 1.98, height: 1.19, wheelbase: 2.64 },
+  'mercedes-amg-gt4': { length: 4.62, width: 1.99, height: 1.27, wheelbase: 2.63 },
+  'alpine-a110-gt4': { length: 4.25, width: 1.80, height: 1.25, wheelbase: 2.42 },
+  'ford-mustang-gt4': { length: 4.78, width: 1.96, height: 1.38, wheelbase: 2.72 },
+
+  // Production Track Coupes & Hatchbacks (Clio V6 ~3.84 m .. GT-R ~4.71 m)
+  'renault-clio-v6': { length: 3.84, width: 1.81, height: 1.36, wheelbase: 2.53 },
+  'toyota-gr-yaris': { length: 4.00, width: 1.80, height: 1.45, wheelbase: 2.56 },
+  'bmw-m2-cs': { length: 4.58, width: 1.89, height: 1.40, wheelbase: 2.75 },
+  'porsche-911-gt3-rs': { length: 4.57, width: 1.90, height: 1.30, wheelbase: 2.46 },
+  'honda-civic-type-r': { length: 4.59, width: 1.89, height: 1.41, wheelbase: 2.735 },
+  'corvette-z06-coupe': { length: 4.69, width: 2.02, height: 1.23, wheelbase: 2.72 },
+  'nissan-gtr-nismo': { length: 4.71, width: 1.90, height: 1.37, wheelbase: 2.78 },
+
+  // Production Supercars & Hypercars (~4.50 - 4.84 m)
+  'aston-valkyrie-road': { length: 4.50, width: 1.99, height: 1.07, wheelbase: 2.77 },
+  'ferrari-296-gtb': { length: 4.565, width: 1.96, height: 1.19, wheelbase: 2.60 },
+  'mclaren-750s': { length: 4.569, width: 1.93, height: 1.20, wheelbase: 2.67 },
+  'koenigsegg-jesko': { length: 4.61, width: 2.03, height: 1.21, wheelbase: 2.70 },
+  'mclaren-w1': { length: 4.635, width: 2.07, height: 1.18, wheelbase: 2.68 },
+  'porsche-918-spyder': { length: 4.643, width: 1.94, height: 1.17, wheelbase: 2.73 },
+  'ferrari-sf90': { length: 4.71, width: 1.97, height: 1.19, wheelbase: 2.65 },
+  'ferrari-f80': { length: 4.84, width: 2.06, height: 1.14, wheelbase: 2.77 },
+
+  // Formula E (~5.02 m)
+  'fe-porsche-99x': { length: 5.02, width: 1.70, height: 1.02, wheelbase: 2.97 },
+  'fe-jaguar-itype7': { length: 5.02, width: 1.70, height: 1.02, wheelbase: 2.97 },
+  'fe-nissan-e4orce': { length: 5.02, width: 1.70, height: 1.02, wheelbase: 2.97 },
+  'fe-maserati-folgore': { length: 5.02, width: 1.70, height: 1.02, wheelbase: 2.97 },
+
+  // Formula 1 (2026 ~5.50 m, 2021 ~5.63 m, 2005 ~4.65 m)
+  'f1-26-mercedes': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-ferrari': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-redbull': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-mclaren': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-aston': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-williams': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-alpine': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-haas': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-audi': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-racing-bulls': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-26-cadillac': { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 },
+  'f1-21-mercedes': { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 },
+  'f1-21-redbull': { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 },
+  'f1-21-ferrari': { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 },
+  'f1-21-mclaren': { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 },
+  'f1-05-renault': { length: 4.65, width: 1.80, height: 0.95, wheelbase: 3.10 },
+  'f1-05-mclaren': { length: 4.65, width: 1.80, height: 0.95, wheelbase: 3.10 },
+  'f1-05-ferrari': { length: 4.65, width: 1.80, height: 0.95, wheelbase: 3.10 },
+  'f1-05-williams': { length: 4.65, width: 1.80, height: 0.95, wheelbase: 3.10 },
+};
+
+export const REAL_WORLD_CAR_LENGTHS: Record<string, number> = Object.fromEntries(
+  Object.entries(REAL_WORLD_CAR_DIMENSIONS).map(([k, v]) => [k, v.length]),
+);
+
+export function getRealWorldCarDimensions(carId?: string, classId?: CarClassId): CarDimensions {
+  if (carId) {
+    const direct = REAL_WORLD_CAR_DIMENSIONS[carId];
+    if (direct) return { ...direct };
+    const normalized = carId.toLowerCase().replace(/_/g, '-');
+    if (REAL_WORLD_CAR_DIMENSIONS[normalized]) return { ...REAL_WORLD_CAR_DIMENSIONS[normalized] };
+    if (normalized.includes('clio')) return { length: 3.84, width: 1.81, height: 1.36, wheelbase: 2.53 };
+    if (normalized.includes('yaris')) return { length: 4.00, width: 1.80, height: 1.45, wheelbase: 2.56 };
+    if (normalized.startsWith('f1-05')) return { length: 4.65, width: 1.80, height: 0.95, wheelbase: 3.10 };
+    if (normalized.startsWith('f1-21')) return { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 };
+    if (normalized.startsWith('f1-26') || normalized.startsWith('f1-')) return { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 };
+    if (normalized.startsWith('fe-')) return { length: 5.02, width: 1.70, height: 1.02, wheelbase: 2.97 };
+    if (normalized.includes('oreca') || normalized.includes('ligier')) return { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 };
+    if (normalized.includes('gt4')) return { length: 4.55, width: 1.92, height: 1.28, wheelbase: 2.65 };
+    if (normalized.includes('gt3')) return { length: 4.68, width: 2.04, height: 1.25, wheelbase: 2.70 };
+  }
+  switch (classId) {
+    case CarClassId.F1_2026:
+      return { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 };
+    case CarClassId.F1_2021:
+      return { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 };
+    case CarClassId.F1_2005:
+      return { length: 4.65, width: 1.80, height: 0.95, wheelbase: 3.10 };
+    case CarClassId.FORMULA_E:
+      return { length: 5.02, width: 1.70, height: 1.02, wheelbase: 2.97 };
+    case CarClassId.HYPERCAR_GTP:
+      return { length: 5.00, width: 2.00, height: 1.05, wheelbase: 3.15 };
+    case CarClassId.LMP2:
+      return { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 };
+    case CarClassId.GT3:
+      return { length: 4.68, width: 2.04, height: 1.25, wheelbase: 2.70 };
+    case CarClassId.GT4:
+      return { length: 4.55, width: 1.92, height: 1.28, wheelbase: 2.65 };
+    case CarClassId.TRACK_COUPE:
+      return { length: 4.45, width: 1.88, height: 1.35, wheelbase: 2.65 };
+    case CarClassId.SUPERCAR:
+      return { length: 4.65, width: 2.00, height: 1.18, wheelbase: 2.70 };
+    default:
+      return { length: 4.65, width: 2.00, height: 1.20, wheelbase: 2.70 };
+  }
+}
+
+export function getRealWorldCarLength(carId?: string, classId?: CarClassId): number {
+  return getRealWorldCarDimensions(carId, classId).length;
 }
 
 export const CARS: CarSpec[] = [
@@ -991,6 +1166,13 @@ export const CARS: CarSpec[] = [
   },
 ];
 
+// Attach real-world metric dimensions and lengths to all specifications
+for (const car of CARS) {
+  const dims = getRealWorldCarDimensions(car.id, car.classId);
+  car.dimensions = dims;
+  car.length = dims.length;
+}
+
 const CAR_ALIASES: Record<string, { targetCarId: string; liveryPresetId?: string }> = {
   // Formula 1 2026
   'f1-26-ferrari': { targetCarId: 'f1-26-mercedes', liveryPresetId: 'f1-26-ferrari' },
@@ -1032,8 +1214,11 @@ export function getCarById(id: string): CarSpec {
       if (alias.liveryPresetId && target.liveries) {
         const preset = target.liveries.find((p) => p.id === alias.liveryPresetId);
         if (preset) {
+          const dims = getRealWorldCarDimensions(id, target.classId);
           return {
             ...target,
+            dimensions: dims,
+            length: dims.length,
             defaultLivery: { ...preset.livery },
           };
         }

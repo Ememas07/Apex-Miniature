@@ -121,6 +121,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 13,
     targetLapSeconds: 89,
     corners: 18,
+    pitSide: "right",
     waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["suzuka"], { trackId: "suzuka" }),
   },
   {

@@ -1,6 +1,7 @@
 // server.ts
 import express from "express";
 import http from "http";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { WebSocket, WebSocketServer } from "ws";
@@ -184,6 +185,20 @@ async function startServer() {
     });
     ws.on("close", cleanup);
     ws.on("error", cleanup);
+  });
+  app.use(express.json({ limit: "50mb" }));
+  app.post("/api/telemetry", (req, res) => {
+    try {
+      const demo = req.body;
+      const auditDir = path.resolve(__dirname, "audit");
+      if (!fs.existsSync(auditDir)) {
+        fs.mkdirSync(auditDir, { recursive: true });
+      }
+      fs.appendFileSync(path.join(auditDir, "human_demos.jsonl"), JSON.stringify(demo) + "\n", "utf-8");
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: e?.message || "Failed to save telemetry demo" });
+    }
   });
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

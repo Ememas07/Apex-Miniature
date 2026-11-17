@@ -374,24 +374,28 @@ export function buildTrackEnvironment(
       const segNx = bestSeg.anx + bestT * (bestSeg.bnx - bestSeg.anx);
       const segNz = bestSeg.anz + bestT * (bestSeg.bnz - bestSeg.anz);
 
-      const isOverpass = roadY - rawY > 4.2;
+      // Overpass is when this road segment is elevated high above an underlying road corridor (e.g. Suzuka bridge)
+      const isOverpass = inAnyCorridor && lowestCorridorY < Infinity && roadY - lowestCorridorY > 3.5;
       if (!isOverpass) {
         const latSign = Math.sign((vx - bestPx) * segNx + (vz - bestPz) * segNz) || 1;
-        const roadLowestEdgeY = roadY - roadHalfW * Math.abs(Math.sin(roadBank));
         const roadEdgeY = roadY + latSign * (roadHalfW + 1.5) * Math.sin(roadBank);
+        const targetEdgeY = (inAnyCorridor && lowestCorridorY < Infinity ? lowestCorridorY : roadEdgeY) - 0.18;
 
         const dClamp = roadHalfW + 1.5;
-        const dOuter = roadHalfW + 35.0;
+        const dOuter = roadHalfW + 42.0;
 
-        if (inAnyCorridor || bestDist < dClamp) {
-          // Zero grass triangles ever poke above the asphalt or curbs
-          const clampCeil = (lowestCorridorY < Infinity ? lowestCorridorY : roadLowestEdgeY) - 0.18;
-          vy = Math.min(vy, clampCeil);
+        if (inAnyCorridor || bestDist <= dClamp) {
+          // Exactly flush under kerb/apron without vertical trench or drop
+          vy = targetEdgeY;
         } else if (bestDist <= dOuter) {
           // Smoothstep outer embankment transition from exact outer curb elevation out to surrounding DEM terrain
           const u = (bestDist - dClamp) / (dOuter - dClamp);
           const s = u * u * (3 - 2 * u);
-          vy = roadEdgeY * (1 - s) + rawY * s;
+          vy = targetEdgeY * (1 - s) + rawY * s;
+        }
+        // Strict guard: grass within immediate runoff apron (roadHalfW + 4.8) never bleeds above road/kerb
+        if (bestDist <= roadHalfW + 4.8) {
+          vy = Math.min(vy, targetEdgeY);
         }
       }
     }
@@ -478,7 +482,7 @@ export function buildTrackEnvironment(
       const ox = s.x + s.nx * side * outerEdge;
       const oz = s.z + s.nz * side * outerEdge;
       const bgOuterY = sampleBaseGroundY(ox, oz);
-      const oy = (isOverpass || inPitZone) ? Math.min(bgOuterY, s.y - 1.5) : (bgOuterY - 0.25);
+      const oy = (isOverpass || inPitZone) ? Math.min(bgOuterY, s.y - 1.5) : clampTerrainHeight(ox, oz, bgOuterY);
 
       const base = i * 2;
       const v0 = side === 1 ? base : base + 1;
@@ -683,15 +687,17 @@ export function buildTrackEnvironment(
   const pierStep = Math.max(8, Math.floor(compiled.samples.length / 40));
   for (let i = 0; i < compiled.samples.length; i += pierStep) {
     const s = compiled.samples[i];
-    if (s.y > 4.2) {
+    const bgY = sampleBaseGroundY(s.x, s.z);
+    if (s.y - bgY > 3.5) {
       const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const pierHeight = s.y - bgY;
       for (const side of [-1, 1]) {
         const pier = new THREE.Mesh(pierGeo, pierMat);
         const offset = curHalfW + 2.4;
-        pier.scale.y = Math.max(1, s.y - 0.1);
+        pier.scale.y = Math.max(1, pierHeight);
         pier.position.set(
           s.x + s.nx * side * offset,
-          (s.y - 0.1) * 0.5,
+          bgY + pierHeight * 0.5,
           s.z + s.nz * side * offset,
         );
         pier.rotation.y = Math.atan2(s.tx, s.tz);

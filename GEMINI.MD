@@ -4,3 +4,4 @@
 3. **Minimal-Diff Edits:** Use targeted search-and-replace / patch edits rather than rewriting entire files. Never echo unchanged code blocks back in assistant messages.
 4. **Silent Execution Between Milestones:** Do not narrate routine steps ("Now I will read X", "Next I will edit Y"). Execute tool calls directly and only output a concise final summary after verification passes.
 5. **Single-Pass Verification & Terse Output:** Run `npx tsc --noEmit` once after batching all edits—not after every file change. When inspecting command logs, read only error lines/tail output, and keep final summaries under 15 bullet points.
+6. **No Scratch Verification Scripts:** Never create temporary test scripts or run test conversions; modify only the target project files and verify with `npx tsc --noEmit`.
