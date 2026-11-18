@@ -6,13 +6,13 @@ export interface TelemetryLapDemo {
   carId: string;
   trackId: string;
   lapTime: number;
-  isValid: boolean;
   samples: number[][]; // Each sample: [...obs43, steer, throttleAct, brakeAct] (46 floats)
 }
 
 /**
- * Human telemetry recorder sampling at 30 Hz for Behavioral Cloning.
- * Exports every completed lap (>= 5s of data) and tags `isValid` for optional filtering.
+ * Valid-lap human telemetry recorder sampling at 30 Hz for Behavioral Cloning.
+ * Only clean laps without track limit violations, wall/car collisions, or resets
+ * that finish within <= 103% of the player's session best lap time are exported.
  */
 export class HumanTelemetryRecorder {
   private sampleInterval = 1 / 30; // 30 Hz
@@ -42,7 +42,7 @@ export class HumanTelemetryRecorder {
   }
 
   /**
-   * Evaluates telemetry frame and buffers samples at 30 Hz.
+   * Evaluates telemetry frame and buffers valid samples at 30 Hz.
    */
   public recordStep(
     car: CarSimState,
@@ -60,7 +60,7 @@ export class HumanTelemetryRecorder {
     const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
     const halfW = (currentSample.width ?? compiledTrack.spec.trackWidth) * 0.5;
 
-    // Check Lap Invalidation Criteria (tagged via isValid):
+    // Check Lap Invalidation Criteria:
     // 1. Exceeded track limits outside road boundary + kerb margin
     if (Math.abs(car.lateralOffset) > halfW + 1.2) {
       this.isLapValid = false;
@@ -80,21 +80,25 @@ export class HumanTelemetryRecorder {
     const crossedStartFinish = this.prevTrackT > 0.85 && car.trackT < 0.15;
     if (crossedStartFinish && car.currentLapTime > 15 && car.pitStopRemaining <= 0) {
       const minFrames = 150; // At least ~5 seconds of data
-      if (this.currentLapBuffer.length >= minFrames) {
-        if (this.sessionBestLap === null || car.currentLapTime < this.sessionBestLap) {
-          this.sessionBestLap = car.currentLapTime;
+      if (this.isLapValid && this.currentLapBuffer.length >= minFrames) {
+        const isCompetitive =
+          this.sessionBestLap === null || car.currentLapTime <= this.sessionBestLap * 1.03;
+
+        if (isCompetitive) {
+          if (this.sessionBestLap === null || car.currentLapTime < this.sessionBestLap) {
+            this.sessionBestLap = car.currentLapTime;
+          }
+
+          const demo: TelemetryLapDemo = {
+            carId: car.carSpec.id,
+            trackId: compiledTrack.spec.id,
+            lapTime: Math.round(car.currentLapTime * 1000) / 1000,
+            samples: [...this.currentLapBuffer],
+          };
+
+          this.lastCompletedDemo = demo;
+          this.exportDemo(demo);
         }
-
-        const demo: TelemetryLapDemo = {
-          carId: car.carSpec.id,
-          trackId: compiledTrack.spec.id,
-          lapTime: Math.round(car.currentLapTime * 1000) / 1000,
-          isValid: this.isLapValid,
-          samples: [...this.currentLapBuffer],
-        };
-
-        this.lastCompletedDemo = demo;
-        this.exportDemo(demo);
       }
 
       // Reset buffer for the new lap
@@ -130,7 +134,7 @@ export class HumanTelemetryRecorder {
   }
 
   /**
-   * Manually exports the current telemetry buffer (or last completed lap) on demand (e.g. F9).
+   * Manually exports the current telemetry buffer (or last valid completed lap) on demand (e.g. F9).
    */
   public exportManual(download = false): TelemetryLapDemo | null {
     const demo: TelemetryLapDemo | null =
@@ -139,7 +143,6 @@ export class HumanTelemetryRecorder {
             carId: this.lastCarId,
             trackId: this.lastTrackId,
             lapTime: Math.round(this.lastLapTime * 1000) / 1000,
-            isValid: this.isLapValid,
             samples: [...this.currentLapBuffer],
           }
         : this.lastCompletedDemo;
@@ -168,7 +171,7 @@ export class HumanTelemetryRecorder {
   }
 
   /**
-   * Exports demonstration lap JSONL record via relative POST api/telemetry or callback.
+   * Exports valid demonstration lap JSONL record via relative POST api/telemetry or callback.
    */
   private exportDemo(demo: TelemetryLapDemo): void {
     if (this.onLapRecorded) {

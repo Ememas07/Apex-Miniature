@@ -753,23 +753,74 @@ export function stepCarPhysics(
     ? 68.5 + (attrs.topSpeed - 64) * 1.02
     : 91.5 + (attrs.topSpeed - 83) * 1.70) * bop.topSpeedMult;
 
-  // Calibrated class launch acceleration (m/s^2) producing authentic 0-100 & 0-200 km/h splits
-  const accelAttrNorm = Math.max(-1, Math.min(1.5, (attrs.acceleration - 80) / 20));
-  const accelBase = isF126 || isF121 || isF105
-    ? 15.8 + (attrs.acceleration - 90) * 0.18
-    : isFE
-    ? 12.6 + (attrs.acceleration - 84) * 0.22
+  // Real-world class physical parameters (kg, Watts, traction-limited launch g, aero downforce traction gain, high-RPM power taper)
+  const massKg = isF126 || isF121
+    ? 798
+    : isF105
+    ? 720
     : isGTP
-    ? 11.6 + (attrs.acceleration - 85) * 0.16
+    ? 1030
     : isLMP2
-    ? 10.7 + (attrs.acceleration - 80) * 0.16
+    ? 930
     : isGT3
-    ? 9.9 + (attrs.acceleration - 77) * 0.16
+    ? 1300
     : isGT4
-    ? 7.9 + (attrs.acceleration - 70) * 0.16
+    ? 1420
+    : isFE
+    ? 860
     : isCoupe
-    ? 6.2 + Math.max(0, attrs.acceleration - 64) * 0.18
-    : 12.2 + accelAttrNorm * 1.4;
+    ? 1450
+    : 1400;
+
+  const powerWatts = isF126 || isF121
+    ? 785_000 + (attrs.acceleration - 93) * 14_000
+    : isF105
+    ? 705_000 + (attrs.acceleration - 93) * 12_000
+    : isGTP
+    ? 495_000 + (attrs.acceleration - 85) * 7_500
+    : isLMP2
+    ? 435_000 + (attrs.acceleration - 80) * 6_500
+    : isGT3
+    ? 325_000 + (attrs.acceleration - 77) * 6_000
+    : isGT4
+    ? 275_000 + (attrs.acceleration - 70) * 5_500
+    : isFE
+    ? 360_000 + (attrs.acceleration - 90) * 7_500
+    : isCoupe
+    ? 245_000 + Math.max(0, attrs.acceleration - 64) * 11_000
+    : 650_000 + (attrs.acceleration - 85) * 26_000;
+
+  const launchGripG = isF126 || isF121 || isF105
+    ? 1.06 + (attrs.acceleration - 93) * 0.015
+    : isFE
+    ? 1.12 + (attrs.acceleration - 90) * 0.015
+    : isGTP
+    ? 0.94 + (attrs.acceleration - 85) * 0.012
+    : isLMP2
+    ? 0.91 + (attrs.acceleration - 80) * 0.012
+    : isGT3
+    ? 0.84 + (attrs.acceleration - 77) * 0.012
+    : isGT4
+    ? 0.70 + (attrs.acceleration - 70) * 0.010
+    : isCoupe
+    ? 0.65 + Math.max(0, attrs.acceleration - 64) * 0.012
+    : 1.06 + Math.max(-0.15, (attrs.acceleration - 85) * 0.018);
+
+  const downforceTractionCoeff = isFormula && !isFE
+    ? 0.0018
+    : isGTP || isLMP2
+    ? 0.0010
+    : isGT3
+    ? 0.0005
+    : 0.0002;
+
+  const highSpeedPowerTaper = isFormula && !isFE
+    ? 0.44
+    : isGTP
+    ? 0.25
+    : isLMP2 || isGT3
+    ? 0.20
+    : 0.14;
 
   const gripBase =
     (1.42 + (attrs.corneringGrip / 100) * 1.15) *
@@ -935,47 +986,49 @@ export function stepCarPhysics(
 
     const limiterTorqueCut = car.revLimiterActive ? 0.0 : 1.0;
 
+    // True Newtonian longitudinal dynamics: F_net = F_drive - F_drag - F_roll, dv = (F_net / mass) * dt
+    const GRAVITY = 9.81;
+    const CRR = 0.014;
+    const fRollN = CRR * massKg * GRAVITY;
+    const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
+    const powerAtVmaxW = powerWatts * specialAccelMult * fuelFactor * (1 - highSpeedPowerTaper);
+    // kDrag = 0.5 * rho * Cd * A derived cleanly so aero + rolling resistance balances wheel power at effectiveMaxSpeed
+    const kAeroDrag = Math.max(
+      0.05,
+      (powerAtVmaxW / Math.max(20, effectiveMaxSpeed) - fRollN) / (effectiveMaxSpeed * effectiveMaxSpeed),
+    );
+    const fAeroDragN = kAeroDrag * car.speed * car.speed;
+
     if (throttle > 0 && brake < 0.1) {
-      const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
-      const aeroTraction = isFormula && !isFE
-        ? 0.72 + 0.60 * Math.min(1, car.speed / 25.0)
-        : isGTP || isLMP2
-        ? 0.88 + 0.22 * Math.min(1, car.speed / 30.0)
-        : isFE
-        ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
-        : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
-      const highSpeedAero = isFormula && !isFE ? 1.32 : isGTP || isLMP2 ? 1.10 : isFE ? 1.02 : 1.0;
-      const torqueCurve = Math.max(0.35, 1.0 - 0.58 * Math.pow(speedRatio, 1.75));
-      const engineAccel =
-        accelBase *
-        aeroTraction *
-        specialAccelMult *
-        fuelFactor *
-        throttle *
-        torqueCurve *
-        limiterTorqueCut;
-      // Quadratic aero drag F_drag = c_drag * v^2 calibrated so steady-state equilibrium matches effectiveMaxSpeed
-      const eqDragDecel = accelBase * highSpeedAero * specialAccelMult * 0.42;
-      const cAeroDrag = eqDragDecel / (effectiveMaxSpeed * effectiveMaxSpeed);
-      const aeroDragDecel = cAeroDrag * car.speed * car.speed;
-      const netAccel = limiterTorqueCut === 0 ? -2.2 : engineAccel - aeroDragDecel;
-      car.speed = Math.max(0, car.speed + netAccel * dt);
+      // Engine torque/power delivery across RPM & high-speed taper
+      const lowSpeedSpool = isFE ? 1.0 : 0.88 + 0.12 * Math.min(1, car.speed / 18.0);
+      const powerCurveFactor = lowSpeedSpool * (1 - highSpeedPowerTaper * Math.pow(speedRatio, isFormula && !isFE ? 1.18 : 1.45));
+      const pWheelW = powerWatts * specialAccelMult * fuelFactor * throttle * powerCurveFactor;
+      const fPowerN = pWheelW / Math.max(4.5, car.speed);
+
+      // Tire traction limit (static launch grip + aero downforce load, scaled by tire compound & wear)
+      const tireLaunchFactor =
+        (0.75 + 0.25 * compoundMod.grip) * (0.85 + 0.15 * wearGripFactor) * offTrackGrip;
+      const fTractionN =
+        massKg * (launchGripG * GRAVITY * tireLaunchFactor + downforceTractionCoeff * car.speed * car.speed);
+
+      const fDriveN = limiterTorqueCut === 0 ? 0 : Math.min(fPowerN, fTractionN);
+      const fNetN = fDriveN - fAeroDragN - fRollN;
+      car.speed = Math.max(0, car.speed + (fNetN / massKg) * dt);
     }
 
     if (brake > 0) {
-      car.speed = Math.max(0, car.speed - brakeBase * compoundMod.grip * brake * dt);
+      const fBrakeN = massKg * brakeBase * compoundMod.grip * brake + fAeroDragN + fRollN;
+      car.speed = Math.max(0, car.speed - (fBrakeN / massKg) * dt);
     }
 
-    // Natural aero/rolling drag when coasting or above effectiveMaxSpeed
-    const dragCoeff =
-      (car.specialActive && specialType === 'active-aero' ? 0.34 : 0.46) * tuning.dragScale;
+    // Natural aero/rolling drag & engine braking when coasting or above effectiveMaxSpeed
     if (car.speed > effectiveMaxSpeed) {
       car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
     } else if (throttle < 0.05 && brake < 0.05) {
-      car.speed = Math.max(
-        0,
-        car.speed - (car.speed * dragCoeff + 0.00032 * tuning.dragScale * car.speed * car.speed) * dt,
-      );
+      const fEngineBrakeN = massKg * (0.14 * GRAVITY + 0.28 * car.speed * tuning.dragScale);
+      const fCoastN = fAeroDragN + fRollN + fEngineBrakeN;
+      car.speed = Math.max(0, car.speed - (fCoastN / massKg) * dt);
     }
 
     // Forward Gearing Simulation with progressive ratios (headroom above nominal Vmax prevents premature limiter hits)
