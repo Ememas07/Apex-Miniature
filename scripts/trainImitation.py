@@ -17,11 +17,11 @@ class PolicyNet(nn.Module):
     def __init__(self, obs_dim: int = OBS_DIM, act_dim: int = ACT_DIM):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(obs_dim, 128),
+            nn.Linear(obs_dim, 64),
             nn.Tanh(),
-            nn.Linear(128, 128),
+            nn.Linear(64,64),
             nn.Tanh(),
-            nn.Linear(128, act_dim),
+            nn.Linear(64, act_dim),
             nn.Tanh(),
         )
 
@@ -72,33 +72,45 @@ def load_telemetry_files(pattern: str):
     obs_list, act_list, weight_list = [], [], []
     for fp in files:
         with open(fp, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            if fp.endswith(".jsonl"):
+                records = [json.loads(line) for line in f if line.strip()]
+            else:
+                raw = json.load(f)
+                records = raw if isinstance(raw, list) else [raw]
 
-        frames = data if isinstance(data, list) else data.get("frames", [])
-        lap_skill = float(data.get("skill", 1.0)) if isinstance(data, dict) else 1.0
-
-        for fr in frames:
-            obs = fr.get("obs") or fr.get("observation")
-            act = fr.get("action")
-            if not obs or len(obs) != OBS_DIM or not act or len(act) != ACT_DIM:
+        for rec in records:
+            # New TelemetryLapDemo format: samples = [[...obs43, steer, thrAct, brkAct], ...]
+            if isinstance(rec, dict) and "samples" in rec:
+                for row in rec["samples"]:
+                    if len(row) != OBS_DIM + ACT_DIM:
+                        continue
+                    obs_vec = list(row[:OBS_DIM])
+                    obs_vec[42] = 1.0
+                    steer = float(np.clip(row[43], -1.0, 1.0))
+                    thr = float(np.clip(row[44], -1.0, 1.0))
+                    brk = float(np.clip(row[45], -1.0, 1.0))
+                    obs_list.append(obs_vec)
+                    act_list.append([steer, thr, brk])
+                    weight_list.append(1.0 + 1.5 * abs(steer) + 1.5 * max(0.0, (brk + 1.0) * 0.5))
                 continue
 
-            obs_vec = list(obs)
-            # Ensure skillTarget slot (#42) reflects fast expert pace
-            obs_vec[42] = max(obs_vec[42], lap_skill)
-
-            steer = float(np.clip(act[0], -1.0, 1.0))
-            # Convert [0..1] pedal inputs from game recorder to [-1..1] policy outputs if needed
-            thr_raw = float(act[1])
-            brk_raw = float(act[2])
-            thr = thr_raw * 2.0 - 1.0 if 0.0 <= thr_raw <= 1.0 and fr.get("normalized", True) else thr_raw
-            brk = brk_raw * 2.0 - 1.0 if 0.0 <= brk_raw <= 1.0 and fr.get("normalized", True) else brk_raw
-
-            obs_list.append(obs_vec)
-            act_list.append([steer, np.clip(thr, -1.0, 1.0), np.clip(brk, -1.0, 1.0)])
-            # Upweight heavy braking & cornering frames so AI learns apex entry aggressively
-            corner_weight = 1.0 + 1.5 * abs(steer) + 1.5 * max(0.0, (brk + 1.0) * 0.5)
-            weight_list.append(corner_weight)
+            # Legacy frame-object format fallback
+            frames = rec if isinstance(rec, list) else rec.get("frames", [])
+            lap_skill = float(rec.get("skill", 1.0)) if isinstance(rec, dict) else 1.0
+            for fr in frames:
+                obs = fr.get("obs") or fr.get("observation")
+                act = fr.get("action")
+                if not obs or len(obs) != OBS_DIM or not act or len(act) != ACT_DIM:
+                    continue
+                obs_vec = list(obs)
+                obs_vec[42] = max(obs_vec[42], lap_skill)
+                steer = float(np.clip(act[0], -1.0, 1.0))
+                thr_raw, brk_raw = float(act[1]), float(act[2])
+                thr = thr_raw * 2.0 - 1.0 if 0.0 <= thr_raw <= 1.0 and fr.get("normalized", True) else thr_raw
+                brk = brk_raw * 2.0 - 1.0 if 0.0 <= brk_raw <= 1.0 and fr.get("normalized", True) else brk_raw
+                obs_list.append(obs_vec)
+                act_list.append([steer, np.clip(thr, -1.0, 1.0), np.clip(brk, -1.0, 1.0)])
+                weight_list.append(1.0 + 1.5 * abs(steer) + 1.5 * max(0.0, (brk + 1.0) * 0.5))
 
     if not obs_list:
         raise ValueError("Telemetry files contained 0 valid 43-dim frames.")
