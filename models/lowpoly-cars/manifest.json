@@ -349,12 +349,6 @@
       "mtl": "renault-rs01-gt3.mtl"
     },
     {
-      "id": "toyota-gr-yaris",
-      "folder": "toyota-gr-yaris",
-      "obj": "toyota-gr-yaris.obj",
-      "mtl": "toyota-gr-yaris.mtl"
-    },
-    {
       "id": "toyota-gr010",
       "folder": "toyota-gr010",
       "obj": "toyota-gr010.obj",

@@ -1,167 +1,162 @@
 # Exported by Apex Miniature objToLowPoly.mjs
 
-newmtl EXT_GLASS_black
-Kd 0.5 0.5 0.5
+newmtl plastic
+Kd 0.171196 0.173352 0.171196
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42
 
-newmtl EXT_Window
-Kd 0.12144 0.140175 0.173167
+newmtl glass_red_nm
+Kd 0.645161 0 0
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42
 
-newmtl EXT_Glass
-Kd 0.12144 0.140175 0.173167
+newmtl glass_clear
+Kd 0.156863 0.156863 0.156863
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42
 
-newmtl EXT_Glass_rear_lights
-Kd 0.12144 0.140175 0.173167
+newmtl window_ext
+Kd 0.156863 0.156863 0.156863
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42
 
-newmtl EXT_Lights_blend
-Kd 0.121012 0.068666 0.065675
+newmtl light_dark
+Kd 0.870968 0.865079 0.870968
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42
 
-newmtl EXT_Mirror
-Kd 0.588206 0.57566 0.55286
+newmtl glass_black_nm
+Kd 0.16129 0.15873 0.16129
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42
 
-newmtl EXT_Lights_base
-Kd 0.121012 0.068666 0.065675
+newmtl grande
+Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_Lights_chrom
-Kd 0.121012 0.068666 0.065675
+newmtl car_paint
+Kd 0.303605 0.303818 0.303605
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_Button_Engine
-Kd 0.014302 0.014152 0.023501
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Details
-Kd 0.122952 0.089844 0.072833
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Details_crom
-Kd 0.122952 0.089844 0.072833
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Grid
-Kd 0.077652 0.077133 0.085969
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Lights
-Kd 0.121012 0.068666 0.065675
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Light_grid_white
-Kd 0.641531 0.641407 0.641531
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Car_Paint
-Kd 0.78 0.78 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Ext_carpaint_roof
-Kd 0.78 0.78 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Carbon
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Light_DRL
-Kd 0.12144 0.140175 0.173167
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl rear_indicator
-Kd 0.292897 0.289621 0.292897
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT__Engine_noise
-Kd 0.014302 0.014152 0.023501
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Botom_plastic_shiny
-Kd 0.014302 0.014152 0.023501
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Botom_Chrome
-Kd 0.014302 0.014152 0.023501
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Wipers
-Kd 0.014302 0.014152 0.023501
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Camera
-Kd 0.087489 0.084844 0.087267
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Plastic
+newmtl engine_grille_D
 Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_PLATE_plastic
-Kd 0.548139 0.548596 0.548511
+newmtl engine_grille_C
+Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Caliper
-Kd 0.22 0.22 0.22
+newmtl engine_grille_B
+Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl detail
-Kd 0.122952 0.089844 0.072833
+newmtl engine_grille_A
+Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_brake_disk
-Kd 0.82 0.08 0.08
+newmtl grille_A
+Kd 0.16 0.17 0.19
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl WHEEL
-Kd 0.3 0.3 0.3
+newmtl radiator
+Kd 0.6 0.6 0.6
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Rim_logo
-Kd 0.76 0.78 0.82
+newmtl black
+Kd 0.096774 0.095238 0.096774
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_RIM
-Kd 0.76 0.78 0.82
+newmtl car_paint_2
+Kd 0.303605 0.303818 0.303605
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl engine
+Kd 0.8 0.8 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl colors
+Kd 0.8 0.8 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl light_chrome
+Kd 0.870968 0.865079 0.870968
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl aluminium
+Kd 0.870968 0.865079 0.870968
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon
+Kd 0.171196 0.173352 0.171196
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl ferrari_badge
+Kd 0.603768 0.58555 0.455078
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl ext_plate
+Kd 0.771169 0.787004 0.829355
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl caliper_badge
+Kd 0.8 0.8 0.8
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl metal
+Kd 0.451613 0.460317 0.451613
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_paint_caliper
+Kd 0.303605 0.303818 0.303605
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl rim
+Kd 0.382989 0.383417 0.382989
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl emblem_hq
+Kd 0.2 0.2 0.2
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl brakedisc
+Kd 0.159999 0.161443 0.15918
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl tyre
+Kd 0.12 0.12 0.13
 Ks 0.25 0.25 0.25
 Ns 32
