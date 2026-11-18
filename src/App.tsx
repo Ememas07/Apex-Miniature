@@ -5,6 +5,7 @@ import { PauseModal } from './components/PauseModal';
 import { RaceHUD } from './components/RaceHUD';
 import { RaceSetupModal } from './components/RaceSetupModal';
 import { ResultsModal } from './components/ResultsModal';
+import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
 import { TrackStudioModal } from './components/TrackStudioModal';
 import { CAR_CLASSES, CARS, getCarById } from './game/cars';
@@ -65,6 +66,7 @@ export default function App() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [trackStudioOpen, setTrackStudioOpen] = useState(false);
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
+  const [soundStudioOpen, setSoundStudioOpen] = useState(false);
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -311,7 +313,7 @@ export default function App() {
       />
 
       {/* Title Screen */}
-      {phase === 'title' && !garageOpen && !setupOpen && !trackStudioOpen && !liveryStudioOpen && (
+      {phase === 'title' && !garageOpen && !setupOpen && !trackStudioOpen && !liveryStudioOpen && !soundStudioOpen && (
         <TitleOverlay
           raceConfig={raceConfig}
           roomCode={room?.code ?? null}
@@ -320,6 +322,15 @@ export default function App() {
           onOpenSetup={() => setSetupOpen(true)}
           onOpenStudio={() => handleOpenStudio()}
           onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
+          onOpenSoundStudio={() => setSoundStudioOpen(true)}
+        />
+      )}
+
+      {/* Interactive IMSA Sound Studio */}
+      {soundStudioOpen && (
+        <SoundEditorModal
+          currentCarId={raceConfig.playerCarId}
+          onClose={() => setSoundStudioOpen(false)}
         />
       )}
 

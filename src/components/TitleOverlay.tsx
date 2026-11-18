@@ -10,6 +10,7 @@ interface TitleOverlayProps {
   onOpenSetup: () => void;
   onOpenStudio?: () => void;
   onOpenLiveryStudio?: () => void;
+  onOpenSoundStudio?: () => void;
 }
 
 export function TitleOverlay({
@@ -20,6 +21,7 @@ export function TitleOverlay({
   onOpenSetup,
   onOpenStudio,
   onOpenLiveryStudio,
+  onOpenSoundStudio,
 }: TitleOverlayProps) {
   const car = getCarById(raceConfig.playerCarId);
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
@@ -114,8 +116,8 @@ export function TitleOverlay({
           </div>
         </div>
 
-        {/* Primary & Secondary Actions (<= 3 menu actions total) */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+        {/* Primary & Secondary Actions */}
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
           <button
             type="button"
             data-start="true"
@@ -147,6 +149,22 @@ export function TitleOverlay({
                 <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
               </svg>
               Livery Studio
+            </button>
+          )}
+
+          {onOpenSoundStudio && (
+            <button
+              type="button"
+              data-testid="btn-open-sound-studio"
+              onClick={onOpenSoundStudio}
+              className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-amber-500/30 hover:border-amber-400 text-amber-300 hover:text-white font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+              </svg>
+              Sound Studio
             </button>
           )}
 

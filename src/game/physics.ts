@@ -161,6 +161,7 @@ export interface CarSimState {
   finished: boolean;
   gear: number;
   rpmNormalized: number;
+  revLimiterTimer?: number;
   aiTargetOffset: number;
   aiPassTimer: number;
   aiPaceMultiplier: number;
@@ -908,6 +909,17 @@ export function stepCarPhysics(
     car.rpmNormalized = Math.round(Math.min(1.0, 0.22 + (car.speed / maxReverseSpeed) * 0.58) * 100) / 100;
   } else {
     // ==================== FORWARD GEARS (1..N) ====================
+    const isStandstillRev = car.speed < 1.2 && brake > 0.1 && throttle > 0.08;
+    const revCycleHz = 18;
+    const isLimiterActive = !isFE && car.rpmNormalized >= 0.99 && throttle > 0.22;
+    if (isLimiterActive) {
+      car.revLimiterTimer = ((car.revLimiterTimer ?? 0) + dt) % (1 / revCycleHz);
+    } else {
+      car.revLimiterTimer = 0;
+    }
+    const limiterTorqueCut =
+      isLimiterActive && (car.revLimiterTimer ?? 0) > 0.5 / revCycleHz ? 0.0 : 1.0;
+
     if (throttle > 0 && brake < 0.1) {
       const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
       const aeroTraction = isFormula && !isFE
@@ -917,11 +929,18 @@ export function stepCarPhysics(
         : isFE
         ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
         : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
-      const torqueCurve = Math.max(0.12, 1.0 - 0.78 * Math.pow(speedRatio, 1.35));
-      const engineAccel = accelBase * aeroTraction * specialAccelMult * fuelFactor * throttle * torqueCurve;
+      const torqueCurve = Math.max(0.18, 1.0 - 0.68 * Math.pow(speedRatio, 1.35));
+      const engineAccel =
+        accelBase *
+        aeroTraction *
+        specialAccelMult *
+        fuelFactor *
+        throttle *
+        torqueCurve *
+        limiterTorqueCut;
       // Quadratic aero drag F_drag = c_drag * v^2 smoothly balancing engine power near target Vmax
       const cAeroDrag =
-        ((accelBase * 0.12) / (effectiveMaxSpeed * effectiveMaxSpeed)) * tuning.dragScale;
+        ((accelBase * 0.11) / (effectiveMaxSpeed * effectiveMaxSpeed)) * tuning.dragScale;
       const aeroDragDecel = cAeroDrag * car.speed * car.speed;
       const netAccel = engineAccel - aeroDragDecel;
       car.speed = Math.max(0, car.speed + netAccel * dt);
@@ -943,55 +962,74 @@ export function stepCarPhysics(
       );
     }
 
-    // Forward Gearing Simulation & Top-Gear RPM Plateau:
+    // Forward Gearing Simulation & True Redline Reaching (including Top Gear & Standstill Launch Rev):
     if (totalGears === 1) {
       car.gear = 1;
-      const motorRatio = Math.min(1.0, car.speed / Math.max(1, maxSpeedBase));
-      car.rpmNormalized = car.speed < 1.0 ? 0.15 : Math.min(1.0, 0.15 + motorRatio * 0.85);
+      if (isStandstillRev) {
+        car.rpmNormalized = Math.min(1.0, car.rpmNormalized + dt * 3.5 * throttle);
+      } else {
+        const motorRatio = Math.min(1.0, car.speed / Math.max(1, maxSpeedBase));
+        car.rpmNormalized = car.speed < 1.0 ? 0.15 : Math.min(1.0, 0.15 + motorRatio * 0.85);
+      }
+    } else if (isStandstillRev) {
+      // Stationary burnout / launch revving against brake: freely sweeps to redline & bounces
+      const targetRev = Math.min(1.0, 0.18 + throttle * 0.84);
+      const nextRpm =
+        car.rpmNormalized < targetRev
+          ? Math.min(targetRev, car.rpmNormalized + dt * 4.2 * throttle)
+          : Math.max(targetRev, car.rpmNormalized - dt * 3.2);
+      car.rpmNormalized =
+        nextRpm >= 0.99 && limiterTorqueCut === 0
+          ? 0.985
+          : Math.round(nextRpm * 1000) / 1000;
     } else if (isManual) {
       car.gear = Math.max(1, Math.min(totalGears, car.gear));
-      if (car.speed < 1.0 && car.gear === 1) {
+      if (car.speed < 1.0 && car.gear === 1 && throttle < 0.08) {
         car.rpmNormalized = 0.18;
       } else {
-        const topSpeedRef = Math.max(45, maxSpeedBase * specialSpeedMult);
+        const topSpeedRef = Math.max(45, effectiveMaxSpeed);
         const speedRatio = Math.min(1.0, car.speed / topSpeedRef);
         const gearMinRatio = Math.pow((car.gear - 1) / totalGears, 1 / 0.74);
         const gearMaxRatio = Math.pow(car.gear / totalGears, 1 / 0.74);
         const band = Math.max(0.05, gearMaxRatio - gearMinRatio);
         let gearRpm: number;
         if (car.gear === totalGears) {
-          const topRatio = Math.min(1.0, car.speed / effectiveMaxSpeed);
-          gearRpm = 0.52 + 0.40 * Math.pow(topRatio, 0.82);
+          const topRatio = Math.min(1.0, car.speed / Math.max(1, effectiveMaxSpeed));
+          gearRpm = 0.50 + 0.50 * Math.pow(topRatio, 0.84);
         } else {
-          const inGearFrac = Math.max(-0.25, Math.min(1.08, (speedRatio - gearMinRatio) / band));
-          gearRpm = Math.max(0.18, Math.min(1.0, 0.38 + 0.58 * inGearFrac));
+          const inGearFrac = Math.max(-0.25, Math.min(1.0, (speedRatio - gearMinRatio) / band));
+          gearRpm = Math.max(0.18, Math.min(1.0, 0.36 + 0.64 * inGearFrac));
         }
-        if (car.gear < totalGears && speedRatio > gearMaxRatio) {
+        if (car.gear < totalGears && speedRatio >= gearMaxRatio) {
           car.speed = Math.min(car.speed, topSpeedRef * gearMaxRatio);
-          gearRpm = 1.0;
+          gearRpm = limiterTorqueCut === 0 ? 0.985 : 1.0;
+        } else if (gearRpm >= 0.99 && limiterTorqueCut === 0) {
+          gearRpm = 0.985;
         }
-        car.rpmNormalized = Math.round(gearRpm * 100) / 100;
+        car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;
       }
     } else {
-      if (car.speed < 1.0) {
+      if (car.speed < 1.0 && throttle < 0.08) {
         car.gear = 1;
         car.rpmNormalized = 0.18;
       } else {
-        const topSpeedRef = Math.max(45, maxSpeedBase * specialSpeedMult);
+        const topSpeedRef = Math.max(45, effectiveMaxSpeed);
         const speedRatio = Math.min(0.999, car.speed / topSpeedRef);
         const gearProgress = Math.pow(speedRatio, 0.74) * totalGears;
         const currentGear = Math.max(1, Math.min(totalGears, Math.floor(gearProgress) + 1));
         const inGearFraction = gearProgress - (currentGear - 1);
-        // Top-gear RPM plateaus naturally at 89%-94% of redline on flat straights at target Vmax
         let gearRpm: number;
         if (currentGear === totalGears) {
-          const topRatio = Math.min(1.0, car.speed / effectiveMaxSpeed);
-          gearRpm = 0.52 + 0.40 * Math.pow(topRatio, 0.82);
+          const topRatio = Math.min(1.0, car.speed / Math.max(1, effectiveMaxSpeed));
+          gearRpm = 0.50 + 0.50 * Math.pow(topRatio, 0.84);
         } else {
-          gearRpm = 0.38 + 0.58 * Math.max(0, Math.min(1.0, inGearFraction));
+          gearRpm = 0.36 + 0.635 * Math.max(0, Math.min(1.0, inGearFraction));
+        }
+        if (gearRpm >= 0.99 && limiterTorqueCut === 0) {
+          gearRpm = 0.985;
         }
         car.gear = currentGear;
-        car.rpmNormalized = Math.round(gearRpm * 100) / 100;
+        car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;
       }
     }
   }

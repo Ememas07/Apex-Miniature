@@ -95,6 +95,39 @@ export interface CarLiveryPreset {
   livery: LiveryConfig;
 }
 
+export type SoundProfileId =
+  | 'cadillac_v8_hybrid'
+  | 'gtp_turbo_v8'
+  | 'gtp_turbo_v6'
+  | 'gtp_na_v12'
+  | 'gtp_na_v8'
+  | 'lmp2_gibson_v8'
+  | 'gt3_flat6'
+  | 'gt3_flatplane_v8'
+  | 'gt3_v10'
+  | 'gt3_crossplane_v8'
+  | 'gt3_turbo_v6'
+  | 'gt3_turbo_i6'
+  | 'gt3_turbo_v8'
+  | 'gt4_flat6'
+  | 'gt4_turbo_i6'
+  | 'gt4_turbo_v8'
+  | 'gt4_turbo_v6'
+  | 'gt4_turbo_i4'
+  | 'gt4_crossplane_v8'
+  | 'f1_v6_hybrid'
+  | 'f1_v10'
+  | 'formula_e'
+  | 'coupe_flat6'
+  | 'coupe_flatplane_v8'
+  | 'coupe_turbo_i6'
+  | 'coupe_turbo_v6'
+  | 'coupe_na_v6'
+  | 'coupe_turbo_i4'
+  | 'supercar_v12'
+  | 'supercar_flatplane_v8'
+  | 'supercar_v6_hybrid';
+
 export interface CarSpec {
   id: string;
   name: string;
@@ -104,6 +137,7 @@ export interface CarSpec {
   attributes: BoPAttributes;
   tradeoffNote: string;
   engineType: 'v6-hybrid' | 'v8-hybrid' | 'v10' | 'v12' | 'flat6' | 'electric' | 'turbo-i6' | 'turbo-i4';
+  soundProfile?: SoundProfileId;
   gears?: number; // per-car transmission gear override (e.g. Cadillac GTP = 6 gears)
   specialTypeOverride?: ClassSpecialType;
   specialLabelOverride?: string;

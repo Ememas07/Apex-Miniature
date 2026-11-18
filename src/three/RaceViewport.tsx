@@ -769,6 +769,15 @@ export function RaceViewport(props: RaceViewportProps) {
           if (impact > 5) {
             sim.trauma = Math.min(1, sim.trauma + impact * 0.045);
           }
+        } else if (playerCar) {
+          // Grid staging / neutral launch revving during starting-lights countdown
+          const targetGridRpm = throttle > 0.05 ? Math.min(1.0, 0.18 + throttle * 0.84) : 0.18;
+          const rate = throttle > 0.05 ? 4.5 : 3.0;
+          const nextRpm =
+            playerCar.rpmNormalized < targetGridRpm
+              ? Math.min(targetGridRpm, playerCar.rpmNormalized + dt * rate)
+              : Math.max(targetGridRpm, playerCar.rpmNormalized - dt * rate);
+          playerCar.rpmNormalized = nextRpm;
         }
 
         // Send multiplayer telemetry at 20Hz if connected in a room
@@ -907,7 +916,7 @@ export function RaceViewport(props: RaceViewportProps) {
             playerCar.rpmNormalized,
             engineLoad,
             playerCar.carSpec.engineType,
-            sim.countdown <= 0,
+            true,
             playerCar.carSpec.classId,
             brake > 0,
             liveSpeedKmh,
@@ -915,6 +924,7 @@ export function RaceViewport(props: RaceViewportProps) {
             playerCar.lateralSlip,
             playerCar.onKerb,
             playerCar.gear,
+            playerCar.carSpec.soundProfile,
           );
         }
       } else {

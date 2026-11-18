@@ -372,6 +372,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 88, acceleration: 87, corneringGrip: 85, braking: 84, efficiency: 81 },
     tradeoffNote: 'Blistering straight-line punch and strong traction; higher tire deg in long stints.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gtp_turbo_v6',
     defaultLivery: makeLivery('#c8102e', '#facc15', '#ffffff', '51', { template: 'racing-stripes', rimFinish: 'gold-bronze' }),
   },
   {
@@ -383,6 +384,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 84, acceleration: 85, corneringGrip: 86, braking: 86, efficiency: 91 },
     tradeoffNote: 'Metronomic stint consistency and gentle tire wear; slightly softer peak vmax.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gtp_turbo_v6',
     defaultLivery: makeLivery('#111827', '#ef4444', '#ffffff', '7', { template: 'two-tone', carbonHood: true }),
   },
   {
@@ -394,6 +396,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 85, acceleration: 86, corneringGrip: 86, braking: 87, efficiency: 85 },
     tradeoffNote: 'All-round chassis poise and late-braking stability across bumpy street circuits.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gtp_turbo_v8',
     defaultLivery: makeLivery('#dc2626', '#ffffff', '#0f172a', '6', { template: 'heritage', rimFinish: 'gloss-black' }),
   },
   {
@@ -405,6 +408,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 89, acceleration: 89, corneringGrip: 82, braking: 84, efficiency: 83 },
     tradeoffNote: 'Ferocious naturally-aspirated V8 torque and top speed; heavier front wash in long sweepers.',
     engineType: 'v8-hybrid',
+    soundProfile: 'cadillac_v8_hybrid',
     gears: 6,
     defaultLivery: makeLivery('#facc15', '#0f172a', '#ef4444', '01', { template: 'geometric', rimFinish: 'gloss-black' }),
   },
@@ -417,6 +421,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 87, acceleration: 86, corneringGrip: 84, braking: 87, efficiency: 82 },
     tradeoffNote: 'Strong threshold braking and curb compliance; moderate aero efficiency.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gtp_turbo_v8',
     defaultLivery: makeLivery('#ffffff', '#1d4ed8', '#dc2626', '24', { template: 'geometric', rimFinish: 'silver' }),
   },
   {
@@ -428,6 +433,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 83, acceleration: 88, corneringGrip: 88, braking: 85, efficiency: 82 },
     tradeoffNote: 'High-downforce cornering knife with explosive hairpin exit; lower top-end drag ceiling.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gtp_turbo_v6',
     defaultLivery: makeLivery('#1e293b', '#ef4444', '#38bdf8', '10', { template: 'two-tone', rimFinish: 'silver' }),
   },
   {
@@ -439,6 +445,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 87, acceleration: 84, corneringGrip: 86, braking: 85, efficiency: 85 },
     tradeoffNote: 'Slippery aero efficiency on long straights; slightly softer initial launch.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gtp_turbo_v6',
     defaultLivery: makeLivery('#1d4ed8', '#ef4444', '#ffffff', '35', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
   },
   {
@@ -450,6 +457,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 83, acceleration: 84, corneringGrip: 89, braking: 86, efficiency: 86 },
     tradeoffNote: 'Ground-effect apex speed specialist; trades raw straight speed for rapid mid-corner rotation.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gtp_turbo_v6',
     defaultLivery: makeLivery('#cbd5e1', '#84cc16', '#0f172a', '93', { template: 'geometric', carbonHood: true }),
   },
   {
@@ -461,6 +469,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 90, acceleration: 84, corneringGrip: 87, braking: 83, efficiency: 80 },
     tradeoffNote: 'Featherweight V12 top-end screamer with rapid direction change; shorter braking margin.',
     engineType: 'v12',
+    soundProfile: 'gtp_na_v12',
     specialTypeOverride: 'rich-fuel-overboost',
     specialLabelOverride: 'Rich Fuel Overboost',
     defaultLivery: makeLivery('#065f46', '#a3e635', '#ffffff', '007', { template: 'racing-stripes', rimFinish: 'gold-bronze' }),
@@ -474,6 +483,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 86, acceleration: 85, corneringGrip: 85, braking: 88, efficiency: 83 },
     tradeoffNote: 'Confident deep braking zones and rear stability; modest mid-range pull.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gtp_turbo_v8',
     defaultLivery: makeLivery('#65a30d', '#111827', '#ef4444', '63', { template: 'two-tone', carbonHood: true }),
   },
   {
@@ -485,6 +495,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 86, acceleration: 87, corneringGrip: 85, braking: 84, efficiency: 86 },
     tradeoffNote: 'Punchy hybrid deployment out of chicanes with tidy tire preservation.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gtp_turbo_v8',
     defaultLivery: makeLivery('#ea580c', '#18181b', '#f8fafc', '88', { template: 'heritage', rimFinish: 'gloss-black' }),
   },
   {
@@ -496,6 +507,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 88, acceleration: 83, corneringGrip: 85, braking: 86, efficiency: 89 },
     tradeoffNote: 'Non-hybrid mechanical purity: ultra-light on fuel and tires, slightly slower off slow corners.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gtp_na_v8',
     specialTypeOverride: 'rich-fuel-overboost',
     specialLabelOverride: 'Rich Fuel Overboost',
     defaultLivery: makeLivery('#0284c7', '#ffffff', '#dc2626', '708', { template: 'heritage', rimFinish: 'white' }),
@@ -512,6 +524,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 81, acceleration: 81, corneringGrip: 82, braking: 82, efficiency: 84 },
     tradeoffNote: 'Spec benchmark LMP2 prototype with naturally aspirated 4.2L Gibson V8 and versatile aero configuration.',
     engineType: 'v8-hybrid',
+    soundProfile: 'lmp2_gibson_v8',
     gears: 6,
     defaultLivery: makeLivery('#FF6B00', '#0052A5', '#111111', '22', { template: 'two-tone', rimFinish: 'gloss-black' }),
     liveries: [
@@ -564,6 +577,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 74, acceleration: 79, corneringGrip: 81, braking: 82, efficiency: 79 },
     tradeoffNote: 'Rear-engine traction monster on corner exit and late braking; trims top speed on long chutes.',
     engineType: 'flat6',
+    soundProfile: 'gt3_flat6',
     defaultLivery: makeLivery('#f8fafc', '#16a34a', '#111827', '911', { template: 'heritage', rimFinish: 'gold-bronze', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -575,6 +589,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 77, acceleration: 78, corneringGrip: 81, braking: 79, efficiency: 78 },
     tradeoffNote: 'Agile mid-engine balance in fast sweepers with crisp aero efficiency.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gt3_turbo_v6',
     defaultLivery: makeLivery('#dc2626', '#facc15', '#ffffff', '62', { template: 'racing-stripes', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -586,6 +601,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 79, acceleration: 80, corneringGrip: 77, braking: 79, efficiency: 80 },
     tradeoffNote: 'Flat-plane V8 top-end pull and long-stint balance; demands patience on initial turn-in.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt3_flatplane_v8',
     defaultLivery: makeLivery('#facc15', '#18181b', '#dc2626', '3', { template: 'two-tone', carbonHood: true, headlightTint: 'endurance-yellow' }),
   },
   {
@@ -597,6 +613,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 78, acceleration: 77, corneringGrip: 79, braking: 81, efficiency: 81 },
     tradeoffNote: 'Long-wheelbase stability over aggressive kerbs and gentle front tire wear.',
     engineType: 'turbo-i6',
+    soundProfile: 'gt3_turbo_i6',
     defaultLivery: makeLivery('#ffffff', '#2563eb', '#ef4444', '1', { template: 'geometric', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -608,6 +625,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 81, acceleration: 79, corneringGrip: 76, braking: 78, efficiency: 80 },
     tradeoffNote: 'Roaring Coyote V8 straight-line bruiser; wider arc through tight hairpins.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt3_crossplane_v8',
     defaultLivery: makeLivery('#1d4ed8', '#ffffff', '#ef4444', '64', { template: 'racing-stripes', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -619,6 +637,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 77, acceleration: 78, corneringGrip: 79, braking: 80, efficiency: 81 },
     tradeoffNote: 'Predictable front-engine composure in wet and dry transitions.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt3_turbo_v8',
     defaultLivery: makeLivery('#047857', '#bef264', '#111827', '27', { template: 'two-tone', rimFinish: 'gloss-black', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -630,6 +649,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 78, acceleration: 80, corneringGrip: 79, braking: 78, efficiency: 76 },
     tradeoffNote: 'Explosive mid-corner rotation and launch punch; works rear tires hard.',
     engineType: 'v10',
+    soundProfile: 'gt3_v10',
     defaultLivery: makeLivery('#84cc16', '#0f172a', '#ffffff', '19', { template: 'geometric', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -641,6 +661,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 76, acceleration: 77, corneringGrip: 80, braking: 82, efficiency: 82 },
     tradeoffNote: 'Bulletproof braking stability and planted front nose over bumps.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt3_crossplane_v8',
     defaultLivery: makeLivery('#94a3b8', '#06b6d4', '#0f172a', '57', { template: 'heritage', rimFinish: 'silver', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -652,6 +673,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 79, acceleration: 77, corneringGrip: 77, braking: 80, efficiency: 83 },
     tradeoffNote: 'Durable V8 endurance cruiser with forgiving slide recovery.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt3_crossplane_v8',
     defaultLivery: makeLivery('#0f172a', '#2563eb', '#f8fafc', '14', { template: 'two-tone', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -663,6 +685,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 76, acceleration: 78, corneringGrip: 82, braking: 79, efficiency: 76 },
     tradeoffNote: 'Razor-sharp front aero bite in fast chicanes; sensitive to hot track temps.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt3_turbo_v8',
     defaultLivery: makeLivery('#f97316', '#0f172a', '#38bdf8', '59', { template: 'geometric', carbonHood: true, headlightTint: 'endurance-yellow' }),
   },
   {
@@ -674,6 +697,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 78, acceleration: 79, corneringGrip: 80, braking: 79, efficiency: 77 },
     tradeoffNote: 'LMP1-derived carbon monocoque & massive downforce; heavier GT3 BoP ballast.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gt3_turbo_v6',
     gears: 7,
     defaultLivery: makeLivery('#facc15', '#111827', '#ffffff', '21', { template: 'two-tone', rimFinish: 'gloss-black', headlightTint: 'endurance-yellow' }),
   },
@@ -686,6 +710,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 82, acceleration: 79, corneringGrip: 75, braking: 78, efficiency: 82 },
     tradeoffNote: 'Massive 4.0L twin-turbo V8 torque & straight-line stability; heavy curb weight in tight chicanes.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt3_turbo_v8',
     defaultLivery: makeLivery('#064e3b', '#ffffff', '#a3e635', '7', { template: 'heritage', rimFinish: 'gloss-black', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -697,6 +722,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 77, acceleration: 78, corneringGrip: 80, braking: 80, efficiency: 79 },
     tradeoffNote: 'Naturally aspirated 5.2L V10 throttle response & sharp mid-engine turn-in.',
     engineType: 'v10',
+    soundProfile: 'gt3_v10',
     defaultLivery: makeLivery('#cbd5e1', '#dc2626', '#111827', '29', { template: 'geometric', rimFinish: 'gloss-black', headlightTint: 'endurance-yellow' }),
   },
   {
@@ -708,6 +734,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 76, acceleration: 80, corneringGrip: 79, braking: 80, efficiency: 80 },
     tradeoffNote: 'Twin-turbo V6 corner-exit punch & balanced endurance chassis.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gt3_turbo_v6',
     defaultLivery: makeLivery('#dc2626', '#111827', '#f8fafc', '93', { template: 'two-tone', rimFinish: 'gloss-black', headlightTint: 'endurance-yellow' }),
   },
 
@@ -721,6 +748,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 68, acceleration: 71, corneringGrip: 75, braking: 74, efficiency: 84 },
     tradeoffNote: '911 GT3-derived 9,000 RPM 4.0L flat-six & sharp mid-engine balance.',
     engineType: 'flat6',
+    soundProfile: 'gt4_flat6',
     defaultLivery: makeLivery('#e2e8f0', '#0284c7', '#0f172a', '82', { template: 'two-tone', rimFinish: 'gloss-black' }),
   },
   {
@@ -732,6 +760,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 72, acceleration: 71, corneringGrip: 71, braking: 73, efficiency: 84 },
     tradeoffNote: 'Twin-turbo S58 torque & high-speed stability; longer braking zones.',
     engineType: 'turbo-i6',
+    soundProfile: 'gt4_turbo_i6',
     defaultLivery: makeLivery('#ffffff', '#2563eb', '#dc2626', '11', { template: 'geometric', rimFinish: 'gloss-black' }),
   },
   {
@@ -743,6 +772,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 71, acceleration: 70, corneringGrip: 73, braking: 73, efficiency: 85 },
     tradeoffNote: '4.0L twin-turbo V8 endurance reliability & smooth aerodynamic platform.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt4_turbo_v8',
     defaultLivery: makeLivery('#064e3b', '#a3e635', '#111827', '97', { template: 'heritage', rimFinish: 'gold-bronze' }),
   },
   {
@@ -754,6 +784,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 70, acceleration: 72, corneringGrip: 72, braking: 72, efficiency: 85 },
     tradeoffNote: 'Agile short-wheelbase turn-in & responsive inline-6 turbo punch.',
     engineType: 'turbo-i6',
+    soundProfile: 'gt4_turbo_i6',
     defaultLivery: makeLivery('#ffffff', '#dc2626', '#111827', '52', { template: 'two-tone', rimFinish: 'gloss-black' }),
   },
   {
@@ -765,6 +796,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 69, acceleration: 72, corneringGrip: 74, braking: 73, efficiency: 83 },
     tradeoffNote: 'Carbon monocell lightweight agility & 120-degree twin-turbo V6 punch.',
     engineType: 'v6-hybrid',
+    soundProfile: 'gt4_turbo_v6',
     defaultLivery: makeLivery('#ea580c', '#111827', '#0284c7', '27', { template: 'geometric', rimFinish: 'gloss-black' }),
   },
   {
@@ -776,6 +808,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 71, acceleration: 70, corneringGrip: 72, braking: 74, efficiency: 85 },
     tradeoffNote: '4.0L twin-turbo V8 torque & bombproof endurance traction control.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt4_turbo_v8',
     defaultLivery: makeLivery('#cbd5e1', '#0284c7', '#111827', '48', { template: 'racing-stripes', rimFinish: 'silver' }),
   },
   {
@@ -787,6 +820,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 67, acceleration: 71, corneringGrip: 76, braking: 74, efficiency: 87 },
     tradeoffNote: 'Ultra-lightweight 1,080kg featherweight chassis & exceptional tire preservation.',
     engineType: 'turbo-i4',
+    soundProfile: 'gt4_turbo_i4',
     defaultLivery: makeLivery('#2563eb', '#ffffff', '#dc2626', '36', { template: 'heritage', rimFinish: 'white' }),
   },
   {
@@ -798,6 +832,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 73, acceleration: 71, corneringGrip: 70, braking: 72, efficiency: 84 },
     tradeoffNote: '5.0L Coyote V8 roar & straight-line speed; heavier tire wear in tight hairpins.',
     engineType: 'v8-hybrid',
+    soundProfile: 'gt4_crossplane_v8',
     defaultLivery: makeLivery('#1e3a8a', '#ffffff', '#dc2626', '55', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
   },
 
@@ -812,6 +847,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 93, acceleration: 93, corneringGrip: 93, braking: 93, efficiency: 90 },
     tradeoffNote: 'Active Aero 2026 regulation challenger with 50/50 ICE-MGU-K power unit and Z-mode/X-mode active aerodynamics.',
     engineType: 'v6-hybrid',
+    soundProfile: 'f1_v6_hybrid',
     gears: 8,
     defaultLivery: makeLivery('#00D2BE', '#C0C0C0', '#111111', '63', { template: 'geometric' }),
     liveries: [
@@ -895,6 +931,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 94, acceleration: 94, corneringGrip: 97, braking: 96, efficiency: 89 },
     tradeoffNote: 'Peak floor-downforce 2021 titan with complex bargeboards, razor-sharp turn-in and planted rear stability.',
     engineType: 'v6-hybrid',
+    soundProfile: 'f1_v6_hybrid',
     gears: 8,
     defaultLivery: makeLivery('#111111', '#00D2BE', '#C0C0C0', '44', { template: 'heritage' }),
     liveries: [
@@ -971,6 +1008,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 92, acceleration: 96, corneringGrip: 92, braking: 91, efficiency: 87 },
     tradeoffNote: 'Featherweight 605kg V10 screamer with violent standing starts and playful mechanical slip.',
     engineType: 'v10',
+    soundProfile: 'f1_v10',
     defaultLivery: makeLivery('#38bdf8', '#facc15', '#1e3a8a', '5', { template: 'two-tone', rimFinish: 'silver' }),
   },
   {
@@ -982,6 +1020,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 95, acceleration: 94, corneringGrip: 93, braking: 90, efficiency: 84 },
     tradeoffNote: 'Razor-sharp turn-in and blistering top-end V10 shriek; demands smooth throttle.',
     engineType: 'v10',
+    soundProfile: 'f1_v10',
     defaultLivery: makeLivery('#cbd5e1', '#111827', '#ef4444', '9', { template: 'geometric', rimFinish: 'silver' }),
   },
   {
@@ -993,6 +1032,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 93, acceleration: 93, corneringGrip: 92, braking: 93, efficiency: 89 },
     tradeoffNote: 'Enduring Bridgestone stint pace and crisp late-braking balance.',
     engineType: 'v10',
+    soundProfile: 'f1_v10',
     defaultLivery: makeLivery('#dc2626', '#ffffff', '#111827', '1', { template: 'racing-stripes', rimFinish: 'silver' }),
   },
   {
@@ -1004,6 +1044,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 96, acceleration: 94, corneringGrip: 90, braking: 91, efficiency: 86 },
     tradeoffNote: '19,200 RPM BMW V10 horsepower king; lively rear under hard downshifts.',
     engineType: 'v10',
+    soundProfile: 'f1_v10',
     defaultLivery: makeLivery('#ffffff', '#1e3a8a', '#38bdf8', '7', { template: 'heritage', rimFinish: 'white' }),
   },
 
@@ -1017,6 +1058,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 76, acceleration: 92, corneringGrip: 83, braking: 85, efficiency: 86 },
     tradeoffNote: 'Instant AWD launch torque and heavy front-axle regen braking for tight street circuits.',
     engineType: 'electric',
+    soundProfile: 'formula_e',
     defaultLivery: makeLivery('#ffffff', '#dc2626', '#0f172a', '94', { template: 'geometric', headlightTint: 'ice-blue' }),
   },
   {
@@ -1028,6 +1070,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 77, acceleration: 90, corneringGrip: 84, braking: 84, efficiency: 87 },
     tradeoffNote: 'Ultra-efficient powertrain software that sustains Attack Mode pace without overheating.',
     engineType: 'electric',
+    soundProfile: 'formula_e',
     defaultLivery: makeLivery('#111827', '#f8fafc', '#eab308', '9', { template: 'two-tone', headlightTint: 'ice-blue' }),
   },
   {
@@ -1039,6 +1082,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 75, acceleration: 93, corneringGrip: 84, braking: 84, efficiency: 84 },
     tradeoffNote: 'Explosive corner-exit punch with agile street-chicane rotation.',
     engineType: 'electric',
+    soundProfile: 'formula_e',
     defaultLivery: makeLivery('#ef4444', '#ffffff', '#1e293b', '23', { template: 'heritage', headlightTint: 'ice-blue' }),
   },
   {
@@ -1050,6 +1094,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 78, acceleration: 89, corneringGrip: 84, braking: 86, efficiency: 85 },
     tradeoffNote: 'Top-end street speed paired with confident threshold braking.',
     engineType: 'electric',
+    soundProfile: 'formula_e',
     defaultLivery: makeLivery('#1d4ed8', '#f8fafc', '#38bdf8', '7', { template: 'racing-stripes', headlightTint: 'ice-blue' }),
   },
 
@@ -1063,6 +1108,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 68, acceleration: 71, corneringGrip: 71, braking: 73, efficiency: 82 },
     tradeoffNote: 'Playful front-engine balance with forgiving slip angles and stout brakes.',
     engineType: 'turbo-i6',
+    soundProfile: 'coupe_turbo_i6',
     defaultLivery: makeLivery('#1d4ed8', '#111827', '#ef4444', '21', { template: 'racing-stripes', carbonHood: true, rimFinish: 'gold-bronze' }),
   },
   {
@@ -1074,6 +1120,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 70, acceleration: 72, corneringGrip: 75, braking: 75, efficiency: 76 },
     tradeoffNote: 'Active-wing street weapon with racecar cornering bite; lighter top speed.',
     engineType: 'flat6',
+    soundProfile: 'coupe_flat6',
     defaultLivery: makeLivery('#f8fafc', '#ef4444', '#111827', '992', { template: 'heritage', carbonHood: true, rimFinish: 'gloss-black' }),
   },
   {
@@ -1085,6 +1132,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 74, acceleration: 74, corneringGrip: 70, braking: 71, efficiency: 77 },
     tradeoffNote: '8,600 RPM flat-plane V8 surge on long straights; noticeable body roll under load.',
     engineType: 'v8-hybrid',
+    soundProfile: 'coupe_flatplane_v8',
     defaultLivery: makeLivery('#ea580c', '#18181b', '#ffffff', '06', { template: 'two-tone', rimFinish: 'gloss-black' }),
   },
   {
@@ -1096,6 +1144,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 72, acceleration: 76, corneringGrip: 70, braking: 71, efficiency: 78 },
     tradeoffNote: 'AWD corner-exit slingshot grip; heavier curb weight in rapid chicanes.',
     engineType: 'v6-hybrid',
+    soundProfile: 'coupe_turbo_v6',
     defaultLivery: makeLivery('#cbd5e1', '#111827', '#dc2626', '23', { template: 'two-tone', carbonHood: true, rimFinish: 'gloss-black' }),
   },
   {
@@ -1107,6 +1156,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 64, acceleration: 68, corneringGrip: 76, braking: 74, efficiency: 86 },
     tradeoffNote: 'Mid-engine 3.0L naturally aspirated V6 hot-hatch icon; wide haunches and lively rear-wheel-drive rotation.',
     engineType: 'v6-hybrid',
+    soundProfile: 'coupe_na_v6',
     defaultLivery: makeLivery('#2563eb', '#cbd5e1', '#111827', '15', { template: 'two-tone', rimFinish: 'silver' }),
   },
   {
@@ -1118,6 +1168,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 67, acceleration: 69, corneringGrip: 75, braking: 74, efficiency: 86 },
     tradeoffNote: 'Dual-axis strut FWD track king; razor-sharp front-end bite and huge rear wing stability.',
     engineType: 'turbo-i4',
+    soundProfile: 'coupe_turbo_i4',
     defaultLivery: makeLivery('#f8fafc', '#dc2626', '#111827', '25', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
   },
   {
@@ -1129,6 +1180,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 64, acceleration: 71, corneringGrip: 76, braking: 73, efficiency: 87 },
     tradeoffNote: 'GR-FOUR rally-bred AWD punch and carbon roof lightness; explosive agility through technical chicanes.',
     engineType: 'turbo-i4',
+    soundProfile: 'coupe_turbo_i4',
     defaultLivery: makeLivery('#dc2626', '#111827', '#ffffff', '60', { template: 'two-tone', rimFinish: 'gloss-black' }),
   },
 
@@ -1142,6 +1194,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 84, acceleration: 85, corneringGrip: 78, braking: 79, efficiency: 79 },
     tradeoffNote: 'Short-wheelbase agility with rapid twin-turbo hybrid punch; less aero than GT3.',
     engineType: 'v6-hybrid',
+    soundProfile: 'supercar_v6_hybrid',
     defaultLivery: makeLivery('#dc2626', '#facc15', '#111827', '296', { template: 'racing-stripes', rimFinish: 'silver' }),
   },
   {
@@ -1153,6 +1206,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 86, acceleration: 84, corneringGrip: 79, braking: 78, efficiency: 77 },
     tradeoffNote: 'Featherweight carbon tub and ferocious top-end pull; demands smooth brake release.',
     engineType: 'v8-hybrid',
+    soundProfile: 'supercar_flatplane_v8',
     defaultLivery: makeLivery('#f97316', '#111827', '#f8fafc', '750', { template: 'two-tone', rimFinish: 'gloss-black' }),
   },
   {
@@ -1164,6 +1218,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 87, acceleration: 89, corneringGrip: 76, braking: 78, efficiency: 74 },
     tradeoffNote: '1,000hp AWD hyper-launch acceleration; heavier over long braking zones.',
     engineType: 'v8-hybrid',
+    soundProfile: 'supercar_flatplane_v8',
     defaultLivery: makeLivery('#991b1b', '#cbd5e1', '#facc15', '90', { template: 'heritage', rimFinish: 'gold-bronze' }),
   },
   {
@@ -1175,6 +1230,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 83, acceleration: 86, corneringGrip: 79, braking: 80, efficiency: 82 },
     tradeoffNote: 'Precision Weissach AWD traction and clean brake modulation.',
     engineType: 'v8-hybrid',
+    soundProfile: 'supercar_flatplane_v8',
     defaultLivery: makeLivery('#cbd5e1', '#84cc16', '#111827', '918', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
   },
   {
@@ -1186,6 +1242,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 90, acceleration: 83, corneringGrip: 81, braking: 77, efficiency: 74 },
     tradeoffNote: '6.5L V12 extreme power-to-weight rocket with active venturi downforce.',
     engineType: 'v12',
+    soundProfile: 'supercar_v12',
     defaultLivery: makeLivery('#065f46', '#a3e635', '#111827', '12', { template: 'geometric', carbonHood: true, rimFinish: 'gold-bronze' }),
   },
   {
@@ -1197,6 +1254,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 96, acceleration: 91, corneringGrip: 74, braking: 73, efficiency: 72 },
     tradeoffNote: '1,600 hp twin-turbo flat-plane V8 rocket hitting 380-400+ km/h; demands early braking on road tires.',
     engineType: 'v8-hybrid',
+    soundProfile: 'supercar_flatplane_v8',
     defaultLivery: makeLivery('#ffffff', '#16a34a', '#111827', '00', { template: 'geometric', rimFinish: 'gloss-black' }),
   },
   {
@@ -1208,6 +1266,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 89, acceleration: 89, corneringGrip: 77, braking: 76, efficiency: 74 },
     tradeoffNote: '1,200 hp Le Mans-derived 3.0L twin-turbo V6 hybrid with active rear wing; 350+ km/h vmax.',
     engineType: 'v6-hybrid',
+    soundProfile: 'supercar_v6_hybrid',
     defaultLivery: makeLivery('#dc2626', '#111827', '#ffffff', '80', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
   },
   {
@@ -1219,6 +1278,7 @@ export const CARS: CarSpec[] = [
     attributes: { topSpeed: 89, acceleration: 88, corneringGrip: 77, braking: 76, efficiency: 75 },
     tradeoffNote: '1,275 hp twin-turbo V8 hybrid successor to P1 with Active Long Tail aero; extreme high-speed downforce.',
     engineType: 'v8-hybrid',
+    soundProfile: 'supercar_flatplane_v8',
     defaultLivery: makeLivery('#ea580c', '#111827', '#ffffff', '01', { template: 'geometric', rimFinish: 'gloss-black' }),
   },
 ];

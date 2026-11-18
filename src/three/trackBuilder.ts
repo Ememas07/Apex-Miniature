@@ -262,6 +262,7 @@ export function buildTrackEnvironment(
     let bestPz = 0;
     let lowestCorridorY = Infinity;
     let inAnyCorridor = false;
+    let inApronCorridor = false;
 
     // Check 3x3 neighborhood around cell so segment queries never miss near cell boundaries
     const checked = new Set<number>();
@@ -290,13 +291,20 @@ export function buildTrackEnvironment(
 
           const segW = seg.aw + t * (seg.bw - seg.aw);
           const segHalfW = segW * 0.5;
-          const segCorridor = segHalfW + 1.5;
-          if (dSq <= segCorridor * segCorridor) {
-            inAnyCorridor = true;
+          const segApron = segHalfW + 5.2;
+          if (dSq <= segApron * segApron) {
+            inApronCorridor = true;
+            if (dSq <= (segHalfW + 1.5) * (segHalfW + 1.5)) {
+              inAnyCorridor = true;
+            }
             const segY = seg.ay + t * (seg.by - seg.ay);
             const segBank = seg.abank + t * (seg.bbank - seg.abank);
-            const segLowEdge = segY - segHalfW * Math.abs(Math.sin(segBank));
-            if (segLowEdge < lowestCorridorY) lowestCorridorY = segLowEdge;
+            const segNx = seg.anx + t * (seg.bnx - seg.anx);
+            const segNz = seg.anz + t * (seg.bnz - seg.anz);
+            const latSigned = rx * segNx + rz * segNz;
+            const clampedLat = Math.max(-(segHalfW + 4.8), Math.min(segHalfW + 4.8, latSigned));
+            const segSurfaceY = segY + clampedLat * Math.sin(segBank);
+            if (segSurfaceY < lowestCorridorY) lowestCorridorY = segSurfaceY;
           }
 
           if (dSq < minDistSq) {
@@ -309,11 +317,29 @@ export function buildTrackEnvironment(
         }
       }
     }
-    return { bestSeg, bestT, bestDist: Math.sqrt(minDistSq), bestPx, bestPz, lowestCorridorY, inAnyCorridor };
+    return {
+      bestSeg,
+      bestT,
+      bestDist: Math.sqrt(minDistSq),
+      bestPx,
+      bestPz,
+      lowestCorridorY,
+      inAnyCorridor,
+      inApronCorridor,
+    };
   };
 
   const clampTerrainHeight = (vx: number, vz: number, rawY: number): number => {
-    const { bestSeg, bestT, bestDist, bestPx, bestPz, lowestCorridorY, inAnyCorridor } = getNearestRoadSegment(vx, vz);
+    const {
+      bestSeg,
+      bestT,
+      bestDist,
+      bestPx,
+      bestPz,
+      lowestCorridorY,
+      inAnyCorridor,
+      inApronCorridor,
+    } = getNearestRoadSegment(vx, vz);
     let vy = rawY;
     if (bestSeg) {
       const roadW = bestSeg.aw + bestT * (bestSeg.bw - bestSeg.aw);
@@ -323,28 +349,41 @@ export function buildTrackEnvironment(
       const segNx = bestSeg.anx + bestT * (bestSeg.bnx - bestSeg.anx);
       const segNz = bestSeg.anz + bestT * (bestSeg.bnz - bestSeg.anz);
 
-      // Overpass is when this road segment is elevated high above an underlying road corridor (e.g. Suzuka bridge)
-      const isOverpass = inAnyCorridor && lowestCorridorY < Infinity && roadY - lowestCorridorY > 3.5;
-      if (!isOverpass) {
-        const latSign = Math.sign((vx - bestPx) * segNx + (vz - bestPz) * segNz) || 1;
-        const roadEdgeY = roadY + latSign * (roadHalfW + 1.5) * Math.sin(roadBank);
-        const targetEdgeY = (inAnyCorridor && lowestCorridorY < Infinity ? lowestCorridorY : roadEdgeY) - 0.18;
+      const latSigned = (vx - bestPx) * segNx + (vz - bestPz) * segNz;
+      const latSign = Math.sign(latSigned) || 1;
+      const clampedLat = Math.max(-(roadHalfW + 4.8), Math.min(roadHalfW + 4.8, latSigned));
+      const roadSurfaceY = roadY + clampedLat * Math.sin(roadBank);
+      const roadEdgeY = roadY + latSign * (roadHalfW + 4.8) * Math.sin(roadBank);
 
-        const dClamp = roadHalfW + 1.5;
+      // Overpass: upper bridge crosses >=3.5m above a lower road corridor (e.g., Suzuka figure-8).
+      // Even when bestSeg is the upper bridge, ground MUST still clamp below lowestCorridorY!
+      const isOverpass =
+        inAnyCorridor && lowestCorridorY < Infinity && roadY - lowestCorridorY > 3.5;
+
+      if (isOverpass) {
+        vy = Math.min(vy, lowestCorridorY - 0.24);
+      } else {
+        const dClamp = roadHalfW + 5.2;
         const dOuter = roadHalfW + 42.0;
+        const corridorFloorY =
+          (lowestCorridorY < Infinity ? Math.min(roadSurfaceY, lowestCorridorY) : roadSurfaceY) -
+          0.22;
 
-        if (inAnyCorridor || bestDist <= dClamp) {
-          // Exactly flush under kerb/apron without vertical trench or drop
-          vy = targetEdgeY;
+        if (inApronCorridor || bestDist <= dClamp) {
+          // Strictly depressed beneath road, kerbs, and runoff apron
+          vy = Math.min(vy, corridorFloorY);
         } else if (bestDist <= dOuter) {
-          // Smoothstep outer embankment transition from exact outer curb elevation out to surrounding DEM terrain
+          // Smoothstep outer embankment transition from apron outer edge to surrounding DEM terrain
+          const edgeBaseY =
+            (lowestCorridorY < Infinity ? Math.min(roadEdgeY, lowestCorridorY) : roadEdgeY) - 0.20;
           const u = (bestDist - dClamp) / (dOuter - dClamp);
           const s = u * u * (3 - 2 * u);
-          vy = targetEdgeY * (1 - s) + rawY * s;
-        }
-        // Strict guard: grass within immediate runoff apron (roadHalfW + 4.8) never bleeds above road/kerb
-        if (bestDist <= roadHalfW + 4.8) {
-          vy = Math.min(vy, targetEdgeY);
+          vy = edgeBaseY * (1 - s) + rawY * s;
+          // Anti-tenting guard just outside the apron edge so coarse grid triangles never clip upward across the apron
+          if (bestDist <= roadHalfW + 14.0) {
+            const maxSlopeY = edgeBaseY + (bestDist - dClamp) * 0.14;
+            vy = Math.min(vy, maxSlopeY);
+          }
         }
       }
     }
@@ -366,6 +405,9 @@ export function buildTrackEnvironment(
       color: palette.ground,
       roughness: 0.94,
       metalness: 0.02,
+      polygonOffset: true,
+      polygonOffsetFactor: 2,
+      polygonOffsetUnits: 2,
     }),
   );
   const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -389,11 +431,11 @@ export function buildTrackEnvironment(
     group.add(water);
   }
 
-  // 2b. Smooth Bank-Aware Outer Turf Embankment Skirts (left & right from apron outer edge +4.7m out to +34m)
-  // Bridges steep elevation crests & banked corners cleanly to surrounding terrain with zero sunken gaps or cliff steps
+  // 2b. Smooth Bank-Aware Outer Turf Embankment Skirts (2 radial rings from apron outer edge +4.75m out to +32m)
+  // Bridges steep elevation crests & banked corners cleanly with zero hairpin self-intersection or road overlap
   const buildOuterSkirt = (side: -1 | 1): THREE.BufferGeometry => {
     const n = compiled.samples.length;
-    const vertCount = (n + 1) * 2;
+    const vertCount = (n + 1) * 3;
     const positions = new Float32Array(vertCount * 3);
     const normals = new Float32Array(vertCount * 3);
     const indices: number[] = [];
@@ -405,7 +447,7 @@ export function buildTrackEnvironment(
       const cosB = Math.cos(bank);
       const sinB = Math.sin(bank);
 
-      // Detect elevated overpass sections (e.g. Suzuka bridge) so skirt drops cleanly rather than bridging across lower road
+      // Detect elevated overpass sections (e.g. Suzuka bridge)
       let minOtherY = s.y;
       if (s.y > 4.0) {
         for (let k = 0; k < n; k += 4) {
@@ -419,42 +461,65 @@ export function buildTrackEnvironment(
       }
       const isOverpass = s.y - minOtherY > 3.5;
 
-      const innerEdge = hw + 4.7;
-      const outerEdge = hw + 34.0;
+      // Dynamically cap outer skirt width on inside of tight hairpins so triangles never fold across the opposite leg
+      const isInsideTurn = s.curvature * side > 0.004;
+      const maxSafeOuter = isInsideTurn
+        ? Math.min(32.0, Math.max(6.8, 0.76 / Math.abs(s.curvature) - hw))
+        : 32.0;
+
+      const innerEdge = hw + 4.75;
+      const midEdge = Math.min(hw + 13.0, hw + 4.75 + (maxSafeOuter - 4.75) * 0.4);
+      const outerEdge = hw + maxSafeOuter;
 
       const ix = s.x + s.nx * side * innerEdge * cosB;
       const iz = s.z + s.nz * side * innerEdge * cosB;
-      const iy = isOverpass ? s.y - 1.2 : (s.y - 0.02 + side * innerEdge * sinB);
+      const iyRaw = isOverpass ? s.y - 1.2 : s.y - 0.06 + side * innerEdge * sinB;
+      const iy = clampTerrainHeight(ix, iz, iyRaw);
+
+      const mx = s.x + s.nx * side * midEdge * cosB;
+      const mz = s.z + s.nz * side * midEdge * cosB;
+      const bgMidY = sampleBaseGroundY(mx, mz);
+      const myRaw = isOverpass
+        ? Math.min(bgMidY, s.y - 1.35)
+        : iy * 0.62 + bgMidY * 0.38;
+      const my = clampTerrainHeight(mx, mz, myRaw);
 
       const ox = s.x + s.nx * side * outerEdge;
       const oz = s.z + s.nz * side * outerEdge;
       const bgOuterY = sampleBaseGroundY(ox, oz);
-      const oy = isOverpass ? Math.min(bgOuterY, s.y - 1.5) : clampTerrainHeight(ox, oz, bgOuterY);
+      const oyRaw = isOverpass ? Math.min(bgOuterY, s.y - 1.5) : bgOuterY;
+      const oy = clampTerrainHeight(ox, oz, oyRaw);
 
-      const base = i * 2;
-      const v0 = side === 1 ? base : base + 1;
-      const v1 = side === 1 ? base + 1 : base;
-      positions[v0 * 3] = ix; positions[v0 * 3 + 1] = iy; positions[v0 * 3 + 2] = iz;
-      positions[v1 * 3] = ox; positions[v1 * 3 + 1] = oy; positions[v1 * 3 + 2] = oz;
-      normals[v0 * 3 + 1] = 1;
-      normals[v1 * 3 + 1] = 1;
+      const base = i * 3;
+      positions[base * 3] = ix;
+      positions[base * 3 + 1] = iy;
+      positions[base * 3 + 2] = iz;
+      positions[(base + 1) * 3] = mx;
+      positions[(base + 1) * 3 + 1] = my;
+      positions[(base + 1) * 3 + 2] = mz;
+      positions[(base + 2) * 3] = ox;
+      positions[(base + 2) * 3 + 1] = oy;
+      positions[(base + 2) * 3 + 2] = oz;
+
+      normals[base * 3 + 1] = 1;
+      normals[(base + 1) * 3 + 1] = 1;
+      normals[(base + 2) * 3 + 1] = 1;
 
       if (i > 0) {
-        const a = (i - 1) * 2;
-        const b = a + 1;
-        const c = i * 2;
-        const d = c + 1;
-        indices.push(a, b, c, b, d, c);
+        const p0 = (i - 1) * 3;
+        const p1 = p0 + 1;
+        const p2 = p0 + 2;
+        const c0 = base;
+        const c1 = base + 1;
+        const c2 = base + 2;
+        if (side === 1) {
+          indices.push(p0, p1, c0, p1, c1, c0);
+          indices.push(p1, p2, c1, p2, c2, c1);
+        } else {
+          indices.push(p1, p0, c0, p1, c0, c1);
+          indices.push(p2, p1, c1, p2, c1, c2);
+        }
       }
-    }
-
-    // Strict post-generation height clamp across all skirt mesh vertices:
-    // Ensures zero skirt triangles ever poke above the asphalt or curbs
-    for (let k = 0; k < vertCount; k++) {
-      const vx = positions[k * 3];
-      const vy = positions[k * 3 + 1];
-      const vz = positions[k * 3 + 2];
-      positions[k * 3 + 1] = clampTerrainHeight(vx, vz, vy);
     }
 
     const geo = new THREE.BufferGeometry();
@@ -472,7 +537,7 @@ export function buildTrackEnvironment(
     group.add(skirtMesh);
   }
 
-  // 3. Main Track Asphalt Ribbon (clean +0.02m layering above apron & ground)
+  // 3. Main Track Asphalt Ribbon (clean +0.02m layering above apron & depressed terrain)
   const asphaltTex = track(createAsphaltTexture(compiled.spec.asphaltColor, maxAniso));
   const roadGeo = track(buildRibbonGeometry(compiled.samples, halfW, 0.02, 16, true, compiled.spec.trackWidth));
   const roadMat = track(
@@ -490,13 +555,16 @@ export function buildTrackEnvironment(
   roadMesh.receiveShadow = true;
   group.add(roadMesh);
 
-  // 4. Gravel / Turf Runoff Apron under Track (0.00m baseline)
-  const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, 0.00, 24, true, compiled.spec.trackWidth));
+  // 4. Gravel / Turf Runoff Apron under Track (-0.015m below asphalt, strictly above depressed ground)
+  const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, -0.015, 24, true, compiled.spec.trackWidth));
   const apronMat = track(
     new THREE.MeshStandardMaterial({
       color: compiled.spec.scenery === 'desert' ? 0xc49c6e : 0x3b483d,
       roughness: 0.95,
       metalness: 0,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
     }),
   );
   const apronMesh = new THREE.Mesh(apronGeo, apronMat);
@@ -512,8 +580,8 @@ export function buildTrackEnvironment(
       roughness: 0.55,
       metalness: 0.05,
       polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     }),
   );
   const kerbBoxGeo = track(new THREE.BoxGeometry(1.3, 0.07, 2.2));
@@ -726,7 +794,8 @@ export function buildTrackEnvironment(
       map: sfLineTex,
       roughness: 0.65,
       polygonOffset: true,
-      polygonOffsetFactor: -1,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
     }),
   );
   const sfLine = new THREE.Mesh(sfLineGeo, sfLineMat);
