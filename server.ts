@@ -97,7 +97,7 @@ async function startServer() {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
-    const pathname = new URL(request.url || '/', 'http://localhost').pathname;
+    const pathname = new URL(request.url || '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
     if (pathname === '/ws' || pathname === '/Apex-Miniature/ws') {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);

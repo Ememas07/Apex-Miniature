@@ -46,6 +46,12 @@ import {
   makeSoftClippingCurve,
   resolveAcousticProfile,
 } from './audio';
+import {
+  getDeploymentBasePath,
+  getWebSocketUrl,
+  getRoomRestUrl,
+  MultiplayerClient,
+} from './multiplayer';
 
 test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.HYPERCAR_GTP).length, 12);
@@ -1711,6 +1717,105 @@ test('KN5 to OBJ Converter & Livery Visualizer: smooth normals, 4 wheels on Orec
   };
   assert.ok(customLivery.customTexture && customLivery.customTexture.startsWith('data:image/png'));
 });
+
+test('Multiplayer URL builder preserves deployment base path and window.location.host', () => {
+  const originalWindow = (globalThis as any).window;
+
+  try {
+    // Production subpath without trailing slash
+    (globalThis as any).window = {
+      location: {
+        protocol: 'https:',
+        host: 'marc-mas.ddns.net',
+        pathname: '/Apex-Miniature',
+      },
+    };
+    assert.equal(getDeploymentBasePath(), '/Apex-Miniature/');
+    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature/ws');
+    assert.equal(getRoomRestUrl('room1'), '/Apex-Miniature/api/rooms/ROOM1');
+
+    // Production subpath with trailing slash
+    (globalThis as any).window = {
+      location: {
+        protocol: 'https:',
+        host: 'marc-mas.ddns.net',
+        pathname: '/Apex-Miniature/',
+      },
+    };
+    assert.equal(getDeploymentBasePath(), '/Apex-Miniature/');
+    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature/ws');
+
+    // Production subpath with index.html
+    (globalThis as any).window = {
+      location: {
+        protocol: 'https:',
+        host: 'marc-mas.ddns.net',
+        pathname: '/Apex-Miniature/index.html',
+      },
+    };
+    assert.equal(getDeploymentBasePath(), '/Apex-Miniature/');
+    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature/ws');
+
+    // Local dev with port 3000
+    (globalThis as any).window = {
+      location: {
+        protocol: 'http:',
+        host: 'localhost:3000',
+        pathname: '/',
+      },
+    };
+    assert.equal(getDeploymentBasePath(), '/');
+    assert.equal(getWebSocketUrl(), 'ws://localhost:3000/ws');
+    assert.equal(getRoomRestUrl('test2'), '/api/rooms/TEST2');
+
+    // Local dev with port 5173
+    (globalThis as any).window = {
+      location: {
+        protocol: 'http:',
+        host: 'localhost:5173',
+        pathname: '/',
+      },
+    };
+    assert.equal(getWebSocketUrl(), 'ws://localhost:5173/ws');
+  } finally {
+    if (originalWindow === undefined) {
+      delete (globalThis as any).window;
+    } else {
+      (globalThis as any).window = originalWindow;
+    }
+  }
+});
+
+test('MultiplayerClient queues outbound messages until WebSocket is OPEN', async () => {
+  const mp = new MultiplayerClient();
+  const sentMessages: string[] = [];
+  const fakeSocket = {
+    readyState: 0, // CONNECTING
+    send: (msg: string) => sentMessages.push(msg),
+    close: () => {},
+  } as unknown as WebSocket;
+
+  (mp as any).ws = fakeSocket;
+
+  // Attempting to send while CONNECTING queues the payload
+  await mp.joinRoom('ABC12', 'Player1', 'ferrari-499p', {} as any);
+  assert.equal(sentMessages.length, 0, 'Should not send while readyState is CONNECTING');
+  assert.equal((mp as any).outboundQueue.length, 1, 'Should queue outbound join message');
+  const queuedMsg = JSON.parse((mp as any).outboundQueue[0]);
+  assert.equal(queuedMsg.type, 'room:join');
+  assert.equal(queuedMsg.code, 'ABC12');
+
+  // Transition socket to OPEN and flush queue
+  (fakeSocket as any).readyState = 1; // OPEN
+  (mp as any).flushOutboundQueue();
+
+  assert.equal(sentMessages.length, 1, 'Queued message should be flushed once OPEN');
+  assert.equal((mp as any).outboundQueue.length, 0, 'Queue should be empty after flush');
+  const sentMsg = JSON.parse(sentMessages[0]);
+  assert.equal(sentMsg.type, 'room:join');
+  assert.equal(sentMsg.code, 'ABC12');
+});
+
 
 
 

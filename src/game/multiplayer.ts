@@ -16,10 +16,35 @@ export interface PeerTelemetryPacket {
 
 export type ConnectionMode = 'server' | 'local-relay' | 'connecting' | 'disconnected';
 
+export function getDeploymentBasePath(): string {
+  if (typeof window === 'undefined') return '/';
+  let p = window.location.pathname || '/';
+  if (/\.[a-zA-Z0-9]+$/.test(p)) {
+    p = p.replace(/\/[^/]*$/, '');
+  }
+  if (!p.startsWith('/')) p = '/' + p;
+  if (!p.endsWith('/')) p = p + '/';
+  return p;
+}
+
+export function getWebSocketUrl(): string {
+  if (typeof window === 'undefined') return 'ws://localhost/ws';
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const basePath = getDeploymentBasePath();
+  return `${protocol}//${window.location.host}${basePath}ws`;
+}
+
+export function getRoomRestUrl(code: string): string {
+  const normalizedCode = code.toUpperCase().trim();
+  const basePath = getDeploymentBasePath();
+  return `${basePath}api/rooms/${encodeURIComponent(normalizedCode)}`;
+}
+
 export class MultiplayerClient {
   private ws: WebSocket | null = null;
   private channel: BroadcastChannel | null = null;
   private connectPromise: Promise<void> | null = null;
+  private outboundQueue: string[] = [];
   public peerId: string;
   public room: RoomState | null = null;
   public connected = false;
@@ -39,6 +64,9 @@ export class MultiplayerClient {
       } catch {
         this.channel = null;
       }
+    }
+    if (typeof window !== 'undefined') {
+      this.connect().catch(() => {});
     }
   }
 
@@ -152,10 +180,36 @@ export class MultiplayerClient {
     } catch {}
   }
 
+  private flushOutboundQueue() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    while (this.outboundQueue.length > 0) {
+      const msg = this.outboundQueue.shift();
+      if (msg) {
+        try {
+          this.ws.send(msg);
+        } catch {}
+      }
+    }
+  }
+
+  async fetchRoom(code: string): Promise<RoomState | null> {
+    const normalizedCode = code.toUpperCase().trim();
+    if (!normalizedCode) return null;
+    try {
+      const url = getRoomRestUrl(normalizedCode);
+      const res = await fetch(url, { cache: 'no-cache' });
+      if (!res.ok) return null;
+      return (await res.json()) as RoomState;
+    } catch {
+      return null;
+    }
+  }
+
   connect(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.connected = true;
       this.setConnectionMode('server');
+      this.flushOutboundQueue();
       return Promise.resolve();
     }
     if (this.connectPromise) {
@@ -171,17 +225,7 @@ export class MultiplayerClient {
         return;
       }
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const basePath = window.location.pathname.endsWith('/')
-        ? window.location.pathname
-        : window.location.pathname.replace(/\/[^/]*$/, '/');
-
-      // Primary WebSocket endpoint
-      const primaryUrl = `${protocol}//${window.location.host}${basePath}ws`;
-      // Standalone port 3000 fallback if UI is opened via Vite port 5173
-      const fallbackUrl =
-        window.location.port !== '3000' ? `${protocol}//${window.location.hostname}:3000/ws` : null;
-
+      const wsUrl = getWebSocketUrl();
       let settled = false;
       let activeSocket: WebSocket | null = null;
 
@@ -194,6 +238,7 @@ export class MultiplayerClient {
           this.ws = activeSocket;
           this.connected = true;
           this.setConnectionMode('server');
+          this.flushOutboundQueue();
         } else {
           this.connected = false;
           this.setConnectionMode(this.channel ? 'local-relay' : 'disconnected');
@@ -208,67 +253,57 @@ export class MultiplayerClient {
           } catch {}
           finishConnect(false);
         }
-      }, 3500);
+      }, 4000);
 
-      const tryConnectUrl = (url: string, onFail: () => void) => {
-        try {
-          const socket = new WebSocket(url);
-          activeSocket = socket;
+      try {
+        const socket = new WebSocket(wsUrl);
+        activeSocket = socket;
 
-          socket.onopen = () => {
-            finishConnect(true);
-          };
+        socket.onopen = () => {
+          finishConnect(true);
+        };
 
-          socket.onmessage = (ev) => {
-            let msg: Record<string, unknown>;
-            try {
-              msg = JSON.parse(String(ev.data));
-            } catch {
-              return;
+        socket.onmessage = (ev) => {
+          let msg: Record<string, unknown>;
+          try {
+            msg = JSON.parse(String(ev.data));
+          } catch {
+            return;
+          }
+          const type = String(msg.type || '');
+          if (type === 'room:state') {
+            this.room = msg.room as RoomState;
+            if (typeof msg.peerId === 'string') this.peerId = msg.peerId;
+            this.setConnectionMode('server');
+            this.onRoomUpdate?.(this.room);
+          } else if (type === 'room:started') {
+            this.room = msg.room as RoomState;
+            this.onRaceStart?.(this.room);
+          } else if (type === 'room:error') {
+            this.onError?.(String(msg.message || 'Multiplayer error'));
+          } else if (type === 'race:peer_telemetry') {
+            const pId = String(msg.peerId || '');
+            if (pId) {
+              this.peerTelemetry.set(pId, msg.data as PeerTelemetryPacket);
             }
-            const type = String(msg.type || '');
-            if (type === 'room:state') {
-              this.room = msg.room as RoomState;
-              if (typeof msg.peerId === 'string') this.peerId = msg.peerId;
-              this.setConnectionMode('server');
-              this.onRoomUpdate?.(this.room);
-            } else if (type === 'room:started') {
-              this.room = msg.room as RoomState;
-              this.onRaceStart?.(this.room);
-            } else if (type === 'room:error') {
-              this.onError?.(String(msg.message || 'Multiplayer error'));
-            } else if (type === 'race:peer_telemetry') {
-              const pId = String(msg.peerId || '');
-              if (pId) {
-                this.peerTelemetry.set(pId, msg.data as PeerTelemetryPacket);
-              }
-            }
-          };
+          }
+        };
 
-          socket.onclose = () => {
-            if (this.ws === socket) {
-              this.ws = null;
-              this.connected = false;
-              this.setConnectionMode(this.channel ? 'local-relay' : 'disconnected');
-            }
-            if (!settled) onFail();
-          };
+        socket.onclose = () => {
+          if (this.ws === socket) {
+            this.ws = null;
+            this.connected = false;
+            this.setConnectionMode(this.channel ? 'local-relay' : 'disconnected');
+          }
+          if (!settled) finishConnect(false);
+        };
 
-          socket.onerror = () => {
-            if (!settled) onFail();
-          };
-        } catch {
-          if (!settled) onFail();
-        }
-      };
-
-      tryConnectUrl(primaryUrl, () => {
-        if (fallbackUrl && !settled) {
-          tryConnectUrl(fallbackUrl, () => finishConnect(false));
-        } else {
-          finishConnect(false);
-        }
-      });
+        socket.onerror = () => {
+          if (!settled) finishConnect(false);
+        };
+      } catch {
+        if (!settled) finishConnect(false);
+      }
     });
 
     return this.connectPromise;
@@ -284,10 +319,6 @@ export class MultiplayerClient {
   }
 
   async createRoom(name: string, carId: string, livery: LiveryConfig, config: RaceConfig, classId?: CarClassId) {
-    try {
-      await this.connect();
-    } catch {}
-
     const hostPeer: RoomPeer = {
       peerId: this.peerId,
       name: String(name || 'Host Driver').slice(0, 24),
@@ -298,24 +329,42 @@ export class MultiplayerClient {
       isHost: true,
     };
 
+    const payload = JSON.stringify({
+      type: 'room:create',
+      peerId: this.peerId,
+      name: hostPeer.name,
+      carId: hostPeer.carId,
+      classId: hostPeer.classId,
+      livery: hostPeer.livery,
+      config,
+    });
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
-        this.ws.send(
-          JSON.stringify({
-            type: 'room:create',
-            peerId: this.peerId,
-            name: hostPeer.name,
-            carId: hostPeer.carId,
-            classId: hostPeer.classId,
-            livery: hostPeer.livery,
-            config,
-          }),
-        );
+        this.ws.send(payload);
         return;
       } catch {}
     }
 
-    // Local multi-tab signaling initialization
+    // Queue outbound room:create message until ws.readyState === WebSocket.OPEN
+    this.outboundQueue.push(payload);
+
+    try {
+      await this.connect();
+    } catch {}
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.flushOutboundQueue();
+      return;
+    }
+
+    // If socket is still connecting, leave it queued so onopen flushes it
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    // Server connection unavailable; remove queued create payload and initialize local relay
+    this.outboundQueue = this.outboundQueue.filter((m) => m !== payload);
     const code = this.generateRoomCode();
     const localRoom: RoomState = {
       code,
@@ -337,10 +386,6 @@ export class MultiplayerClient {
       return;
     }
 
-    try {
-      await this.connect();
-    } catch {}
-
     const guestPeer: RoomPeer = {
       peerId: this.peerId,
       name: String(name || 'Guest Driver').slice(0, 24),
@@ -351,21 +396,48 @@ export class MultiplayerClient {
       isHost: false,
     };
 
+    const payload = JSON.stringify({
+      type: 'room:join',
+      code: normalizedCode,
+      peerId: this.peerId,
+      name: guestPeer.name,
+      carId: guestPeer.carId,
+      classId: guestPeer.classId,
+      livery: guestPeer.livery,
+    });
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
-        this.ws.send(
-          JSON.stringify({
-            type: 'room:join',
-            code: normalizedCode,
-            peerId: this.peerId,
-            name: guestPeer.name,
-            carId: guestPeer.carId,
-            classId: guestPeer.classId,
-            livery: guestPeer.livery,
-          }),
-        );
+        this.ws.send(payload);
         return;
       } catch {}
+    }
+
+    // Queue outbound room:join message until ws.readyState === WebSocket.OPEN
+    this.outboundQueue.push(payload);
+
+    try {
+      await this.connect();
+    } catch {}
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.flushOutboundQueue();
+      return;
+    }
+
+    // If socket is still connecting, leave it queued so onopen flushes it
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    // Server connection unavailable; remove queued join payload
+    this.outboundQueue = this.outboundQueue.filter((m) => m !== payload);
+
+    // Attempt REST fetch using relative base path
+    const restRoom = await this.fetchRoom(normalizedCode);
+    if (restRoom) {
+      this.room = restRoom;
+      this.onRoomUpdate?.(this.room);
     }
 
     // Local multi-tab signaling fallback: broadcast join request to other tabs
