@@ -134,6 +134,25 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     }
   };
 
+  const applyLiveAudioUpdate = (p: AcousticProfile) => {
+    profileRef.current = p;
+    const engine = engineRef.current;
+    if (engine && simRef.current.audioRunning) {
+      engine.updateEngineWithProfile(
+        p,
+        simRef.current.simRpm,
+        simRef.current.simThrottle,
+        true,
+        activeCar.classId,
+        simRef.current.simSpeedKmh,
+        p.soundProfile === defaultProfileId ? activeCar.id : '',
+        0,
+        false,
+        simRef.current.simGear,
+      );
+    }
+  };
+
   const handleSelectPreset = (presetId: SoundProfileId) => {
     setSelectedPresetId(presetId);
     const isCarMatch = presetId === defaultProfileId;
@@ -143,39 +162,46 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
       isCarMatch ? activeCar.classId : undefined,
       presetId,
     );
+    profileRef.current = resolved;
     setProfile(resolved);
     setHasCustomOverride(Boolean(loadSoundProfileOverrides()[presetId]));
+    applyLiveAudioUpdate(resolved);
   };
 
   const updateProfileField = <K extends keyof AcousticProfile>(
     key: K,
     value: AcousticProfile[K],
   ) => {
-    setProfile((prev) => {
-      const next: AcousticProfile = {
-        ...prev,
-        [key]: value,
-        harmonicWeights: [...prev.harmonicWeights],
-      };
-      saveSoundProfileOverride(next.soundProfile, next);
-      setHasCustomOverride(true);
-      return next;
-    });
+    const next: AcousticProfile = {
+      ...profileRef.current,
+      [key]: value,
+      harmonicWeights: [...profileRef.current.harmonicWeights],
+    };
+    if (key === 'profileGain') {
+      next.engineOutputGain = value as number;
+    } else if (key === 'engineOutputGain') {
+      next.profileGain = value as number;
+    }
+    profileRef.current = next;
+    setProfile(next);
+    saveSoundProfileOverride(next.soundProfile, next);
+    setHasCustomOverride(true);
+    applyLiveAudioUpdate(next);
   };
 
   const updateHarmonicWeight = (index: number, value: number) => {
-    setProfile((prev) => {
-      const nextWeights = [...prev.harmonicWeights];
-      while (nextWeights.length < 8) nextWeights.push(0);
-      nextWeights[index] = value;
-      const next: AcousticProfile = {
-        ...prev,
-        harmonicWeights: nextWeights,
-      };
-      saveSoundProfileOverride(next.soundProfile, next);
-      setHasCustomOverride(true);
-      return next;
-    });
+    const nextWeights = [...profileRef.current.harmonicWeights];
+    while (nextWeights.length < 8) nextWeights.push(0);
+    nextWeights[index] = value;
+    const next: AcousticProfile = {
+      ...profileRef.current,
+      harmonicWeights: nextWeights,
+    };
+    profileRef.current = next;
+    setProfile(next);
+    saveSoundProfileOverride(next.soundProfile, next);
+    setHasCustomOverride(true);
+    applyLiveAudioUpdate(next);
   };
 
   const handleResetProfile = () => {
@@ -184,8 +210,10 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
       selectedPresetId,
       selectedPresetId === defaultProfileId ? activeCar.id : '',
     );
+    profileRef.current = base;
     setProfile(base);
     setHasCustomOverride(false);
+    applyLiveAudioUpdate(base);
   };
 
   const handleResetAll = () => {
@@ -194,8 +222,10 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
       selectedPresetId,
       selectedPresetId === defaultProfileId ? activeCar.id : '',
     );
+    profileRef.current = base;
     setProfile(base);
     setHasCustomOverride(false);
+    applyLiveAudioUpdate(base);
   };
 
   const handleCopyJson = async () => {
@@ -871,12 +901,21 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
             </div>
           </div>
 
-          {/* Section 3: Exhaust Filter, Distortion, Intake & Crackle */}
+          {/* Section 3: Master Gain, Exhaust Filter, Distortion, Intake & Crackle */}
           <div className="p-4 rounded-lg bg-[#101622] border border-white/10 space-y-3">
             <div className="text-xs font-semibold uppercase tracking-wider text-rose-300">
-              3. Exhaust Resonance, Growl Drive & Intake Snarl
+              3. Engine Output Gain, Exhaust Resonance, Growl Drive & Intake Snarl
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              <SliderControl
+                label="Engine Output Gain"
+                value={profile.profileGain ?? profile.engineOutputGain ?? 1.6}
+                min={0.2}
+                max={3.0}
+                step={0.05}
+                unit="x"
+                onChange={(v) => updateProfileField('profileGain', v)}
+              />
               <SliderControl
                 label="Exhaust Low-Pass Cutoff"
                 value={profile.wotFilterCutoff}
@@ -944,7 +983,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                 label="Turbo Spool Gain"
                 value={profile.turboSpoolLevel}
                 min={0}
-                max={0.45}
+                max={1.0}
                 step={0.01}
                 onChange={(v) => updateProfileField('turboSpoolLevel', v)}
               />
@@ -961,7 +1000,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                 label="MGU-K Hybrid Whine"
                 value={profile.hybridWhineLevel}
                 min={0}
-                max={0.4}
+                max={1.0}
                 step={0.01}
                 onChange={(v) => updateProfileField('hybridWhineLevel', v)}
               />
@@ -969,7 +1008,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                 label="Straight-Cut Gearbox Whine"
                 value={profile.gearWhineLevel}
                 min={0}
-                max={0.4}
+                max={1.0}
                 step={0.01}
                 onChange={(v) => updateProfileField('gearWhineLevel', v)}
               />
