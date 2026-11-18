@@ -54,6 +54,13 @@ export class MotorsportAudioEngine {
   private turboNoiseFilter: BiquadFilterNode | null = null;
   private turboSpoolGain: GainNode | null = null;
 
+  // Equal-Loudness & RMS Normalization Nodes (-16 dBFS target)
+  private eqCutFilter: BiquadFilterNode | null = null;
+  private highShelfFilter: BiquadFilterNode | null = null;
+  private normalizeGainNode: GainNode | null = null;
+  private currentNormGain = 1.0;
+  private rmsBuffer: Float32Array = new Float32Array(512);
+
   // Reference Audio Auditioning Nodes
   private refSource: AudioBufferSourceNode | null = null;
   private refGain: GainNode | null = null;
@@ -88,6 +95,7 @@ export class MotorsportAudioEngine {
     firingHz: 0,
     baseHz: 0,
     limiterActive: false,
+    outputDbfs: -16.0,
     layerLevels: {
       combustion: 0,
       intake: 0,
@@ -126,18 +134,18 @@ export class MotorsportAudioEngine {
       const ctx = new AudioCtx();
       this.ctx = ctx;
 
-      // Soft Dynamics Limiter / Master Compressor to normalize RMS loudness across all profiles
+      // Brickwall Dynamics Limiter (-6 dB threshold, ratio 12, knee 3, -3 dBFS ceiling)
       const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.setValueAtTime(-12, ctx.currentTime);
-      limiter.knee.setValueAtTime(8, ctx.currentTime);
-      limiter.ratio.setValueAtTime(4.5, ctx.currentTime);
-      limiter.attack.setValueAtTime(0.004, ctx.currentTime);
-      limiter.release.setValueAtTime(0.08, ctx.currentTime);
+      limiter.threshold.setValueAtTime(-6, ctx.currentTime);
+      limiter.knee.setValueAtTime(3, ctx.currentTime);
+      limiter.ratio.setValueAtTime(12, ctx.currentTime);
+      limiter.attack.setValueAtTime(0.003, ctx.currentTime);
+      limiter.release.setValueAtTime(0.12, ctx.currentTime);
       limiter.connect(ctx.destination);
       this.masterLimiter = limiter;
 
       const master = ctx.createGain();
-      master.gain.value = this.muted ? 0 : 0.62 * this.masterVolume;
+      master.gain.value = this.muted ? 0 : 0.48 * this.masterVolume;
       master.connect(limiter);
       this.masterGain = master;
 
@@ -147,9 +155,33 @@ export class MotorsportAudioEngine {
       master.connect(analyser);
       this.analyser = analyser;
 
+      // Equal-Loudness Compensation Filter:
+      // -7 dB peaking cut at 3.1 kHz (human ear acoustic sensitivity peak)
+      const eqCut = ctx.createBiquadFilter();
+      eqCut.type = 'peaking';
+      eqCut.frequency.value = 3100;
+      eqCut.Q.value = 0.9;
+      eqCut.gain.value = -7.0;
+      this.eqCutFilter = eqCut;
+
+      // High-shelf trim to soften high-frequency harshness
+      const highShelf = ctx.createBiquadFilter();
+      highShelf.type = 'highshelf';
+      highShelf.frequency.value = 6500;
+      highShelf.gain.value = -3.5;
+      this.highShelfFilter = highShelf;
+
+      // Dynamic RMS Normalization Gain Node (targeting -16 dBFS)
+      const normGain = ctx.createGain();
+      normGain.gain.value = 1.0;
+      this.normalizeGainNode = normGain;
+
       const mainEngine = ctx.createGain();
       mainEngine.gain.value = 0;
-      mainEngine.connect(master);
+      mainEngine.connect(eqCut);
+      eqCut.connect(highShelf);
+      highShelf.connect(normGain);
+      normGain.connect(master);
       this.engineGain = mainEngine;
 
       // 1. Multi-harmonic Combustion Engine Synthesizer with Dual Formants & Saturation
@@ -432,30 +464,57 @@ export class MotorsportAudioEngine {
   private getOrCreatePeriodicWave(
     waveform: OscillatorType,
     weights: number[],
+    subLevel = 0.65,
   ): PeriodicWave | null {
     if (!this.ctx) return null;
-    const key = `${waveform}:${weights.join(',')}`;
+    const key = `${waveform}:${subLevel.toFixed(2)}:${weights.join(',')}`;
     const cached = this.periodicWaveCache.get(key);
     if (cached) return cached;
 
-    const harmonicCount = Math.max(8, weights.length);
-    const real = new Float32Array(harmonicCount + 1);
-    const imag = new Float32Array(harmonicCount + 1);
+    // Harmonic bin mapping for primary oscillator running at f0 = 0.5 * firingHz:
+    // bin 1  = 0.5x sub-octave rumble
+    // bin 2  = 1.0x fundamental firing order
+    // bin 4  = 2.0x (2nd order)
+    // bin 6  = 3.0x (3rd order - Flat-6)
+    // bin 8  = 4.0x (4th order - Flat-Plane V8)
+    // bin 10 = 5.0x (5th order - V10)
+    // bin 12 = 6.0x (6th order - Top Scream)
+    const real = new Float32Array(16);
+    const imag = new Float32Array(16);
 
-    for (let k = 1; k <= harmonicCount; k++) {
-      const w = weights[k - 1] ?? 0;
-      let baseAmp = 1 / k;
-      if (waveform === 'square') {
-        baseAmp = k % 2 === 1 ? 1 / k : 0.14 / k;
-      } else if (waveform === 'triangle') {
-        baseAmp = k % 2 === 1 ? 1 / (k * k) : 0.08 / k;
-      } else if (waveform === 'sine') {
-        baseAmp = k === 1 ? 1.0 : 0.05 * w;
-      }
-      imag[k] = baseAmp * w;
+    const sub = Math.max(0, subLevel);
+    const w1 = weights[0] ?? 1.0;
+    const w2 = weights[1] ?? 0.7;
+    const w3 = weights[2] ?? 0.5;
+    const w4 = weights[3] ?? 0.4;
+    const w5 = weights[4] ?? 0.2;
+    const w6 = weights[5] ?? 0.15;
+
+    imag[1] = sub * 1.0;
+    imag[2] = w1 * 1.0;
+    imag[3] = 0.18 * (w1 + w2);
+    imag[4] = w2 * 0.95;
+    imag[5] = 0.14 * (w2 + w3);
+    imag[6] = w3 * 0.92;
+    imag[7] = 0.10 * (w3 + w4);
+    imag[8] = w4 * 0.88;
+    imag[9] = 0.08 * (w4 + w5);
+    imag[10] = w5 * 0.85;
+    imag[11] = 0.06 * (w5 + w6);
+    imag[12] = w6 * 0.82;
+
+    // Explicit gain normalization with disableNormalization: true
+    let energy = 0;
+    for (let k = 1; k <= 12; k++) {
+      energy += imag[k] * imag[k];
+    }
+    const rms = Math.sqrt(energy) || 1.0;
+    const scale = 0.78 / Math.max(0.70, rms * 0.75);
+    for (let k = 1; k <= 12; k++) {
+      imag[k] *= scale;
     }
 
-    const wave = this.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+    const wave = this.ctx.createPeriodicWave(real, imag, { disableNormalization: true });
     if (this.periodicWaveCache.size > 64) {
       this.periodicWaveCache.clear();
     }
@@ -536,13 +595,17 @@ export class MotorsportAudioEngine {
     return this.isPlayingRef;
   }
 
+  public getOutputLevelDbfs(): number {
+    return this.lastTelemetry.outputDbfs;
+  }
+
   setMuted(mute: boolean) {
     this.muted = mute;
     try {
       localStorage.setItem('apex_audio_muted', String(mute));
     } catch {}
     if (this.masterGain && this.ctx) {
-      const targetGain = mute ? 0 : 0.62 * this.masterVolume;
+      const targetGain = mute ? 0 : 0.48 * this.masterVolume;
       this.masterGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.04);
     }
   }
@@ -557,7 +620,7 @@ export class MotorsportAudioEngine {
       localStorage.setItem('apex_audio_volume', String(this.masterVolume));
     } catch {}
     if (this.masterGain && this.ctx) {
-      const targetGain = this.muted ? 0 : 0.62 * this.masterVolume;
+      const targetGain = this.muted ? 0 : 0.48 * this.masterVolume;
       this.masterGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.04);
     }
   }
@@ -582,13 +645,26 @@ export class MotorsportAudioEngine {
     onKerb = false,
     gear = 1,
     soundProfile?: SoundProfileId,
+    revLimiterActive?: boolean,
   ) {
     if (!active) {
       this.silenceAll();
       return;
     }
     const profile = resolveAcousticProfile(carId, engineType, classId, soundProfile);
-    this.updateEngineWithProfile(profile, rpmNorm, throttle, true, classId, speedKmh ?? 0, carId ?? '', lateralSlip, onKerb, gear);
+    this.updateEngineWithProfile(
+      profile,
+      rpmNorm,
+      throttle,
+      true,
+      classId,
+      speedKmh ?? 0,
+      carId ?? '',
+      lateralSlip,
+      onKerb,
+      gear,
+      revLimiterActive,
+    );
   }
 
   private silenceAll() {
@@ -616,6 +692,7 @@ export class MotorsportAudioEngine {
     lateralSlip = 0,
     onKerb = false,
     gear = 1,
+    revLimiterActive?: boolean,
   ) {
     if (
       !this.initialized ||
@@ -648,12 +725,14 @@ export class MotorsportAudioEngine {
     const isNonHybridHypercar =
       carId === 'aston-valkyrie-lmh' || carId === 'glickenhaus-scg-007';
 
-    const waveKey = `${profile.oscCombustionType}:${profile.harmonicWeights.join(',')}`;
+    const currentSub = profile.subLevel ?? 0.65;
+    const waveKey = `${profile.oscCombustionType}:${currentSub.toFixed(2)}:${profile.harmonicWeights.join(',')}`;
     if (this.currentWaveKey !== waveKey) {
       this.currentWaveKey = waveKey;
       const customWave = this.getOrCreatePeriodicWave(
         profile.oscCombustionType,
         profile.harmonicWeights,
+        currentSub,
       );
       if (customWave) {
         this.oscCombustion.setPeriodicWave(customWave);
@@ -679,7 +758,7 @@ export class MotorsportAudioEngine {
       this.oscHighHarmonic.type = targetHighType;
     }
 
-    this.combustionFilter.Q.setTargetAtTime(profile.filterQ, now, 0.015);
+    this.combustionFilter.Q.setTargetAtTime(Math.min(1.8, Math.max(0.5, profile.filterQ || 1.4)), now, 0.015);
     if (this.chestResonator) {
       this.chestResonator.frequency.setTargetAtTime(profile.chestFormantHz, now, 0.015);
       this.chestResonator.gain.setTargetAtTime(profile.chestFormantGain, now, 0.015);
@@ -713,12 +792,19 @@ export class MotorsportAudioEngine {
 
     if (profile.type === 'ELECTRIC_EV') {
       combGainLevel = 0.0;
-      elGainLevel = (profile.hybridWhineLevel ?? 0.16) * 0.35 + clampedThrottle * 0.22 + Math.min(0.09, speedKmh / 300);
-      inverterHz = Math.min(3200, 850 + clampedRpm * 2350);
-      inverterGearHz = Math.min(3800, 1650 + speedKmh * 15);
-      this.electricFilter.frequency.setTargetAtTime(inverterGearHz, now, 0.02);
-      gearGainLevel = (profile.gearWhineLevel ?? 0.14) * 0.055 * Math.min(1.0, 0.25 + (speedKmh / 240) * 0.75);
-      gearWhineHz = Math.min(3600, (1200 + speedKmh * 15) * profile.gearWhinePitchScale);
+      // Tamed 12x-15x internal gain multiplier for realistic Gen3 cabin texture
+      elGainLevel = (profile.hybridWhineLevel ?? 0.16) * 0.024 + clampedThrottle * 0.018 + Math.min(0.008, speedKmh / 3600);
+      inverterHz = Math.min(2400, 750 + clampedRpm * 1450);
+      inverterGearHz = Math.min(2600, 1100 + speedKmh * 8.5);
+
+      // Warm low-pass filter at ~1,800 Hz
+      this.electricFilter.type = 'lowpass';
+      this.electricFilter.frequency.setTargetAtTime(Math.min(1800, 850 + speedKmh * 3.8), now, 0.02);
+      this.electricFilter.Q.setTargetAtTime(1.1, now, 0.02);
+
+      // Subtle mechanical reduction gear texture
+      gearGainLevel = (profile.gearWhineLevel ?? 0.14) * 0.018 * Math.min(1.0, 0.25 + (speedKmh / 240) * 0.75);
+      gearWhineHz = Math.min(2200, (850 + speedKmh * 9.5) * (profile.gearWhinePitchScale || 1.0));
       if (this.pulseLfoGain) this.pulseLfoGain.gain.setTargetAtTime(0, now, 0.02);
       this.lastTelemetry = {
         rpm: Math.round(clampedRpm * 12000),
@@ -726,26 +812,37 @@ export class MotorsportAudioEngine {
         firingHz: 0,
         baseHz: 0,
         limiterActive: false,
+        outputDbfs: -16.0,
         layerLevels: {
           combustion: 0,
           intake: 0,
           turbo: 0,
-          mgu: Math.min(1, elGainLevel * 2.5),
-          gearbox: Math.min(1, gearGainLevel * 20),
+          mgu: Math.min(1, elGainLevel * 25),
+          gearbox: Math.min(1, gearGainLevel * 30),
         },
       };
     } else {
-      const { rpm, crankHz, firingHz, baseHz, subHz, midHz, highHz, filterHz } =
+      const { rpm, crankHz, firingHz, baseHz, subHz, midHz, highHz } =
         computeWarmFundamentalHz(profile, clampedRpm, clampedThrottle);
 
-      this.oscCombustion.frequency.setTargetAtTime(baseHz, now, 0.015);
+      // Primary oscillator runs at 0.5 * firingHz so Fourier bins map exactly:
+      // bin 1 = 0.5x, bin 2 = 1x, bin 4 = 2nd, bin 6 = 3rd, bin 8 = 4th, bin 10 = 5th, bin 12 = 6th
+      this.oscCombustion.frequency.setTargetAtTime(baseHz * 0.5, now, 0.015);
       this.oscHarmonic.frequency.setTargetAtTime(midHz, now, 0.015);
       this.oscSub.frequency.setTargetAtTime(subHz, now, 0.015);
       this.oscHighHarmonic.frequency.setTargetAtTime(highHz, now, 0.015);
-      this.combustionFilter.frequency.setTargetAtTime(filterHz, now, 0.015);
+
+      // Gentle 12 dB/oct slope (Q <= 1.8) exhaust low-pass filter scaling dynamically with RPM up to 3,200-4,500 Hz
+      const baseCutoff = profile.wotFilterCutoff || 2800;
+      const dynamicCutoff = Math.max(
+        650,
+        Math.min(4500, baseCutoff * (0.65 + 0.85 * clampedRpm) * (0.8 + clampedThrottle * 0.25)),
+      );
+      this.combustionFilter.frequency.setTargetAtTime(dynamicCutoff, now, 0.015);
+      this.combustionFilter.Q.setTargetAtTime(Math.min(1.8, Math.max(0.5, profile.filterQ || 1.4)), now, 0.015);
 
       const upperRpmCurve = Math.pow(clampedRpm, 1.35);
-      this.fundGain?.gain.setTargetAtTime(0.88 * (profile.harmonicWeights[0] ?? 1.0), now, 0.015);
+      this.fundGain?.gain.setTargetAtTime(0.85, now, 0.015);
       this.subGain?.gain.setTargetAtTime(profile.subLevel ?? 0.65, now, 0.015);
       this.midGain?.gain.setTargetAtTime(
         (profile.midLevel ?? 0.78) * (0.65 + clampedThrottle * 0.35),
@@ -774,17 +871,19 @@ export class MotorsportAudioEngine {
       // Boosted combustion base gain for authoritative engine roar
       combGainLevel = (profile.combustionGain ?? 0.28) * (1.35 + clampedThrottle * 0.85);
 
-      // === CYCLIC FUEL/IGNITION-CUT REV LIMITER (rpm >= 98.5% redline) ===
-      if (clampedRpm >= 0.985 && clampedThrottle > 0.22) {
+      // === HARSH HYSTERESIS REV LIMITER (Drops pitch, cuts gain, triggers pops) ===
+      const isRedlineCandidate = clampedRpm >= 0.984 && clampedThrottle > 0.22;
+      if (revLimiterActive !== undefined) {
+        limiterActive = revLimiterActive;
+      } else if (isRedlineCandidate) {
         limiterActive = true;
-        const cutHz = Math.max(12, Math.min(24, profile.revLimiterRateHz || 18));
-        const phase = Math.sin(now * Math.PI * 2 * cutHz);
-        if (phase < 0) {
-          combGainLevel *= 0.16;
-          if (now - this.lastLimiterPopTime > 0.095) {
-            this.lastLimiterPopTime = now;
-            this.triggerExhaustCrackles(0.85 * Math.max(0.7, profile.crackleIntensity));
-          }
+      }
+
+      if (limiterActive) {
+        combGainLevel *= 0.12;
+        if (now - this.lastLimiterPopTime > 0.055) {
+          this.lastLimiterPopTime = now;
+          this.triggerExhaustCrackles(0.85 * Math.max(0.7, profile.crackleIntensity));
         }
       }
 
@@ -856,6 +955,7 @@ export class MotorsportAudioEngine {
         firingHz: Number(firingHz.toFixed(1)),
         baseHz: Number(baseHz.toFixed(1)),
         limiterActive,
+        outputDbfs: -16.0,
         layerLevels: {
           combustion: Math.min(1, combGainLevel / 0.65),
           intake: Math.min(1, intakeGainLevel / 0.35),
@@ -877,9 +977,37 @@ export class MotorsportAudioEngine {
     this.turboSpoolGain?.gain.setTargetAtTime(turboGainLevel, now, 0.015);
 
     // Master / Engine Output Gain Calibration
-    const masterOutputGain = profile.engineOutputGain ?? profile.profileGain ?? 1.6;
+    const masterOutputGain = profile.engineOutputGain ?? profile.profileGain ?? 0.90;
     const overallEngineGain = (0.24 + clampedThrottle * 0.28) * masterOutputGain;
     this.engineGain.gain.setTargetAtTime(overallEngineGain, now, 0.015);
+
+    // Live RMS Measurement & Auto-Leveling toward -16 dBFS
+    let liveRms = 0.05;
+    if (this.analyser) {
+      if (!this.rmsBuffer || this.rmsBuffer.length !== 512) {
+        this.rmsBuffer = new Float32Array(512);
+      }
+      this.analyser.getFloatTimeDomainData(this.rmsBuffer as unknown as Float32Array<ArrayBuffer>);
+      let sumSq = 0;
+      for (let i = 0; i < 512; i++) {
+        const v = this.rmsBuffer[i];
+        sumSq += v * v;
+      }
+      liveRms = Math.sqrt(sumSq / 512);
+    }
+    const liveDbfs = Number((20 * Math.log10(Math.max(1e-4, liveRms))).toFixed(1));
+    this.lastTelemetry.outputDbfs = liveDbfs;
+
+    const staticTrim = profile.type === 'ELECTRIC_EV' ? 0.35 : profile.cylinders >= 10 ? 0.72 : 0.85;
+    const targetRms = 0.1585; // -16 dBFS
+    if (clampedThrottle > 0.05 && liveRms > 0.015) {
+      const neededGain = (targetRms / liveRms) * staticTrim;
+      const clampedGain = Math.max(0.10, Math.min(2.5, neededGain));
+      this.currentNormGain = this.currentNormGain * 0.92 + clampedGain * 0.08;
+    } else {
+      this.currentNormGain = this.currentNormGain * 0.95 + staticTrim * 0.05;
+    }
+    this.normalizeGainNode?.gain.setTargetAtTime(this.currentNormGain, now, 0.06);
 
     // Live Tire Scrub Audio
     if (this.scrubGain && this.scrubFilter) {

@@ -162,6 +162,7 @@ export interface CarSimState {
   gear: number;
   rpmNormalized: number;
   revLimiterTimer?: number;
+  revLimiterActive?: boolean;
   aiTargetOffset: number;
   aiPassTimer: number;
   aiPaceMultiplier: number;
@@ -910,15 +911,29 @@ export function stepCarPhysics(
   } else {
     // ==================== FORWARD GEARS (1..N) ====================
     const isStandstillRev = car.speed < 1.2 && brake > 0.1 && throttle > 0.08;
-    const revCycleHz = 18;
-    const isLimiterActive = !isFE && car.rpmNormalized >= 0.99 && throttle > 0.22;
-    if (isLimiterActive) {
-      car.revLimiterTimer = ((car.revLimiterTimer ?? 0) + dt) % (1 / revCycleHz);
+
+    // Stateful hysteresis fuel/spark-cut rev limiter (>= 60-120 RPM constant oscillation)
+    // 70-120 RPM drop on an ~7500-8500 RPM range is ~0.014-0.018 normalized RPM
+    const HYSTERESIS_RPM_DROP = 0.016; // ~100-120 RPM drop
+    const HYSTERESIS_WINDOW_SEC = 0.055; // 55 ms cyclic window (45-70 ms)
+
+    if (!isFE && throttle > 0.20) {
+      if (car.revLimiterActive) {
+        car.revLimiterTimer = (car.revLimiterTimer ?? 0) + dt;
+        if (car.revLimiterTimer >= HYSTERESIS_WINDOW_SEC || car.rpmNormalized <= 1.0 - HYSTERESIS_RPM_DROP) {
+          car.revLimiterActive = false;
+          car.revLimiterTimer = 0;
+        }
+      } else if (car.rpmNormalized >= 0.995) {
+        car.revLimiterActive = true;
+        car.revLimiterTimer = 0;
+      }
     } else {
+      car.revLimiterActive = false;
       car.revLimiterTimer = 0;
     }
-    const limiterTorqueCut =
-      isLimiterActive && (car.revLimiterTimer ?? 0) > 0.5 / revCycleHz ? 0.0 : 1.0;
+
+    const limiterTorqueCut = car.revLimiterActive ? 0.0 : 1.0;
 
     if (throttle > 0 && brake < 0.1) {
       const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
@@ -942,7 +957,7 @@ export function stepCarPhysics(
       const cAeroDrag =
         ((accelBase * 0.11) / (effectiveMaxSpeed * effectiveMaxSpeed)) * tuning.dragScale;
       const aeroDragDecel = cAeroDrag * car.speed * car.speed;
-      const netAccel = engineAccel - aeroDragDecel;
+      const netAccel = limiterTorqueCut === 0 ? -2.2 * dt : engineAccel - aeroDragDecel;
       car.speed = Math.max(0, car.speed + netAccel * dt);
     }
 
@@ -974,14 +989,20 @@ export function stepCarPhysics(
     } else if (isStandstillRev) {
       // Stationary burnout / launch revving against brake: freely sweeps to redline & bounces
       const targetRev = Math.min(1.0, 0.18 + throttle * 0.84);
-      const nextRpm =
-        car.rpmNormalized < targetRev
-          ? Math.min(targetRev, car.rpmNormalized + dt * 4.2 * throttle)
-          : Math.max(targetRev, car.rpmNormalized - dt * 3.2);
-      car.rpmNormalized =
-        nextRpm >= 0.99 && limiterTorqueCut === 0
-          ? 0.985
-          : Math.round(nextRpm * 1000) / 1000;
+      if (car.revLimiterActive) {
+        const nextRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 2.2);
+        car.rpmNormalized = Math.round(nextRpm * 1000) / 1000;
+      } else {
+        const nextRpm =
+          car.rpmNormalized < targetRev
+            ? Math.min(targetRev, car.rpmNormalized + dt * 4.2 * throttle)
+            : Math.max(targetRev, car.rpmNormalized - dt * 3.2);
+        if (nextRpm >= 0.995) {
+          car.revLimiterActive = true;
+          car.revLimiterTimer = 0;
+        }
+        car.rpmNormalized = Math.round(nextRpm * 1000) / 1000;
+      }
     } else if (isManual) {
       car.gear = Math.max(1, Math.min(totalGears, car.gear));
       if (car.speed < 1.0 && car.gear === 1 && throttle < 0.08) {
@@ -1002,9 +1023,17 @@ export function stepCarPhysics(
         }
         if (car.gear < totalGears && speedRatio >= gearMaxRatio) {
           car.speed = Math.min(car.speed, topSpeedRef * gearMaxRatio);
-          gearRpm = limiterTorqueCut === 0 ? 0.985 : 1.0;
-        } else if (gearRpm >= 0.99 && limiterTorqueCut === 0) {
-          gearRpm = 0.985;
+          if (car.revLimiterActive) {
+            gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
+          } else {
+            gearRpm = 1.0;
+            car.revLimiterActive = true;
+          }
+        } else if (car.revLimiterActive) {
+          gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
+        } else if (gearRpm >= 0.995) {
+          gearRpm = 1.0;
+          car.revLimiterActive = true;
         }
         car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;
       }
@@ -1025,8 +1054,11 @@ export function stepCarPhysics(
         } else {
           gearRpm = 0.36 + 0.635 * Math.max(0, Math.min(1.0, inGearFraction));
         }
-        if (gearRpm >= 0.99 && limiterTorqueCut === 0) {
-          gearRpm = 0.985;
+        if (car.revLimiterActive) {
+          gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
+        } else if (gearRpm >= 0.995) {
+          gearRpm = 1.0;
+          car.revLimiterActive = true;
         }
         car.gear = currentGear;
         car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;

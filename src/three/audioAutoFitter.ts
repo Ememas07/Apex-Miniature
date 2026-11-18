@@ -385,8 +385,8 @@ export class InBrowserSoundFitter {
         distortionDrive: nextDrive,
         gearWhineLevel: nextGearWhine,
         turboSpoolLevel: nextTurboSpool,
-        profileGain: 1.6,
-        engineOutputGain: 1.6,
+        profileGain: candidate.profileGain ?? 0.90,
+        engineOutputGain: candidate.engineOutputGain ?? 0.90,
       };
 
       yield {

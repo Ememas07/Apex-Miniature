@@ -925,6 +925,7 @@ export function RaceViewport(props: RaceViewportProps) {
             playerCar.onKerb,
             playerCar.gear,
             playerCar.carSpec.soundProfile,
+            playerCar.revLimiterActive,
           );
         }
       } else {

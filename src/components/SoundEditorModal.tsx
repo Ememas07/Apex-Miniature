@@ -100,6 +100,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     firingHz: 0,
     baseHz: profile.baseIdleHz,
     limiterActive: false,
+    outputDbfs: -16.0,
     gear: 2,
     speedKmh: 65,
     rpmNorm: 0.28,
@@ -131,6 +132,8 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     simSpeedKmh: 65,
     sweepPhaseTimer: 0,
     sweepLifting: false,
+    limiterBounceTimer: 0,
+    limiterActiveState: false,
   });
 
   simRef.current.audioRunning = audioRunning;
@@ -358,9 +361,27 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
 
       if (s.testMode === 'limiter') {
         s.simThrottle = 1.0;
-        s.simRpm = 0.995;
         s.simGear = s.manualGear;
         s.simSpeedKmh = Math.min(330, 52 * s.simGear);
+
+        // Stateful hysteresis limiter bounce (>= 60-120 RPM constant oscillation)
+        const rpmRange = Math.max(1000, p.redlineRpm - p.idleRpm);
+        const rpmDropFrac = Math.max(0.012, Math.min(0.024, 95 / rpmRange));
+
+        if (s.limiterActiveState) {
+          s.limiterBounceTimer += dt;
+          s.simRpm = Math.max(1.0 - rpmDropFrac, s.simRpm - dt * 1.5);
+          if (s.limiterBounceTimer >= 0.055 || s.simRpm <= 1.0 - rpmDropFrac) {
+            s.limiterActiveState = false;
+            s.limiterBounceTimer = 0;
+          }
+        } else {
+          s.simRpm = Math.min(1.0, s.simRpm + dt * 2.4);
+          if (s.simRpm >= 1.0) {
+            s.limiterActiveState = true;
+            s.limiterBounceTimer = 0;
+          }
+        }
       } else if (s.testMode === 'sweep') {
         s.sweepPhaseTimer += dt;
         if (!s.sweepLifting) {
@@ -437,6 +458,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
           0,
           false,
           s.simGear,
+          s.testMode === 'limiter' ? s.limiterActiveState : undefined,
         );
       } else if (engine && !s.audioRunning) {
         engine.updateEngineWithProfile(p, 0, 0, false, activeCar.classId, 0, '', 0, false, 1);
@@ -553,6 +575,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
           firingHz: t && s.audioRunning ? t.firingHz : calcFiringHz,
           baseHz: t && s.audioRunning ? t.baseHz : calcBaseHz,
           limiterActive: Boolean(t?.limiterActive && s.audioRunning),
+          outputDbfs: t && s.audioRunning ? t.outputDbfs : -16.0,
           gear: s.simGear,
           speedKmh: Math.round(s.simSpeedKmh),
           rpmNorm: s.simRpm,
@@ -780,15 +803,20 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                 <Activity className="w-4 h-4 text-sky-400" />
                 Live Exhaust Spectrum & Waveform
               </div>
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${
-                  telemetry.limiterActive
-                    ? 'bg-red-600/25 border-red-500 text-red-300'
-                    : 'bg-slate-800 border-white/10 text-slate-400'
-                }`}
-              >
-                {telemetry.limiterActive ? 'IGNITION CUT LIMITER' : 'CLEAN COMBUSTION'}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-[#0a0e16] border border-white/10 text-sky-300">
+                  {telemetry.outputDbfs < -60 ? 'MUTE' : `${telemetry.outputDbfs.toFixed(1)} dBFS`}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                    telemetry.limiterActive
+                      ? 'bg-red-600/25 border-red-500 text-red-300'
+                      : 'bg-slate-800 border-white/10 text-slate-400'
+                  }`}
+                >
+                  {telemetry.limiterActive ? 'IGNITION CUT LIMITER' : 'CLEAN COMBUSTION'}
+                </span>
+              </div>
             </div>
 
             <canvas
@@ -1217,10 +1245,10 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
               <SliderControl
                 label="Engine Output Gain"
-                value={profile.profileGain ?? profile.engineOutputGain ?? 1.6}
-                min={0.2}
-                max={3.0}
-                step={0.05}
+                value={profile.profileGain ?? profile.engineOutputGain ?? 0.9}
+                min={0.02}
+                max={2.5}
+                step={0.01}
                 unit="x"
                 onChange={(v) => updateProfileField('profileGain', v)}
               />
@@ -1228,7 +1256,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                 label="Exhaust Low-Pass Cutoff"
                 value={profile.wotFilterCutoff}
                 min={600}
-                max={3500}
+                max={4500}
                 step={25}
                 unit=" Hz"
                 onChange={(v) => updateProfileField('wotFilterCutoff', v)}

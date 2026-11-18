@@ -536,6 +536,27 @@ def infer_engine_type(cylinders: int, w1: float, w3: float, pulse_depth: float) 
     return "V8_CROSSPLANE"
 
 
+def objective_fn(
+    vec: np.ndarray,
+    rpm_norm: np.ndarray,
+    throttle_load: np.ndarray,
+    cylinders: int,
+    idle_rpm: float,
+    redline_rpm: float,
+    fft_sizes: tuple[int, ...],
+    hop_sizes: tuple[int, ...],
+    mel_fbs: list[np.ndarray],
+    target_mels: list[np.ndarray],
+    target_cents: list[float],
+) -> float:
+    """Objective function for differential evolution evaluating multi-resolution spectral loss."""
+    cand_audio = synthesize_candidate(
+        vec, rpm_norm, throttle_load, cylinders, idle_rpm, redline_rpm, SAMPLE_RATE
+    )
+    cand_mels, cand_cents = compute_mr_log_mel(cand_audio, fft_sizes, hop_sizes, mel_fbs, SAMPLE_RATE)
+    return multi_resolution_loss(target_mels, target_cents, cand_mels, cand_cents)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Fit audioEngine.ts acoustic preset from reference racing clip (.mp4 / .wav) via Differential Evolution."
@@ -611,33 +632,35 @@ def main():
         (0.0, 0.32),    # 19: gearWhineLevel
     ]
 
-    eval_count = 0
-
-    def objective_fn(vec: np.ndarray) -> float:
-        nonlocal eval_count
-        eval_count += 1
-        cand_audio = synthesize_candidate(
-            vec, rpm_norm, throttle_load, args.cylinders, float(args.idle), float(args.redline), SAMPLE_RATE
-        )
-        cand_mels, cand_cents = compute_mr_log_mel(cand_audio, fft_sizes, hop_sizes, mel_fbs, SAMPLE_RATE)
-        return multi_resolution_loss(target_mels, target_cents, cand_mels, cand_cents)
-
     print(f"Beginning Differential Evolution fitting (iters={args.iters}, popsize={args.popsize})...")
     opt_result = scipy.optimize.differential_evolution(
         func=objective_fn,
         bounds=bounds,
+        args=(
+            rpm_norm,
+            throttle_load,
+            args.cylinders,
+            float(args.idle),
+            float(args.redline),
+            fft_sizes,
+            hop_sizes,
+            mel_fbs,
+            target_mels,
+            target_cents,
+        ),
         maxiter=args.iters,
         popsize=args.popsize,
         mutation=(0.5, 1.0),
         recombination=0.7,
         seed=42,
-        workers=1,
-        polish=True,
+        workers=-1,
+        updating="deferred",
+        polish=False,
     )
 
     best_p = opt_result.x
     best_loss = opt_result.fun
-    print(f"\nOptimization complete! Total evaluations: {eval_count}, Final Loss: {best_loss:.4f}")
+    print(f"\nOptimization complete! Total evaluations: {opt_result.nfev}, Final Loss: {best_loss:.4f}")
 
     # Build final matched waveform and preview if requested
     matched_audio = synthesize_candidate(
