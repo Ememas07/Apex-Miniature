@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
-import { Camera, Volume2, VolumeX, Pause, Wrench, Home } from 'lucide-react';
+import { useMemo } from 'react';
+import { Camera, Volume2, VolumeX, Pause, Wrench, Home, Fuel } from 'lucide-react';
 import { CAR_CLASSES, getCarById, resolveCarSpecial } from '../game/cars';
 import { formatLapTime } from '../game/physics';
 import { compileTrack, getTrackById } from '../game/tracks';
-import { HudSnapshot, PitServiceType, PitStrategy, TireCompound, TrackSpec } from '../game/types';
+import { HudSnapshot, PitServiceAction, PitStrategy, TireCompound, TrackSpec } from '../game/types';
 
 interface RaceHUDProps {
   hud: HudSnapshot;
@@ -12,6 +12,7 @@ interface RaceHUDProps {
   playerCarId: string;
   muted: boolean;
   onChangePitStrategy: (strategy: PitStrategy) => void;
+  onRequestPitStop: (action: PitServiceAction, nextCompound?: TireCompound) => boolean;
   onCycleCamera: () => void;
   onToggleMute: () => void;
   onTogglePause: () => void;
@@ -25,13 +26,12 @@ export function RaceHUD({
   playerCarId,
   muted,
   onChangePitStrategy,
+  onRequestPitStop,
   onCycleCamera,
   onToggleMute,
   onTogglePause,
   onReturnToTitle,
 }: RaceHUDProps) {
-  const [pitMenuOpen, setPitMenuOpen] = useState(false);
-
   const track = customTrack || getTrackById(trackId);
   const playerCar = getCarById(playerCarId);
   const classMeta = CAR_CLASSES[playerCar.classId];
@@ -63,7 +63,15 @@ export function RaceHUD({
     return { pathD, project };
   }, [track]);
 
-  const showPitControls = pitMenuOpen || hud.inPitLane || hud.pitStopRemaining > 0;
+  const showOnTrackPitPrompt =
+    hud.countdown <= 0 && (hud.isStoppedOnTrack || hud.pitStopRemaining > 0);
+  const remainingTotal =
+    hud.pitStopRemaining +
+    hud.pitQueue.reduce((acc, task) => acc + (task === 'tyres' ? 2.0 : 4.0), 0);
+  const pitProgressPct =
+    hud.pitStopTotal > 0
+      ? Math.max(0, Math.min(100, ((hud.pitStopTotal - remainingTotal) / hud.pitStopTotal) * 100))
+      : 0;
 
   return (
     <div
@@ -121,21 +129,17 @@ export function RaceHUD({
           </div>
 
           {/* Contextual Racecraft / Rulebook Alerts */}
-          {(hud.inSlipstream || hud.penaltyTimeRemaining > 0 || hud.warningCount > 0 || hud.inPitLane || hud.pitLimiterActive) && (
+          {(hud.inSlipstream || hud.penaltyTimeRemaining > 0 || hud.warningCount > 0 || hud.pitStopRemaining > 0) && (
             <div className="mt-2 pt-2 border-t border-white/10 space-y-1 text-[11px] font-semibold">
               {hud.inSlipstream && (
                 <div className="text-sky-300">SLIPSTREAM TOW ACTIVE</div>
               )}
-              {(hud.inPitLane || hud.pitLimiterActive) && (
-                <div className={hud.pitSpeeding ? 'text-red-400' : 'text-amber-300'}>
-                  {hud.pitStopRemaining > 0
-                    ? `PIT SERVICE ${hud.pitStopRemaining.toFixed(1)}s`
-                    : hud.pitSpeeding
-                    ? 'PIT SPEEDING PENALTY (3.0s)'
-                    : 'PIT LIMITER: 60 KM/H CLAMP (ACTIVE [L])'}
+              {hud.pitStopRemaining > 0 && (
+                <div className="text-amber-300">
+                  {hud.pitActiveTask === 'fuel' ? 'REFUELING' : 'TYRE SERVICE'} {remainingTotal.toFixed(1)}s
                 </div>
               )}
-              {hud.penaltyTimeRemaining > 0 && !hud.inPitLane && (
+              {hud.penaltyTimeRemaining > 0 && hud.pitStopRemaining <= 0 && (
                 <div className="text-red-400">
                   SLOWDOWN PENALTY {hud.penaltyTimeRemaining.toFixed(1)}s
                 </div>
@@ -162,22 +166,6 @@ export function RaceHUD({
         {/* Top-Right Cluster: Compact Minimap & Utility Icon Buttons */}
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-1.5 pointer-events-auto">
-            <button
-              type="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                e.currentTarget.blur();
-                setPitMenuOpen((v) => !v);
-              }}
-              aria-label="Toggle Pit Strategy"
-              title="Pit Strategy"
-              className={`p-2 rounded bg-[#0b0e13]/90 border text-xs flex items-center gap-1 cursor-pointer ${
-                showPitControls ? 'border-amber-400 text-amber-300' : 'border-white/15 text-slate-200 hover:text-white'
-              }`}
-            >
-              <Wrench className="w-4 h-4" />
-              <span className="hidden sm:inline font-semibold">Pit</span>
-            </button>
             <button
               type="button"
               tabIndex={-1}
@@ -268,54 +256,96 @@ export function RaceHUD({
 
       {/* BOTTOM CORNERS */}
       <div className="flex items-end justify-between gap-4">
-        {/* Bottom-Left: Optional Pit Strategy Drawer when open or in pit lane */}
+        {/* Bottom-Left: On-Track Stationary Pit Stop Prompt */}
         <div>
-          {showPitControls && (
-            <div className="bg-[#0b0e13]/92 border border-amber-500/40 rounded-md p-3 pointer-events-auto space-y-2.5 w-64">
+          {showOnTrackPitPrompt && (
+            <div
+              data-testid="on-track-pit-prompt"
+              className="bg-[#0b0e13]/95 border border-amber-500/50 rounded-md p-3 pointer-events-auto space-y-2.5 w-72 shadow-xl"
+            >
               <div className="flex items-center justify-between text-xs">
-                <span className="font-display font-bold text-amber-300">Pit Box Strategy</span>
-                <span className="text-[11px] text-slate-400">Slow &lt; 60 km/h on entry</span>
+                <span className="font-display font-bold text-amber-300 uppercase tracking-wide">
+                  On-Track Pit Crew
+                </span>
+                <span className="text-[10px] text-slate-400 tabular-nums">
+                  {hud.pitStopRemaining > 0
+                    ? `${remainingTotal.toFixed(1)}s left`
+                    : 'Stopped on track'}
+                </span>
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {(
-                  [
-                    { id: 'splash-go', label: 'Splash & Go (2s)' },
-                    { id: 'full-service', label: 'Full Service (4s)' },
-                  ] as Array<{ id: PitServiceType; label: string }>
-                ).map((srv) => (
-                  <button
-                    key={srv.id}
-                    type="button"
-                    onClick={() =>
-                      onChangePitStrategy({ ...hud.pitStrategy, serviceType: srv.id })
-                    }
-                    className={`py-1.5 px-2 rounded text-[11px] font-semibold border cursor-pointer ${
-                      hud.pitStrategy.serviceType === srv.id
-                        ? 'bg-amber-600/30 border-amber-400 text-white'
-                        : 'bg-[#151a23] border-white/10 text-slate-300'
-                    }`}
-                  >
-                    {srv.label}
-                  </button>
-                ))}
-              </div>
+
+              {hud.pitStopRemaining > 0 && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-semibold">
+                    <span className="text-white">
+                      {hud.pitActiveTask === 'tyres'
+                        ? `Fitting ${hud.pitStrategy.nextCompound.toUpperCase()} Tyres...`
+                        : 'Refueling to 100%...'}
+                    </span>
+                    {hud.pitQueue.length > 0 && (
+                      <span className="text-amber-300">
+                        + {hud.pitQueue[0] === 'tyres' ? 'Tyres' : 'Fuel'} queued
+                      </span>
+                    )}
+                  </div>
+                  <div className="h-2 rounded bg-[#1a202c] overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400 transition-all duration-75"
+                      style={{ width: `${pitProgressPct.toFixed(0)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-4 gap-1">
                 {(['soft', 'medium', 'hard', 'wet'] as TireCompound[]).map((cmp) => (
                   <button
                     key={cmp}
                     type="button"
-                    onClick={() =>
-                      onChangePitStrategy({ ...hud.pitStrategy, nextCompound: cmp })
-                    }
-                    className={`py-1 rounded text-[10px] font-bold uppercase border cursor-pointer ${
+                    tabIndex={-1}
+                    disabled={hud.pitActiveTask === 'tyres'}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onChangePitStrategy({ nextCompound: cmp });
+                    }}
+                    className={`py-1 rounded text-[10px] font-bold uppercase border cursor-pointer disabled:opacity-50 ${
                       hud.pitStrategy.nextCompound === cmp
                         ? 'bg-red-600 border-red-400 text-white'
-                        : 'bg-[#151a23] border-white/10 text-slate-400'
+                        : 'bg-[#151a23] border-white/10 text-slate-400 hover:text-white'
                     }`}
                   >
                     {cmp}
                   </button>
                 ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  disabled={hud.pitActiveTask === 'tyres' || hud.pitQueue.includes('tyres')}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onRequestPitStop('tyres', hud.pitStrategy.nextCompound);
+                  }}
+                  className="py-2 px-2 rounded text-[11px] font-bold border border-amber-400/60 bg-amber-600/25 hover:bg-amber-600/40 text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span>Change Tyres (2.0s)</span>
+                </button>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  disabled={hud.pitActiveTask === 'fuel' || hud.pitQueue.includes('fuel')}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onRequestPitStop('fuel');
+                  }}
+                  className="py-2 px-2 rounded text-[11px] font-bold border border-sky-400/60 bg-sky-600/25 hover:bg-sky-600/40 text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                >
+                  <Fuel className="w-3.5 h-3.5" />
+                  <span>Refuel (4.0s)</span>
+                </button>
               </div>
             </div>
           )}
@@ -456,7 +486,7 @@ export function RaceHUD({
                   : hud.cameraMode === 'orbit'
                   ? 'Orbit'
                   : 'Isometric'}{' '}
-                · [C] · [L] Limiter
+                · [C]
               </span>
             )}
           </div>

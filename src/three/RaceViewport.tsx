@@ -10,6 +10,7 @@ import {
   computeRoadSurfaceTilt,
   computeStandings,
   createCarSimState,
+  requestOnTrackPitStop,
   resolveCarCollisions,
   SPEED_KMH_FACTOR,
   stepCarPhysics,
@@ -20,9 +21,11 @@ import {
   CameraMode,
   GamePhase,
   HudSnapshot,
+  PitServiceAction,
   PitStrategy,
   RaceConfig,
   RoomPeer,
+  TireCompound,
 } from '../game/types';
 import { MotorsportAudioEngine } from './audioEngine';
 import { BuiltCarRig } from './carBuilder';
@@ -45,6 +48,7 @@ interface RaceViewportProps {
   onTogglePause: () => void;
   onCycleCamera: () => void;
   onToggleMute: () => void;
+  onPitHandlerReady?: (handler: (action: PitServiceAction, nextCompound?: TireCompound) => boolean) => void;
 }
 
 function detectSoftwareGl(): boolean {
@@ -110,7 +114,6 @@ export function RaceViewport(props: RaceViewportProps) {
     rainMesh: THREE.InstancedMesh | null;
     keysPressed: Set<string>;
     specialJustPressed: boolean;
-    pitLimiterToggle: boolean;
     worldVersion: number;
     orbitYaw: number;
     orbitPitch: number;
@@ -119,6 +122,8 @@ export function RaceViewport(props: RaceViewportProps) {
     targetOrbitPitch: number;
     targetOrbitDist: number;
     isDraggingOrbit: boolean;
+    orbitUserRotated: boolean;
+    lastCameraMode: CameraMode;
     rebuildWorld: () => void;
   } | null>(null);
 
@@ -231,7 +236,6 @@ export function RaceViewport(props: RaceViewportProps) {
       rainMesh,
       keysPressed,
       specialJustPressed: false,
-      pitLimiterToggle: false,
       worldVersion: 0,
       orbitYaw: 0,
       orbitPitch: 0.35,
@@ -240,8 +244,18 @@ export function RaceViewport(props: RaceViewportProps) {
       targetOrbitPitch: 0.35,
       targetOrbitDist: 12.0,
       isDraggingOrbit: false,
+      orbitUserRotated: false,
+      lastCameraMode: propsRef.current.cameraMode,
       rebuildWorld: () => {},
     };
+
+    propsRef.current.onPitHandlerReady?.((action: PitServiceAction, nextCompound?: TireCompound) => {
+      const pCar = sim.cars.find((c) => c.isPlayer);
+      if (!pCar) return false;
+      const ok = requestOnTrackPitStop(pCar, action, nextCompound);
+      if (ok) sim.audio.playBeep(560, 0.08);
+      return ok;
+    });
 
     const rebuildWorld = () => {
       sim.worldVersion++;
@@ -422,9 +436,23 @@ export function RaceViewport(props: RaceViewportProps) {
       // Position camera initially behind player or lead car
       const anchor = newCars.find((c) => c.isPlayer) ?? newCars[0];
       if (anchor) {
-        const initFrame = computeCameraFrame(propsRef.current.cameraMode, anchor, 0, 0);
+        sim.orbitYaw = sim.targetOrbitYaw = anchor.heading + Math.PI;
+        sim.orbitUserRotated = false;
+        const initSample = sampleTrackAtT(compiled, anchor.trackT);
+        const initTilt = computeRoadSurfaceTilt(initSample, anchor.heading);
+        const initFrame = computeCameraFrame(
+          propsRef.current.cameraMode,
+          anchor,
+          anchor.pitch ?? initTilt.pitchRad,
+          anchor.roll ?? initTilt.rollRad,
+        );
         _camCurrPos.set(initFrame.position.x, initFrame.position.y, initFrame.position.z);
         _camCurrLook.set(initFrame.lookAt.x, initFrame.lookAt.y, initFrame.lookAt.z);
+        if (initFrame.up) {
+          camera.up.set(initFrame.up.x, initFrame.up.y, initFrame.up.z);
+        } else {
+          camera.up.set(0, 1, 0);
+        }
         camera.position.copy(_camCurrPos);
         camera.lookAt(_camCurrLook);
       }
@@ -457,8 +485,11 @@ export function RaceViewport(props: RaceViewportProps) {
         propsRef.current.onToggleMute();
         return;
       }
-      if (code === 'KeyL' && !e.repeat) {
-        sim.pitLimiterToggle = true;
+      if (code === 'F9' && !e.repeat) {
+        e.preventDefault();
+        const exported = telemetryRecorder.exportManual(true);
+        if (exported) sim.audio.playBeep(880, 0.08);
+        return;
       }
       if ((code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyE') && !e.repeat) {
         sim.specialJustPressed = true;
@@ -490,6 +521,7 @@ export function RaceViewport(props: RaceViewportProps) {
     const onPointerDown = (e: PointerEvent) => {
       if (propsRef.current.cameraMode === 'orbit') {
         sim.isDraggingOrbit = true;
+        sim.orbitUserRotated = true;
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
       }
@@ -679,9 +711,6 @@ export function RaceViewport(props: RaceViewportProps) {
             specialPressed = true;
             sim.specialJustPressed = true;
           }
-          if (gp.buttons[1]?.pressed || gp.buttons[3]?.pressed) {
-            sim.pitLimiterToggle = true;
-          }
         }
 
         if (sim.countdown <= 0) {
@@ -695,7 +724,6 @@ export function RaceViewport(props: RaceViewportProps) {
                 steer,
                 specialPressed,
                 specialJustPressed: sim.specialJustPressed,
-                pitLimiterToggle: sim.pitLimiterToggle,
               };
               stepCarPhysics(
                 c,
@@ -711,7 +739,6 @@ export function RaceViewport(props: RaceViewportProps) {
               );
               telemetryRecorder.recordStep(c, sim.compiledTrack, sim.cars, playerInput, dt);
               sim.specialJustPressed = false;
-              sim.pitLimiterToggle = false;
             } else if (c.isHumanPeer) {
               const pkt = p.mpClient.peerTelemetry.get(c.id);
               if (pkt) {
@@ -776,9 +803,17 @@ export function RaceViewport(props: RaceViewportProps) {
           const pPitch = playerCar.pitch ?? fallbackTilt.pitchRad;
           const pRoll = playerCar.roll ?? fallbackTilt.rollRad;
 
+          if (mode !== sim.lastCameraMode) {
+            sim.lastCameraMode = mode;
+            if (mode === 'orbit') {
+              sim.orbitYaw = sim.targetOrbitYaw = playerCar.heading + Math.PI;
+              sim.orbitUserRotated = false;
+            }
+          }
+
           if (mode === 'orbit') {
-            // Driving follow damping when moving and not actively dragging
-            if (!sim.isDraggingOrbit && playerCar.speed > 2.0) {
+            // Only auto-align behind the car before the user drags; once orbiting, stay free of snap-back!
+            if (!sim.isDraggingOrbit && !sim.orbitUserRotated && playerCar.speed > 2.0) {
               const desiredYaw = playerCar.heading + Math.PI;
               let diff = desiredYaw - sim.targetOrbitYaw;
               while (diff > Math.PI) diff -= Math.PI * 2;
@@ -786,11 +821,12 @@ export function RaceViewport(props: RaceViewportProps) {
               sim.targetOrbitYaw += diff * Math.min(2.5 * dt, 0.15);
             }
 
-            const damp = 1 - Math.exp(-12 * dt);
-            sim.orbitYaw += (sim.targetOrbitYaw - sim.orbitYaw) * damp;
-            sim.orbitPitch += (sim.targetOrbitPitch - sim.orbitPitch) * damp;
-            sim.orbitDist += (sim.targetOrbitDist - sim.orbitDist) * damp;
+            const angDamp = sim.isDraggingOrbit ? 1.0 : 1 - Math.exp(-22 * dt);
+            sim.orbitYaw += (sim.targetOrbitYaw - sim.orbitYaw) * angDamp;
+            sim.orbitPitch += (sim.targetOrbitPitch - sim.orbitPitch) * angDamp;
+            sim.orbitDist += (sim.targetOrbitDist - sim.orbitDist) * (1 - Math.exp(-18 * dt));
 
+            // Lock orbit pivot directly to playerCar post-physics position (zero positional lerp/lag)
             const targetLookX = playerCar.x;
             const targetLookY = playerCar.y + 0.8;
             const targetLookZ = playerCar.z;
@@ -807,12 +843,10 @@ export function RaceViewport(props: RaceViewportProps) {
             // Ground-plane clamping: prevent clipping through track/grass plane
             const clampedCamY = Math.max(playerCar.y + 0.45, rawCamY);
 
-            _camDesiredPos.set(rawCamX, clampedCamY, rawCamZ);
-            _camDesiredLook.set(targetLookX, targetLookY, targetLookZ);
-
             _camCurrPos.set(rawCamX, clampedCamY, rawCamZ);
             _camCurrLook.set(targetLookX, targetLookY, targetLookZ);
 
+            camera.up.set(0, 1, 0);
             camera.position.copy(_camCurrPos);
             camera.lookAt(_camCurrLook);
 
@@ -824,9 +858,14 @@ export function RaceViewport(props: RaceViewportProps) {
             const camFrame = computeCameraFrame(mode, playerCar, pPitch, pRoll);
 
             if (camFrame.isLocked) {
-              // Hood Cam: locked rigidly to hood/nose transform, zero velocity-based lag or backward trailing
+              // Hood Cam: locked rigidly to car's full 3D orientation (pitch & roll), zero velocity lag
               _camCurrPos.set(camFrame.position.x, camFrame.position.y, camFrame.position.z);
               _camCurrLook.set(camFrame.lookAt.x, camFrame.lookAt.y, camFrame.lookAt.z);
+              if (camFrame.up) {
+                camera.up.set(camFrame.up.x, camFrame.up.y, camFrame.up.z);
+              } else {
+                camera.up.set(0, 1, 0);
+              }
               camera.position.copy(_camCurrPos);
               camera.lookAt(_camCurrLook);
               if (Math.abs(camera.fov - camFrame.fov) > 0.05) {
@@ -842,6 +881,7 @@ export function RaceViewport(props: RaceViewportProps) {
               _camCurrPos.lerp(_camDesiredPos, dampPos);
               _camCurrLook.lerp(_camDesiredLook, dampLook);
 
+              camera.up.set(0, 1, 0);
               camera.position.copy(_camCurrPos);
               camera.lookAt(_camCurrLook);
 
@@ -874,6 +914,7 @@ export function RaceViewport(props: RaceViewportProps) {
             playerCar.carSpec.id,
             playerCar.lateralSlip,
             playerCar.onKerb,
+            playerCar.gear,
           );
         }
       } else {
@@ -1007,7 +1048,6 @@ export function RaceViewport(props: RaceViewportProps) {
           compound: playerCar.compound,
           fuel: Math.round(playerCar.fuel),
           fuelLapsRemaining: playerCar.fuelLapsRemaining,
-          pitLimiterActive: playerCar.pitLimiterActive,
           attackModeUsesRemaining: playerCar.attackModeUsesRemaining,
           attackModeTimer: playerCar.attackModeTimer,
           aeroDamage: Math.round(playerCar.aeroDamage),
@@ -1017,9 +1057,11 @@ export function RaceViewport(props: RaceViewportProps) {
           trackWetness: sim.trackWetness,
           warningCount: playerCar.warningCount,
           penaltyTimeRemaining: playerCar.penaltyTimeRemaining,
-          inPitLane: playerCar.inPitLane,
+          isStoppedOnTrack: playerCar.speed < 1.5 && !playerCar.finished,
           pitStopRemaining: playerCar.pitStopRemaining,
-          pitSpeeding: playerCar.pitSpeeding,
+          pitStopTotal: playerCar.pitStopTotal,
+          pitActiveTask: playerCar.pitActiveTask,
+          pitQueue: [...playerCar.pitQueue],
           pitStrategy: playerCar.pitStrategy,
           cameraMode: p.cameraMode,
           standings,

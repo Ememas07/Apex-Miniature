@@ -773,9 +773,6 @@ export interface CompiledTrack {
   spec: TrackSpec;
   samples: SampledSplinePoint[];
   totalLength: number;
-  pitEntryT: number;
-  pitExitT: number;
-  pitOffset: number; // lateral world offset for pit corridor
 }
 
 function hermiteCatmullRomVal(
@@ -1030,16 +1027,10 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
     samples[i].racingLineOffset = Math.round(smoothedLine[i] * 100) / 100;
   }
 
-  const pitSign = spec.pitSide === 'right' ? 1 : -1;
-  const pitOffset = pitSign * (spec.trackWidth * 0.5 + 8.5);
-
   return {
     spec,
     samples,
     totalLength,
-    pitEntryT: 0.90,
-    pitExitT: 0.08,
-    pitOffset,
   };
 }
 

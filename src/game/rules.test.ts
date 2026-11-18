@@ -34,6 +34,7 @@ import {
   computeStandings,
   createCarSimState,
   getCompoundModifiers,
+  requestOnTrackPitStop,
   resolveCarCollisions,
   resolveWallContact,
   stepCarPhysics,
@@ -261,7 +262,7 @@ test('Driver number validation and standings calculation work cleanly', () => {
   assert.ok(p.distanceSq < 100);
 });
 
-test('Issue 1: Pit Speed Limiter smoothly ramps speed down (~14-18 m/s^2) and holds 60 km/h (16.67 m/s)', () => {
+test('Issue 1: On-Track Stationary Pit Stops hold car stationary for 2.0s Tyres / 4.0s Fuel and support sequential queueing', () => {
   const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
   const f1 = getCarById('f1-26-ferrari');
   const car = createCarSimState({
@@ -275,32 +276,24 @@ test('Issue 1: Pit Speed Limiter smoothly ramps speed down (~14-18 m/s^2) and ho
     compound: 'soft',
   });
 
-  // Position on Monza dead-straight frontstretch (t = 0.01 -> ~0.02) at 45 m/s (162 km/h)
-  const sp = sampleTrackAtT(monza, 0.01);
-  car.x = sp.x;
-  car.y = sp.y;
-  car.z = sp.z;
-  car.trackT = sp.t;
-  car.prevTrackT = sp.t;
-  car.heading = Math.atan2(sp.tx, sp.tz);
-  car.speed = 45;
-  car.vx = sp.tx * 45;
-  car.vz = sp.tz * 45;
+  // Cannot trigger on-track pit stop while moving (>= 1.5 m/s)
+  car.speed = 25;
+  assert.equal(requestOnTrackPitStop(car, 'tyres', 'hard'), false);
 
-  // Engage manual pit limiter
-  stepCarPhysics(
-    car,
-    { throttle: 1, brake: 0, steer: 0, specialPressed: false, pitLimiterToggle: true },
-    monza,
-    1 / 60,
-    { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
-  );
-  assert.equal(car.pitLimiterActive, true);
-  // Smooth progressive ramp (no instant snap to 16.67 m/s on tick 1)
-  assert.ok(car.speed > 43 && car.speed < 45, `Expected smooth progressive ramp on tick 1, got ${car.speed}`);
+  // Stop car on track with worn tyres & low fuel
+  car.speed = 0.4;
+  car.tireWear = 32;
+  car.fuel = 28;
+  assert.equal(requestOnTrackPitStop(car, 'tyres', 'hard'), true);
+  assert.equal(car.pitActiveTask, 'tyres');
+  assert.equal(car.pitStopRemaining, 2.0);
+  // Queue fuel (4.0s) sequentially
+  assert.equal(requestOnTrackPitStop(car, 'fuel'), true);
+  assert.deepEqual(car.pitQueue, ['fuel']);
+  assert.equal(car.pitStopTotal, 6.0);
 
-  // Run physics for 2.2 seconds with 100% full throttle
-  for (let i = 0; i < 132; i++) {
+  // Step 2.1s -> tyres completed, now refueling with car held stationary
+  for (let i = 0; i < 126; i++) {
     stepCarPhysics(
       car,
       { throttle: 1, brake: 0, steer: 0, specialPressed: false },
@@ -309,10 +302,25 @@ test('Issue 1: Pit Speed Limiter smoothly ramps speed down (~14-18 m/s^2) and ho
       { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
     );
   }
+  assert.equal(car.compound, 'hard');
+  assert.equal(car.tireWear, 100);
+  assert.equal(car.pitActiveTask, 'fuel');
+  assert.ok(car.speed === 0, 'Car must remain held stationary during queued fuel stop');
 
-  // Smoothly clamped at 60 km/h (16.67 m/s) despite 100% throttle
-  assert.ok(car.speed <= 16.7, `Expected car speed <= 16.7 m/s, got ${car.speed}`);
-  assert.ok(car.speed >= 16.5, `Expected car speed >= 16.5 m/s, got ${car.speed}`);
+  // Step remaining 4.1s -> refueling completed and car released
+  for (let i = 0; i < 246; i++) {
+    stepCarPhysics(
+      car,
+      { throttle: 0, brake: 0, steer: 0, specialPressed: false },
+      monza,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
+    );
+  }
+  assert.equal(car.fuel, 100);
+  assert.equal(car.pitStopRemaining, 0);
+  assert.equal(car.pitActiveTask, null);
+  assert.equal(car.pitStops, 1);
 });
 
 test('Issue 2: Fuel consumption calibrated so full tank lasts 12-16 laps at full push', () => {
@@ -641,8 +649,8 @@ test('Custom Track Compilation: handles startNodeIndex rotation, banking, variab
   assert.ok(Math.abs(sampleAtStart.x - gpTemplate.waypoints[2].x) < 2);
   assert.ok(Math.abs(sampleAtStart.z - gpTemplate.waypoints[2].z) < 2);
 
-  // Pit side offset is positive for right side
-  assert.ok(compiled.pitOffset > 0, `Expected positive pit offset for right side, got ${compiled.pitOffset}`);
+  // Pit side setting preserved on compiled track spec
+  assert.equal(compiled.spec.pitSide, 'right');
 
   // Banked oval template has banking in samples
   const ovalTemplate = CUSTOM_TRACK_TEMPLATES.find((t) => t.id === 'template-banked-oval')!;
@@ -970,12 +978,12 @@ test('Smooth Wall-Sliding Collisions, Depenetration & 25 km/h Damage Threshold',
   assert.ok(damageFactor >= 0.88 && damageFactor <= 0.90, `Damage factor at 100% aero damage must be ~0.89, got ${damageFactor}`);
 });
 
-test('Invisible Pit-Lane Collision Walls & Strict Entry/Exit Openings', () => {
+test('Outer Track Guardrails Containment: prevents cars from leaving track corridor on either side', () => {
   const spa = compileTrack(TRACKS[0]);
   const f1 = getCarById('f1-26-ferrari');
   const car = createCarSimState({
-    id: 'pit-wall-car',
-    name: 'Pit Wall Tester',
+    id: 'wall-car',
+    name: 'Wall Tester',
     isPlayer: true,
     carId: f1.id,
     livery: f1.defaultLivery,
@@ -984,19 +992,14 @@ test('Invisible Pit-Lane Collision Walls & Strict Entry/Exit Openings', () => {
     compound: 'soft',
   });
 
-  const pitSign = Math.sign(spa.pitOffset) || 1;
-  const dividerWallLat = pitSign === 1 ? spa.spec.trackWidth * 0.5 + 0.8 : -spa.spec.trackWidth * 0.5 - 0.8;
-
-  // Car on main straight at t = 0.98 (alongside pit lane divider wall)
-  // Attempting to cut sideways into pit lane is blocked by divider wall
-  const sampleMidPit = sampleTrackAtT(spa, 0.98);
-  car.inPitLane = false;
-  car.trackT = 0.98;
-  const testLat = dividerWallLat + pitSign * 0.4; // Crossing into divider wall
+  const maxCorridorLat = spa.spec.trackWidth * 0.5 + 6.2;
+  const sampleMid = sampleTrackAtT(spa, 0.5);
+  car.trackT = 0.5;
+  const testLat = maxCorridorLat + 1.5;
   car.lateralOffset = testLat;
-  car.x = sampleMidPit.x + sampleMidPit.nx * testLat;
-  car.z = sampleMidPit.z + sampleMidPit.nz * testLat;
-  car.heading = Math.atan2(sampleMidPit.tx, sampleMidPit.tz);
+  car.x = sampleMid.x + sampleMid.nx * testLat;
+  car.z = sampleMid.z + sampleMid.nz * testLat;
+  car.heading = Math.atan2(sampleMid.tx, sampleMid.tz);
 
   stepCarPhysics(
     car,
@@ -1006,12 +1009,10 @@ test('Invisible Pit-Lane Collision Walls & Strict Entry/Exit Openings', () => {
     { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
   );
 
-  // Depenetrated back to the main track side of the divider wall
-  if (pitSign === 1) {
-    assert.ok(car.lateralOffset <= dividerWallLat, `Expected main track car to be blocked by pit divider, got ${car.lateralOffset}`);
-  } else {
-    assert.ok(car.lateralOffset >= dividerWallLat, `Expected main track car to be blocked by pit divider, got ${car.lateralOffset}`);
-  }
+  assert.ok(
+    car.lateralOffset <= maxCorridorLat + 0.05,
+    `Expected car to be contained inside outer guardrail (${maxCorridorLat}), got ${car.lateralOffset}`,
+  );
 });
 
 test('Strict Track Surface Clearance: zero trees, rocks, grandstands, or props inside clearance buffer', () => {
@@ -1449,7 +1450,7 @@ test('Functional Reverse Gear (R): Automatic and Manual shifting with ~35 km/h b
   assert.equal(manCar.gear, 1, 'Shifting up from Reverse must return to 1st gear');
 });
 
-test('Hood Cam Rig: locked directly to hood/nose transform at 0 km/h and 350 km/h with zero velocity lag', () => {
+test('Hood Cam Rig & Orbit Cam: rigid 3D pitch/roll tracking and zero-lag pivot lock', () => {
   const dummyCar0 = { x: 100, y: 10, z: 200, heading: 0.5, speed: 0 };
   const dummyCarFast = { x: 100, y: 10, z: 200, heading: 0.5, speed: 350 / 3.6 };
 
@@ -1474,6 +1475,24 @@ test('Hood Cam Rig: locked directly to hood/nose transform at 0 km/h and 350 km/
   assert.ok(Math.abs(frame0.position.x - expX) < 0.01);
   assert.ok(Math.abs(frame0.position.y - expY) < 0.01);
   assert.ok(Math.abs(frame0.position.z - expZ) < 0.01);
+
+  // Verify full 3D pitch orientation: climbing uphill (+0.18 rad) pitches lookAt UP relative to mount
+  const frameUphill = computeCameraFrame('hood', dummyCarFast, 0.18, 0);
+  const frameDownhill = computeCameraFrame('hood', dummyCarFast, -0.18, 0);
+  assert.ok(
+    frameUphill.lookAt.y > frameUphill.position.y + 1.0,
+    `Expected uphill HoodCam lookAt.y > mount.y, got lookAt=${frameUphill.lookAt.y}, mount=${frameUphill.position.y}`,
+  );
+  assert.ok(
+    frameDownhill.lookAt.y < frameDownhill.position.y - 1.0,
+    `Expected downhill HoodCam lookAt.y < mount.y, got lookAt=${frameDownhill.lookAt.y}, mount=${frameDownhill.position.y}`,
+  );
+
+  // Orbit cam must lock pivot directly to playerCar with zero lag
+  const orbitFrame = computeCameraFrame('orbit', dummyCarFast, 0, 0);
+  assert.ok(orbitFrame.isLocked, 'Orbit camera must lock directly onto car pivot');
+  assert.equal(orbitFrame.lookAt.x, dummyCarFast.x);
+  assert.equal(orbitFrame.lookAt.z, dummyCarFast.z);
 });
 
 test('Manual Transmission Forward Gear Persistence & Tuning Bounds Safety', () => {

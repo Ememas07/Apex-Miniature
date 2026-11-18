@@ -130,7 +130,7 @@ export function buildObservationVector(
 
   for (let i = 0; i < allCars.length; i++) {
     const other = allCars[i];
-    if (other.id === car.id || other.inPitLane || other.pitStopRemaining > 0) continue;
+    if (other.id === car.id || other.pitStopRemaining > 0) continue;
 
     let dt = other.trackT - car.trackT;
     while (dt > 0.5) dt -= 1;
@@ -248,16 +248,8 @@ export function computeNeuralAIControl(
   // Always evaluate heuristic control for race management, pit triggers, and safety bounds
   const heuristic = computeAIControl(car, compiledTrack, allCars, dt, trackWetness);
 
-  // If in pit lane, boxing, or finished, defer directly to heuristic controller
-  if (car.inPitLane || car.pitStopRemaining > 0 || car.finished) {
-    return heuristic;
-  }
-
-  const wantsPit =
-    car.pitCooldown <= 0 &&
-    (car.tireWear < 24 || car.fuel < 15 || (trackWetness > 0.5 && car.compound !== 'wet'));
-  const enteringPit = wantsPit && (car.trackT >= 0.87 || car.trackT <= 0.04);
-  if (enteringPit) {
+  // If boxing on track or finished, defer directly to heuristic controller
+  if (car.pitStopRemaining > 0 || car.finished) {
     return heuristic;
   }
 
@@ -294,14 +286,13 @@ export function computeNeuralAIControl(
     blendedBrake = Math.max(policyOut.brake, heuristic.brake);
   }
 
-  // Preserve pit limiter, DRS / special triggers, and manual transmission signals from heuristic
+  // Preserve DRS / special triggers and manual transmission signals from heuristic
   return {
     steer: Math.max(-1, Math.min(1, blendedSteer)),
     throttle: Math.max(0, Math.min(1, blendedThrottle)),
     brake: Math.max(0, Math.min(1, blendedBrake)),
     specialPressed: heuristic.specialPressed,
     specialJustPressed: heuristic.specialJustPressed,
-    pitLimiterToggle: heuristic.pitLimiterToggle,
     shiftUp: heuristic.shiftUp,
     shiftDown: heuristic.shiftDown,
   };

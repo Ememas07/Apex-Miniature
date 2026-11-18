@@ -160,10 +160,9 @@ export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffi
 
 export type CameraMode = 'chase-34' | 'hood' | 'high-chase' | 'isometric' | 'orbit';
 
-export type PitServiceType = 'splash-go' | 'full-service';
+export type PitServiceAction = 'tyres' | 'fuel';
 
 export interface PitStrategy {
-  serviceType: PitServiceType;
   nextCompound: TireCompound;
 }
 
@@ -244,10 +243,11 @@ export interface HudSnapshot {
   trackWetness: number; // 0..1
   warningCount: number;
   penaltyTimeRemaining: number;
-  inPitLane: boolean;
-  pitLimiterActive: boolean;
+  isStoppedOnTrack: boolean;
   pitStopRemaining: number;
-  pitSpeeding: boolean;
+  pitStopTotal: number;
+  pitActiveTask: PitServiceAction | null;
+  pitQueue: PitServiceAction[];
   pitStrategy: PitStrategy;
   cameraMode: CameraMode;
   standings: DriverStandingsEntry[];

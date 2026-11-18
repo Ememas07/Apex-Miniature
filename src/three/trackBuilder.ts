@@ -137,50 +137,7 @@ export function buildTrackEnvironment(
   const group = new THREE.Group();
   const palette = getSceneryPalette(compiled.spec.scenery);
   const halfW = compiled.spec.trackWidth * 0.5;
-
-  // 1. Pit Lane Bypass Corridor + Speed Limit Line (computed early so ground terrain & clearance verify both splines)
-  const pitSamples: Array<{ x: number; y: number; z: number; nx: number; nz: number; banking?: number; width?: number }> = [];
-  const pitSteps = 44;
-  for (let i = 0; i <= pitSteps; i++) {
-    const u = i / pitSteps;
-    // t spans from 0.89 -> 1.0 -> 0.09
-    const t = (0.89 + u * 0.2) % 1;
-    const sp = sampleTrackAtT(compiled, t);
-    const blend = Math.sin(u * Math.PI); // smoothly pulls away from track to pitOffset
-    const lat = compiled.pitOffset * Math.min(1, blend * 1.45);
-    pitSamples.push({
-      x: sp.x + sp.nx * lat,
-      y: sp.y,
-      z: sp.z + sp.nz * lat,
-      nx: sp.nx,
-      nz: sp.nz,
-      banking: 0,
-      width: 7.6,
-    });
-  }
-  const pitRoadGeo = track(buildRibbonGeometry(pitSamples, 3.8, 0.02, 12, false, 7.6));
-  const pitRoadMat = track(
-    new THREE.MeshStandardMaterial({
-      color: 0x333944,
-      roughness: 0.82,
-      metalness: 0.05,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
-    }),
-  );
-  const pitMesh = new THREE.Mesh(pitRoadGeo, pitRoadMat);
-  pitMesh.receiveShadow = true;
-  group.add(pitMesh);
-
-  // Pit Entry Speed Limit Line (White + Amber)
-  const pitEntrySp = pitSamples[7];
-  const limitGeo = track(new THREE.BoxGeometry(7.6, 0.02, 0.7));
-  const limitMat = track(new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 }));
-  const limitLine = new THREE.Mesh(limitGeo, limitMat);
-  limitLine.position.set(pitEntrySp.x, pitEntrySp.y + 0.028, pitEntrySp.z);
-  limitLine.rotation.y = Math.atan2(-pitEntrySp.nz, pitEntrySp.nx);
-  group.add(limitLine);
+  const pitSideSign = compiled.spec.pitSide === 'right' ? 1 : -1;
 
   // 2. Expansive Contoured Ground Terrain Grid + Bank-Aware Embankment Skirts
   // Preserves track surface & banking heights 100%, derives continuous surrounding terrain from DEM road heights
@@ -268,14 +225,6 @@ export function buildTrackEnvironment(
     roadSegments.push({
       ax: a.x, az: a.z, ay: a.y, aw: a.width ? a.width : compiled.spec.trackWidth, abank: a.banking || 0, anx: a.nx, anz: a.nz,
       bx: b.x, bz: b.z, by: b.y, bw: b.width ? b.width : compiled.spec.trackWidth, bbank: b.banking || 0, bnx: b.nx, bnz: b.nz,
-    });
-  }
-  for (let i = 0; i < pitSamples.length - 1; i++) {
-    const a = pitSamples[i];
-    const b = pitSamples[i + 1];
-    roadSegments.push({
-      ax: a.x, az: a.z, ay: a.y, aw: a.width || 7.6, abank: a.banking || 0, anx: a.nx, anz: a.nz,
-      bx: b.x, bz: b.z, by: b.y, bw: b.width || 7.6, bbank: b.banking || 0, bnx: b.nx, bnz: b.nz,
     });
   }
 
@@ -442,7 +391,6 @@ export function buildTrackEnvironment(
 
   // 2b. Smooth Bank-Aware Outer Turf Embankment Skirts (left & right from apron outer edge +4.7m out to +34m)
   // Bridges steep elevation crests & banked corners cleanly to surrounding terrain with zero sunken gaps or cliff steps
-  const pitSideSign = compiled.pitOffset >= 0 ? 1 : -1;
   const buildOuterSkirt = (side: -1 | 1): THREE.BufferGeometry => {
     const n = compiled.samples.length;
     const vertCount = (n + 1) * 2;
@@ -471,18 +419,17 @@ export function buildTrackEnvironment(
       }
       const isOverpass = s.y - minOtherY > 3.5;
 
-      const inPitZone = side === pitSideSign && (s.t >= 0.885 || s.t <= 0.095);
       const innerEdge = hw + 4.7;
       const outerEdge = hw + 34.0;
 
       const ix = s.x + s.nx * side * innerEdge * cosB;
       const iz = s.z + s.nz * side * innerEdge * cosB;
-      const iy = (isOverpass || inPitZone) ? s.y - 1.2 : (s.y - 0.02 + side * innerEdge * sinB);
+      const iy = isOverpass ? s.y - 1.2 : (s.y - 0.02 + side * innerEdge * sinB);
 
       const ox = s.x + s.nx * side * outerEdge;
       const oz = s.z + s.nz * side * outerEdge;
       const bgOuterY = sampleBaseGroundY(ox, oz);
-      const oy = (isOverpass || inPitZone) ? Math.min(bgOuterY, s.y - 1.5) : clampTerrainHeight(ox, oz, bgOuterY);
+      const oy = isOverpass ? Math.min(bgOuterY, s.y - 1.5) : clampTerrainHeight(ox, oz, bgOuterY);
 
       const base = i * 2;
       const v0 = side === 1 ? base : base + 1;
@@ -616,10 +563,7 @@ export function buildTrackEnvironment(
   const barrierMatrices: THREE.Matrix4[] = [];
   for (let i = 0; i < compiled.samples.length; i += 2) {
     const s = compiled.samples[i];
-    // Skip inner barrier along pit lane corridor so players can enter pits cleanly
-    const inPitWindow = s.t >= 0.88 || s.t <= 0.10;
     for (const side of [-1, 1]) {
-      if (side === pitSideSign && inPitWindow) continue;
       const bank = s.banking || 0;
       const cosB = Math.cos(bank);
       const sinB = Math.sin(bank);
@@ -642,38 +586,6 @@ export function buildTrackEnvironment(
   barrierInst.computeBoundingSphere();
   barrierInst.castShadow = true;
   group.add(barrierInst);
-
-  // Concrete Pit Wall Divider between main track straight and pit lane corridor
-  const pitWallGeo = track(new THREE.BoxGeometry(0.55, 1.1, 4.4));
-  const pitWallMat = track(new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.65, metalness: 0.25 }));
-  const pitWallMatrices: THREE.Matrix4[] = [];
-  for (let i = 0; i < compiled.samples.length; i += 2) {
-    const s = compiled.samples[i];
-    // Extend along pit corridor except throat and merge
-    const inDivider = (s.t >= 0.905 || s.t <= 0.075);
-    if (inDivider) {
-      const curHalfW = s.width ? s.width * 0.5 : halfW;
-      const wallOffset = curHalfW + 0.9;
-      dummy.position.set(
-        s.x + s.nx * pitSideSign * wallOffset,
-        s.y + 0.55,
-        s.z + s.nz * pitSideSign * wallOffset,
-      );
-      dummy.rotation.set(0, Math.atan2(s.tx, s.tz), 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      pitWallMatrices.push(dummy.matrix.clone());
-    }
-  }
-  if (pitWallMatrices.length > 0) {
-    const pitWallInst = new THREE.InstancedMesh(pitWallGeo, pitWallMat, pitWallMatrices.length);
-    pitWallMatrices.forEach((m, idx) => pitWallInst.setMatrixAt(idx, m));
-    pitWallInst.instanceMatrix.needsUpdate = true;
-    pitWallInst.computeBoundingSphere();
-    pitWallInst.castShadow = true;
-    pitWallInst.receiveShadow = true;
-    group.add(pitWallInst);
-  }
 
   // 6b. Concrete Overpass Support Piers on Elevated Sections (e.g., Suzuka Figure-8 Bridge)
   const pierGeo = track(new THREE.BoxGeometry(1.4, 1.0, 1.4));
@@ -764,8 +676,6 @@ export function buildTrackEnvironment(
       const offsetSamples = Math.round(metersBefore / distScale);
       const si = (zone.index - offsetSamples + totalSamples) % totalSamples;
       const s = compiled.samples[si];
-      const inPitWindow = s.t >= 0.89 || s.t <= 0.09;
-      if (inPitWindow && zone.side === pitSideSign) continue;
       if (s.y > 4.2) continue; // avoid floating boards beside elevated overpasses
       if (bIdx < 2 && Math.abs(s.curvature) > 0.02) continue; // only show 200m/150m if approach is clear
 
@@ -858,12 +768,12 @@ export function buildTrackEnvironment(
   }
   group.add(sfGroup);
 
-  // 8. Pit Garages & Grandstands flanking the Main Straight
+  // 8. Decorative Paddock Garages & Grandstands flanking the Main Straight
   const pitBuildingGroup = new THREE.Group();
   pitBuildingGroup.position.set(
-    sf.x + sf.nx * (compiled.pitOffset + pitSideSign * 7.5),
+    sf.x + sf.nx * pitSideSign * (halfW + 13.5),
     sf.y,
-    sf.z + sf.nz * (compiled.pitOffset + pitSideSign * 7.5),
+    sf.z + sf.nz * pitSideSign * (halfW + 13.5),
   );
   pitBuildingGroup.rotation.y = sfAngle;
 
@@ -922,7 +832,7 @@ export function buildTrackEnvironment(
   standGroup.add(specInst);
 
   const isSafe = (px: number, pz: number, r: number) =>
-    isPositionSafeFromTrack(px, pz, r, compiled, pitSamples);
+    isPositionSafeFromTrack(px, pz, r, compiled);
 
   // 9. Scenery Perimeter Landmarks (Trees / Desert Rocks / Night Towers)
   const propRadius =

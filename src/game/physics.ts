@@ -8,6 +8,7 @@ import {
   CarSpec,
   DriverStandingsEntry,
   LiveryConfig,
+  PitServiceAction,
   PitStrategy,
   TireCompound,
 } from './types';
@@ -102,7 +103,6 @@ export interface ControlInput {
   steer: number; // -1 (left) .. +1 (right)
   specialPressed: boolean; // edge-triggered or held depending on class
   specialJustPressed?: boolean; // edge-triggered activation
-  pitLimiterToggle?: boolean; // toggle 60 km/h pit speed limiter
   shiftUp?: boolean;
   shiftDown?: boolean;
 }
@@ -150,12 +150,10 @@ export interface CarSimState {
   warningCount: number;
   offTrackCooldown: number;
   penaltyTimeRemaining: number;
-  inPitLane: boolean;
-  pitLimiterActive: boolean;
-  pitLimiterManual: boolean;
-  pitBoxTimer: number;
   pitStopRemaining: number;
-  pitSpeeding: boolean;
+  pitStopTotal: number;
+  pitActiveTask: PitServiceAction | null;
+  pitQueue: PitServiceAction[];
   pitStops: number;
   pitCooldown: number;
   pitStrategy: PitStrategy;
@@ -347,16 +345,13 @@ export function createCarSimState(params: {
     warningCount: 0,
     offTrackCooldown: 0,
     penaltyTimeRemaining: 0,
-    inPitLane: false,
-    pitLimiterActive: false,
-    pitLimiterManual: false,
-    pitBoxTimer: 0,
     pitStopRemaining: 0,
-    pitSpeeding: false,
+    pitStopTotal: 0,
+    pitActiveTask: null,
+    pitQueue: [],
     pitStops: 0,
     pitCooldown: 0,
     pitStrategy: {
-      serviceType: 'full-service',
       nextCompound: params.compound,
     },
     flashingHeadlights: false,
@@ -492,6 +487,48 @@ export function resolveWallContact(
 }
 
 /**
+ * Triggers or queues an on-track stationary pit service ('tyres' = 2.0s, 'fuel' = 4.0s)
+ * whenever the player car is stopped on track (speed < 1.5 m/s).
+ */
+export function requestOnTrackPitStop(
+  car: CarSimState,
+  action: PitServiceAction,
+  nextCompound?: TireCompound,
+): boolean {
+  if (car.finished || car.speed >= 1.5) {
+    return false;
+  }
+
+  if (nextCompound) {
+    car.pitStrategy = {
+      ...car.pitStrategy,
+      nextCompound,
+    };
+  }
+
+  const duration = action === 'tyres' ? 2.0 : 4.0;
+
+  if (car.pitStopRemaining <= 0) {
+    car.speed = 0;
+    car.vx = 0;
+    car.vz = 0;
+    car.pitActiveTask = action;
+    car.pitStopRemaining = duration;
+    car.pitStopTotal = duration;
+    car.pitQueue = [];
+    return true;
+  }
+
+  if (car.pitActiveTask !== action && !car.pitQueue.includes(action)) {
+    car.pitQueue.push(action);
+    car.pitStopTotal += duration;
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Steps a single car's sim-cade physics for `dt` seconds.
  */
 export function stepCarPhysics(
@@ -519,7 +556,7 @@ export function stepCarPhysics(
   const classMeta = CAR_CLASSES[car.carSpec.classId];
   const attrs = car.carSpec.attributes;
 
-  // Handle active pit stop hold
+  // Handle active on-track stationary pit stop hold
   if (car.pitStopRemaining > 0) {
     car.speed = 0;
     car.vx = 0;
@@ -528,49 +565,38 @@ export function stepCarPhysics(
     car.currentLapTime += dt;
     car.totalTime += dt;
     if (car.pitStopRemaining === 0) {
-      // Apply pit service
-      if (car.pitStrategy.serviceType === 'full-service') {
+      const completedTask = car.pitActiveTask;
+      if (completedTask === 'tyres') {
+        car.compound = car.pitStrategy.nextCompound;
+        car.tireWear = 100;
+        car.tireTemp = 72;
+        car.aeroDamage = Math.max(0, car.aeroDamage - 25);
+      } else if (completedTask === 'fuel') {
+        car.fuel = 100;
+        car.fuelLapsRemaining = Math.max(12, car.fuelLapsRemaining);
+      } else {
         car.compound = car.pitStrategy.nextCompound;
         car.tireWear = 100;
         car.tireTemp = 72;
         car.fuel = 100;
         car.aeroDamage = 0;
-      } else {
-        car.fuel = Math.min(100, car.fuel + 45);
-        car.aeroDamage = Math.max(0, car.aeroDamage - 50);
       }
-      car.pitStops += 1;
-      car.pitCooldown = 6.0;
-      car.pitSpeeding = false;
+
+      if (car.pitQueue.length > 0) {
+        const nextTask = car.pitQueue.shift()!;
+        car.pitActiveTask = nextTask;
+        car.pitStopRemaining = nextTask === 'tyres' ? 2.0 : 4.0;
+      } else {
+        car.pitActiveTask = null;
+        car.pitStopTotal = 0;
+        car.pitStops += 1;
+        car.pitCooldown = 3.0;
+      }
     }
     return;
   }
 
-  // Pit lane check
-  const inPitProgress = car.trackT >= compiledTrack.pitEntryT || car.trackT <= compiledTrack.pitExitT;
   const halfW = compiledTrack.spec.trackWidth * 0.5;
-  const pitSideSign = compiledTrack.spec.pitSide === 'right' ? 1 : -1;
-  const isInPitCorridor =
-    inPitProgress &&
-    (pitSideSign === 1
-      ? car.lateralOffset > halfW + 1.6 && car.lateralOffset < halfW + 18
-      : car.lateralOffset < -halfW - 1.6 && car.lateralOffset > -halfW - 18);
-  car.inPitLane = isInPitCorridor;
-
-  // Manual pit limiter toggle
-  if (input.pitLimiterToggle) {
-    car.pitLimiterManual = !car.pitLimiterManual;
-  }
-
-  // Auto-release pit limiter cleanly at pit-exit line
-  const crossedPitExit = car.prevTrackT <= compiledTrack.pitExitT && car.trackT > compiledTrack.pitExitT;
-  if (crossedPitExit) {
-    car.inPitLane = false;
-    car.pitLimiterManual = false;
-    car.pitSpeeding = false;
-  }
-
-  car.pitLimiterActive = car.inPitLane || car.pitLimiterManual;
 
   // Class / car-specific special activation / toggle
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
@@ -650,7 +676,7 @@ export function stepCarPhysics(
   if (car.flashingHeadlights) {
     for (let i = 0; i < opts.allCars.length; i++) {
       const other = opts.allCars[i];
-      if (other.id === car.id || other.inPitLane || other.isPlayer) continue;
+      if (other.id === car.id || other.pitStopRemaining > 0 || other.isPlayer) continue;
       let dT = other.trackT - car.trackT;
       while (dT > 0.5) dT -= 1;
       while (dT < -0.5) dT += 1;
@@ -802,7 +828,7 @@ export function stepCarPhysics(
   }
 
   // Off-track / runoff resistance
-  const onAsphalt = Math.abs(car.lateralOffset) <= halfW + 1.0 || isInPitCorridor;
+  const onAsphalt = Math.abs(car.lateralOffset) <= halfW + 1.0;
   const offTrackDrag = onAsphalt ? 1.0 : 0.72;
   const offTrackGrip = onAsphalt ? 1.0 : 0.65;
 
@@ -823,23 +849,6 @@ export function stepCarPhysics(
   // Sample current 3D road normal tilt (slope + banking) for longitudinal gravity and lateral banking forces
   const currentRoadSample = sampleTrackAtT(compiledTrack, car.trackT);
   const roadTilt = computeRoadSurfaceTilt(currentRoadSample, car.heading);
-
-  // Pit Speed Limiter: smooth progressive deceleration ramp (~14-18 m/s^2) down to 60 km/h (16.6667 m/s), zero instant snap
-  const PIT_LIMIT_KMH = 60;
-  const PIT_LIMIT_SPEED = PIT_LIMIT_KMH / SPEED_KMH_FACTOR; // 16.6667 m/s
-
-  if (car.pitLimiterActive) {
-    if (car.speed > PIT_LIMIT_SPEED) {
-      if (car.inPitLane && car.speed > PIT_LIMIT_SPEED * 1.08 && !car.pitSpeeding && car.pitCooldown <= 0) {
-        car.pitSpeeding = true;
-        car.penaltyTimeRemaining = Math.max(car.penaltyTimeRemaining, 3.0);
-      }
-      const excess = car.speed - PIT_LIMIT_SPEED;
-      const smoothRampDecel = Math.min(18.0, 14.0 + Math.min(4.0, excess * 0.15));
-      car.speed = Math.max(PIT_LIMIT_SPEED, car.speed - smoothRampDecel * dt);
-    }
-    effectiveMaxSpeed = Math.min(effectiveMaxSpeed, PIT_LIMIT_SPEED);
-  }
 
   // Longitudinal acceleration, braking & transmission drivetrain
   const throttle = Math.max(0, Math.min(1, input.throttle));
@@ -900,31 +909,22 @@ export function stepCarPhysics(
   } else {
     // ==================== FORWARD GEARS (1..N) ====================
     if (throttle > 0 && brake < 0.1) {
-      if (car.pitLimiterActive && car.speed >= PIT_LIMIT_SPEED - 0.05 && car.speed <= PIT_LIMIT_SPEED + 0.1) {
-        // Throttle rev-limited at 60 km/h once target speed reached; holds 60 km/h (16.67 m/s)
-        car.speed = PIT_LIMIT_SPEED;
-      } else {
-        const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
-        const aeroTraction = isFormula && !isFE
-          ? 0.72 + 0.60 * Math.min(1, car.speed / 25.0)
-          : isGTP || isLMP2
-          ? 0.88 + 0.22 * Math.min(1, car.speed / 30.0)
-          : isFE
-          ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
-          : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
-        const torqueCurve = Math.max(0.12, 1.0 - 0.78 * Math.pow(speedRatio, 1.35));
-        const engineAccel = accelBase * aeroTraction * specialAccelMult * fuelFactor * throttle * torqueCurve;
-        // Quadratic aero drag F_drag = c_drag * v^2 smoothly balancing engine power near target Vmax
-        const cAeroDrag =
-          ((accelBase * 0.12) / (effectiveMaxSpeed * effectiveMaxSpeed)) * tuning.dragScale;
-        const aeroDragDecel = cAeroDrag * car.speed * car.speed;
-        const netAccel = engineAccel - aeroDragDecel;
-        let nextSpeed = Math.max(0, car.speed + netAccel * dt);
-        if (car.pitLimiterActive && car.speed <= PIT_LIMIT_SPEED) {
-          nextSpeed = Math.min(PIT_LIMIT_SPEED, nextSpeed);
-        }
-        car.speed = nextSpeed;
-      }
+      const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
+      const aeroTraction = isFormula && !isFE
+        ? 0.72 + 0.60 * Math.min(1, car.speed / 25.0)
+        : isGTP || isLMP2
+        ? 0.88 + 0.22 * Math.min(1, car.speed / 30.0)
+        : isFE
+        ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
+        : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
+      const torqueCurve = Math.max(0.12, 1.0 - 0.78 * Math.pow(speedRatio, 1.35));
+      const engineAccel = accelBase * aeroTraction * specialAccelMult * fuelFactor * throttle * torqueCurve;
+      // Quadratic aero drag F_drag = c_drag * v^2 smoothly balancing engine power near target Vmax
+      const cAeroDrag =
+        ((accelBase * 0.12) / (effectiveMaxSpeed * effectiveMaxSpeed)) * tuning.dragScale;
+      const aeroDragDecel = cAeroDrag * car.speed * car.speed;
+      const netAccel = engineAccel - aeroDragDecel;
+      car.speed = Math.max(0, car.speed + netAccel * dt);
     }
 
     if (brake > 0) {
@@ -934,9 +934,9 @@ export function stepCarPhysics(
     // Natural aero/rolling drag when coasting or above effectiveMaxSpeed
     const dragCoeff =
       (car.specialActive && specialType === 'active-aero' ? 0.34 : 0.46) * tuning.dragScale;
-    if (!car.pitLimiterActive && car.speed > effectiveMaxSpeed) {
+    if (car.speed > effectiveMaxSpeed) {
       car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
-    } else if (throttle < 0.05 && brake < 0.05 && !car.pitLimiterActive) {
+    } else if (throttle < 0.05 && brake < 0.05) {
       car.speed = Math.max(
         0,
         car.speed - (car.speed * dragCoeff + 0.00032 * tuning.dragScale * car.speed * car.speed) * dt,
@@ -1000,7 +1000,7 @@ export function stepCarPhysics(
   const moveSign = isReversing ? -1 : 1;
 
   // Slope gravity force (-g * sinSlope): climbing slows car, downhill accelerates car smoothly
-  if ((car.speed > 0.5 || throttle > 0.05) && (!car.pitLimiterActive || throttle < 0.5)) {
+  if (car.speed > 0.5 || throttle > 0.05) {
     const slopeGravity = -9.81 * roadTilt.sinSlope * moveSign;
     car.speed = Math.max(0, car.speed + slopeGravity * dt);
   }
@@ -1087,7 +1087,6 @@ export function stepCarPhysics(
   // Kerb contact detection on curved apexes
   const sampleHalfW = (proj.sample.width ? proj.sample.width : compiledTrack.spec.trackWidth) * 0.5;
   car.onKerb =
-    !isInPitCorridor &&
     car.speed > 4 &&
     Math.abs(proj.sample.curvature) > 0.008 &&
     Math.abs(car.lateralOffset) >= sampleHalfW - 0.65 &&
@@ -1100,60 +1099,17 @@ export function stepCarPhysics(
     car.wallCollisionCooldown = Math.max(0, car.wallCollisionCooldown - dt);
   }
 
-  // Guardrails, outer containment & invisible pit-lane walls
-  const pitSign = compiledTrack.spec.pitSide === 'right' ? 1 : -1;
-  const pitOffset = compiledTrack.pitOffset;
-  const isPitThroat =
-    (car.trackT >= compiledTrack.pitEntryT && car.trackT < ((compiledTrack.pitEntryT + 0.018) % 1 || 0.91)) ||
-    (car.trackT <= compiledTrack.pitExitT && car.trackT > ((compiledTrack.pitExitT - 0.018 + 1) % 1 || 0.07));
-  const isPitDividerZone = inPitProgress && !isPitThroat;
-
-  if (car.inPitLane) {
-    // 1. Pit divider wall separating pit lane from main track straight
-    const dividerWallLat = pitSign === 1 ? sampleHalfW + 1.2 : -sampleHalfW - 1.2;
-    if (isPitDividerZone) {
-      if (pitSign === 1 && car.lateralOffset < dividerWallLat) {
-        resolveWallContact(car, proj.sample, dividerWallLat, -1, dt);
-      } else if (pitSign === -1 && car.lateralOffset > dividerWallLat) {
-        resolveWallContact(car, proj.sample, dividerWallLat, 1, dt);
-      }
-    }
-    // 2. Outer pit-garage boundary wall
-    const garageWallLat = pitOffset + pitSign * 4.8;
-    if (pitSign === 1 && car.lateralOffset > garageWallLat) {
-      resolveWallContact(car, proj.sample, garageWallLat, 1, dt);
-    } else if (pitSign === -1 && car.lateralOffset < garageWallLat) {
-      resolveWallContact(car, proj.sample, garageWallLat, -1, dt);
-    }
-  } else {
-    // Car on main track
-    // 1. Pit divider wall prevents crossing sideways into pit lane
-    if (isPitDividerZone) {
-      const dividerWallLat = pitSign === 1 ? sampleHalfW + 0.8 : -sampleHalfW - 0.8;
-      if (pitSign === 1 && car.lateralOffset > dividerWallLat) {
-        resolveWallContact(car, proj.sample, dividerWallLat, 1, dt);
-      } else if (pitSign === -1 && car.lateralOffset < dividerWallLat) {
-        resolveWallContact(car, proj.sample, dividerWallLat, -1, dt);
-      }
-    }
-    // 2. Outer track guardrails / barriers
-    const outerRunoff = 6.2;
-    const maxRight = inPitProgress && pitSign === 1 ? sampleHalfW + 0.8 : sampleHalfW + outerRunoff;
-    const maxLeft = inPitProgress && pitSign === -1 ? -sampleHalfW - 0.8 : -sampleHalfW - outerRunoff;
-    if (car.lateralOffset > maxRight && (!isPitDividerZone || pitSign !== 1)) {
-      resolveWallContact(car, proj.sample, maxRight, 1, dt);
-    } else if (car.lateralOffset < maxLeft && (!isPitDividerZone || pitSign !== -1)) {
-      resolveWallContact(car, proj.sample, maxLeft, -1, dt);
-    }
+  // Outer track guardrails / barriers
+  const outerRunoff = 6.2;
+  const maxRight = sampleHalfW + outerRunoff;
+  const maxLeft = -sampleHalfW - outerRunoff;
+  if (car.lateralOffset > maxRight) {
+    resolveWallContact(car, proj.sample, maxRight, 1, dt);
+  } else if (car.lateralOffset < maxLeft) {
+    resolveWallContact(car, proj.sample, maxLeft, -1, dt);
   }
 
-  // Pit box trigger
   if (car.pitCooldown > 0) car.pitCooldown = Math.max(0, car.pitCooldown - dt);
-  const inPitBoxZone = isInPitCorridor && (proj.sample.t >= 0.96 || proj.sample.t <= 0.03);
-  if (inPitBoxZone && car.pitCooldown <= 0 && car.speed < 18 && !opts.isQualifying) {
-    car.pitStopRemaining = car.pitStrategy.serviceType === 'full-service' ? 4.0 : 2.1;
-    car.speed = 0;
-  }
 
   // Track limits corner cutting check
   // Generous 4-Wheels-Off Rule (Allow Kerb Riding): only count off-track violation when ALL four wheels are outside kerbs
@@ -1167,7 +1123,6 @@ export function stepCarPhysics(
   const offTrackThreshold = sampleHalfW + KERB_WIDTH + CAR_HALF_WIDTH * 0.85;
 
   const isCuttingInside =
-    !isInPitCorridor &&
     Math.abs(car.lateralOffset) > offTrackThreshold &&
     ((proj.sample.curvature > 0.010 && car.lateralOffset > offTrackThreshold) ||
       (proj.sample.curvature < -0.010 && car.lateralOffset < -offTrackThreshold));
@@ -1241,9 +1196,9 @@ export function stepCarPhysics(
   const avgBurnRatePerLap = Math.max(4.0, 8.8 * efficiencyFactor * 0.78 * overboostFuelMult);
   car.fuelLapsRemaining = Number((car.fuel / avgBurnRatePerLap).toFixed(1));
 
-  // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 1.5s outside a pit stall,
+  // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 1.5s while racing,
   // smoothly reset aligned with nearest spline point at 35 km/h (9.72 m/s) in an unoccupied lateral lane
-  if (!car.isPlayer && !car.inPitLane && car.pitStopRemaining <= 0) {
+  if (!car.isPlayer && car.pitStopRemaining <= 0) {
     if (car.speed < 5 / SPEED_KMH_FACTOR) {
       car.aiStuckTimer = (car.aiStuckTimer || 0) + dt;
       if (car.aiStuckTimer >= 1.5) {
@@ -1256,7 +1211,7 @@ export function stepCarPhysics(
         for (const cand of candidates) {
           let minGap = Infinity;
           for (const other of opts.allCars) {
-            if (other.id === car.id || other.inPitLane) continue;
+            if (other.id === car.id || other.pitStopRemaining > 0) continue;
             let dT = other.trackT - car.trackT;
             while (dT > 0.5) dT -= 1;
             while (dT < -0.5) dT += 1;
@@ -1423,16 +1378,11 @@ export function computeAIControl(
   const CAR_HALF_WIDTH = CAR_WIDTH * 0.5;
   const CAR_LENGTH = car.carSpec.length ?? (car.carSpec.dimensions?.length ?? 4.7);
 
-  // Pit decision
+  // On-track stationary pit request helper for AI if critically depleted or wet mismatch
   const needsWetSwitch = trackWetness > 0.5 && car.compound !== 'wet';
   const needsDrySwitch = trackWetness < 0.15 && car.compound === 'wet';
-  const wantsPit =
-    car.pitCooldown <= 0 &&
-    (car.tireWear < 24 || car.fuel < 15 || needsWetSwitch || needsDrySwitch);
-
-  if (wantsPit) {
+  if (car.pitCooldown <= 0 && (needsWetSwitch || needsDrySwitch)) {
     car.pitStrategy = {
-      serviceType: 'full-service',
       nextCompound: trackWetness > 0.45 ? 'wet' : 'medium',
     };
   }
@@ -1498,7 +1448,7 @@ export function computeAIControl(
 
   for (let i = 0; i < allCars.length; i++) {
     const other = allCars[i];
-    if (other.id === car.id || other.inPitLane || other.pitStopRemaining > 0) continue;
+    if (other.id === car.id || other.pitStopRemaining > 0) continue;
 
     let dT = other.trackT - car.trackT;
     while (dT > 0.5) dT -= 1;
@@ -1639,12 +1589,7 @@ export function computeAIControl(
   // Hard Track-Boundary Containment: strictly clamp target offset inside safe asphalt bounds
   car.aiTargetOffset = Math.max(minSafeLane, Math.min(maxSafeLane, car.aiTargetOffset));
 
-  // Pit lane entry override when boxing
-  let steerTargetOffset = car.aiTargetOffset;
-  const enteringPit = wantsPit && (car.trackT >= 0.87 || car.trackT <= 0.04);
-  if (enteringPit) {
-    steerTargetOffset = compiledTrack.pitOffset;
-  }
+  const steerTargetOffset = car.aiTargetOffset;
 
   // ==================== 3. KINEMATIC SLOPE-AWARE STOPPING-DISTANCE CURVATURE SCAN ====================
   const scanDist = Math.max(180, Math.min(430, (car.speed * car.speed) / (2 * Math.max(10, brakeDecel * 0.80)) + 45.0));
@@ -1783,7 +1728,7 @@ export function computeAIControl(
     ? Math.max(minSafeLane, Math.min(maxSafeLane, targetSample.racingLineOffset))
     : steerTargetOffset;
 
-  const isContested = isBattlingTraffic || car.aiPassTimer > 0 || sideCarLeftLat !== null || sideCarRightLat !== null || enteringPit;
+  const isContested = isBattlingTraffic || car.aiPassTimer > 0 || sideCarLeftLat !== null || sideCarRightLat !== null;
   const effectiveLookaheadOffset = isContested ? steerTargetOffset : targetLineOffset;
 
   const targetX = targetSample.x + targetSample.nx * effectiveLookaheadOffset;
@@ -1809,7 +1754,7 @@ export function computeAIControl(
   let brake = Math.max(cornerBrake, avoidBrake);
 
   // ==================== 6. OFF-TRACK GUARDRAIL OVERRIDE ====================
-  if (!enteringPit && !car.inPitLane && Math.abs(car.lateralOffset) > halfW * 0.78) {
+  if (Math.abs(car.lateralOffset) > halfW * 0.78) {
     const excessRatio = (Math.abs(car.lateralOffset) - halfW * 0.78) / Math.max(1, halfW * 0.22);
     // Lift throttle 30-50% to arrest drift velocity and stabilize front grip
     throttle = Math.min(throttle, Math.max(0.50, 0.70 - Math.min(0.20, excessRatio * 0.15)));
@@ -1820,10 +1765,7 @@ export function computeAIControl(
 
   steer = Math.max(-1, Math.min(1, steer));
 
-  if (car.inPitLane) {
-    throttle = car.speed < 14.5 ? 0.55 : 0;
-    brake = car.speed > 16.5 ? 0.85 : 0;
-  } else if (personality === 'Tire-Saver' && car.tireWear > 45 && Math.abs(steer) > 0.55 && brake === 0) {
+  if (personality === 'Tire-Saver' && car.tireWear > 45 && Math.abs(steer) > 0.55 && brake === 0) {
     throttle = Math.min(throttle, 0.84);
   }
 
@@ -1887,7 +1829,7 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
       lastLapTime: c.lastLapTime,
       totalTime: c.totalTime,
       pitStops: c.pitStops,
-      inPit: c.inPitLane || c.pitStopRemaining > 0,
+      inPit: c.pitStopRemaining > 0,
       finished: c.finished,
       primaryColor: c.livery.primaryColor,
       secondaryColor: c.livery.secondaryColor,

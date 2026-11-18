@@ -18,9 +18,11 @@ import {
   GamePhase,
   HudSnapshot,
   LiveryConfig,
+  PitServiceAction,
   PitStrategy,
   RaceConfig,
   RoomState,
+  TireCompound,
   TrackSpec,
 } from './game/types';
 import { RaceViewport } from './three/RaceViewport';
@@ -67,13 +69,15 @@ export default function App() {
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
     const cam = params.get('camera') as CameraMode;
-    return cam === 'isometric' || cam === 'high-chase' || cam === 'chase-34' || cam === 'hood' ? cam : 'chase-34';
+    return cam === 'isometric' || cam === 'high-chase' || cam === 'chase-34' || cam === 'hood' || cam === 'orbit'
+      ? cam
+      : 'chase-34';
   });
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
-    serviceType: 'full-service',
     nextCompound: 'medium',
   });
+  const pitHandlerRef = useRef<((action: PitServiceAction, nextCompound?: TireCompound) => boolean) | null>(null);
 
   const [hud, setHud] = useState<HudSnapshot | null>(null);
   const [finalSnapshot, setFinalSnapshot] = useState<HudSnapshot | null>(null);
@@ -301,6 +305,9 @@ export default function App() {
         onTogglePause={handleTogglePause}
         onCycleCamera={handleCycleCamera}
         onToggleMute={handleToggleMute}
+        onPitHandlerReady={(handler) => {
+          pitHandlerRef.current = handler;
+        }}
       />
 
       {/* Title Screen */}
@@ -415,6 +422,9 @@ export default function App() {
           playerCarId={raceConfig.playerCarId}
           muted={muted}
           onChangePitStrategy={setPitStrategy}
+          onRequestPitStop={(action, nextCompound) =>
+            pitHandlerRef.current ? pitHandlerRef.current(action, nextCompound) : false
+          }
           onCycleCamera={handleCycleCamera}
           onToggleMute={handleToggleMute}
           onTogglePause={handleTogglePause}

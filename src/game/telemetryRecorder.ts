@@ -22,6 +22,10 @@ export class HumanTelemetryRecorder {
   private prevAeroDamage = 0;
   private prevTrackT = 0;
   private sessionBestLap: number | null = null;
+  private lastCarId = '';
+  private lastTrackId = '';
+  private lastLapTime = 0;
+  private lastCompletedDemo: TelemetryLapDemo | null = null;
   public onLapRecorded?: (demo: TelemetryLapDemo) => void;
 
   /**
@@ -34,6 +38,7 @@ export class HumanTelemetryRecorder {
     this.prevAeroDamage = 0;
     this.prevTrackT = 0;
     this.sessionBestLap = null;
+    this.lastCompletedDemo = null;
   }
 
   /**
@@ -48,12 +53,16 @@ export class HumanTelemetryRecorder {
   ): void {
     if (!car.isPlayer) return;
 
+    this.lastCarId = car.carSpec.id;
+    this.lastTrackId = compiledTrack.spec.id;
+    this.lastLapTime = car.currentLapTime;
+
     const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
     const halfW = (currentSample.width ?? compiledTrack.spec.trackWidth) * 0.5;
 
     // Check Lap Invalidation Criteria:
     // 1. Exceeded track limits outside road boundary + kerb margin
-    if (Math.abs(car.lateralOffset) > halfW + 1.2 && !car.inPitLane) {
+    if (Math.abs(car.lateralOffset) > halfW + 1.2) {
       this.isLapValid = false;
     }
 
@@ -69,7 +78,7 @@ export class HumanTelemetryRecorder {
 
     // Lap Completion Check: crossed start/finish line
     const crossedStartFinish = this.prevTrackT > 0.85 && car.trackT < 0.15;
-    if (crossedStartFinish && car.currentLapTime > 15 && !car.inPitLane) {
+    if (crossedStartFinish && car.currentLapTime > 15 && car.pitStopRemaining <= 0) {
       const minFrames = 150; // At least ~5 seconds of data
       if (this.isLapValid && this.currentLapBuffer.length >= minFrames) {
         const isCompetitive =
@@ -87,6 +96,7 @@ export class HumanTelemetryRecorder {
             samples: [...this.currentLapBuffer],
           };
 
+          this.lastCompletedDemo = demo;
           this.exportDemo(demo);
         }
       }
@@ -96,12 +106,12 @@ export class HumanTelemetryRecorder {
       this.currentLapBuffer = [];
     }
 
-    // 30 Hz Frame Sampling
+    // 30 Hz Frame Sampling (pause while stationary in on-track pit service)
     this.sampleTimer += dt;
     if (this.sampleTimer >= this.sampleInterval) {
       this.sampleTimer -= this.sampleInterval;
 
-      if (!car.inPitLane && car.speed > 5.0) {
+      if (car.pitStopRemaining <= 0 && car.speed > 5.0) {
         const obs43 = buildObservationVector(
           car,
           compiledTrack,
@@ -124,7 +134,44 @@ export class HumanTelemetryRecorder {
   }
 
   /**
-   * Exports valid demonstration lap JSONL record via POST /api/telemetry or callback.
+   * Manually exports the current telemetry buffer (or last valid completed lap) on demand (e.g. F9).
+   */
+  public exportManual(download = false): TelemetryLapDemo | null {
+    const demo: TelemetryLapDemo | null =
+      this.currentLapBuffer.length > 0 && this.lastCarId && this.lastTrackId
+        ? {
+            carId: this.lastCarId,
+            trackId: this.lastTrackId,
+            lapTime: Math.round(this.lastLapTime * 1000) / 1000,
+            samples: [...this.currentLapBuffer],
+          }
+        : this.lastCompletedDemo;
+
+    if (!demo || demo.samples.length === 0) return null;
+
+    this.exportDemo(demo);
+
+    if (download && typeof document !== 'undefined' && typeof Blob !== 'undefined') {
+      try {
+        const blob = new Blob([JSON.stringify(demo) + '\n'], { type: 'application/x-ndjson' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `telemetry_${demo.trackId}_${demo.carId}.jsonl`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch {
+        // Safe headless fallback
+      }
+    }
+
+    return demo;
+  }
+
+  /**
+   * Exports valid demonstration lap JSONL record via relative POST api/telemetry or callback.
    */
   private exportDemo(demo: TelemetryLapDemo): void {
     if (this.onLapRecorded) {

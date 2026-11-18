@@ -52,11 +52,11 @@ function broadcastRoom(room, payload, excludePeerId) {
 }
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '50mb' }));
-  app.get("/api/health", (_req, res) => {
+  app.use(express.json({ limit: "50mb" }));
+  app.get(["/api/health", "/Apex-Miniature/api/health"], (_req, res) => {
     res.json({ ok: true, activeRooms: rooms.size });
   });
-  app.get("/api/rooms/:code", (req, res) => {
+  app.get(["/api/rooms/:code", "/Apex-Miniature/api/rooms/:code"], (req, res) => {
     const code = String(req.params.code || "").toUpperCase().trim();
     const room = rooms.get(code);
     if (!room) {
@@ -66,7 +66,17 @@ async function startServer() {
     res.json(serializeRoom(room));
   });
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    const pathname = new URL(request.url || "/", "http://localhost").pathname;
+    if (pathname === "/ws" || pathname === "/Apex-Miniature/ws") {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
   wss.on("connection", (ws) => {
     let joinedRoomCode = null;
     let currentPeerId = null;
@@ -186,9 +196,13 @@ async function startServer() {
     ws.on("close", cleanup);
     ws.on("error", cleanup);
   });
-  app.post("/api/telemetry", (req, res) => {
+  app.post(["/api/telemetry", "/Apex-Miniature/api/telemetry"], (req, res) => {
     try {
       const demo = req.body;
+      if (!demo || typeof demo.carId !== "string" || typeof demo.trackId !== "string" || !Array.isArray(demo.samples) || demo.samples.length === 0) {
+        res.status(400).json({ error: "Invalid telemetry payload" });
+        return;
+      }
       const auditDir = path.resolve(__dirname, "audit");
       if (!fs.existsSync(auditDir)) {
         fs.mkdirSync(auditDir, { recursive: true });
@@ -207,6 +221,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, "dist");
+    app.use("/Apex-Miniature", express.static(distPath));
     app.use(express.static(distPath));
     app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
