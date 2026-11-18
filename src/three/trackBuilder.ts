@@ -587,6 +587,29 @@ export function buildTrackEnvironment(
   const kerbBoxGeo = track(new THREE.BoxGeometry(1.3, 0.07, 2.2));
   const kerbMatrices: THREE.Matrix4[] = [];
   const dummy = new THREE.Object3D();
+  const basisMat = new THREE.Matrix4();
+  const zAxis = new THREE.Vector3();
+  const xRaw = new THREE.Vector3();
+  const yAxis = new THREE.Vector3();
+  const xAxis = new THREE.Vector3();
+  const setBankedTrackTransform = (
+    px: number,
+    py: number,
+    pz: number,
+    s: CompiledTrack['samples'][number],
+    bank: number,
+  ) => {
+    const cosB = Math.cos(bank);
+    const sinB = Math.sin(bank);
+    zAxis.set(s.tx, s.ty || 0, s.tz).normalize();
+    xRaw.set(-s.nx * cosB, -sinB, -s.nz * cosB);
+    yAxis.crossVectors(zAxis, xRaw).normalize();
+    xAxis.crossVectors(yAxis, zAxis).normalize();
+    dummy.position.set(px, py, pz);
+    dummy.quaternion.setFromRotationMatrix(basisMat.makeBasis(xAxis, yAxis, zAxis));
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+  };
 
   for (let i = 0; i < compiled.samples.length; i++) {
     const s = compiled.samples[i];
@@ -598,14 +621,13 @@ export function buildTrackEnvironment(
       const sinB = Math.sin(bank);
       const curHalfW = s.width ? s.width * 0.5 : halfW;
       const kerbDist = curHalfW + 0.55;
-      dummy.position.set(
+      setBankedTrackTransform(
         s.x + s.nx * side * kerbDist * cosB,
         s.y + 0.02 + (i % 2) * 0.003 + side * kerbDist * sinB,
         s.z + s.nz * side * kerbDist * cosB,
+        s,
+        bank,
       );
-      dummy.rotation.set(bank * side * Math.cos(Math.atan2(s.tx, s.tz)), Math.atan2(s.tx, s.tz), bank * side);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
       kerbMatrices.push(dummy.matrix.clone());
     }
   }
@@ -629,7 +651,9 @@ export function buildTrackEnvironment(
     }),
   );
   const barrierMatrices: THREE.Matrix4[] = [];
-  for (let i = 0; i < compiled.samples.length; i += 2) {
+  const nSamples = compiled.samples.length;
+  const adjSkip = Math.max(12, Math.floor(nSamples * 0.04));
+  for (let i = 0; i < nSamples; i += 2) {
     const s = compiled.samples[i];
     for (const side of [-1, 1]) {
       const bank = s.banking || 0;
@@ -637,14 +661,25 @@ export function buildTrackEnvironment(
       const sinB = Math.sin(bank);
       const curHalfW = s.width ? s.width * 0.5 : halfW;
       const offset = curHalfW + 5.6;
-      dummy.position.set(
-        s.x + s.nx * side * offset * cosB,
-        s.y + 0.35 + side * offset * sinB,
-        s.z + s.nz * side * offset * cosB,
-      );
-      dummy.rotation.set(0, Math.atan2(s.tx, s.tz), bank * side);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
+      const bx = s.x + s.nx * side * offset * cosB;
+      const by = s.y + 0.35 + side * offset * sinB;
+      const bz = s.z + s.nz * side * offset * cosB;
+      let overlapsOtherLeg = false;
+      for (let j = 0; j < nSamples; j += 2) {
+        const dIdx = Math.min(Math.abs(j - i), nSamples - Math.abs(j - i));
+        if (dIdx < adjSkip) continue;
+        const o = compiled.samples[j];
+        if (Math.abs(o.y - by) >= 4.5) continue;
+        const clearR = (o.width ? o.width * 0.5 : halfW) + 2.4;
+        const dx = bx - o.x;
+        const dz = bz - o.z;
+        if (dx * dx + dz * dz < clearR * clearR) {
+          overlapsOtherLeg = true;
+          break;
+        }
+      }
+      if (overlapsOtherLeg) continue;
+      setBankedTrackTransform(bx, by, bz, s, bank);
       barrierMatrices.push(dummy.matrix.clone());
     }
   }
@@ -837,71 +872,71 @@ export function buildTrackEnvironment(
   }
   group.add(sfGroup);
 
-  // 8. Decorative Paddock Garages & Grandstands flanking the Main Straight
-  const pitBuildingGroup = new THREE.Group();
-  pitBuildingGroup.position.set(
-    sf.x + sf.nx * pitSideSign * (halfW + 13.5),
-    sf.y,
-    sf.z + sf.nz * pitSideSign * (halfW + 13.5),
-  );
-  pitBuildingGroup.rotation.y = sfAngle;
-
-  const garageWallGeo = track(new THREE.BoxGeometry(5.5, 4.2, 34));
-  const garageWallMat = track(new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.65, metalness: 0.25 }));
-  const garageMesh = new THREE.Mesh(garageWallGeo, garageWallMat);
-  garageMesh.position.y = 2.1;
-  garageMesh.castShadow = true;
-  pitBuildingGroup.add(garageMesh);
-
-  const garageRoofGeo = track(new THREE.BoxGeometry(8.5, 0.6, 36));
-  const garageRoofMat = track(new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.45, metalness: 0.2 }));
-  const garageRoof = new THREE.Mesh(garageRoofGeo, garageRoofMat);
-  garageRoof.position.set(1.2 * pitSideSign, 4.4, 0);
-  garageRoof.castShadow = true;
-  pitBuildingGroup.add(garageRoof);
-  group.add(pitBuildingGroup);
-
-  // Main Grandstand opposite Pit Lane
-  const standGroup = new THREE.Group();
-  standGroup.position.set(
-    sf.x - sf.nx * pitSideSign * (halfW + 13),
-    sf.y,
-    sf.z - sf.nz * pitSideSign * (halfW + 13),
-  );
-  standGroup.rotation.y = sfAngle;
-  const standBaseGeo = track(new THREE.BoxGeometry(9.5, 5.4, 38));
-  const standBaseMat = track(new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.75 }));
-  const standMesh = new THREE.Mesh(standBaseGeo, standBaseMat);
-  standMesh.position.y = 2.7;
-  standMesh.castShadow = true;
-  standGroup.add(standMesh);
-  group.add(standGroup);
-
-  // Stylized Miniature Spectator Dots (InstancedMesh)
-  const specGeo = track(new THREE.BoxGeometry(0.65, 0.7, 0.65));
-  const specMat = track(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 }));
-  const specCount = 96;
-  const specInst = new THREE.InstancedMesh(specGeo, specMat, specCount);
-  const specColors = [0xef4444, 0xfacc15, 0x38bdf8, 0xf8fafc, 0x22c55e, 0xf97316];
-  const colorObj = new THREE.Color();
-  for (let i = 0; i < specCount; i++) {
-    const row = Math.floor(i / 24);
-    const col = i % 24;
-    dummy.position.set(-3.2 + row * 1.4, 5.75, -16 + col * 1.4);
-    dummy.rotation.set(0, 0, 0);
-    dummy.scale.set(1, 0.9 + (i % 3) * 0.15, 1);
-    dummy.updateMatrix();
-    specInst.setMatrixAt(i, dummy.matrix);
-    colorObj.setHex(specColors[(i * 7) % specColors.length]);
-    specInst.setColorAt(i, colorObj);
-  }
-  specInst.instanceMatrix.needsUpdate = true;
-  if (specInst.instanceColor) specInst.instanceColor.needsUpdate = true;
-  specInst.computeBoundingSphere();
-  standGroup.add(specInst);
-
   const isSafe = (px: number, pz: number, r: number) =>
     isPositionSafeFromTrack(px, pz, r, compiled);
+  const colorObj = new THREE.Color();
+
+  // 8. Decorative Paddock Garages & Grandstands flanking the Main Straight
+  const pitX = sf.x + sf.nx * pitSideSign * (halfW + 13.5);
+  const pitZ = sf.z + sf.nz * pitSideSign * (halfW + 13.5);
+  if (isSafe(pitX, pitZ, 4.5)) {
+    const pitBuildingGroup = new THREE.Group();
+    pitBuildingGroup.position.set(pitX, sf.y, pitZ);
+    pitBuildingGroup.rotation.y = sfAngle;
+
+    const garageWallGeo = track(new THREE.BoxGeometry(5.5, 4.2, 34));
+    const garageWallMat = track(new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.65, metalness: 0.25 }));
+    const garageMesh = new THREE.Mesh(garageWallGeo, garageWallMat);
+    garageMesh.position.y = 2.1;
+    garageMesh.castShadow = true;
+    pitBuildingGroup.add(garageMesh);
+
+    const garageRoofGeo = track(new THREE.BoxGeometry(8.5, 0.6, 36));
+    const garageRoofMat = track(new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.45, metalness: 0.2 }));
+    const garageRoof = new THREE.Mesh(garageRoofGeo, garageRoofMat);
+    garageRoof.position.set(1.2 * pitSideSign, 4.4, 0);
+    garageRoof.castShadow = true;
+    pitBuildingGroup.add(garageRoof);
+    group.add(pitBuildingGroup);
+  }
+
+  // Main Grandstand opposite Pit Lane
+  const standX = sf.x - sf.nx * pitSideSign * (halfW + 13);
+  const standZ = sf.z - sf.nz * pitSideSign * (halfW + 13);
+  if (isSafe(standX, standZ, 5.2)) {
+    const standGroup = new THREE.Group();
+    standGroup.position.set(standX, sf.y, standZ);
+    standGroup.rotation.y = sfAngle;
+    const standBaseGeo = track(new THREE.BoxGeometry(9.5, 5.4, 38));
+    const standBaseMat = track(new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.75 }));
+    const standMesh = new THREE.Mesh(standBaseGeo, standBaseMat);
+    standMesh.position.y = 2.7;
+    standMesh.castShadow = true;
+    standGroup.add(standMesh);
+    group.add(standGroup);
+
+    // Stylized Miniature Spectator Dots (InstancedMesh)
+    const specGeo = track(new THREE.BoxGeometry(0.65, 0.7, 0.65));
+    const specMat = track(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 }));
+    const specCount = 96;
+    const specInst = new THREE.InstancedMesh(specGeo, specMat, specCount);
+    const specColors = [0xef4444, 0xfacc15, 0x38bdf8, 0xf8fafc, 0x22c55e, 0xf97316];
+    for (let i = 0; i < specCount; i++) {
+      const row = Math.floor(i / 24);
+      const col = i % 24;
+      dummy.position.set(-3.2 + row * 1.4, 5.75, -16 + col * 1.4);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 0.9 + (i % 3) * 0.15, 1);
+      dummy.updateMatrix();
+      specInst.setMatrixAt(i, dummy.matrix);
+      colorObj.setHex(specColors[(i * 7) % specColors.length]);
+      specInst.setColorAt(i, colorObj);
+    }
+    specInst.instanceMatrix.needsUpdate = true;
+    if (specInst.instanceColor) specInst.instanceColor.needsUpdate = true;
+    specInst.computeBoundingSphere();
+    standGroup.add(specInst);
+  }
 
   // 9. Scenery Perimeter Landmarks (Trees / Desert Rocks / Night Towers)
   const propRadius =

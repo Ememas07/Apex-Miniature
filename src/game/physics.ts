@@ -734,13 +734,13 @@ export function stepCarPhysics(
   // F1: 325-355 km/h (with active-aero/ERS), GTP: 330-345 km/h, LMP2: 315-325 km/h,
   // GT3: 285-300 km/h, GT4: 260-275 km/h, FE: 300-324 km/h, Coupe: 247-313 km/h, Supercar: 330-427 km/h
   const maxSpeedBase = (isF126
-    ? 89.2 + (attrs.topSpeed - 90) * 0.42
+    ? 93.8 + (attrs.topSpeed - 90) * 0.35
     : isF121
-    ? 92.2 + (attrs.topSpeed - 90) * 0.45
+    ? 95.2 + (attrs.topSpeed - 90) * 0.35
     : isF105
-    ? 94.0 + (attrs.topSpeed - 89) * 0.48
+    ? 95.0 + (attrs.topSpeed - 92) * 0.35
     : isGTP
-    ? 91.7 + (attrs.topSpeed - 83) * 0.58
+    ? 93.3 + (attrs.topSpeed - 86) * 0.25
     : isLMP2
     ? 87.5 + (attrs.topSpeed - 78) * 0.46
     : isGT3
@@ -794,9 +794,9 @@ export function stepCarPhysics(
   let specialGripMult = 1.0;
   if (car.specialActive) {
     if (specialType === 'active-aero') {
-      // 2026 F1: +7.5% low-drag straight Vmax (345-355 km/h), -25% cornering grip
-      specialSpeedMult = 1.075;
-      specialAccelMult = 1.05;
+      // 2026 F1: +3.8% low-drag straight Vmax (350-355 km/h), -25% cornering grip
+      specialSpeedMult = 1.038;
+      specialAccelMult = 1.06;
       specialGripMult = 0.75;
     } else if (specialType === 'attack-mode') {
       // Formula E: AWD launch & +15% power, +5.5% top speed (315-324 km/h)
@@ -804,12 +804,12 @@ export function stepCarPhysics(
       specialAccelMult = 1.18;
       specialGripMult = 1.08;
     } else if (specialType === 'ers-overtake' || specialType === 'hybrid-deploy') {
-      // 2021 F1 & Hypercar: +14% mid/high-speed pull, +3.5% Vmax
-      specialSpeedMult = 1.035;
-      specialAccelMult = 1.14;
+      // 2021 F1 & Hypercar: +12% mid/high-speed pull, +2.0% Vmax
+      specialSpeedMult = 1.020;
+      specialAccelMult = 1.12;
     } else if (specialType === 'v10-overboost' || specialType === 'rich-fuel-overboost') {
       // 2005 F1 & Non-hybrid LMH: +8% power surge with +35% fuel burn
-      specialSpeedMult = 1.028;
+      specialSpeedMult = 1.026;
       specialAccelMult = 1.08;
     }
   }
@@ -944,7 +944,8 @@ export function stepCarPhysics(
         : isFE
         ? 0.94 + 0.08 * Math.min(1, car.speed / 24.0)
         : 0.92 + 0.08 * Math.min(1, car.speed / 26.0);
-      const torqueCurve = Math.max(0.18, 1.0 - 0.68 * Math.pow(speedRatio, 1.35));
+      const highSpeedAero = isFormula && !isFE ? 1.32 : isGTP || isLMP2 ? 1.10 : isFE ? 1.02 : 1.0;
+      const torqueCurve = Math.max(0.35, 1.0 - 0.58 * Math.pow(speedRatio, 1.75));
       const engineAccel =
         accelBase *
         aeroTraction *
@@ -953,11 +954,11 @@ export function stepCarPhysics(
         throttle *
         torqueCurve *
         limiterTorqueCut;
-      // Quadratic aero drag F_drag = c_drag * v^2 smoothly balancing engine power near target Vmax
-      const cAeroDrag =
-        ((accelBase * 0.11) / (effectiveMaxSpeed * effectiveMaxSpeed)) * tuning.dragScale;
+      // Quadratic aero drag F_drag = c_drag * v^2 calibrated so steady-state equilibrium matches effectiveMaxSpeed
+      const eqDragDecel = accelBase * highSpeedAero * specialAccelMult * 0.42;
+      const cAeroDrag = eqDragDecel / (effectiveMaxSpeed * effectiveMaxSpeed);
       const aeroDragDecel = cAeroDrag * car.speed * car.speed;
-      const netAccel = limiterTorqueCut === 0 ? -2.2 * dt : engineAccel - aeroDragDecel;
+      const netAccel = limiterTorqueCut === 0 ? -2.2 : engineAccel - aeroDragDecel;
       car.speed = Math.max(0, car.speed + netAccel * dt);
     }
 
@@ -977,7 +978,24 @@ export function stepCarPhysics(
       );
     }
 
-    // Forward Gearing Simulation & True Redline Reaching (including Top Gear & Standstill Launch Rev):
+    // Forward Gearing Simulation with progressive ratios (headroom above nominal Vmax prevents premature limiter hits)
+    const getGearTopFracs = (nGears: number): number[] => {
+      if ((isF126 || isF121) && nGears === 8) {
+        return [0.30, 0.39, 0.48, 0.57, 0.67, 0.78, 0.89, 1.00];
+      }
+      if ((isGTP || isF105) && nGears === 7) {
+        return [0.32, 0.43, 0.54, 0.65, 0.77, 0.89, 1.00];
+      }
+      if (isGTP && nGears === 6) {
+        return [0.33, 0.46, 0.59, 0.72, 0.86, 1.00];
+      }
+      const out: number[] = [];
+      for (let g = 1; g <= nGears; g++) {
+        out.push(0.22 + 0.78 * Math.pow(g / nGears, 1 / 0.82));
+      }
+      return out;
+    };
+
     if (totalGears === 1) {
       car.gear = 1;
       if (isStandstillRev) {
@@ -1003,65 +1021,77 @@ export function stepCarPhysics(
         }
         car.rpmNormalized = Math.round(nextRpm * 1000) / 1000;
       }
-    } else if (isManual) {
-      car.gear = Math.max(1, Math.min(totalGears, car.gear));
-      if (car.speed < 1.0 && car.gear === 1 && throttle < 0.08) {
-        car.rpmNormalized = 0.18;
-      } else {
-        const topSpeedRef = Math.max(45, effectiveMaxSpeed);
-        const speedRatio = Math.min(1.0, car.speed / topSpeedRef);
-        const gearMinRatio = Math.pow((car.gear - 1) / totalGears, 1 / 0.74);
-        const gearMaxRatio = Math.pow(car.gear / totalGears, 1 / 0.74);
-        const band = Math.max(0.05, gearMaxRatio - gearMinRatio);
-        let gearRpm: number;
-        if (car.gear === totalGears) {
-          const topRatio = Math.min(1.0, car.speed / Math.max(1, effectiveMaxSpeed));
-          gearRpm = 0.50 + 0.50 * Math.pow(topRatio, 0.84);
+    } else {
+      const gearboxTopSpeed = Math.max(45, maxSpeedBase * dragVmaxFactor * 1.045);
+      const gearFracs = getGearTopFracs(totalGears);
+      const speedRatioGear = Math.min(1.02, car.speed / gearboxTopSpeed);
+
+      if (isManual) {
+        car.gear = Math.max(1, Math.min(totalGears, car.gear));
+        if (car.speed < 1.0 && car.gear === 1 && throttle < 0.08) {
+          car.rpmNormalized = 0.18;
         } else {
-          const inGearFrac = Math.max(-0.25, Math.min(1.0, (speedRatio - gearMinRatio) / band));
-          gearRpm = Math.max(0.18, Math.min(1.0, 0.36 + 0.64 * inGearFrac));
-        }
-        if (car.gear < totalGears && speedRatio >= gearMaxRatio) {
-          car.speed = Math.min(car.speed, topSpeedRef * gearMaxRatio);
-          if (car.revLimiterActive) {
-            gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
+          const gearMinRatio = car.gear === 1 ? 0 : gearFracs[car.gear - 2] * 0.82;
+          const gearMaxRatio = gearFracs[car.gear - 1];
+          const band = Math.max(0.05, gearMaxRatio - gearMinRatio);
+          let gearRpm: number;
+          if (car.gear === totalGears) {
+            const entryRatio = gearFracs[totalGears - 2] * 0.82;
+            const inTop = Math.max(0, Math.min(1.0, (speedRatioGear - entryRatio) / Math.max(0.06, 1.0 - entryRatio)));
+            gearRpm = 0.72 + 0.28 * Math.pow(inTop, 0.85);
           } else {
+            const inGearFrac = Math.max(-0.25, Math.min(1.0, (speedRatioGear - gearMinRatio) / band));
+            const baseFloor = car.gear === 1 ? 0.22 : 0.62;
+            gearRpm = Math.max(0.18, Math.min(1.0, baseFloor + (1.0 - baseFloor) * inGearFrac));
+          }
+          if (car.gear < totalGears && speedRatioGear >= gearMaxRatio) {
+            car.speed = Math.min(car.speed, gearboxTopSpeed * gearMaxRatio);
+            if (car.revLimiterActive) {
+              gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
+            } else {
+              gearRpm = 1.0;
+              car.revLimiterActive = true;
+            }
+          } else if (car.revLimiterActive) {
+            gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
+          } else if (gearRpm >= 0.995) {
             gearRpm = 1.0;
             car.revLimiterActive = true;
           }
-        } else if (car.revLimiterActive) {
-          gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
-        } else if (gearRpm >= 0.995) {
-          gearRpm = 1.0;
-          car.revLimiterActive = true;
+          car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;
         }
-        car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;
-      }
-    } else {
-      if (car.speed < 1.0 && throttle < 0.08) {
-        car.gear = 1;
-        car.rpmNormalized = 0.18;
       } else {
-        const topSpeedRef = Math.max(45, effectiveMaxSpeed);
-        const speedRatio = Math.min(0.999, car.speed / topSpeedRef);
-        const gearProgress = Math.pow(speedRatio, 0.74) * totalGears;
-        const currentGear = Math.max(1, Math.min(totalGears, Math.floor(gearProgress) + 1));
-        const inGearFraction = gearProgress - (currentGear - 1);
-        let gearRpm: number;
-        if (currentGear === totalGears) {
-          const topRatio = Math.min(1.0, car.speed / Math.max(1, effectiveMaxSpeed));
-          gearRpm = 0.50 + 0.50 * Math.pow(topRatio, 0.84);
+        if (car.speed < 1.0 && throttle < 0.08) {
+          car.gear = 1;
+          car.rpmNormalized = 0.18;
         } else {
-          gearRpm = 0.36 + 0.635 * Math.max(0, Math.min(1.0, inGearFraction));
+          let currentGear = Math.max(1, Math.min(totalGears, car.gear));
+          while (currentGear < totalGears && speedRatioGear >= gearFracs[currentGear - 1] * 0.965) {
+            currentGear += 1;
+          }
+          while (currentGear > 1 && speedRatioGear < gearFracs[currentGear - 2] * 0.80) {
+            currentGear -= 1;
+          }
+          const shiftUpPoint = gearFracs[currentGear - 1] * (currentGear === totalGears ? 1.0 : 0.965);
+          const entryRatio = currentGear === 1 ? 0 : gearFracs[currentGear - 2] * 0.82;
+          let gearRpm: number;
+          if (currentGear === totalGears) {
+            const inTop = Math.max(0, Math.min(1.0, (speedRatioGear - entryRatio) / Math.max(0.06, 1.0 - entryRatio)));
+            gearRpm = 0.72 + 0.28 * Math.pow(inTop, 0.88);
+          } else {
+            const inGearFrac = Math.max(0, Math.min(1.0, (speedRatioGear - entryRatio) / Math.max(0.05, shiftUpPoint - entryRatio)));
+            const baseFloor = currentGear === 1 ? 0.22 : 0.70;
+            gearRpm = baseFloor + (0.975 - baseFloor) * inGearFrac;
+          }
+          if (car.revLimiterActive) {
+            gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
+          } else if (gearRpm >= 0.995) {
+            gearRpm = 1.0;
+            car.revLimiterActive = true;
+          }
+          car.gear = currentGear;
+          car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;
         }
-        if (car.revLimiterActive) {
-          gearRpm = Math.max(1.0 - HYSTERESIS_RPM_DROP, car.rpmNormalized - dt * 1.5);
-        } else if (gearRpm >= 0.995) {
-          gearRpm = 1.0;
-          car.revLimiterActive = true;
-        }
-        car.gear = currentGear;
-        car.rpmNormalized = Math.round(gearRpm * 1000) / 1000;
       }
     }
   }
@@ -1295,9 +1325,9 @@ export function stepCarPhysics(
             bestLane = cand;
           }
         }
-        car.x = sp.x + sp.nx * bestLane;
-        car.y = sp.y;
-        car.z = sp.z + sp.nz * bestLane;
+        car.x = sp.x + sp.nx * bestLane * Math.cos(sp.banking || 0);
+        car.y = sp.y + bestLane * Math.sin(sp.banking || 0);
+        car.z = sp.z + sp.nz * bestLane * Math.cos(sp.banking || 0);
         car.lateralOffset = bestLane;
         car.aiTargetOffset = bestLane;
         car.heading = Math.atan2(sp.tx, sp.tz);

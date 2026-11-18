@@ -82,7 +82,7 @@ export const TRACK_SVG_PATHS: Record<string, string> = {
   "lime-rock": "M 695 868 L 185 872 L 125 815 L 118 715 L 145 648 L 185 638 L 285 655 L 335 615 L 335 552 L 305 432 L 312 365 L 392 242 L 495 182 L 595 82 L 635 82 L 755 215 L 855 365 L 862 455 L 815 685 L 775 795 Z",
 
   // 18. Grand Prix of Long Beach — Clockwise, S/F bottom-right northeast->southwest
-  "long-beach": "M 775 645 L 615 812 L 525 822 L 445 775 L 225 588 L 198 635 L 142 668 L 128 695 L 115 682 L 112 655 L 52 585 L 65 495 L 98 438 L 332 658 L 352 615 L 355 335 L 368 322 L 585 318 L 775 345 L 782 365 L 782 495 L 815 532 L 855 525 L 868 505 L 865 535 L 822 588 Z",
+  "long-beach": "M 775 645 L 615 812 L 525 822 L 445 775 L 225 588 L 198 655 L 142 685 L 128 695 L 115 682 L 112 655 L 52 585 L 65 495 L 98 438 L 335 638 L 352 615 L 355 335 L 368 322 L 585 318 L 775 345 L 782 365 L 782 495 L 815 532 L 858 502 L 882 524 L 864 560 L 822 588 Z",
 
   // 19. Lusail International Circuit — Clockwise, S/F bottom right->left
   "lusail": "M 775 852 L 255 852 L 228 815 L 235 768 L 315 692 L 325 635 L 298 605 L 235 532 L 182 245 L 192 205 L 248 175 L 268 195 L 305 375 L 325 385 L 335 365 L 348 125 L 375 92 L 402 112 L 425 205 L 472 288 L 468 355 L 452 448 L 468 488 L 515 472 L 582 392 L 635 162 L 672 128 L 738 128 L 762 162 L 792 275 L 782 315 L 702 475 L 702 515 L 805 785 L 802 828 Z",
@@ -100,7 +100,7 @@ export const TRACK_SVG_PATHS: Record<string, string> = {
   "mid-ohio": "M 488 282 L 478 618 L 512 708 L 855 695 L 872 745 L 848 795 L 575 808 L 292 638 L 282 585 L 305 512 L 298 455 L 205 452 L 192 415 L 192 318 L 135 225 L 132 105 L 165 72 L 295 72 L 388 158 L 418 152 L 498 85 L 535 115 L 532 168 L 492 205 Z",
 
   // 24. Circuit de Monaco (Monte Carlo) — Clockwise, S/F left southwest->northeast
-  "monaco": "M 185 375 L 352 178 L 372 192 L 505 405 L 615 532 L 665 538 L 682 485 L 692 408 L 835 412 L 842 442 L 818 468 L 815 542 L 822 542 L 838 475 L 885 528 L 825 605 L 725 665 L 625 612 L 502 452 L 488 458 L 475 432 L 368 242 L 348 242 L 278 295 L 278 342 L 218 452 L 192 445 L 155 545 L 158 635 L 122 575 L 145 485 Z",
+  "monaco": "M 185 375 L 352 178 L 372 192 L 505 405 L 615 532 L 665 538 L 682 485 L 692 408 L 835 412 L 842 442 L 806 472 L 800 546 L 832 548 L 846 476 L 892 528 L 825 605 L 725 665 L 625 612 L 502 452 L 488 458 L 475 432 L 368 242 L 348 242 L 278 295 L 278 342 L 218 452 L 192 445 L 160 545 L 162 642 L 114 580 L 142 485 Z",
 
   // 25. Circuit Gilles Villeneuve (Montreal) — Clockwise, S/F top-right west->east
   "montreal": "M 745 342 L 882 392 L 902 348 L 918 355 L 915 418 L 832 542 L 812 528 L 725 618 L 685 622 L 615 595 L 608 665 L 572 678 L 425 638 L 328 558 L 325 518 L 195 405 L 78 392 L 75 372 L 125 372 L 288 325 L 585 322 L 595 345 Z",
@@ -263,6 +263,78 @@ function parseSvgVertices(svgD: string): Array<[number, number]> {
 }
 
 /**
+ * Solves a uniform periodic C2 cubic spline for second derivatives M_i at sample indices 0..N-1.
+ */
+function solveUniformPeriodicCubicM(vals: number[]): Float64Array {
+  const n = vals.length;
+  const M = new Float64Array(n);
+  if (n < 3) return M;
+  const h = 1 / n;
+  const a = h / 6;
+  const b = (2 * h) / 3;
+  const c = h / 6;
+  const d = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const im = (i - 1 + n) % n;
+    const ip = (i + 1) % n;
+    d[i] = (vals[ip] - 2 * vals[i] + vals[im]) / h;
+  }
+  const gamma = -b;
+  const bMod = new Float64Array(n).fill(b);
+  bMod[0] = b - gamma;
+  bMod[n - 1] = b - (a * c) / gamma;
+
+  const solveTri = (rhs: Float64Array): Float64Array => {
+    const cp = new Float64Array(n);
+    const dp = new Float64Array(n);
+    cp[0] = c / bMod[0];
+    dp[0] = rhs[0] / bMod[0];
+    for (let i = 1; i < n; i++) {
+      const denom = bMod[i] - a * cp[i - 1];
+      cp[i] = i < n - 1 ? c / denom : 0;
+      dp[i] = (rhs[i] - a * dp[i - 1]) / denom;
+    }
+    const x = new Float64Array(n);
+    x[n - 1] = dp[n - 1];
+    for (let i = n - 2; i >= 0; i--) {
+      x[i] = dp[i] - cp[i] * x[i + 1];
+    }
+    return x;
+  };
+
+  const u = new Float64Array(n);
+  u[0] = gamma;
+  u[n - 1] = c;
+  const z1 = solveTri(d);
+  const z2 = solveTri(u);
+  const factor = (z1[0] + (a / gamma) * z1[n - 1]) / (1 + z2[0] + (a / gamma) * z2[n - 1]);
+  for (let i = 0; i < n; i++) {
+    M[i] = z1[i] - factor * z2[i];
+  }
+  return M;
+}
+
+function evalUniformPeriodicCubic(vals: number[], M: Float64Array, tRaw: number): number {
+  const n = vals.length;
+  if (n === 0) return 0;
+  if (n < 3) return vals[0];
+  const t = ((tRaw % 1) + 1) % 1;
+  const pos = t * n;
+  const i0 = Math.floor(pos) % n;
+  const i1 = (i0 + 1) % n;
+  const frac = pos - Math.floor(pos);
+  const h = 1 / n;
+  const A = 1 - frac;
+  const B = frac;
+  return (
+    A * vals[i0] +
+    B * vals[i1] +
+    (((A * A * A - A) * h * h) / 6) * M[i0] +
+    (((B * B * B - B) * h * h) / 6) * M[i1]
+  );
+}
+
+/**
  * Converts a normalized SVG path string into high-density 3D TrackWaypoints (180-240 points).
  * Preserves crisp corner profiles, prevents ribbon self-intersection folds, scales for
  * authentic 35-55s / 65-75s lap times, and applies real-world elevation and banking profiles.
@@ -361,9 +433,15 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
       continue;
     }
 
-    const r = minSafeRadius;
+    // Scale fillet radius by corner angle: tight hairpins use minSafeRadius, fast shallow bends get high-speed sweep radii
+    const r =
+      phi >= 1.55
+        ? minSafeRadius
+        : phi >= 0.75
+        ? minSafeRadius * (1.0 + 1.8 * ((1.55 - phi) / 0.8))
+        : Math.min(180, minSafeRadius * 2.8 + ((0.75 - phi) / 0.75) * 95);
     const tanHalf = Math.tan(phi * 0.5);
-    const maxTrim = 0.44 * Math.min(inLen, outLen);
+    const maxTrim = 0.42 * Math.min(inLen, outLen);
     const trim = Math.min(r * tanHalf, maxTrim);
     const rEff = trim / Math.max(1e-4, tanHalf);
 
@@ -387,7 +465,7 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
     while (dAng < -Math.PI) dAng += Math.PI * 2;
 
     const arcLen = Math.abs(dAng) * rEff;
-    const desiredArcChords = Math.max(2, Math.min(6, Math.round(arcLen / 8.5)));
+    const desiredArcChords = Math.max(2, Math.min(8, Math.round(arcLen / 8.5)));
     const interiorPts = Math.max(1, desiredArcChords - 1);
 
     cornerExpanded.push({ x: ax, y: 0, z: az, isCorner: true });
@@ -410,7 +488,7 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
     const pt = cornerExpanded[i];
     if (cleaned.length > 0) {
       const prev = cleaned[cleaned.length - 1];
-      if (Math.hypot(pt.x - prev.x, pt.z - prev.z) < 7.2) {
+      if (Math.hypot(pt.x - prev.x, pt.z - prev.z) < 3.5) {
         prev.x = (prev.x + pt.x) * 0.5;
         prev.z = (prev.z + pt.z) * 0.5;
         continue;
@@ -444,96 +522,79 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
   }
 
   const totalPts = dense.length;
-  const rawWaypoints = dense.map((p, idx) => {
-    const t = idx / totalPts;
+  const cumS = new Float64Array(totalPts);
+  let totalXZLen = 0;
+  for (let i = 1; i < totalPts; i++) {
+    totalXZLen += Math.hypot(dense[i].x - dense[i - 1].x, dense[i].z - dense[i - 1].z);
+    cumS[i] = totalXZLen;
+  }
+  totalXZLen += Math.hypot(dense[0].x - dense[totalPts - 1].x, dense[0].z - dense[totalPts - 1].z);
+
+  const demProfile = trackId ? REAL_DEM_ELEVATIONS[trackId] : undefined;
+  const demM = demProfile && demProfile.length >= 3 ? solveUniformPeriodicCubicM(demProfile) : null;
+
+  const smoothedWaypoints: TrackWaypoint[] = dense.map((p, idx) => {
+    const tArc = totalXZLen > 1e-3 ? cumS[idx] / totalXZLen : idx / totalPts;
     let y = 0;
     let banking = 0;
 
-    // Real-World Satellite Digital Elevation Model (DEM) Interpolation
-    const demProfile = trackId ? REAL_DEM_ELEVATIONS[trackId] : undefined;
-    if (demProfile && demProfile.length > 0) {
-      const N = demProfile.length;
-      const pos = t * N;
-      const i0 = Math.floor(pos) % N;
-      const i1 = (i0 + 1) % N;
-      const frac = pos - Math.floor(pos);
-      y = demProfile[i0] * (1 - frac) + demProfile[i1] * frac;
+    // Exact periodic C2 cubic spline interpolation of Real-World Satellite DEM at true XZ arc-length fraction
+    if (demProfile && demProfile.length > 0 && demM) {
+      y = Math.round(evalUniformPeriodicCubic(demProfile, demM, tArc) * 1000) / 1000;
     }
 
-    // Gentle Banking Profiles: smooth 8°-10° max for Daytona, 10°-12° max for Zandvoort/Indy, 0°-3° standard
+    // Gentle Banking Profiles: smooth 8°-10° max for Daytona, 10°-12° max for Zandvoort/Indy
     if (trackId === 'daytona-road') {
-      // Infield (t = 0.06..0.47) & Backstretch/Le Mans Chicane (t = 0.63..0.76) are strictly 0° flat!
-      if (t >= 0.48 && t <= 0.62) {
-        // West Oval Banking (NASCAR T1-T2 / Road Course T8-T9)
+      if (tArc >= 0.48 && tArc <= 0.62) {
         const ease = 0.035;
         let factor = 1.0;
-        if (t < 0.48 + ease) factor = (1 - Math.cos(((t - 0.48) / ease) * Math.PI)) * 0.5;
-        else if (t > 0.62 - ease) factor = (1 - Math.cos(((0.62 - t) / ease) * Math.PI)) * 0.5;
+        if (tArc < 0.48 + ease) factor = (1 - Math.cos(((tArc - 0.48) / ease) * Math.PI)) * 0.5;
+        else if (tArc > 0.62 - ease) factor = (1 - Math.cos(((0.62 - tArc) / ease) * Math.PI)) * 0.5;
         banking = 9.5 * factor;
-      } else if (t >= 0.77 && t <= 0.93) {
-        // East Oval Banking (NASCAR T3-T4 / Road Course T12-T13)
+      } else if (tArc >= 0.77 && tArc <= 0.93) {
         const ease = 0.035;
         let factor = 1.0;
-        if (t < 0.77 + ease) factor = (1 - Math.cos(((t - 0.77) / ease) * Math.PI)) * 0.5;
-        else if (t > 0.93 - ease) factor = (1 - Math.cos(((0.93 - t) / ease) * Math.PI)) * 0.5;
+        if (tArc < 0.77 + ease) factor = (1 - Math.cos(((tArc - 0.77) / ease) * Math.PI)) * 0.5;
+        else if (tArc > 0.93 - ease) factor = (1 - Math.cos(((0.93 - tArc) / ease) * Math.PI)) * 0.5;
         banking = 9.5 * factor;
-      } else if (t > 0.93 || t < 0.05) {
-        // Gentle Tri-Oval Frontstretch Banking (6.5°), easing smoothly to 0° before T1 braking
+      } else if (tArc > 0.93 || tArc < 0.05) {
         let factor = 1.0;
-        if (t >= 0.93 && t < 0.96) factor = (1 - Math.cos(((t - 0.93) / 0.03) * Math.PI)) * 0.5;
-        else if (t >= 0.02 && t < 0.05) factor = (1 - Math.cos(((0.05 - t) / 0.03) * Math.PI)) * 0.5;
+        if (tArc >= 0.93 && tArc < 0.96) factor = (1 - Math.cos(((tArc - 0.93) / 0.03) * Math.PI)) * 0.5;
+        else if (tArc >= 0.02 && tArc < 0.05) factor = (1 - Math.cos(((0.05 - tArc) / 0.03) * Math.PI)) * 0.5;
         banking = 6.5 * factor;
       }
     } else if (trackId === 'zandvoort') {
-      // Clockwise right-handers: Hugenholtzbocht & Arie Luyendijkbocht must tilt down on inside (right) & up on outside (left)
-      if (t >= 0.14 && t <= 0.24) {
+      if (tArc >= 0.14 && tArc <= 0.24) {
         const ease = 0.025;
         let factor = 1.0;
-        if (t < 0.14 + ease) factor = (1 - Math.cos(((t - 0.14) / ease) * Math.PI)) * 0.5;
-        else if (t > 0.24 - ease) factor = (1 - Math.cos(((0.24 - t) / ease) * Math.PI)) * 0.5;
+        if (tArc < 0.14 + ease) factor = (1 - Math.cos(((tArc - 0.14) / ease) * Math.PI)) * 0.5;
+        else if (tArc > 0.24 - ease) factor = (1 - Math.cos(((0.24 - tArc) / ease) * Math.PI)) * 0.5;
         banking = -11.0 * factor;
-      } else if (t >= 0.88 && t <= 0.98) {
+      } else if (tArc >= 0.88 && tArc <= 0.98) {
         const ease = 0.025;
         let factor = 1.0;
-        if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
-        else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
+        if (tArc < 0.88 + ease) factor = (1 - Math.cos(((tArc - 0.88) / ease) * Math.PI)) * 0.5;
+        else if (tArc > 0.98 - ease) factor = (1 - Math.cos(((0.98 - tArc) / ease) * Math.PI)) * 0.5;
         banking = -11.0 * factor;
       }
     } else if (trackId === 'indianapolis-road') {
-      // Oval Turn 1 / final road course right-hander onto frontstretch: 9.2° tilt down on right (inside) & up on left (outside)
-      if (t >= 0.88 && t <= 0.98) {
+      if (tArc >= 0.88 && tArc <= 0.98) {
         const ease = 0.025;
         let factor = 1.0;
-        if (t < 0.88 + ease) factor = (1 - Math.cos(((t - 0.88) / ease) * Math.PI)) * 0.5;
-        else if (t > 0.98 - ease) factor = (1 - Math.cos(((0.98 - t) / ease) * Math.PI)) * 0.5;
+        if (tArc < 0.88 + ease) factor = (1 - Math.cos(((tArc - 0.88) / ease) * Math.PI)) * 0.5;
+        else if (tArc > 0.98 - ease) factor = (1 - Math.cos(((0.98 - tArc) / ease) * Math.PI)) * 0.5;
         banking = -9.2 * factor;
       }
     }
 
     return {
-      x: Math.round(p.x * 10) / 10,
+      x: Math.round(p.x * 100) / 100,
       y,
-      z: Math.round(p.z * 10) / 10,
+      z: Math.round(p.z * 100) / 100,
       ...(banking ? { banking } : {}),
       width: trackWidth,
     };
   });
-
-  // Low-pass smoothing filter on elevation (Y) so slopes are realistic and transition buttery smooth
-  const smoothedWaypoints: TrackWaypoint[] = [];
-  const W = rawWaypoints.length;
-  for (let i = 0; i < W; i++) {
-    const yMinus2 = rawWaypoints[(i - 2 + W) % W].y;
-    const yMinus1 = rawWaypoints[(i - 1 + W) % W].y;
-    const y0 = rawWaypoints[i].y;
-    const yPlus1 = rawWaypoints[(i + 1) % W].y;
-    const yPlus2 = rawWaypoints[(i + 2) % W].y;
-    const smoothedY = 0.06 * yMinus2 + 0.24 * yMinus1 + 0.40 * y0 + 0.24 * yPlus1 + 0.06 * yPlus2;
-    smoothedWaypoints.push({
-      ...rawWaypoints[i],
-      y: Math.round(smoothedY * 10) / 10,
-    });
-  }
 
   // Final 3D perimeter normalization preserving DEM elevation Y values untouched
   if (smoothedWaypoints.length >= 4) {

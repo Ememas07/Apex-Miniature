@@ -19,7 +19,7 @@
     "HYPERCAR_GTP": {
       "downforceScale": 0.9406,
       "brakeForceScale": 0.9479,
-      "dragScale": 1.2146,
+      "dragScale": 1.0,
       "lowSpeedGripScale": 1.0326,
       "aiCornerSpeedScale": 0.9843,
       "aiBrakeMarginScale": 1.0537
@@ -27,7 +27,7 @@
     "F1_2026": {
       "downforceScale": 1.0936,
       "brakeForceScale": 0.9872,
-      "dragScale": 1.3649,
+      "dragScale": 1.0,
       "lowSpeedGripScale": 0.9739,
       "aiCornerSpeedScale": 1,
       "aiBrakeMarginScale": 1.0211
@@ -51,7 +51,7 @@
     "F1_2021": {
       "downforceScale": 1.0049,
       "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
+      "dragScale": 1.0,
       "lowSpeedGripScale": 1.0221,
       "aiCornerSpeedScale": 1,
       "aiBrakeMarginScale": 1.0609
@@ -59,7 +59,7 @@
     "F1_2005": {
       "downforceScale": 1.0049,
       "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
+      "dragScale": 1.0,
       "lowSpeedGripScale": 1.0221,
       "aiCornerSpeedScale": 1,
       "aiBrakeMarginScale": 1.0609

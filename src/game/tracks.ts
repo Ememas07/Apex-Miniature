@@ -773,6 +773,116 @@ export interface CompiledTrack {
   spec: TrackSpec;
   samples: SampledSplinePoint[];
   totalLength: number;
+  ySplineM?: number[];
+}
+
+function solvePeriodicCubicSpline(h: number[], y: number[]): number[] {
+  const n = y.length;
+  if (n < 3) return new Array(n).fill(0);
+  const a = new Float64Array(n);
+  const b = new Float64Array(n);
+  const c = new Float64Array(n);
+  const d = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const im = (i - 1 + n) % n;
+    const ip = (i + 1) % n;
+    const hm = Math.max(1e-4, h[im]);
+    const hi = Math.max(1e-4, h[i]);
+    a[i] = hm;
+    b[i] = 2 * (hm + hi);
+    c[i] = hi;
+    d[i] = 6 * ((y[ip] - y[i]) / hi - (y[i] - y[im]) / hm);
+  }
+  const gamma = -b[0] * 0.5;
+  b[0] -= gamma;
+  b[n - 1] -= (a[0] * c[n - 1]) / gamma;
+  const uVec = new Float64Array(n);
+  uVec[0] = gamma;
+  uVec[n - 1] = c[n - 1];
+
+  const solveTri = (rhs: Float64Array): Float64Array => {
+    const cp = new Float64Array(n);
+    const dp = new Float64Array(n);
+    cp[0] = c[0] / b[0];
+    dp[0] = rhs[0] / b[0];
+    for (let i = 1; i < n; i++) {
+      const m = b[i] - a[i] * cp[i - 1];
+      cp[i] = c[i] / m;
+      dp[i] = (rhs[i] - a[i] * dp[i - 1]) / m;
+    }
+    const x = new Float64Array(n);
+    x[n - 1] = dp[n - 1];
+    for (let i = n - 2; i >= 0; i--) {
+      x[i] = dp[i] - cp[i] * x[i + 1];
+    }
+    return x;
+  };
+
+  const z = solveTri(d);
+  const q = solveTri(uVec);
+  const fac = (z[0] + (a[0] / gamma) * z[n - 1]) / (1 + q[0] + (a[0] / gamma) * q[n - 1]);
+  const M = new Array<number>(n);
+  for (let i = 0; i < n; i++) M[i] = z[i] - fac * q[i];
+  return M;
+}
+
+function evalNonUniformPeriodicSplineY(
+  wpS: number[],
+  wpY: number[],
+  wpM: number[],
+  totalS: number,
+  sQuery: number,
+): number {
+  const n = wpY.length;
+  const s = ((sQuery % totalS) + totalS) % totalS;
+  let seg = n - 1;
+  for (let i = 0; i < n - 1; i++) {
+    if (s >= wpS[i] && s < wpS[i + 1]) {
+      seg = i;
+      break;
+    }
+  }
+  const s0 = wpS[seg];
+  const s1 = seg < n - 1 ? wpS[seg + 1] : totalS;
+  const h = Math.max(1e-4, s1 - s0);
+  const u = Math.max(0, Math.min(h, s - s0));
+  const hu = h - u;
+  const M0 = wpM[seg];
+  const M1 = wpM[(seg + 1) % n];
+  const y0 = wpY[seg];
+  const y1 = wpY[(seg + 1) % n];
+  return (
+    (M0 * hu * hu * hu + M1 * u * u * u) / (6 * h) +
+    (y0 / h - (M0 * h) / 6) * hu +
+    (y1 / h - (M1 * h) / 6) * u
+  );
+}
+
+function solveUniformPeriodicCubicSplineM(y: number[], h: number): number[] {
+  const n = y.length;
+  if (n < 3) return new Array(n).fill(0);
+  return solvePeriodicCubicSpline(new Array(n).fill(h), y);
+}
+
+function evalUniformPeriodicCubicYAndSlope(
+  y0: number,
+  y1: number,
+  m0: number,
+  m1: number,
+  h: number,
+  alpha: number,
+): { y: number; dyDs: number } {
+  const u = alpha * h;
+  const hu = h - u;
+  const y =
+    (m0 * hu * hu * hu + m1 * u * u * u) / (6 * h) +
+    (y0 / h - (m0 * h) / 6) * hu +
+    (y1 / h - (m1 * h) / 6) * u;
+  const dyDs =
+    (-m0 * hu * hu + m1 * u * u) / (2 * h) +
+    (y1 - y0) / h -
+    ((m1 - m0) * h) / 6;
+  return { y, dyDs };
 }
 
 function hermiteCatmullRomVal(
@@ -819,27 +929,43 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
   let totalLength = 0;
 
   if (!hasPerNodeTension) {
-    // Centripetal Catmull-Rom over piecewise straight collars + circular corner clusters
-    // guarantees zero ribbon self-intersection folds AND dead-straight straights.
-    const curve = new THREE.CatmullRomCurve3(
-      ptsArr.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
+    // Centripetal Catmull-Rom over XZ centerline + exact periodic C2 cubic spline elevation y(s)
+    const curveXZ = new THREE.CatmullRomCurve3(
+      ptsArr.map((p) => new THREE.Vector3(p.x, 0, p.z)),
       true,
       'centripetal',
       0.5,
     );
-    curve.arcLengthDivisions = Math.max(1500, n * 30, 1800);
-    totalLength = curve.getLength();
+    const arcSub = 20;
+    const arcDiv = Math.max(1800, n * arcSub);
+    curveXZ.arcLengthDivisions = arcDiv;
+    const arcLengths = curveXZ.getLengths(arcDiv);
+    const totalXZLen = arcLengths[arcDiv] || 1;
+    const wpS: number[] = [];
+    const wpH: number[] = [];
+    const wpY = ptsArr.map((p) => p.y);
+    for (let i = 0; i < n; i++) {
+      const idx = Math.round((i / n) * arcDiv);
+      wpS.push(arcLengths[idx]);
+    }
+    for (let i = 0; i < n; i++) {
+      const nextS = i < n - 1 ? wpS[i + 1] : totalXZLen;
+      wpH.push(Math.max(1e-4, nextS - wpS[i]));
+    }
+    const wpM = solvePeriodicCubicSpline(wpH, wpY);
+
     // Preserve ~8m sample spacing on long circuits (e.g. Le Mans 13.6km -> ~1700 samples) when using default density
     const effectiveSampleCount =
-      sampleCount >= 720 && totalLength > 7500
-        ? Math.min(2000, Math.round(totalLength / 8.0))
+      sampleCount >= 720 && totalXZLen > 7500
+        ? Math.min(2000, Math.round(totalXZLen / 8.0))
         : sampleCount;
     sampleCount = effectiveSampleCount;
-    const spaced = curve.getSpacedPoints(sampleCount);
+    const spacedXZ = curveXZ.getSpacedPoints(sampleCount);
 
+    const tmpPts: Array<{ x: number; y: number; z: number; banking: number; width: number }> = [];
     for (let k = 0; k < sampleCount; k++) {
       const u = k / sampleCount;
-      const tParam = curve.getUtoTmapping(u, 0);
+      const tParam = curveXZ.getUtoTmapping(u, 0);
       const segU = tParam * n;
       const seg = Math.floor(segU) % n;
       const localT = segU - Math.floor(segU);
@@ -859,19 +985,33 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
       const w2 = p2.width || spec.trackWidth;
       const w3 = p3.width || spec.trackWidth;
 
-      const pt = spaced[k];
-      raw.push({
+      const pt = spacedXZ[k];
+      tmpPts.push({
         x: pt.x,
-        y: pt.y,
+        y: evalNonUniformPeriodicSplineY(wpS, wpY, wpM, totalXZLen, u * totalXZLen),
         z: pt.z,
         banking: hermiteCatmullRomVal(bank0, bank1, bank2, bank3, localT, 0.18, 0.18),
         width: hermiteCatmullRomVal(w0, w1, w2, w3, localT, 0.18, 0.18),
-        s: u * totalLength,
+      });
+    }
+
+    const cum3D: number[] = [0];
+    for (let i = 1; i <= sampleCount; i++) {
+      const a = tmpPts[i - 1];
+      const b = tmpPts[i % sampleCount];
+      totalLength += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+      cum3D.push(totalLength);
+    }
+    for (let k = 0; k < sampleCount; k++) {
+      raw.push({
+        ...tmpPts[k],
+        s: cum3D[k],
       });
     }
   } else {
-    // Custom Track Studio path honoring per-node tension overrides (same Catmull-Rom polynomial, 1800+ arc divisions)
-    const denseCount = Math.max(1800, n * 60);
+    // Custom Track Studio path honoring per-node tension overrides + exact periodic C2 cubic spline elevation y(s)
+    const subPerSeg = Math.max(12, Math.ceil(1800 / Math.max(1, n)));
+    const denseCount = n * subPerSeg;
     const dense: Array<{ x: number; y: number; z: number; banking: number; width: number }> = [];
 
     for (let i = 0; i < denseCount; i++) {
@@ -898,11 +1038,32 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
 
       dense.push({
         x: hermiteCatmullRomVal(p0.x, p1.x, p2.x, p3.x, localT, tau1, tau2),
-        y: hermiteCatmullRomVal(p0.y, p1.y, p2.y, p3.y, localT, 0.25, 0.25),
+        y: 0,
         z: hermiteCatmullRomVal(p0.z, p1.z, p2.z, p3.z, localT, tau1, tau2),
         banking: hermiteCatmullRomVal(bank0, bank1, bank2, bank3, localT, 0.25, 0.25),
         width: hermiteCatmullRomVal(w0, w1, w2, w3, localT, 0.25, 0.25),
       });
+    }
+
+    const denseCumXZ: number[] = [0];
+    let totalXZLen = 0;
+    for (let i = 1; i <= denseCount; i++) {
+      const a = dense[i - 1];
+      const b = dense[i % denseCount];
+      totalXZLen += Math.hypot(b.x - a.x, b.z - a.z);
+      denseCumXZ.push(totalXZLen);
+    }
+    const wpS: number[] = [];
+    const wpH: number[] = [];
+    const wpY = ptsArr.map((p) => p.y);
+    for (let i = 0; i < n; i++) wpS.push(denseCumXZ[i * subPerSeg]);
+    for (let i = 0; i < n; i++) {
+      const nextS = i < n - 1 ? wpS[i + 1] : totalXZLen;
+      wpH.push(Math.max(1e-4, nextS - wpS[i]));
+    }
+    const wpM = solvePeriodicCubicSpline(wpH, wpY);
+    for (let i = 0; i < denseCount; i++) {
+      dense[i].y = evalNonUniformPeriodicSplineY(wpS, wpY, wpM, totalXZLen || 1, denseCumXZ[i]);
     }
 
     const denseCumLen: number[] = [0];
@@ -924,9 +1085,10 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
       const alpha = s1 > s0 ? (targetS - s0) / (s1 - s0) : 0;
       const a = dense[cursor];
       const b = dense[(cursor + 1) % denseCount];
+      const sQueryXZ = denseCumXZ[cursor] + (denseCumXZ[cursor + 1] - denseCumXZ[cursor]) * alpha;
       raw.push({
         x: a.x + (b.x - a.x) * alpha,
-        y: a.y + (b.y - a.y) * alpha,
+        y: evalNonUniformPeriodicSplineY(wpS, wpY, wpM, totalXZLen || 1, sQueryXZ),
         z: a.z + (b.z - a.z) * alpha,
         banking: a.banking + (b.banking - a.banking) * alpha,
         width: a.width + (b.width - a.width) * alpha,
@@ -935,23 +1097,40 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
     }
   }
 
+  const uniformSegH = Math.max(1e-4, totalLength / sampleCount);
+  const ySplineM = solveUniformPeriodicCubicSplineM(
+    raw.map((r) => r.y),
+    uniformSegH,
+  );
+
   const samples: SampledSplinePoint[] = [];
   for (let i = 0; i < sampleCount; i++) {
     const prev = raw[(i - 1 + sampleCount) % sampleCount];
     const curr = raw[i];
     const next = raw[(i + 1) % sampleCount];
     const dx = next.x - prev.x;
-    const dy = next.y - prev.y;
     const dz = next.z - prev.z;
-    const len = Math.hypot(dx, dy, dz) || 1;
-    const tx = dx / len;
-    const ty = dy / len;
-    const tz = dz / len;
+    const xzLen = Math.hypot(dx, dz) || 1;
+    const ux = dx / xzLen;
+    const uz = dz / xzLen;
+
+    // Exact analytical dy/ds from periodic C2 cubic spline
+    const { dyDs } = evalUniformPeriodicCubicYAndSlope(
+      curr.y,
+      next.y,
+      ySplineM[i],
+      ySplineM[(i + 1) % sampleCount],
+      uniformSegH,
+      0,
+    );
+    const invSlopeNorm = 1 / Math.hypot(1, dyDs);
+    const tx = ux * invSlopeNorm;
+    const ty = dyDs * invSlopeNorm;
+    const tz = uz * invSlopeNorm;
 
     // Right-hand normal in XZ plane
-    const xzLen = Math.hypot(tx, tz) || 1;
-    const nx = -tz / xzLen;
-    const nz = tx / xzLen;
+    const nx = -uz;
+    const nz = ux;
 
     // True geometric inverse-radius curvature (1/R in 1/m) in XZ plane
     const ax = curr.x - prev.x;
@@ -972,7 +1151,7 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
       nx,
       nz,
       s: curr.s,
-      t: curr.s / Math.max(1, totalLength),
+      t: i / sampleCount,
       curvature,
       banking: curr.banking,
       width: curr.width,
@@ -1031,6 +1210,7 @@ export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack 
     spec,
     samples,
     totalLength,
+    ySplineM,
   };
 }
 
@@ -1043,13 +1223,40 @@ export function sampleTrackAtT(compiled: CompiledTrack, tRaw: number): SampledSp
   const alpha = fIdx - Math.floor(fIdx);
   const a = compiled.samples[i0];
   const b = compiled.samples[i1];
-  const tx = a.tx + (b.tx - a.tx) * alpha;
-  const ty = a.ty + (b.ty - a.ty) * alpha;
-  const tz = a.tz + (b.tz - a.tz) * alpha;
-  const tLen = Math.hypot(tx, ty, tz) || 1;
-  const utx = tx / tLen;
-  const utz = tz / tLen;
-  const xzLen = Math.hypot(utx, utz) || 1;
+  const xzTx = a.tx + (b.tx - a.tx) * alpha;
+  const xzTz = a.tz + (b.tz - a.tz) * alpha;
+  const xzLen = Math.hypot(xzTx, xzTz) || 1;
+  const ux = xzTx / xzLen;
+  const uz = xzTz / xzLen;
+
+  let yVal: number;
+  let tyVal: number;
+  let txVal: number;
+  let tzVal: number;
+  if (compiled.ySplineM && compiled.ySplineM.length === n) {
+    const h = Math.max(1e-4, compiled.totalLength / n);
+    const res = evalUniformPeriodicCubicYAndSlope(
+      a.y,
+      b.y,
+      compiled.ySplineM[i0],
+      compiled.ySplineM[i1],
+      h,
+      alpha,
+    );
+    yVal = res.y;
+    const invNorm = 1 / Math.hypot(1, res.dyDs);
+    txVal = ux * invNorm;
+    tyVal = res.dyDs * invNorm;
+    tzVal = uz * invNorm;
+  } else {
+    yVal = a.y + (b.y - a.y) * alpha;
+    const ty = a.ty + (b.ty - a.ty) * alpha;
+    const tLen = Math.hypot(xzTx, ty, xzTz) || 1;
+    txVal = xzTx / tLen;
+    tyVal = ty / tLen;
+    tzVal = xzTz / tLen;
+  }
+
   const banking = (a.banking || 0) + ((b.banking || 0) - (a.banking || 0)) * alpha;
   const width =
     (a.width || compiled.spec.trackWidth) +
@@ -1057,13 +1264,13 @@ export function sampleTrackAtT(compiled: CompiledTrack, tRaw: number): SampledSp
 
   return {
     x: a.x + (b.x - a.x) * alpha,
-    y: a.y + (b.y - a.y) * alpha,
+    y: yVal,
     z: a.z + (b.z - a.z) * alpha,
-    tx: utx,
-    ty: ty / tLen,
-    tz: utz,
-    nx: -utz / xzLen,
-    nz: utx / xzLen,
+    tx: txVal,
+    ty: tyVal,
+    tz: tzVal,
+    nx: -uz,
+    nz: ux,
     s: t * compiled.totalLength,
     t,
     curvature: a.curvature + (b.curvature - a.curvature) * alpha,
