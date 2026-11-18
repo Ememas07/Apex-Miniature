@@ -30,7 +30,9 @@ import {
   AutoFitProgress,
   findCleanestEngineWindow,
   InBrowserSoundFitter,
+  playCompletionBlip,
   ReferenceAudioWindow,
+  sliceReferenceWindow,
 } from '../three/audioAutoFitter';
 import { MotorsportAudioEngine } from '../three/audioEngine';
 
@@ -90,6 +92,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
   const [isFitting, setIsFitting] = useState(false);
   const [fitProgress, setFitProgress] = useState<AutoFitProgress | null>(null);
   const [fitStatusText, setFitStatusText] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const fitterRef = useRef<InBrowserSoundFitter | null>(null);
   const refPlayingRef = useRef(false);
@@ -268,11 +271,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-
+  const processAudioFile = async (file: File) => {
     ensureAudioStarted();
     const ctx = engineRef.current?.getAudioContext();
     if (!ctx) return;
@@ -280,10 +279,10 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     try {
       setFitStatusText(`Reading ${file.name}...`);
       const arrayBuffer = await file.arrayBuffer();
-      setFitStatusText('Decoding audio track via Web Audio...');
+      setFitStatusText('Decoding audio track via Web Audio in C++...');
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
-      setFitStatusText('Scanning for cleanest 2.0s engine pull window...');
+      setFitStatusText('Scanning for highest-energy 2.0s engine pull window...');
       const refWin = findCleanestEngineWindow(audioBuffer, file.name, 2.0);
       setRefWindow(refWin);
 
@@ -291,8 +290,42 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     } catch (err) {
       console.error('Failed to decode/fit audio:', err);
       setFitStatusText(`Audio decoding error: ${err instanceof Error ? err.message : String(err)}`);
-      window.setTimeout(() => setFitStatusText(''), 4500);
+      window.setTimeout(() => setFitStatusText(''), 5000);
     }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    await processAudioFile(file);
+  };
+
+  const handleWindowScrub = (newStartSec: number) => {
+    if (!refWindow) return;
+    const sliced = sliceReferenceWindow(refWindow.buffer, newStartSec, 2.0, refWindow.name);
+    setRefWindow(sliced);
+  };
+
+  const handleRefitCurrentWindow = () => {
+    if (!refWindow || isFitting) return;
+    runAutoFitProcess(refWindow);
+  };
+
+  const applyInferredSpecs = () => {
+    if (!fitProgress) return;
+    const { inferredCylinders, inferredIdleRpm, inferredRedlineRpm } = fitProgress.features;
+    const next: AcousticProfile = {
+      ...profileRef.current,
+      cylinders: inferredCylinders,
+      idleRpm: inferredIdleRpm,
+      redlineRpm: inferredRedlineRpm,
+    };
+    profileRef.current = next;
+    setProfile(next);
+    saveSoundProfileOverride(next.soundProfile, next);
+    setHasCustomOverride(true);
+    applyLiveAudioUpdate(next);
   };
 
   const runAutoFitProcess = async (refWin: ReferenceAudioWindow) => {
@@ -301,27 +334,29 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     fitterRef.current = fitter;
 
     try {
-      const generator = fitter.runFitting(profileRef.current, refWin, 45);
-      let lastEstRpm = 0;
+      const generator = fitter.runFitting(profileRef.current, refWin, 150);
+      let lastLoss = 0;
       for await (const progress of generator) {
         setFitProgress(progress);
-        lastEstRpm = progress.features.estimatedRpm;
-        setFitStatusText(
-          `Matching audio... Iteration ${progress.step}/${progress.totalSteps} · Loss: ${progress.loss.toFixed(3)} · Est. ${lastEstRpm} RPM`
-        );
+        lastLoss = progress.loss;
+        const pct = Math.round((progress.step / progress.totalSteps) * 100);
+        setFitStatusText(`Matching audio... ${pct}% | Loss: ${progress.loss.toFixed(3)}`);
         profileRef.current = progress.candidate;
         setProfile(progress.candidate);
         saveSoundProfileOverride(progress.candidate.soundProfile, progress.candidate);
         setHasCustomOverride(true);
         applyLiveAudioUpdate(progress.candidate);
-
-        // Micro-delay to yield to UI thread and hear/see candidate iteration live
-        await new Promise((r) => setTimeout(r, 22));
       }
-      setFitStatusText(`Fit complete! Est. ${lastEstRpm} RPM · Ready to audition`);
-      window.setTimeout(() => setFitStatusText(''), 4500);
+
+      const ctx = engineRef.current?.getAudioContext();
+      if (ctx) {
+        playCompletionBlip(ctx);
+      }
+      setFitStatusText(`Match complete! Loss: ${lastLoss.toFixed(3)} · 150 candidates evaluated · Ready to audition`);
+      window.setTimeout(() => setFitStatusText(''), 6000);
     } catch (err) {
       console.error('Fitting error:', err);
+      setFitStatusText(`Fitting error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setIsFitting(false);
       fitterRef.current = null;
@@ -615,7 +650,20 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
   return (
     <div
       data-testid="sound-editor-modal"
-      className="fixed inset-0 z-40 bg-[#070a10] text-slate-100 flex flex-col overflow-hidden"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file) processAudioFile(file);
+      }}
+      className={`fixed inset-0 z-40 bg-[#070a10] text-slate-100 flex flex-col overflow-hidden ${
+        isDragOver ? 'ring-4 ring-sky-500/60 ring-inset bg-sky-950/20' : ''
+      }`}
     >
       {/* Top Studio Header */}
       <header className="shrink-0 flex flex-wrap items-center justify-between gap-4 px-5 py-3.5 bg-[#0e131d] border-b border-white/10">
@@ -641,11 +689,11 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Hidden file input for Match from MP4 / Audio */}
+          {/* File input for Match from MP4 / Audio */}
           <input
             ref={fileInputRef}
             type="file"
-            accept=".mp4,.webm,.mov,.wav,.mp3,.ogg"
+            accept="video/*,audio/*"
             onChange={handleFileUpload}
             className="hidden"
           />
@@ -677,7 +725,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
             title="Import an onboard engine clip (.mp4, .webm, .mov, .wav) and optimize preset live"
           >
             <Upload className="w-3.5 h-3.5 text-sky-400" />
-            {isFitting ? 'Fitting Clip...' : 'Match from MP4 / Audio'}
+            {isFitting ? 'Matching Audio...' : 'Match from MP4 / Audio'}
           </button>
 
           {refWindow && (
@@ -734,24 +782,34 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
       </header>
 
       {fitStatusText && (
-        <div className="shrink-0 px-5 py-2 bg-sky-950/80 border-b border-sky-500/30 flex items-center justify-between text-xs text-sky-200">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
-            <span className="font-medium">{fitStatusText}</span>
-            {refWindow && (
-              <span className="text-[11px] text-sky-400/70 hidden sm:inline">
-                · {refWindow.name} ({refWindow.durationSec.toFixed(1)}s window @ {refWindow.startSec.toFixed(1)}s)
-              </span>
+        <div className="shrink-0 px-5 py-2.5 bg-sky-950/90 border-b border-sky-500/30 flex flex-col gap-1.5 text-xs text-sky-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
+              <span className="font-semibold text-white">{fitStatusText}</span>
+              {refWindow && (
+                <span className="text-[11px] text-sky-400/80 hidden sm:inline">
+                  · {refWindow.name} ({refWindow.durationSec.toFixed(1)}s window @ {refWindow.startSec.toFixed(1)}s of {refWindow.totalDurationSec.toFixed(1)}s)
+                </span>
+              )}
+            </div>
+            {isFitting && (
+              <button
+                type="button"
+                onClick={() => fitterRef.current?.abort()}
+                className="px-2.5 py-1 rounded bg-red-600/30 hover:bg-red-600/60 border border-red-500/40 text-red-200 text-xs font-semibold cursor-pointer"
+              >
+                Cancel Fitting
+              </button>
             )}
           </div>
-          {isFitting && (
-            <button
-              type="button"
-              onClick={() => fitterRef.current?.abort()}
-              className="px-2.5 py-1 rounded bg-red-600/30 hover:bg-red-600/60 border border-red-500/40 text-red-200 text-xs font-semibold cursor-pointer"
-            >
-              Cancel Fitting
-            </button>
+          {isFitting && fitProgress && (
+            <div className="w-full bg-slate-900/80 h-1.5 rounded-full overflow-hidden border border-white/5">
+              <div
+                className="h-full bg-gradient-to-r from-sky-400 via-cyan-300 to-emerald-400 transition-all duration-75"
+                style={{ width: `${Math.round((fitProgress.step / fitProgress.totalSteps) * 100)}%` }}
+              />
+            </div>
           )}
         </div>
       )}
@@ -760,6 +818,78 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
         {/* Left Column: Preset Selector, Live Pedals & Telemetry Oscilloscope */}
         <section className="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-white/10 bg-[#0b1019] p-5 flex flex-col gap-4 overflow-y-auto custom-scroll">
+          {/* Reference Audio Window & Auto-Fit Controller */}
+          {refWindow && (
+            <div className="p-3.5 rounded-lg bg-[#111827] border border-sky-500/30 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-sky-400" />
+                  <span className="text-xs font-bold text-white uppercase tracking-wider truncate max-w-[200px]" title={refWindow.name}>
+                    {refWindow.name}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={togglePlayReference}
+                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                      refPlaying
+                        ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                        : 'bg-sky-950 hover:bg-sky-900 border border-sky-500/40 text-sky-200'
+                    }`}
+                  >
+                    {refPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                    {refPlaying ? 'Stop' : 'Play Reference (A/B)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRefitCurrentWindow}
+                    disabled={isFitting}
+                    className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    {isFitting ? 'Optimizing...' : 'Re-Match'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 2.0s Rev Window Scrubber */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[11px] text-slate-300">
+                  <span>Scrub 2.0s Rev Window: <strong className="text-sky-300">{refWindow.startSec.toFixed(1)}s</strong></span>
+                  <span className="text-slate-400">Total: {refWindow.totalDurationSec.toFixed(1)}s</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(0, refWindow.totalDurationSec - 2.0)}
+                  step={0.1}
+                  value={refWindow.startSec}
+                  disabled={isFitting}
+                  onChange={(e) => handleWindowScrub(parseFloat(e.target.value))}
+                  className="w-full accent-sky-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                />
+              </div>
+
+              {/* Inferred specs pill */}
+              {fitProgress && (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2 rounded bg-black/40 border border-white/5 text-[11px]">
+                  <div className="text-slate-300">
+                    Inferred: <strong className="text-emerald-400">{fitProgress.features.estimatedRpm} RPM</strong> · {fitProgress.features.inferredCylinders} Cyl · {fitProgress.features.wotFilterCutoff} Hz Cutoff
+                  </div>
+                  <button
+                    type="button"
+                    onClick={applyInferredSpecs}
+                    className="px-2 py-0.5 rounded bg-sky-900/60 hover:bg-sky-800 border border-sky-400/30 text-sky-200 font-semibold cursor-pointer"
+                    title="Update modal cylinder and RPM settings to matched reference audio"
+                  >
+                    Apply Inferred Specs
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Preset Selector */}
           <div className="p-3.5 rounded-lg bg-[#111827] border border-white/10 space-y-2.5">
             <div className="flex items-center justify-between">
