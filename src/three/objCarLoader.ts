@@ -77,8 +77,25 @@ export async function findLowPolyModelForCar(carId: string): Promise<LowPolyCarM
   if (direct) return direct;
 
   // Single-model class fallback aliases
-  if (key.includes('oreca') || key === 'lmp2' || key.includes('ligier') || key.includes('unitedautosports') || key.includes('aoracing') || key.includes('intereuropol')) {
-    return map.get('oreca07') ?? map.get('oreca07united') ?? map.get('oreca07ao') ?? map.get('oreca07europol') ?? null;
+  if (
+    key.includes('oreca') ||
+    key === 'lmp2' ||
+    key.includes('ligier') ||
+    key.includes('united') ||
+    key.includes('europol') ||
+    key.includes('aoracing') ||
+    key.includes('spike') ||
+    key.includes('afcorse') ||
+    key.includes('coolracing') ||
+    key.includes('algarve')
+  ) {
+    return (
+      map.get('oreca07') ??
+      map.get('oreca07united') ??
+      map.get('oreca07ao') ??
+      map.get('oreca07europol') ??
+      null
+    );
   }
   if (key.startsWith('f126') || key === 'f12026') {
     return map.get('f126mercedes') ?? null;

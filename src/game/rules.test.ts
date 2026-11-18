@@ -1831,23 +1831,53 @@ test('Oreca 07 is selectable in LMP2 and resolves to Oreca 07 (never Ferrari 499
   assert.equal(baseOreca.classId, CarClassId.LMP2);
   assert.equal(baseOreca.modelId, 'oreca-07');
 
-  // getCarById never falls back to 499P for Oreca IDs or aliases
-  const carBase = getCarById('oreca-07');
-  assert.equal(carBase.id, 'oreca-07');
-  assert.notEqual(carBase.id, 'ferrari-499p');
+  // EVERY selectable Oreca variant resolves directly via getCarById
+  for (const entry of orecaEntries) {
+    const resolved = getCarById(entry.id);
+    assert.equal(resolved.classId, CarClassId.LMP2, `Car ${entry.id} must be in LMP2`);
+    assert.notEqual(resolved.id, 'ferrari-499p', `Car ${entry.id} must not fall back to Ferrari 499P`);
+    assert.equal(resolved.modelId, 'oreca-07', `Car ${entry.id} must have modelId oreca-07`);
+  }
 
-  const carUnited = getCarById('united-autosports');
-  assert.equal(carUnited.classId, CarClassId.LMP2);
-  assert.notEqual(carUnited.id, 'ferrari-499p');
+  // Common aliases and short names all resolve properly
+  const expectedAliases = [
+    'oreca-07',
+    'united-autosports',
+    'oreca-07-united',
+    'oreca-07-united-autosports',
+    'inter-europol',
+    'oreca-07-europol',
+    'oreca-07-inter-europol',
+    'ao-racing',
+    'oreca-07-ao',
+    'oreca-07-ao-racing',
+    'af-corse',
+    'oreca-07-af-corse',
+    'cool-racing',
+    'oreca-07-cool',
+    'oreca-07-cool-racing',
+    'algarve-pro',
+    'oreca-07-algarve',
+    'oreca-07-algarve-pro',
+    'ligier-js-p217',
+    'lmp2',
+    'oreca',
+  ];
 
-  const carAo = getCarById('oreca-07-ao');
-  assert.equal(carAo.classId, CarClassId.LMP2);
-  assert.equal(carAo.defaultLivery.primaryColor, '#6A2C91');
-  assert.notEqual(carAo.id, 'ferrari-499p');
+  for (const alias of expectedAliases) {
+    const car = getCarById(alias);
+    assert.equal(car.classId, CarClassId.LMP2, `Alias "${alias}" must resolve to LMP2`);
+    assert.notEqual(car.id, 'ferrari-499p', `Alias "${alias}" must not fall back to 499P`);
+    assert.equal(car.modelId, 'oreca-07', `Alias "${alias}" must point to oreca-07`);
+  }
 
-  const carEuropol = getCarById('oreca-07-europol');
-  assert.equal(carEuropol.classId, CarClassId.LMP2);
-  assert.notEqual(carEuropol.id, 'ferrari-499p');
+  // Check specific livery primary colors match team identities
+  assert.equal(getCarById('oreca-07-ao-racing').defaultLivery.primaryColor, '#6A2C91');
+  assert.equal(getCarById('oreca-07-inter-europol').defaultLivery.primaryColor, '#FFD100');
+  assert.equal(getCarById('oreca-07-af-corse').defaultLivery.primaryColor, '#D52B1E');
+  assert.equal(getCarById('oreca-07-cool-racing').defaultLivery.primaryColor, '#0055B8');
+  assert.equal(getCarById('oreca-07-algarve-pro').defaultLivery.primaryColor, '#111111');
+  assert.equal(getCarById('oreca-07-united-autosports').defaultLivery.primaryColor, '#FF6B00');
 });
 
 

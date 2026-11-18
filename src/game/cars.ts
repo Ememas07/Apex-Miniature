@@ -225,11 +225,16 @@ export const REAL_WORLD_CAR_DIMENSIONS: Record<string, CarDimensions> = {
   // LMP2 (~4.75 m)
   'oreca-07': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-united': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-united-autosports': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-europol': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-inter-europol': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-ao': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-ao-racing': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-af-corse': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-cool': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-cool-racing': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-algarve': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'oreca-07-algarve-pro': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'united-autosports': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'inter-europol': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'ao-racing': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
@@ -333,7 +338,18 @@ export function getRealWorldCarDimensions(carId?: string, classId?: CarClassId):
     if (normalized.startsWith('f1-21')) return { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 };
     if (normalized.startsWith('f1-26') || normalized.startsWith('f1-')) return { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 };
     if (normalized.startsWith('fe-')) return { length: 5.02, width: 1.70, height: 1.02, wheelbase: 2.97 };
-    if (normalized.includes('oreca') || normalized.includes('ligier')) return { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 };
+    if (
+      normalized.includes('oreca') ||
+      normalized.includes('ligier') ||
+      normalized.includes('united') ||
+      normalized.includes('europol') ||
+      normalized.includes('ao-racing') ||
+      normalized.includes('corse') ||
+      normalized.includes('cool') ||
+      normalized.includes('algarve')
+    ) {
+      return { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 };
+    }
     if (normalized.includes('gt4')) return { length: 4.55, width: 1.92, height: 1.28, wheelbase: 2.65 };
     if (normalized.includes('gt3')) return { length: 4.68, width: 2.04, height: 1.25, wheelbase: 2.70 };
   }
@@ -1325,17 +1341,23 @@ const CAR_ALIASES: Record<string, { targetCarId: string; liveryPresetId?: string
   'f1_2021': { targetCarId: 'f1-21-mercedes' },
 
   // LMP2
+  'oreca-07': { targetCarId: 'oreca-07' },
   'oreca-07-united': { targetCarId: 'oreca-07', liveryPresetId: 'united-autosports' },
-  'oreca-07-europol': { targetCarId: 'oreca-07', liveryPresetId: 'inter-europol' },
-  'oreca-07-ao': { targetCarId: 'oreca-07', liveryPresetId: 'ao-racing' },
-  'oreca-07-af-corse': { targetCarId: 'oreca-07', liveryPresetId: 'af-corse' },
-  'oreca-07-cool': { targetCarId: 'oreca-07', liveryPresetId: 'cool-racing' },
-  'oreca-07-algarve': { targetCarId: 'oreca-07', liveryPresetId: 'algarve-pro' },
+  'oreca-07-united-autosports': { targetCarId: 'oreca-07', liveryPresetId: 'united-autosports' },
   'united-autosports': { targetCarId: 'oreca-07', liveryPresetId: 'united-autosports' },
+  'oreca-07-europol': { targetCarId: 'oreca-07', liveryPresetId: 'inter-europol' },
+  'oreca-07-inter-europol': { targetCarId: 'oreca-07', liveryPresetId: 'inter-europol' },
   'inter-europol': { targetCarId: 'oreca-07', liveryPresetId: 'inter-europol' },
+  'oreca-07-ao': { targetCarId: 'oreca-07', liveryPresetId: 'ao-racing' },
+  'oreca-07-ao-racing': { targetCarId: 'oreca-07', liveryPresetId: 'ao-racing' },
   'ao-racing': { targetCarId: 'oreca-07', liveryPresetId: 'ao-racing' },
+  'oreca-07-af-corse': { targetCarId: 'oreca-07', liveryPresetId: 'af-corse' },
   'af-corse': { targetCarId: 'oreca-07', liveryPresetId: 'af-corse' },
+  'oreca-07-cool': { targetCarId: 'oreca-07', liveryPresetId: 'cool-racing' },
+  'oreca-07-cool-racing': { targetCarId: 'oreca-07', liveryPresetId: 'cool-racing' },
   'cool-racing': { targetCarId: 'oreca-07', liveryPresetId: 'cool-racing' },
+  'oreca-07-algarve': { targetCarId: 'oreca-07', liveryPresetId: 'algarve-pro' },
+  'oreca-07-algarve-pro': { targetCarId: 'oreca-07', liveryPresetId: 'algarve-pro' },
   'algarve-pro': { targetCarId: 'oreca-07', liveryPresetId: 'algarve-pro' },
   'ligier-js-p217': { targetCarId: 'oreca-07', liveryPresetId: 'united-autosports' },
   'lmp2': { targetCarId: 'oreca-07' },
@@ -1370,6 +1392,41 @@ export function getCarById(id: string): CarSpec {
             defaultLivery: { ...preset.livery },
           };
         }
+      }
+      return target;
+    }
+  }
+
+  // Dynamic fallback for any Oreca 07 or LMP2 variant: never fall back to Ferrari 499P
+  if (
+    id.includes('oreca') ||
+    id.includes('lmp2') ||
+    id.includes('ligier') ||
+    id.includes('united') ||
+    id.includes('europol') ||
+    id.includes('ao-racing') ||
+    id.includes('af-corse') ||
+    id.includes('cool-racing') ||
+    id.includes('algarve')
+  ) {
+    const target = CARS.find((c) => c.id === 'oreca-07');
+    if (target && target.liveries) {
+      const clean = id.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const preset = target.liveries.find((p) => {
+        const pClean = p.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return clean.includes(pClean) || pClean.includes(clean.replace(/^oreca07/, ''));
+      });
+      if (preset) {
+        const dims = getRealWorldCarDimensions(id, target.classId);
+        return {
+          ...target,
+          id,
+          name: preset.name,
+          manufacturer: preset.team ?? target.manufacturer,
+          dimensions: dims,
+          length: dims.length,
+          defaultLivery: { ...preset.livery },
+        };
       }
       return target;
     }

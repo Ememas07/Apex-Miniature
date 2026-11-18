@@ -227,7 +227,16 @@ export function inferSoundProfileId(
   }
 
   // LMP2
-  if (classId === CarClassId.LMP2 || carId.includes('oreca') || carId.includes('ligier')) {
+  if (
+    classId === CarClassId.LMP2 ||
+    carId.includes('oreca') ||
+    carId.includes('ligier') ||
+    carId.includes('united') ||
+    carId.includes('europol') ||
+    carId.includes('ao-racing') ||
+    carId.includes('cool-racing') ||
+    carId.includes('algarve')
+  ) {
     return 'lmp2_gibson_v8';
   }
 
