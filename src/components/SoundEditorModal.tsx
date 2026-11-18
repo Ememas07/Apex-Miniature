@@ -8,13 +8,16 @@ import {
   Play,
   RotateCcw,
   Sliders,
+  Sparkles,
   Square,
+  Upload,
   Volume2,
   X,
 } from 'lucide-react';
 import {
   AcousticProfile,
   clearSoundProfileOverride,
+  computeWarmFundamentalHz,
   getBaseAcousticProfile,
   loadSoundProfileOverrides,
   resolveAcousticProfile,
@@ -23,6 +26,12 @@ import {
 } from '../game/audio';
 import { CAR_CLASSES, getCarById } from '../game/cars';
 import { SoundProfileId } from '../game/types';
+import {
+  AutoFitProgress,
+  findCleanestEngineWindow,
+  InBrowserSoundFitter,
+  ReferenceAudioWindow,
+} from '../three/audioAutoFitter';
 import { MotorsportAudioEngine } from '../three/audioEngine';
 
 interface SoundEditorModalProps {
@@ -75,6 +84,16 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
   const [manualGear, setManualGear] = useState(2);
   const [copiedJson, setCopiedJson] = useState(false);
 
+  // Reference Audio & Browser Auto-Fitter State
+  const [refWindow, setRefWindow] = useState<ReferenceAudioWindow | null>(null);
+  const [refPlaying, setRefPlaying] = useState(false);
+  const [isFitting, setIsFitting] = useState(false);
+  const [fitProgress, setFitProgress] = useState<AutoFitProgress | null>(null);
+  const [fitStatusText, setFitStatusText] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fitterRef = useRef<InBrowserSoundFitter | null>(null);
+  const refPlayingRef = useRef(false);
+
   const [telemetry, setTelemetry] = useState({
     rpm: profile.idleRpm,
     crankHz: 0,
@@ -85,6 +104,13 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     speedKmh: 65,
     rpmNorm: 0.28,
     throttle: 0.25,
+    layerLevels: {
+      combustion: 0.35,
+      intake: 0,
+      turbo: 0,
+      mgu: 0,
+      gearbox: 0,
+    },
   });
 
   const engineRef = useRef<MotorsportAudioEngine | null>(null);
@@ -239,13 +265,88 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    ensureAudioStarted();
+    const ctx = engineRef.current?.getAudioContext();
+    if (!ctx) return;
+
+    try {
+      setFitStatusText(`Reading ${file.name}...`);
+      const arrayBuffer = await file.arrayBuffer();
+      setFitStatusText('Decoding audio track via Web Audio...');
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+      setFitStatusText('Scanning for cleanest 2.0s engine pull window...');
+      const refWin = findCleanestEngineWindow(audioBuffer, file.name, 2.0);
+      setRefWindow(refWin);
+
+      await runAutoFitProcess(refWin);
+    } catch (err) {
+      console.error('Failed to decode/fit audio:', err);
+      setFitStatusText(`Audio decoding error: ${err instanceof Error ? err.message : String(err)}`);
+      window.setTimeout(() => setFitStatusText(''), 4500);
+    }
+  };
+
+  const runAutoFitProcess = async (refWin: ReferenceAudioWindow) => {
+    setIsFitting(true);
+    const fitter = new InBrowserSoundFitter();
+    fitterRef.current = fitter;
+
+    try {
+      const generator = fitter.runFitting(profileRef.current, refWin, 45);
+      let lastEstRpm = 0;
+      for await (const progress of generator) {
+        setFitProgress(progress);
+        lastEstRpm = progress.features.estimatedRpm;
+        setFitStatusText(
+          `Matching audio... Iteration ${progress.step}/${progress.totalSteps} · Loss: ${progress.loss.toFixed(3)} · Est. ${lastEstRpm} RPM`
+        );
+        profileRef.current = progress.candidate;
+        setProfile(progress.candidate);
+        saveSoundProfileOverride(progress.candidate.soundProfile, progress.candidate);
+        setHasCustomOverride(true);
+        applyLiveAudioUpdate(progress.candidate);
+
+        // Micro-delay to yield to UI thread and hear/see candidate iteration live
+        await new Promise((r) => setTimeout(r, 22));
+      }
+      setFitStatusText(`Fit complete! Est. ${lastEstRpm} RPM · Ready to audition`);
+      window.setTimeout(() => setFitStatusText(''), 4500);
+    } catch (err) {
+      console.error('Fitting error:', err);
+    } finally {
+      setIsFitting(false);
+      fitterRef.current = null;
+    }
+  };
+
+  const togglePlayReference = () => {
+    if (!refWindow || !engineRef.current) return;
+    ensureAudioStarted();
+    const engine = engineRef.current;
+    if (engine.isPlayingReference()) {
+      engine.stopReferenceAudio();
+      refPlayingRef.current = false;
+      setRefPlaying(false);
+    } else {
+      engine.playReferenceBuffer(refWindow.buffer, refWindow.startSec, refWindow.durationSec);
+      refPlayingRef.current = true;
+      setRefPlaying(true);
+    }
+  };
+
   // Live audio synthesis & spectrum visualizer RAF loop
   useEffect(() => {
     let rafId = 0;
     let lastTime = performance.now();
     let lastUiUpdate = 0;
-    const freqData = new Uint8Array(128);
-    const timeData = new Uint8Array(128);
+    const freqData = new Uint8Array(1024);
+    const timeData = new Uint8Array(1024);
 
     const tick = (now: number) => {
       const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
@@ -351,34 +452,67 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
           ctx2d.fillStyle = '#070b12';
           ctx2d.fillRect(0, 0, w, h);
 
-          // Subtle frequency grid
-          ctx2d.strokeStyle = 'rgba(148,163,184,0.08)';
+          // Logarithmic Frequency Grid & Markers (30 Hz to 8 kHz)
+          const logMin = Math.log10(30);
+          const logMax = Math.log10(8000);
+          const logRange = logMax - logMin;
+          const gridFreqs = [60, 125, 250, 500, 1000, 2000, 4000, 8000];
+
+          ctx2d.strokeStyle = 'rgba(148,163,184,0.12)';
           ctx2d.lineWidth = 1;
-          for (let gx = 1; gx < 6; gx++) {
-            const xPos = (gx / 6) * w;
+          ctx2d.fillStyle = 'rgba(148,163,184,0.45)';
+          ctx2d.font = '9px monospace';
+
+          for (const gf of gridFreqs) {
+            const gx = Math.round(((Math.log10(gf) - logMin) / logRange) * w);
             ctx2d.beginPath();
-            ctx2d.moveTo(xPos, 0);
-            ctx2d.lineTo(xPos, h);
+            ctx2d.moveTo(gx, 0);
+            ctx2d.lineTo(gx, h);
             ctx2d.stroke();
+            const label = gf < 1000 ? `${gf}` : `${gf / 1000}k`;
+            ctx2d.fillText(label, gx + 2, 10);
           }
 
+          const sampleRate = engine?.getAudioContext()?.sampleRate || 44100;
+          const binHz = sampleRate / 2048;
+
+          // Multi-layer Log-frequency Spectrum
           if (engine && s.audioRunning && engine.getAnalyserFrequencyData(freqData)) {
-            const barCount = 56;
-            const barW = w / barCount;
+            const barCount = 64;
             for (let i = 0; i < barCount; i++) {
-              const mag = freqData[i] / 255;
-              const barH = mag * (h - 10);
-              const hue = 205 - mag * 190; // cyan -> amber -> crimson
-              ctx2d.fillStyle = `hsla(${hue}, 88%, 55%, 0.78)`;
-              ctx2d.fillRect(i * barW + 1, h - barH, Math.max(1, barW - 2), barH);
+              const u1 = i / barCount;
+              const u2 = (i + 1) / barCount;
+              const f1 = Math.pow(10, logMin + u1 * logRange);
+              const f2 = Math.pow(10, logMin + u2 * logRange);
+              const k1 = Math.max(0, Math.min(1023, Math.round(f1 / binHz)));
+              const k2 = Math.max(k1, Math.min(1023, Math.round(f2 / binHz)));
+
+              let maxMag = 0;
+              for (let k = k1; k <= k2; k++) {
+                if (freqData[k] > maxMag) maxMag = freqData[k];
+              }
+
+              const norm = maxMag / 255;
+              if (norm > 0.015) {
+                const barH = norm * (h - 14);
+                const hue = 210 - norm * 195; // 210 (cyan) -> 15 (crimson/red)
+                ctx2d.fillStyle = `hsla(${hue}, 92%, 55%, 0.82)`;
+                const barX = Math.round(u1 * w);
+                const barW = Math.max(1, Math.round(w / barCount) - 1);
+                ctx2d.fillRect(barX, h - barH, barW, barH);
+              }
             }
           }
 
+          // Oscilloscope Time-Domain Waveform Overlay
           if (engine && s.audioRunning && engine.getAnalyserTimeData(timeData)) {
             ctx2d.strokeStyle = '#38bdf8';
-            ctx2d.lineWidth = 1.6;
+            ctx2d.shadowColor = '#0284c7';
+            ctx2d.shadowBlur = 4;
+            ctx2d.lineWidth = 1.8;
             ctx2d.beginPath();
-            for (let i = 0; i < timeData.length; i++) {
+            const step = Math.max(1, Math.floor(timeData.length / w));
+            for (let i = 0; i < timeData.length; i += step) {
               const x = (i / (timeData.length - 1)) * w;
               const v = (timeData[i] - 128) / 128;
               const y = h * 0.5 + v * (h * 0.42);
@@ -386,8 +520,9 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
               else ctx2d.lineTo(x, y);
             }
             ctx2d.stroke();
+            ctx2d.shadowBlur = 0;
           } else {
-            ctx2d.strokeStyle = 'rgba(56,189,248,0.28)';
+            ctx2d.strokeStyle = 'rgba(56,189,248,0.25)';
             ctx2d.lineWidth = 1.2;
             ctx2d.beginPath();
             ctx2d.moveTo(0, h * 0.5);
@@ -400,19 +535,38 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
       if (now - lastUiUpdate > 55) {
         lastUiUpdate = now;
         const t = engine?.lastTelemetry;
+        const warm = computeWarmFundamentalHz(p, s.simRpm, s.simThrottle);
+        const curRpm = t && s.audioRunning ? t.rpm : Math.round(warm.rpm);
+        const calcCrankHz = Number(warm.crankHz.toFixed(1));
+        const calcFiringHz = Number(warm.firingHz.toFixed(1));
+        const calcBaseHz = Number(warm.baseHz.toFixed(1));
+
+        const isRef = Boolean(engine?.isPlayingReference());
+        if (isRef !== refPlayingRef.current) {
+          refPlayingRef.current = isRef;
+          setRefPlaying(isRef);
+        }
+
         setTelemetry({
-          rpm:
-            t && s.audioRunning
-              ? t.rpm
-              : Math.round(p.idleRpm + s.simRpm * (p.redlineRpm - p.idleRpm)),
-          crankHz: t && s.audioRunning ? t.crankHz : 0,
-          firingHz: t && s.audioRunning ? t.firingHz : 0,
-          baseHz: t && s.audioRunning ? t.baseHz : 0,
+          rpm: curRpm,
+          crankHz: t && s.audioRunning ? t.crankHz : calcCrankHz,
+          firingHz: t && s.audioRunning ? t.firingHz : calcFiringHz,
+          baseHz: t && s.audioRunning ? t.baseHz : calcBaseHz,
           limiterActive: Boolean(t?.limiterActive && s.audioRunning),
           gear: s.simGear,
           speedKmh: Math.round(s.simSpeedKmh),
           rpmNorm: s.simRpm,
           throttle: s.simThrottle,
+          layerLevels:
+            t && s.audioRunning
+              ? t.layerLevels
+              : {
+                  combustion: Math.min(1, 0.35 + s.simThrottle * 0.45),
+                  intake: Math.min(1, (p.intakeLevel || 0) * (0.2 + s.simThrottle * 0.8)),
+                  turbo: Math.min(1, (p.turboSpoolLevel || 0) * (s.simRpm * 0.9)),
+                  mgu: Math.min(1, (p.hybridWhineLevel || 0) * (0.4 + s.simThrottle * 0.6)),
+                  gearbox: Math.min(1, (p.gearWhineLevel || 0) * Math.min(1, s.simSpeedKmh / 200)),
+                },
         });
       }
 
@@ -464,6 +618,15 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Hidden file input for Match from MP4 / Audio */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".mp4,.webm,.mov,.wav,.mp3,.ogg"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+
           <button
             type="button"
             onClick={() => {
@@ -482,6 +645,32 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
             {audioRunning ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             {audioRunning ? 'Mute Studio Audio' : 'Start Audio Engine'}
           </button>
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isFitting}
+            className="px-3 py-2 rounded-md bg-[#192438] hover:bg-[#22314d] border border-sky-400/40 text-xs font-semibold text-sky-200 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Import an onboard engine clip (.mp4, .webm, .mov, .wav) and optimize preset live"
+          >
+            <Upload className="w-3.5 h-3.5 text-sky-400" />
+            {isFitting ? 'Fitting Clip...' : 'Match from MP4 / Audio'}
+          </button>
+
+          {refWindow && (
+            <button
+              type="button"
+              onClick={togglePlayReference}
+              className={`px-3 py-2 rounded-md border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                refPlaying
+                  ? 'bg-amber-600 hover:bg-amber-500 border-amber-400 text-white'
+                  : 'bg-[#1a2333] hover:bg-[#243047] border-amber-500/40 text-amber-300'
+              }`}
+            >
+              {refPlaying ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+              {refPlaying ? 'Stop Reference Clip' : 'Play Reference Clip'}
+            </button>
+          )}
 
           <button
             type="button"
@@ -520,6 +709,29 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
           </button>
         </div>
       </header>
+
+      {fitStatusText && (
+        <div className="shrink-0 px-5 py-2 bg-sky-950/80 border-b border-sky-500/30 flex items-center justify-between text-xs text-sky-200">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
+            <span className="font-medium">{fitStatusText}</span>
+            {refWindow && (
+              <span className="text-[11px] text-sky-400/70 hidden sm:inline">
+                · {refWindow.name} ({refWindow.durationSec.toFixed(1)}s window @ {refWindow.startSec.toFixed(1)}s)
+              </span>
+            )}
+          </div>
+          {isFitting && (
+            <button
+              type="button"
+              onClick={() => fitterRef.current?.abort()}
+              className="px-2.5 py-1 rounded bg-red-600/30 hover:bg-red-600/60 border border-red-500/40 text-red-200 text-xs font-semibold cursor-pointer"
+            >
+              Cancel Fitting
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Main Content Split */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
@@ -624,6 +836,102 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                 <div className="font-telemetry text-xs font-bold text-sky-300">{telemetry.baseHz} Hz</div>
               </div>
             </div>
+
+            {/* Live Layer Level Meters */}
+            <div className="space-y-1.5 pt-1.5 border-t border-white/5">
+              <div className="flex items-center justify-between text-[10px] uppercase font-semibold text-slate-400">
+                <span>Active Layer Metering</span>
+                <span className="text-[9px] text-slate-500 font-normal">Real-Time Mix</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="p-1.5 rounded bg-[#0a0e16] border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-amber-400 font-medium">Combustion</span>
+                    <span className="text-slate-400 font-mono text-[9px]">
+                      {Math.round(telemetry.layerLevels.combustion * 100)}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 transition-all duration-75"
+                      style={{ width: `${Math.round(telemetry.layerLevels.combustion * 100)}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="p-1.5 rounded bg-[#0a0e16] border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-sky-400 font-medium">Intake Snarl</span>
+                    <span className="text-slate-400 font-mono text-[9px]">
+                      {Math.round(telemetry.layerLevels.intake * 100)}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-sky-500 transition-all duration-75"
+                      style={{ width: `${Math.round(telemetry.layerLevels.intake * 100)}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="p-1.5 rounded bg-[#0a0e16] border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-purple-400 font-medium">Turbo / MGU</span>
+                    <span className="text-slate-400 font-mono text-[9px]">
+                      {Math.round(Math.max(telemetry.layerLevels.turbo, telemetry.layerLevels.mgu) * 100)}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-purple-500 transition-all duration-75"
+                      style={{
+                        width: `${Math.round(Math.max(telemetry.layerLevels.turbo, telemetry.layerLevels.mgu) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="p-1.5 rounded bg-[#0a0e16] border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-emerald-400 font-medium">Gearbox</span>
+                    <span className="text-slate-400 font-mono text-[9px]">
+                      {Math.round(telemetry.layerLevels.gearbox * 100)}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-75"
+                      style={{ width: `${Math.round(telemetry.layerLevels.gearbox * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Reference Audio Clip Status & A/B Controls (when loaded) */}
+            {refWindow && (
+              <div className="p-2 rounded bg-sky-950/40 border border-sky-500/20 flex items-center justify-between text-xs">
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-sky-200 text-[11px] truncate max-w-[220px]">
+                    Reference: {refWindow.name}
+                  </div>
+                  <div className="text-[10px] text-sky-400/80">
+                    Window: {refWindow.startSec.toFixed(1)}s - {(refWindow.startSec + refWindow.durationSec).toFixed(1)}s ({refWindow.durationSec.toFixed(1)}s)
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={togglePlayReference}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer border transition-colors ${
+                    refPlaying
+                      ? 'bg-amber-600 border-amber-400 text-white'
+                      : 'bg-sky-600/30 hover:bg-sky-600/50 border-sky-400/40 text-sky-200'
+                  }`}
+                >
+                  {refPlaying ? 'Stop A/B' : 'Audition Reference'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Interactive Throttle Pedal / RPM Sweep / Rev-Limiter Controls */}

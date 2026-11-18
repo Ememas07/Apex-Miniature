@@ -54,6 +54,11 @@ export class MotorsportAudioEngine {
   private turboNoiseFilter: BiquadFilterNode | null = null;
   private turboSpoolGain: GainNode | null = null;
 
+  // Reference Audio Auditioning Nodes
+  private refSource: AudioBufferSourceNode | null = null;
+  private refGain: GainNode | null = null;
+  private isPlayingRef = false;
+
   // Tire scrub & kerb rumble nodes
   private scrubSource: AudioBufferSourceNode | null = null;
   private scrubFilter: BiquadFilterNode | null = null;
@@ -83,6 +88,13 @@ export class MotorsportAudioEngine {
     firingHz: 0,
     baseHz: 0,
     limiterActive: false,
+    layerLevels: {
+      combustion: 0,
+      intake: 0,
+      turbo: 0,
+      mgu: 0,
+      gearbox: 0,
+    },
   };
 
   constructor() {
@@ -130,8 +142,8 @@ export class MotorsportAudioEngine {
       this.masterGain = master;
 
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.72;
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.75;
       master.connect(analyser);
       this.analyser = analyser;
 
@@ -463,6 +475,67 @@ export class MotorsportAudioEngine {
     return true;
   }
 
+  public getAudioContext(): AudioContext | null {
+    if (!this.initialized || !this.ctx) {
+      this.init();
+    }
+    return this.ctx;
+  }
+
+  public playReferenceBuffer(buffer: AudioBuffer, offsetSec = 0, durationSec?: number): void {
+    if (!this.ctx) this.init();
+    if (!this.ctx || !this.masterGain) return;
+    this.stopReferenceAudio();
+
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0.95;
+    src.connect(gain);
+    gain.connect(this.masterGain);
+
+    src.onended = () => {
+      this.isPlayingRef = false;
+      this.refSource = null;
+      this.refGain = null;
+    };
+
+    const now = this.ctx.currentTime;
+    if (durationSec !== undefined && durationSec > 0) {
+      src.start(now, offsetSec, durationSec);
+    } else {
+      src.start(now, offsetSec);
+    }
+    this.refSource = src;
+    this.refGain = gain;
+    this.isPlayingRef = true;
+  }
+
+  public stopReferenceAudio(): void {
+    if (this.refSource) {
+      try {
+        this.refSource.stop();
+        this.refSource.disconnect();
+      } catch {}
+      this.refSource = null;
+    }
+    if (this.refGain) {
+      try {
+        this.refGain.disconnect();
+      } catch {}
+      this.refGain = null;
+    }
+    this.isPlayingRef = false;
+  }
+
+  public isPlayingReference(): boolean {
+    return this.isPlayingRef;
+  }
+
   setMuted(mute: boolean) {
     this.muted = mute;
     try {
@@ -647,7 +720,20 @@ export class MotorsportAudioEngine {
       gearGainLevel = (profile.gearWhineLevel ?? 0.14) * 0.055 * Math.min(1.0, 0.25 + (speedKmh / 240) * 0.75);
       gearWhineHz = Math.min(3600, (1200 + speedKmh * 15) * profile.gearWhinePitchScale);
       if (this.pulseLfoGain) this.pulseLfoGain.gain.setTargetAtTime(0, now, 0.02);
-      this.lastTelemetry = { rpm: Math.round(clampedRpm * 12000), crankHz: 0, firingHz: 0, baseHz: 0, limiterActive: false };
+      this.lastTelemetry = {
+        rpm: Math.round(clampedRpm * 12000),
+        crankHz: 0,
+        firingHz: 0,
+        baseHz: 0,
+        limiterActive: false,
+        layerLevels: {
+          combustion: 0,
+          intake: 0,
+          turbo: 0,
+          mgu: Math.min(1, elGainLevel * 2.5),
+          gearbox: Math.min(1, gearGainLevel * 20),
+        },
+      };
     } else {
       const { rpm, crankHz, firingHz, baseHz, subHz, midHz, highHz, filterHz } =
         computeWarmFundamentalHz(profile, clampedRpm, clampedThrottle);
@@ -770,6 +856,13 @@ export class MotorsportAudioEngine {
         firingHz: Number(firingHz.toFixed(1)),
         baseHz: Number(baseHz.toFixed(1)),
         limiterActive,
+        layerLevels: {
+          combustion: Math.min(1, combGainLevel / 0.65),
+          intake: Math.min(1, intakeGainLevel / 0.35),
+          turbo: Math.min(1, turboGainLevel * 25),
+          mgu: Math.min(1, elGainLevel * 25),
+          gearbox: Math.min(1, gearGainLevel * 22),
+        },
       };
     }
 
@@ -934,6 +1027,7 @@ export class MotorsportAudioEngine {
 
   dispose() {
     try {
+      this.stopReferenceAudio();
       this.oscCombustion?.stop();
       this.oscHarmonic?.stop();
       this.oscSub?.stop();
