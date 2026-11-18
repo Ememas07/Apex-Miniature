@@ -2598,25 +2598,23 @@ export function buildDiecastCar(
       return zQuery <= hullStations[0].z ? hullStations[0] : hullStations[hullStations.length - 1];
     };
 
-    // Dark inner wheel-arch backing tub strictly inboard of tire inner wall (zero fender poke!)
-    const linerRadius = wheelRadius + 0.032;
-    const linerWidth = 0.04;
-    const linerGeo = track(new THREE.CylinderGeometry(linerRadius, linerRadius, linerWidth, 18, 1, false, 0, Math.PI));
-    linerGeo.rotateZ(Math.PI / 2);
+    // Dark recessed wheel-arch inner backing disc strictly inboard of tire (never pokes through sloped hood)
+    const backingGeo = track(new THREE.CircleGeometry(wheelRadius * 0.92, 18));
     const linerBackMat = track(
       new THREE.MeshStandardMaterial({
         color: 0x0b0d12,
-        roughness: 0.92,
-        metalness: 0.05,
+        roughness: 0.94,
+        metalness: 0.04,
         side: THREE.DoubleSide,
       }),
     );
-    const linerCenterX = Math.max(0.40, trackHalfX - wheelWidth * 0.5 - 0.02);
+    const linerCenterX = Math.max(0.40, trackHalfX - wheelWidth * 0.5 - 0.018);
     for (const sz of [-wheelBaseZ, wheelBaseZ]) {
       for (const side of [-1, 1]) {
-        const liner = new THREE.Mesh(linerGeo, linerBackMat);
-        liner.position.set(side * linerCenterX, wheelRadius, sz);
-        bodyGroup.add(liner);
+        const backing = new THREE.Mesh(backingGeo, linerBackMat);
+        backing.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+        backing.position.set(side * linerCenterX, wheelRadius, sz);
+        bodyGroup.add(backing);
       }
     }
 
@@ -3103,13 +3101,17 @@ export function buildDiecastCar(
 
     // 10. Flush Door Number Plates (integrated directly onto UV canvas via procedural textures)
 
-    // 11. Flush Sculpted Headlights & Rear LED Light Bar (recessed into front/rear fender fascia)
+    // 11. Flush Sculpted Headlights & Rear LED Light Bar (recessed into front/rear fender fascia with dark housing bezel)
     const hlSample = sampleHullAtZ(bodyLen * 0.455);
     const hlZ = bodyLen * 0.468;
     const hlBaseX = Math.min(0.64, hlSample.wBelt * 0.72);
     [-hlBaseX, hlBaseX].forEach((hx, idx) => {
       if (design.headlightStyle === 'bentley-quad') {
         for (const [xMul, rad, yOff] of [[1.04, 0.095, 0.04], [0.70, 0.072, 0.02]] as const) {
+          const bezel = new THREE.Mesh(track(new THREE.CylinderGeometry(rad * 1.15, rad * 1.15, 0.04, 14)), matteTrimMat);
+          bezel.rotation.x = Math.PI / 2 - 0.16;
+          bezel.position.set(hx * xMul, hlSample.yBelt * 0.88 + yOff, hlZ - 0.016);
+          bodyGroup.add(bezel);
           const lamp = new THREE.Mesh(track(new THREE.CylinderGeometry(rad, rad, 0.05, 14)), headlightMats[idx]);
           lamp.rotation.x = Math.PI / 2 - 0.16;
           lamp.position.set(hx * xMul, hlSample.yBelt * 0.88 + yOff, hlZ - 0.01);
@@ -3130,18 +3132,31 @@ export function buildDiecastCar(
         hl.rotation.x = -0.16;
         bodyGroup.add(hl);
       } else if (design.headlightStyle === 'round-911') {
-        const hl = new THREE.Mesh(track(new THREE.CylinderGeometry(0.115, 0.115, 0.05, 16)), headlightMats[idx]);
+        const bezel = new THREE.Mesh(track(new THREE.CylinderGeometry(0.132, 0.132, 0.04, 16)), matteTrimMat);
+        bezel.rotation.x = Math.PI / 2 - 0.34;
+        bezel.position.set(hx * 1.00, hlSample.yBelt * 0.96, hlZ - 0.036);
+        bodyGroup.add(bezel);
+        const hl = new THREE.Mesh(track(new THREE.CylinderGeometry(0.112, 0.112, 0.05, 16)), headlightMats[idx]);
         hl.rotation.x = Math.PI / 2 - 0.34;
         hl.position.set(hx * 1.00, hlSample.yBelt * 0.96, hlZ - 0.03);
         bodyGroup.add(hl);
       } else if (design.headlightStyle === 'fang') {
-        const hl = new THREE.Mesh(track(new THREE.BoxGeometry(0.25, 0.065, 0.05)), headlightMats[idx]);
+        const bezel = new THREE.Mesh(track(new THREE.BoxGeometry(0.28, 0.085, 0.04)), matteTrimMat);
+        bezel.position.set(hx, hlSample.yBelt * 0.88, hlZ - 0.008);
+        bezel.rotation.z = hx < 0 ? 0.22 : -0.22;
+        bezel.rotation.y = hx < 0 ? -0.16 : 0.16;
+        bodyGroup.add(bezel);
+        const hl = new THREE.Mesh(track(new THREE.BoxGeometry(0.25, 0.06, 0.05)), headlightMats[idx]);
         hl.position.set(hx, hlSample.yBelt * 0.88, hlZ);
         hl.rotation.z = hx < 0 ? 0.22 : -0.22;
         hl.rotation.y = hx < 0 ? -0.16 : 0.16;
         bodyGroup.add(hl);
       } else {
-        const hl = new THREE.Mesh(track(new THREE.BoxGeometry(0.25, 0.065, 0.05)), headlightMats[idx]);
+        const bezel = new THREE.Mesh(track(new THREE.BoxGeometry(0.28, 0.085, 0.04)), matteTrimMat);
+        bezel.position.set(hx, hlSample.yBelt * 0.88, hlZ - 0.008);
+        bezel.rotation.y = hx < 0 ? -0.16 : 0.16;
+        bodyGroup.add(bezel);
+        const hl = new THREE.Mesh(track(new THREE.BoxGeometry(0.25, 0.06, 0.05)), headlightMats[idx]);
         hl.position.set(hx, hlSample.yBelt * 0.88, hlZ);
         hl.rotation.y = hx < 0 ? -0.16 : 0.16;
         bodyGroup.add(hl);

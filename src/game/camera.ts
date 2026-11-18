@@ -67,10 +67,10 @@ export function computeCameraFrame(
     const posY = car.y + fwdY * fwdDist + upY * upDist;
     const posZ = car.z + fwdZ * fwdDist + upZ * upDist;
 
-    // Look forward along heading (25m ahead)
+    // Look forward along heading with slight driver sightline pitch so front nose/fenders frame bottom ~15-20%
     const lookDist = 25.0;
     const lookX = posX + fwdX * lookDist;
-    const lookY = posY + fwdY * lookDist;
+    const lookY = posY + fwdY * lookDist - upY * 4.5;
     const lookZ = posZ + fwdZ * lookDist;
 
     return {

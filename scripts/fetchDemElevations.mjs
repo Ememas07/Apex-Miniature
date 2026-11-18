@@ -27,7 +27,7 @@ export const CIRCUIT_GEO = {
 
   // North & South America
   "daytona-road":      { lat: 29.1856, lon: -81.0705, rotDeg: 165 },
-  "laguna-seca":       { lat: 36.5842, lon: -121.7533, rotDeg: 90 },
+  "laguna-seca":       { lat: 36.5842, lon: -121.7533, rotDeg: 55 },
   "cota":              { lat: 30.1345, lon: -97.6360, rotDeg: 315 },
   "sebring":           { lat: 27.4547, lon: -81.3483, rotDeg: 0 },
   "long-beach":        { lat: 33.7652, lon: -118.1893, rotDeg: 0 },
@@ -216,7 +216,11 @@ async function fetchElevationBatch(lats, lons) {
             return data.elevation;
           }
         }
-        if (res.status === 429 || res.status >= 500) {
+        if (res.status === 429) {
+          openMeteoDisabled = true;
+          break;
+        }
+        if (res.status >= 500) {
           await new Promise((r) => setTimeout(r, attempt * 1800));
           continue;
         }
@@ -325,20 +329,24 @@ async function main() {
     }
 
     // Post-processing:
-    // A. Overpass Bridge clearance preservation on suzuka figure-8 (+10.5m cosine bridge deck over t=0.51..0.71)
+    // A. Overpass Bridge clearance preservation on suzuka figure-8:
+    // Underpass occurs at t ≈ 0.400 (idx ~80), Overpass deck crosses at t ≈ 0.808 (idx ~162).
     let elevs = [...rawElevations];
     if (trackId === 'suzuka') {
+      const underpassY = elevs[Math.round(0.40 * elevs.length)] ?? elevs[80];
+      const bridgeBaseY = elevs[Math.round(0.808 * elevs.length)] ?? elevs[162];
+      const targetBoost = Math.max(11.0, underpassY + 10.5 - bridgeBaseY);
       for (let i = 0; i < 200; i++) {
         const t = i / 200;
         let boost = 0;
-        if (t >= 0.57 && t <= 0.65) {
-          boost = 10.5;
-        } else if (t >= 0.51 && t < 0.57) {
-          const u = (t - 0.51) / 0.06;
-          boost = (1 - Math.cos(u * Math.PI)) * 0.5 * 10.5;
-        } else if (t > 0.65 && t <= 0.71) {
-          const u = (t - 0.65) / 0.06;
-          boost = (1 + Math.cos(u * Math.PI)) * 0.5 * 10.5;
+        if (t >= 0.785 && t <= 0.830) {
+          boost = targetBoost;
+        } else if (t >= 0.750 && t < 0.785) {
+          const u = (t - 0.750) / 0.035;
+          boost = (1 - Math.cos(u * Math.PI)) * 0.5 * targetBoost;
+        } else if (t > 0.830 && t <= 0.865) {
+          const u = (t - 0.830) / 0.035;
+          boost = (1 + Math.cos(u * Math.PI)) * 0.5 * targetBoost;
         }
         elevs[i] += boost;
       }
@@ -350,6 +358,29 @@ async function main() {
     // C. Normalize to Start/Finish Datum: elevations[0] = 0.0m
     const base0 = smoothed[0];
     const normalized = smoothed.map((e) => Math.round((e - base0) * 10) / 10);
+
+    // D. Calibrate Spa La Source -> Eau Rouge -> Raidillon -> Kemmel (idx 0..50) where 30m DEM averages ravine walls
+    if (trackId === 'spa-francorchamps') {
+      const target50 = normalized[50];
+      for (let i = 0; i <= 16; i++) {
+        const u = i / 16;
+        const y = -25.5 * u - 4.5 * Math.sin(u * Math.PI);
+        normalized[i] = Math.round(y * 10) / 10;
+      }
+      normalized[0] = 0.0;
+      normalized[7] = -13.5;
+      normalized[16] = -25.5;
+      for (let i = 16; i <= 29; i++) {
+        const u = (i - 16) / (29 - 16);
+        const s = u * u * (3 - 2 * u);
+        normalized[i] = Math.round((-25.5 + (56.0 - -25.5) * s) * 10) / 10;
+      }
+      for (let i = 29; i <= 50; i++) {
+        const u = (i - 29) / (50 - 29);
+        const s = u * u * (3 - 2 * u);
+        normalized[i] = Math.round((56.0 + (target50 - 56.0) * s) * 10) / 10;
+      }
+    }
 
     DEM_ELEVATIONS[trackId] = normalized;
   }

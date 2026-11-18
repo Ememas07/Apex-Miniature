@@ -29,12 +29,12 @@ const DEFAULT_TRIS = 12000;
 const DEFAULT_WELD_EPSILON = 1e-4;
 const LEGACY_TARGET_LENGTH = 3.75;
 const DEFAULT_CREASE_ANGLE = 42;
-const DEFAULT_MAX_ERROR = 0.025;
+const DEFAULT_MAX_ERROR = 0.012;
 
 const STRIP_HELPER_RE =
-  /(?:^|[_\-\s.])(COCKPIT|STEER|DRIVER|SHADOW|COLLIDER|BLUR|DAMAGE|LOD_?[BCD]|INT|CABIN|INTERIOR|SEAT|ROLLCAGE|DASH|ELECTRONICS|GAUGE|BUTTONS|PEDAL|HELMET|OCCLUSION)(?:$|[_\-\s.\d])/i;
+  /(?:^|[_\-\s.])(COCKPIT|STEER(?:ING)?|DRIVER|SHADOW|COLLIDER|COLLISION|COL|PHYS(?:ICS)?|HITBOX|BLUR(?:RED)?|DAMAGE(?:D)?|DMG|LOD_?(?:[BCD]|[1-9])|INT|CABIN|INTERIOR|SEAT|ROLLCAGE|DASH|ELECTRONICS|GAUGE|BUTTONS|PEDAL|HELMET|OCCLUSION)(?:$|[_\-\s.\d])/i;
 const STRIP_MAT_RE =
-  /(?:^|[_\-\s.])(INT|COCKPIT|STEER|SEAT|ROLLCAGE|DASH|ELECTRONICS|DISPLAY|GAUGE|BUTTONS|PEDAL|HELMET|OCCLUSION)(?:$|[_\-\s.\d])/i;
+  /(?:^|[_\-\s.])(INT|COCKPIT|STEER(?:ING)?|SEAT|ROLLCAGE|DASH|ELECTRONICS|DISPLAY|GAUGE|BUTTONS|PEDAL|HELMET|OCCLUSION|DAMAGE(?:D)?|DMG|BLUR(?:RED)?)(?:$|[_\-\s.\d])/i;
 const LEGACY_GLASS_RE =
   /(?:^|[_\-\s.])(GLASS|WINDSHIELD|WINDSCREEN|WINDOW|WINDOWS|GLAZING|CANOPY_GLASS)(?:$|[_\-\s.\d])/i;
 const GLASS_NAME_RE =
@@ -70,6 +70,9 @@ export const REAL_WORLD_CAR_DIMENSIONS = {
   'oreca-07-united': 4.75,
   'oreca-07-europol': 4.75,
   'oreca-07-ao': 4.75,
+  'oreca-07-af-corse': 4.75,
+  'oreca-07-cool': 4.75,
+  'oreca-07-algarve': 4.75,
   'ligier-js-p217': 4.75,
 
   // GT3 (~4.55 - 4.78 m)
@@ -139,6 +142,12 @@ export const REAL_WORLD_CAR_DIMENSIONS = {
   'f1-21-redbull': 5.63,
   'f1-21-ferrari': 5.63,
   'f1-21-mclaren': 5.63,
+  'f1-21-alpine': 5.63,
+  'f1-21-alphatauri': 5.63,
+  'f1-21-aston': 5.63,
+  'f1-21-williams': 5.63,
+  'f1-21-alfa': 5.63,
+  'f1-21-haas': 5.63,
   'f1-05-renault': 4.65,
   'f1-05-mclaren': 4.65,
   'f1-05-ferrari': 4.65,
@@ -656,20 +665,23 @@ function parseKn5File(kn5Path, opts) {
       keptGroups.set(groupName, list);
     }
 
+    const maxV = meshVerts.length / 3;
+    const maxVT = meshUVs.length / 2;
     const flipWinding = mat4Det3(worldMat) < 0;
     for (let i = 0; i < meshIndices.length; i += 3) {
       const i0 = meshIndices[i];
       const i1 = flipWinding ? meshIndices[i + 2] : meshIndices[i + 1];
       const i2 = flipWinding ? meshIndices[i + 1] : meshIndices[i + 2];
+      if (i0 >= maxV || i1 >= maxV || i2 >= maxV) continue;
       if (i0 === i1 || i1 === i2 || i2 === i0) continue;
 
       list.push({
         v0: baseV + i0,
         v1: baseV + i1,
         v2: baseV + i2,
-        vt0: baseVT + i0,
-        vt1: baseVT + i1,
-        vt2: baseVT + i2,
+        vt0: i0 < maxVT ? baseVT + i0 : -1,
+        vt1: i1 < maxVT ? baseVT + i1 : -1,
+        vt2: i2 < maxVT ? baseVT + i2 : -1,
         material: matName,
       });
     }
@@ -1461,6 +1473,21 @@ function filterDegenerateTris(indices, positions) {
   return new Uint32Array(out);
 }
 
+const SKIP_DECIMATION_TRIM_MAT_RE =
+  /(?:trim|caliper|mirror|window|frame|gasket|rubber|chrome|grille|mesh|badge|logo|emblem|light|lamp|lens|exhaust|carbon|door|wing|splitter|diffuser|brake|disc|hub|lug|bolt|nut)/i;
+
+function shouldSkipDecimation(submesh, opts = {}) {
+  if (opts.legacy || opts.ratio !== null && opts.ratio !== undefined) return false;
+  const inTris = submesh.inTris ?? (submesh.welded?.indices?.length ?? submesh.indices?.length ?? 0) / 3;
+  const g = (submesh.groupName || '').toUpperCase();
+  const mat = (submesh.material || '');
+  if (inTris <= 350) return true;
+  if (g.startsWith('WHEEL_') && inTris <= 900) return true;
+  if (g === 'GLASS' && inTris <= 600) return true;
+  if (SKIP_DECIMATION_TRIM_MAT_RE.test(mat) && inTris <= 700) return true;
+  return false;
+}
+
 function simplifySubmesh(submesh, targetTris, opts = {}) {
   if (targetTris <= 0) return new Uint32Array(0);
   const inTris = submesh.indices.length / 3;
@@ -1475,7 +1502,7 @@ function simplifySubmesh(submesh, targetTris, opts = {}) {
 
   const errorSteps = legacy
     ? [0.01, 0.02, 0.03, 0.05, 0.08]
-    : [0.002, 0.005, 0.01, 0.018, 0.025].filter((e) => e <= maxErr + 1e-9);
+    : [0.001, 0.0025, 0.005, 0.008, 0.012].filter((e) => e <= maxErr + 1e-9);
   if (errorSteps.length === 0) errorSteps.push(maxErr);
 
   // Progressive simplification with conservative error thresholds & LockBorder
@@ -1501,44 +1528,56 @@ function simplifySubmesh(submesh, targetTris, opts = {}) {
   return filterDegenerateTris(bestIndices, submesh.positions);
 }
 
-function allocateBudgets(submeshes, totalTargetTris) {
+function allocateBudgets(submeshes, totalTargetTris, opts = {}) {
   const totalInTris = submeshes.reduce((s, m) => s + m.inTris, 0);
   if (totalInTris === 0) return submeshes.map(() => 0);
   if (totalTargetTris >= totalInTris) return submeshes.map((m) => m.inTris);
 
-  const targets = submeshes.map((m) => {
-    const prop = Math.round((m.inTris / totalInTris) * totalTargetTris);
+  const locked = submeshes.map((m) => shouldSkipDecimation(m, opts));
+  let lockedTris = 0;
+  let decimatableInTris = 0;
+  for (let i = 0; i < submeshes.length; i++) {
+    if (locked[i]) lockedTris += submeshes[i].inTris;
+    else decimatableInTris += submeshes[i].inTris;
+  }
+
+  const remainingTarget = Math.max(0, totalTargetTris - lockedTris);
+  const targets = submeshes.map((m, idx) => {
+    if (locked[idx]) return m.inTris;
+    if (decimatableInTris === 0) return m.inTris;
+    const prop = Math.round((m.inTris / decimatableInTris) * remainingTarget);
     const g = (m.groupName || '').toUpperCase();
     const mat = (m.material || '').toUpperCase();
 
     let floor = 0;
     if (g.startsWith('WHEEL_')) {
       if (mat.includes('TYRE') || mat.includes('TIRE')) {
-        floor = Math.min(m.inTris, Math.max(180, Math.floor(totalTargetTris * 0.02)));
+        floor = Math.min(m.inTris, Math.max(360, Math.floor(totalTargetTris * 0.03)));
       } else if (mat.includes('RIM') || mat.includes('WHEEL')) {
-        floor = Math.min(m.inTris, Math.max(180, Math.floor(totalTargetTris * 0.02)));
+        floor = Math.min(m.inTris, Math.max(360, Math.floor(totalTargetTris * 0.03)));
       } else {
-        floor = Math.min(m.inTris, Math.max(40, Math.floor(totalTargetTris * 0.005)));
+        floor = Math.min(m.inTris, Math.max(120, Math.floor(totalTargetTris * 0.01)));
       }
     } else if (g === 'BODY') {
       if (mat.includes('CARPAINT') || mat.includes('BODY') || mat.includes('CHASSIS') || mat.includes('SKIN')) {
-        floor = Math.min(m.inTris, Math.max(1800, Math.floor(totalTargetTris * 0.35)));
+        floor = Math.min(m.inTris, Math.max(2000, Math.floor(totalTargetTris * 0.35)));
       } else {
-        floor = Math.min(m.inTris, Math.max(30, Math.floor(totalTargetTris * 0.005)));
+        floor = Math.min(m.inTris, Math.max(120, Math.floor(totalTargetTris * 0.01)));
       }
     } else if (g === 'AERO_WING') {
-      floor = Math.min(m.inTris, Math.max(80, Math.floor(totalTargetTris * 0.015)));
+      floor = Math.min(m.inTris, Math.max(150, Math.floor(totalTargetTris * 0.015)));
     } else if (g === 'GLASS') {
-      floor = Math.min(m.inTris, Math.max(80, Math.floor(totalTargetTris * 0.015)));
+      floor = Math.min(m.inTris, Math.max(120, Math.floor(totalTargetTris * 0.015)));
     }
 
     return Math.min(m.inTris, Math.max(floor, prop));
   });
 
-  // Adjust delta on largest submeshes to match totalTargetTris closely
+  // Adjust delta on largest decimatable submeshes without shrinking locked small/dense parts
   let diff = targets.reduce((s, v) => s + v, 0) - totalTargetTris;
   const order = submeshes
-    .map((m, idx) => ({ idx, inTris: m.inTris, groupName: m.groupName, material: m.material }))
+    .map((m, idx) => ({ idx, inTris: m.inTris, groupName: m.groupName, material: m.material, locked: locked[idx] }))
+    .filter((item) => !item.locked)
     .sort((a, b) => b.inTris - a.inTris);
 
   let guard = 0;
@@ -1548,7 +1587,7 @@ function allocateBudgets(submeshes, totalTargetTris) {
       if (diff === 0) break;
       const idx = item.idx;
       const isTyreOrRim = item.groupName.startsWith('WHEEL_') && /(TYRE|TIRE|RIM)/i.test(item.material);
-      const minFloor = isTyreOrRim ? 150 : 20;
+      const minFloor = isTyreOrRim ? 300 : 100;
       if (diff > 0 && targets[idx] > minFloor) {
         targets[idx]--;
         diff--;
@@ -2155,7 +2194,7 @@ export function convertCarFile(inputPath, outputDir, opts = {}) {
       ? Math.max(1, Math.round(totalKeptInTris * fullOpts.ratio))
       : Math.min(totalKeptInTris, fullOpts.tris);
 
-  const budgets = allocateBudgets(submeshes, targetTotalTris);
+  const budgets = allocateBudgets(submeshes, targetTotalTris, fullOpts);
 
   const groupedOut = new Map();
   const wheelGroupsSeen = new Set();

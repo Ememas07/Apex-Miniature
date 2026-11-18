@@ -445,7 +445,7 @@ export function RaceHUD({
             ) : hud.aeroDamage > 4 ? (
               <span className="text-amber-300 font-semibold">Aero {hud.aeroDamage}% dmg</span>
             ) : (
-              <span>
+              <span data-testid="hud-camera-label">
                 Cam:{' '}
                 {hud.cameraMode === 'hood'
                   ? 'Hood'

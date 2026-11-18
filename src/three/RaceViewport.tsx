@@ -153,7 +153,7 @@ export function RaceViewport(props: RaceViewportProps) {
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
 
-    const camera = new THREE.PerspectiveCamera(52, w / h, 0.4, 950);
+    const camera = new THREE.PerspectiveCamera(52, w / h, 0.12, 950);
 
     // Warm Sun + Cool Sky Hemisphere Fill
     const hemi = new THREE.HemisphereLight(0xbbe1ff, 0x2f3b2f, 0.78);
