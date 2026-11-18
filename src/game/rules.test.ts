@@ -6,6 +6,7 @@ import {
   CARS,
   CAR_CLASSES,
   computeBoPEquilibriumScore,
+  getAllSelectableCars,
   getCarById,
   getCarsByClass,
   resolveCarSpecial,
@@ -1815,6 +1816,40 @@ test('MultiplayerClient queues outbound messages until WebSocket is OPEN', async
   assert.equal(sentMsg.type, 'room:join');
   assert.equal(sentMsg.code, 'ABC12');
 });
+
+test('Oreca 07 is selectable in LMP2 and resolves to Oreca 07 (never Ferrari 499P)', () => {
+  const selectableCars = getAllSelectableCars();
+  const orecaEntries = selectableCars.filter(
+    (c) => c.classId === CarClassId.LMP2 && (c.id.includes('oreca') || c.name.includes('Oreca')),
+  );
+  assert.ok(orecaEntries.length >= 7, `Expected at least 7 selectable Oreca entries, got ${orecaEntries.length}`);
+
+  // Base Oreca 07 entry exists
+  const baseOreca = selectableCars.find((c) => c.id === 'oreca-07');
+  assert.ok(baseOreca, 'Base oreca-07 must be selectable in car catalog');
+  assert.equal(baseOreca.name, 'Oreca 07 Gibson');
+  assert.equal(baseOreca.classId, CarClassId.LMP2);
+  assert.equal(baseOreca.modelId, 'oreca-07');
+
+  // getCarById never falls back to 499P for Oreca IDs or aliases
+  const carBase = getCarById('oreca-07');
+  assert.equal(carBase.id, 'oreca-07');
+  assert.notEqual(carBase.id, 'ferrari-499p');
+
+  const carUnited = getCarById('united-autosports');
+  assert.equal(carUnited.classId, CarClassId.LMP2);
+  assert.notEqual(carUnited.id, 'ferrari-499p');
+
+  const carAo = getCarById('oreca-07-ao');
+  assert.equal(carAo.classId, CarClassId.LMP2);
+  assert.equal(carAo.defaultLivery.primaryColor, '#6A2C91');
+  assert.notEqual(carAo.id, 'ferrari-499p');
+
+  const carEuropol = getCarById('oreca-07-europol');
+  assert.equal(carEuropol.classId, CarClassId.LMP2);
+  assert.notEqual(carEuropol.id, 'ferrari-499p');
+});
+
 
 
 

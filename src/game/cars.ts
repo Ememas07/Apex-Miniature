@@ -230,6 +230,12 @@ export const REAL_WORLD_CAR_DIMENSIONS: Record<string, CarDimensions> = {
   'oreca-07-af-corse': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-cool': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'oreca-07-algarve': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'united-autosports': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'inter-europol': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'ao-racing': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'af-corse': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'cool-racing': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
+  'algarve-pro': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.005 },
   'ligier-js-p217': { length: 4.75, width: 1.99, height: 1.05, wheelbase: 3.01 },
 
   // GTD Pro / LMGT3 (~4.55 - 4.78 m)
@@ -520,7 +526,7 @@ export const CARS: CarSpec[] = [
     manufacturer: 'Oreca',
     classId: CarClassId.LMP2,
     silhouette: 'lmp2',
-    modelId: 'oreca-07-united',
+    modelId: 'oreca-07',
     attributes: { topSpeed: 81, acceleration: 81, corneringGrip: 82, braking: 82, efficiency: 84 },
     tradeoffNote: 'Spec benchmark LMP2 prototype with naturally aspirated 4.2L Gibson V8 and versatile aero configuration.',
     engineType: 'v8-hybrid',
@@ -530,37 +536,37 @@ export const CARS: CarSpec[] = [
     liveries: [
       {
         id: 'united-autosports',
-        name: 'United Autosports',
+        name: 'Oreca 07 — United Autosports',
         team: 'United Autosports',
         livery: makeLivery('#FF6B00', '#0052A5', '#111111', '22', { template: 'two-tone', rimFinish: 'gloss-black' }),
       },
       {
         id: 'inter-europol',
-        name: 'Inter Europol Competition',
+        name: 'Oreca 07 — Inter Europol Competition',
         team: 'Inter Europol Competition',
         livery: makeLivery('#FFD100', '#00843D', '#FFFFFF', '34', { template: 'geometric', rimFinish: 'silver' }),
       },
       {
         id: 'ao-racing',
-        name: 'AO Racing "Spike"',
+        name: 'Oreca 07 — AO Racing "Spike"',
         team: 'AO Racing',
         livery: makeLivery('#6A2C91', '#FF6A00', '#111111', '99', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
       },
       {
         id: 'af-corse',
-        name: 'AF Corse',
+        name: 'Oreca 07 — AF Corse',
         team: 'AF Corse',
         livery: makeLivery('#D52B1E', '#FFFFFF', '#C0C0C0', '83', { template: 'racing-stripes', rimFinish: 'silver' }),
       },
       {
         id: 'cool-racing',
-        name: 'COOL Racing',
+        name: 'Oreca 07 — COOL Racing',
         team: 'COOL Racing',
         livery: makeLivery('#0055B8', '#FFFFFF', '#111111', '37', { template: 'geometric', rimFinish: 'white' }),
       },
       {
         id: 'algarve-pro',
-        name: 'Algarve Pro Racing',
+        name: 'Oreca 07 — Algarve Pro Racing',
         team: 'Algarve Pro Racing',
         livery: makeLivery('#111111', '#FF6600', '#FFFFFF', '25', { template: 'two-tone', rimFinish: 'gloss-black' }),
       },
@@ -1325,8 +1331,15 @@ const CAR_ALIASES: Record<string, { targetCarId: string; liveryPresetId?: string
   'oreca-07-af-corse': { targetCarId: 'oreca-07', liveryPresetId: 'af-corse' },
   'oreca-07-cool': { targetCarId: 'oreca-07', liveryPresetId: 'cool-racing' },
   'oreca-07-algarve': { targetCarId: 'oreca-07', liveryPresetId: 'algarve-pro' },
+  'united-autosports': { targetCarId: 'oreca-07', liveryPresetId: 'united-autosports' },
+  'inter-europol': { targetCarId: 'oreca-07', liveryPresetId: 'inter-europol' },
+  'ao-racing': { targetCarId: 'oreca-07', liveryPresetId: 'ao-racing' },
+  'af-corse': { targetCarId: 'oreca-07', liveryPresetId: 'af-corse' },
+  'cool-racing': { targetCarId: 'oreca-07', liveryPresetId: 'cool-racing' },
+  'algarve-pro': { targetCarId: 'oreca-07', liveryPresetId: 'algarve-pro' },
   'ligier-js-p217': { targetCarId: 'oreca-07', liveryPresetId: 'united-autosports' },
   'lmp2': { targetCarId: 'oreca-07' },
+  'oreca': { targetCarId: 'oreca-07' },
 };
 
 export function getCarById(id: string): CarSpec {
@@ -1338,7 +1351,13 @@ export function getCarById(id: string): CarSpec {
     const target = CARS.find((c) => c.id === alias.targetCarId);
     if (target) {
       if (alias.liveryPresetId && target.liveries) {
-        const preset = target.liveries.find((p) => p.id === alias.liveryPresetId);
+        const presetId = alias.liveryPresetId;
+        const preset = target.liveries.find(
+          (p) =>
+            p.id === presetId ||
+            p.id === `oreca-07-${presetId}` ||
+            p.id.endsWith(presetId),
+        );
         if (preset) {
           const dims = getRealWorldCarDimensions(id, target.classId);
           return {
@@ -1367,7 +1386,24 @@ export function getCarById(id: string): CarSpec {
 export function getAllSelectableCars(): CarSpec[] {
   const result: CarSpec[] = [];
   for (const car of CARS) {
-    if (car.liveries && car.liveries.length > 1) {
+    if (car.id === 'oreca-07') {
+      result.push(car);
+      if (car.liveries) {
+        for (const preset of car.liveries) {
+          const aliasId = `oreca-07-${preset.id.replace(/^oreca-07-/, '')}`;
+          const dims = getRealWorldCarDimensions(aliasId, car.classId);
+          result.push({
+            ...car,
+            id: aliasId,
+            name: preset.name.includes('Oreca') ? preset.name : `Oreca 07 — ${preset.name}`,
+            manufacturer: preset.team ?? car.manufacturer,
+            dimensions: dims,
+            length: dims.length,
+            defaultLivery: { ...preset.livery },
+          });
+        }
+      }
+    } else if (car.liveries && car.liveries.length > 1) {
       for (const preset of car.liveries) {
         const dims = getRealWorldCarDimensions(preset.id, car.classId);
         result.push({
