@@ -9,6 +9,7 @@ import {
   Flag,
   LogOut,
   Search,
+  Shuffle,
   Sun,
   Users,
   X,
@@ -22,6 +23,7 @@ import {
 } from '../game/cars';
 import { getSavedCustomTracks } from '../game/customTracks';
 import { ConnectionMode } from '../game/multiplayer';
+import { generateRandomScenario } from '../game/randomScenario';
 import { TRACKS, compileTrack, filterTracks, getTrackById } from '../game/tracks';
 import {
   CarClassId,
@@ -208,6 +210,40 @@ export function MultiplayerModal({
     setTimeout(() => setCopiedCode(false), 1800);
   };
 
+  const handleRandomScenario = () => {
+    if (room && !isHost) {
+      // Guest inside lobby: randomize own car within room classes without altering host settings
+      const matchingCars = allSelectableCars.filter((c) => config.activeClasses.includes(c.classId));
+      const pool = matchingCars.length > 0 ? matchingCars : allSelectableCars;
+      const picked = pool[Math.floor(Math.random() * pool.length)];
+      handleSelectCarInLobby(picked.id);
+      return;
+    }
+
+    const scenario = generateRandomScenario(
+      TRACKS,
+      customTracks,
+      allSelectableCars,
+      config.playerLivery.driverNumber,
+    );
+    onUpdateConfig({
+      activeClasses: scenario.activeClasses,
+      trackId: scenario.track.id,
+      customTrack: scenario.isCustomTrack ? scenario.track : undefined,
+      playerCarId: scenario.car.id,
+      playerLivery: scenario.livery,
+    });
+    if (room) {
+      onUpdatePeer?.({
+        carId: scenario.car.id,
+        classId: scenario.car.classId,
+        livery: scenario.livery,
+      });
+    }
+    setTrackSearch('');
+    setRegionFilter('All');
+  };
+
   const renderConnectionBadge = () => {
     if (connectionMode === 'server') {
       return (
@@ -289,6 +325,20 @@ export function MultiplayerModal({
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            data-testid="btn-mp-random-scenario"
+            onClick={handleRandomScenario}
+            title={
+              room && !isHost
+                ? 'Pick a random car from the lobby classes'
+                : 'Prepare a random track, class mix, and car without starting'
+            }
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-md bg-[#161b24] hover:bg-[#1f2736] border border-white/15 text-xs font-display font-bold text-slate-100 tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <Shuffle className="w-3.5 h-3.5 text-amber-400" />
+            {room && !isHost ? 'Random Car' : 'Random'}
+          </button>
           {room && isHost && (
             <button
               type="button"

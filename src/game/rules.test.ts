@@ -1243,84 +1243,109 @@ test('Authentic Transmission Gearing & Powertrains per Class: F1, GTP, LMP2, GT3
   assert.ok(f1Car.speed > 55, `F1 car should exceed 200 km/h (~4.6s benchmark) within 5s acceleration, got ${(f1Car.speed * 3.6).toFixed(0)} km/h`);
 });
 
-test('Bouncy Car-to-Car Collisions: elastic normal bounce, tangential momentum preservation & damage threshold', () => {
+test('2D Rigid-Body Car-to-Car Collisions: momentum conservation, bump-drafting, PIT torque & damage threshold', () => {
   const spa = compileTrack(TRACKS[0]);
   const f1Spec = CARS.find((c) => c.classId === CarClassId.F1_2026)!;
 
-  const carA = createCarSimState({
-    id: 'carA',
-    name: 'Car A',
-    isPlayer: true,
-    carId: f1Spec.id,
-    livery: f1Spec.defaultLivery,
-    gridSlot: 1,
-    compiledTrack: spa,
-    compound: 'soft',
-  });
-  const carB = createCarSimState({
-    id: 'carB',
-    name: 'Car B',
-    isPlayer: false,
-    carId: f1Spec.id,
-    livery: f1Spec.defaultLivery,
-    gridSlot: 2,
-    compiledTrack: spa,
-    compound: 'soft',
-  });
+  const makeCar = (id: string, isPlayer: boolean) => {
+    const c = createCarSimState({
+      id,
+      name: id,
+      isPlayer,
+      carId: f1Spec.id,
+      livery: f1Spec.defaultLivery,
+      gridSlot: isPlayer ? 1 : 2,
+      compiledTrack: spa,
+      compound: 'soft',
+    });
+    c.heading = 0; // +Z forward, -X right, +X left
+    c.yawRate = 0;
+    return c;
+  };
 
-  // Position cars in overlapping contact
+  // 1. Side-by-side contact: low-restitution momentum conservation (no elastic bounce-fling or dead-stop)
+  const carA = makeCar('carA', true);
+  const carB = makeCar('carB', false);
   carA.x = 0;
   carA.z = 0;
   carA.vx = 0;
-  carA.vz = 50; // 180 km/h forward
+  carA.vz = 50;
   carA.speed = 50;
 
-  carB.x = 1.5; // lateral offset within 2.65m contact distance
+  carB.x = 1.65;
   carB.z = 0;
-  carB.vx = -10; // closing into carA at 10 m/s
+  carB.vx = -10; // closing laterally into carA at 10 m/s
   carB.vz = 50;
-  carB.speed = Math.hypot(carB.vx, carB.vz);
+  carB.speed = 50;
 
-  const initialDmgA = carA.aeroDamage;
   resolveCarCollisions([carA, carB]);
 
-  // Cars must bounce apart along X (normal)
-  assert.ok(carA.vx < 0, `Car A should bounce left (-X), got vx=${carA.vx}`);
-  assert.ok(carB.vx > 0, `Car B should bounce right (+X), got vx=${carB.vx}`);
+  // Equal mass: momentum conserved (vxA + vxB ≈ -10), low restitution (e=0.08 => vxA ≈ -5.4, vxB ≈ -4.6)
+  assert.ok(carA.vx < -4.0, `Car A should absorb leftward momentum, got vx=${carA.vx}`);
+  assert.ok(carB.vx > -6.0 && carB.vx > carA.vx, `Car B should slow laterally without elastic fling, got vx=${carB.vx}`);
+  assert.ok(Math.abs(carA.vx + carB.vx - -10) < 0.25, `Linear lateral momentum should be conserved, sum=${carA.vx + carB.vx}`);
+  assert.ok(carA.speed >= 45 && carB.speed >= 45, `Forward speeds preserved after side-bump: A=${carA.speed}, B=${carB.speed}`);
 
-  // Forward momentum must NOT be destroyed (speed must NOT halt to 0 or drop by massive amount)
-  assert.ok(carA.speed >= 40, `Car A forward speed preserved after side-bump: ${carA.speed} m/s`);
-  assert.ok(carB.speed >= 40, `Car B forward speed preserved after side-bump: ${carB.speed} m/s`);
+  // 2. Bump-drafting: aligned low-closing-speed nose-to-tail smoothly transfers forward speed (e = 0.0, no spin)
+  const trail = makeCar('trail', true);
+  const lead = makeCar('lead', false);
+  trail.x = 0;
+  trail.z = 0;
+  trail.vx = 0;
+  trail.vz = 64;
+  trail.speed = 64;
 
-  // Low speed grazing contact (< 25 km/h = 6.94 m/s) should inflict 0 damage
-  const carC = createCarSimState({
-    id: 'carC',
-    name: 'Car C',
-    isPlayer: true,
-    carId: f1Spec.id,
-    livery: f1Spec.defaultLivery,
-    gridSlot: 1,
-    compiledTrack: spa,
-    compound: 'soft',
-  });
-  const carD = createCarSimState({
-    id: 'carD',
-    name: 'Car D',
-    isPlayer: false,
-    carId: f1Spec.id,
-    livery: f1Spec.defaultLivery,
-    gridSlot: 2,
-    compiledTrack: spa,
-    compound: 'soft',
-  });
+  lead.x = 0;
+  lead.z = 5.1; // nose-to-tail overlap for ~5.5m F1 car
+  lead.vx = 0;
+  lead.vz = 60;
+  lead.speed = 60;
+
+  resolveCarCollisions([trail, lead]);
+
+  assert.ok(lead.vz > 61.5, `Lead car should gain forward speed in bump-draft, got vz=${lead.vz}`);
+  assert.ok(trail.vz > 60.5, `Trailing car must not dead-stop or bounce back in bump-draft, got vz=${trail.vz}`);
+  assert.ok(Math.abs(lead.vz - trail.vz) < 0.25, `Zero-restitution bump-draft should match speeds, diff=${lead.vz - trail.vz}`);
+  assert.ok(
+    Math.abs(lead.yawRate ?? 0) < 0.05 && Math.abs(trail.yawRate ?? 0) < 0.05,
+    `Dead-center bump-draft should not induce spin`,
+  );
+
+  // 3. PIT maneuver: off-center contact into lead car's rear-left quarter panel induces yaw spin
+  const pitAttacker = makeCar('pitAttacker', true);
+  const pitTarget = makeCar('pitTarget', false);
+  pitTarget.x = 0;
+  pitTarget.z = 0;
+  pitTarget.vx = 0;
+  pitTarget.vz = 45;
+  pitTarget.speed = 45;
+
+  pitAttacker.x = 1.65; // overlapping left rear quarter of pitTarget (+X is left at heading=0)
+  pitAttacker.z = -3.6;
+  pitAttacker.vx = -6; // nudging right (-X) into target's rear-left quarter
+  pitAttacker.vz = 47;
+  pitAttacker.speed = 47;
+
+  resolveCarCollisions([pitAttacker, pitTarget]);
+
+  assert.ok(
+    (pitTarget.yawRate ?? 0) > 0.15,
+    `Off-center rear-left PIT contact must induce positive yaw spin, got yawRate=${pitTarget.yawRate}`,
+  );
+
+  // 4. Low speed grazing contact (< 25 km/h = 6.94 m/s) should inflict 0 damage
+  const carC = makeCar('carC', true);
+  const carD = makeCar('carD', false);
   carC.x = 0;
   carC.z = 0;
-  carC.vx = 2.0; // below 6.94 m/s
+  carC.vx = 2.0; // closing speed 4.0 m/s < 6.94 m/s
   carC.vz = 30;
-  carD.x = 2.0;
+  carC.speed = 30;
+  carD.x = 1.65;
   carD.z = 0;
   carD.vx = -2.0;
   carD.vz = 30;
+  carD.speed = 30;
   resolveCarCollisions([carC, carD]);
   assert.equal(carC.aeroDamage, 0, 'Grazing contact below 25 km/h must inflict 0 damage');
   assert.equal(carD.aeroDamage, 0, 'Grazing contact below 25 km/h must inflict 0 damage');

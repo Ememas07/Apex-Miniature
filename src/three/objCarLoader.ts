@@ -9,7 +9,11 @@ import {
   createCarGlassMaterial,
   getRealWorldCarLength,
 } from './carBuilder';
-import { createContactShadowTexture, createNumberPlateTexture } from './proceduralTextures';
+import {
+  createContactShadowTexture,
+  createLiveryTexture,
+  createNumberPlateTexture,
+} from './proceduralTextures';
 
 export interface LowPolyCarManifestEntry {
   id: string;
@@ -190,6 +194,9 @@ function isNeutralColor(color: THREE.Color): boolean {
 interface MaterialConversionContext {
   carSpec: CarSpec;
   livery: LiveryConfig;
+  maxAniso: number;
+  isV2Pipeline: boolean;
+  getProceduralLiveryTexture: () => THREE.Texture;
   track: <T extends { dispose: () => void }>(res: T) => T;
   headlightMats: THREE.MeshStandardMaterial[];
   brakeLightMats: THREE.MeshStandardMaterial[];
@@ -332,7 +339,19 @@ function convertSourceMaterial(
 
   let built: THREE.Material;
 
-  if (/lights?_?glass_?rear|taillight|brake_?light|rear_?light/i.test(lowerMat)) {
+  const isAcuraNsxPaint =
+    ctx.carSpec.id === 'acura-nsx-gt3' &&
+    (lowerMat === 'material_#968' || lowerMat === 'material_#907' || lowerMat === 'material_#906');
+  const isPrimaryBodyPaint =
+    isAcuraNsxPaint ||
+    (!/interior|cockpit|under|bottom|shadow|glass|window|grill|carbon|plastic|rubber|tyre|tire|rim|wheel|brake|disc|caliper/i.test(
+      lowerMat,
+    ) &&
+      /(?:car_?paint|body_?paint|chassis_?paint|^paint|_paint(?:$|_)|ext_chassis|_ext_carpaint|ext_body|^body$|^chassis$|^chasis$|car_chassis|skin\d*|livery|wccarbody|carbody|wc_team_body1|_body$|^body_lowshine$|^exterior$|carrosserie)/i.test(
+        lowerMat,
+      ));
+
+  if (/lights?_?glass_?rear|taillight|brake_?light|rear_?light|redlight|_tlight$/i.test(lowerMat)) {
     const mat = new THREE.MeshStandardMaterial({
       name: matName,
       color: 0xef4444,
@@ -393,11 +412,7 @@ function convertSourceMaterial(
       roughness: /disc|brake/i.test(lowerMat) ? 0.34 : 0.65,
       metalness: /disc|brake/i.test(lowerMat) ? 0.78 : 0.25,
     });
-  } else if (
-    /(?:car_?paint|body_?paint|chassis_?paint|^paint|ext_chassis|_ext_carpaint|ext_body|^body$|^chassis$|^chasis$|car_chassis|skin\d*|livery)/i.test(
-      lowerMat,
-    )
-  ) {
+  } else if (isPrimaryBodyPaint) {
     const paintColor = ctx.livery.primaryColor
       ? new THREE.Color(ctx.livery.primaryColor)
       : isNeutralColor(srcColor)
@@ -412,9 +427,12 @@ function convertSourceMaterial(
         liveryTexture.colorSpace = THREE.SRGBColorSpace;
         liveryTexture.wrapS = THREE.RepeatWrapping;
         liveryTexture.wrapT = THREE.RepeatWrapping;
+        liveryTexture.anisotropy = ctx.maxAniso;
       } catch (err) {
         console.warn('Failed to load custom livery texture:', err);
       }
+    } else if (ctx.isV2Pipeline) {
+      liveryTexture = ctx.getProceduralLiveryTexture();
     }
 
     built = new THREE.MeshPhysicalMaterial({
@@ -426,7 +444,7 @@ function convertSourceMaterial(
       clearcoat: 1.0,
       clearcoatRoughness: 0.12,
     });
-  } else if (/(?:chassis2|redbull_detail|color_light_green|accent|secondary)/i.test(lowerMat)) {
+  } else if (/(?:chassis2|wc_team_body2|redbull_detail|color_light_green|accent|secondary)/i.test(lowerMat)) {
     const accentColor = ctx.livery.secondaryColor
       ? new THREE.Color(ctx.livery.secondaryColor)
       : srcColor;
@@ -450,12 +468,12 @@ function convertSourceMaterial(
       roughness: 0.22,
       metalness: 0.78,
     });
-  } else if (/numberplate|num_plate|^plate$/i.test(lowerMat)) {
+  } else if (/numberplate|num_plate|^plate$|^numpan\d*$|^numberdigi\d*$/i.test(lowerMat)) {
     const plateTexture = ctx.track(
       createNumberPlateTexture(
         ctx.livery,
         ctx.carSpec.classId,
-        4,
+        ctx.maxAniso,
       ),
     );
     built = new THREE.MeshStandardMaterial({
@@ -532,6 +550,25 @@ function instantiateObjRig(
   });
 
   const isV2Pipeline = Boolean(template.userData?.apexPipelineV2);
+  let cachedProceduralLiveryTex: THREE.Texture | null = null;
+  const getProceduralLiveryTexture = (): THREE.Texture => {
+    if (!cachedProceduralLiveryTex) {
+      cachedProceduralLiveryTex = track(createLiveryTexture(livery, carSpec.classId, maxAniso));
+    }
+    return cachedProceduralLiveryTex;
+  };
+  const matCtx: MaterialConversionContext = {
+    carSpec,
+    livery,
+    maxAniso,
+    isV2Pipeline,
+    getProceduralLiveryTexture,
+    track,
+    headlightMats,
+    brakeLightMats,
+    materialCache,
+  };
+
   const templateSize = templateBounds.isEmpty()
     ? new THREE.Vector3(1.9, 1.3, 4.6)
     : templateBounds.getSize(new THREE.Vector3());
@@ -584,14 +621,7 @@ function instantiateObjRig(
             const strayGeo = track(strayExtracted.geo);
             const strayRawMats = Array.isArray(strayExtracted.mat) ? strayExtracted.mat : [strayExtracted.mat];
             const strayMapped = strayRawMats.map((m) =>
-              convertSourceMaterial(m, 'BODY', false, {
-                carSpec,
-                livery,
-                track,
-                headlightMats,
-                brakeLightMats,
-                materialCache,
-              }),
+              convertSourceMaterial(m, 'BODY', false, matCtx),
             );
             const strayMesh = new THREE.Mesh(
               strayGeo,
@@ -606,15 +636,7 @@ function instantiateObjRig(
           if (wheelExtracted) {
             clonedGeo = track(wheelExtracted.geo);
             const wheelMapped = (Array.isArray(wheelExtracted.mat) ? wheelExtracted.mat : [wheelExtracted.mat]).map(
-              (m) =>
-                convertSourceMaterial(m, meshName, true, {
-                  carSpec,
-                  livery,
-                  track,
-                  headlightMats,
-                  brakeLightMats,
-                  materialCache,
-                }),
+              (m) => convertSourceMaterial(m, meshName, true, matCtx),
             );
             const finalWheelMat = Array.isArray(wheelExtracted.mat) ? wheelMapped : wheelMapped[0];
             clonedGeo.computeBoundingBox();
@@ -649,16 +671,7 @@ function instantiateObjRig(
         }
       }
 
-      const mappedMats = rawMats.map((m) =>
-        convertSourceMaterial(m, meshName, true, {
-          carSpec,
-          livery,
-          track,
-          headlightMats,
-          brakeLightMats,
-          materialCache,
-        }),
-      );
+      const mappedMats = rawMats.map((m) => convertSourceMaterial(m, meshName, true, matCtx));
       const finalMat = Array.isArray(mesh.material) ? mappedMats : mappedMats[0];
 
       clonedGeo.computeBoundingBox();
@@ -698,16 +711,7 @@ function instantiateObjRig(
         const isAero = /wing|spoiler|aero|splitter|diffuser/i.test(meshName);
         clonedGeo = track(applySixZoneCarUVs(clonedGeo, scaledCarBounds, { isAero }));
       }
-      const mappedMats = rawMats.map((m) =>
-        convertSourceMaterial(m, meshName, false, {
-          carSpec,
-          livery,
-          track,
-          headlightMats,
-          brakeLightMats,
-          materialCache,
-        }),
-      );
+      const mappedMats = rawMats.map((m) => convertSourceMaterial(m, meshName, false, matCtx));
       const finalMat = Array.isArray(mesh.material) ? mappedMats : mappedMats[0];
 
       clonedGeo.computeBoundingBox();

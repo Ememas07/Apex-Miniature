@@ -10,6 +10,7 @@ import {
   RotateCcw,
   Search,
   Share2,
+  Shuffle,
   Sun,
   Trash2,
   Upload,
@@ -32,6 +33,7 @@ import {
   getSavedCustomTracks,
   importTrackFromString,
 } from '../game/customTracks';
+import { generateRandomScenario } from '../game/randomScenario';
 import { TRACKS, compileTrack, filterTracks, getTrackById } from '../game/tracks';
 import {
   AIDifficulty,
@@ -150,7 +152,7 @@ export function RaceMenuModal({
   const classMeta = CAR_CLASSES[activeCar.classId];
   const selectedTrack = config.customTrack || getTrackById(config.trackId);
 
-  const [tab, setTab] = useState<SelectorTab>('car');
+  const [tab, setTab] = useState<SelectorTab>('track');
   const [angle, setAngle] = useState<GarageAngle>('hero');
 
   // Car filter state
@@ -158,7 +160,7 @@ export function RaceMenuModal({
   const [carSearch, setCarSearch] = useState('');
 
   // Track filter state
-  const [regionFilter, setRegionFilter] = useState<'Flagship' | TrackRegion | 'All'>('Flagship');
+  const [regionFilter, setRegionFilter] = useState<'Flagship' | TrackRegion | 'All'>('All');
   const [trackSearch, setTrackSearch] = useState('');
   const [customTracks, setCustomTracks] = useState<TrackSpec[]>(() => getSavedCustomTracks());
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -221,6 +223,25 @@ export function RaceMenuModal({
 
   const updateLivery = (patch: Partial<LiveryConfig>) => {
     onChangeLivery({ ...config.playerLivery, ...patch });
+  };
+
+  const handleRandomScenario = () => {
+    const scenario = generateRandomScenario(
+      TRACKS,
+      customTracks,
+      allSelectableCars,
+      config.playerLivery.driverNumber,
+    );
+    onSelectCar(scenario.car.id, scenario.livery);
+    onUpdateConfig({
+      activeClasses: scenario.activeClasses,
+      trackId: scenario.track.id,
+      customTrack: scenario.isCustomTrack ? scenario.track : undefined,
+    });
+    setActiveClass(scenario.car.classId);
+    setCarSearch('');
+    setTrackSearch('');
+    setRegionFilter('All');
   };
 
   const handleLaunch = () => {
@@ -299,6 +320,16 @@ export function RaceMenuModal({
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            data-testid="btn-random-scenario"
+            onClick={handleRandomScenario}
+            title="Prepare a random track, class mix, and car without starting"
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-md bg-[#161b24] hover:bg-[#1f2736] border border-white/15 text-xs font-display font-bold text-slate-100 tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <Shuffle className="w-3.5 h-3.5 text-amber-400" />
+            Random
+          </button>
           <button
             type="button"
             data-testid="btn-start-race"
@@ -650,9 +681,9 @@ export function RaceMenuModal({
           <div className="flex items-center justify-between gap-2 px-5 pt-3 bg-[#0d1118] border-b border-white/10 shrink-0">
             <div className="flex items-center gap-1">
               {[
+                { id: 'track' as SelectorTab, label: `Track (${TRACKS.length})` },
                 { id: 'car' as SelectorTab, label: `Car (${CARS.length})` },
                 { id: 'livery' as SelectorTab, label: 'Livery & Number' },
-                { id: 'track' as SelectorTab, label: `Track (${TRACKS.length})` },
               ].map((t) => (
                 <button
                   key={t.id}
