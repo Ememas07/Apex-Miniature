@@ -103,7 +103,6 @@ export const REAL_WORLD_CAR_DIMENSIONS = {
 
   // Production Coupes & Hatchbacks (Clio V6 ~3.84 m .. GT-R ~4.71 m)
   'renault-clio-v6': 3.84,
-  'toyota-gr-yaris': 4.00,
   'bmw-m2-cs': 4.58,
   'porsche-911-gt3-rs': 4.57,
   'honda-civic-type-r': 4.59,
@@ -1182,7 +1181,6 @@ function resolveTargetCarLength(canonicalName, rawBounds, opts) {
     return REAL_WORLD_CAR_DIMENSIONS[key] * opts.scale;
   }
   if (key.includes('clio')) return 3.84 * opts.scale;
-  if (key.includes('yaris')) return 4.00 * opts.scale;
   if (key.startsWith('f1-05')) return 4.65 * opts.scale;
   if (key.startsWith('f1-21')) return 5.63 * opts.scale;
   if (key.startsWith('f1-26') || key.startsWith('f1-')) return 5.50 * opts.scale;

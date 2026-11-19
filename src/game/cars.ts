@@ -271,7 +271,6 @@ export const REAL_WORLD_CAR_DIMENSIONS: Record<string, CarDimensions> = {
 
   // Production Track Coupes & Hatchbacks (Clio V6 ~3.84 m .. GT-R ~4.71 m)
   'renault-clio-v6': { length: 3.84, width: 1.81, height: 1.36, wheelbase: 2.53 },
-  'toyota-gr-yaris': { length: 4.00, width: 1.80, height: 1.45, wheelbase: 2.56 },
   'bmw-m2-cs': { length: 4.58, width: 1.89, height: 1.40, wheelbase: 2.75 },
   'porsche-911-gt3-rs': { length: 4.57, width: 1.90, height: 1.30, wheelbase: 2.46 },
   'honda-civic-type-r': { length: 4.59, width: 1.89, height: 1.41, wheelbase: 2.735 },
@@ -333,7 +332,6 @@ export function getRealWorldCarDimensions(carId?: string, classId?: CarClassId):
     const normalized = carId.toLowerCase().replace(/_/g, '-');
     if (REAL_WORLD_CAR_DIMENSIONS[normalized]) return { ...REAL_WORLD_CAR_DIMENSIONS[normalized] };
     if (normalized.includes('clio')) return { length: 3.84, width: 1.81, height: 1.36, wheelbase: 2.53 };
-    if (normalized.includes('yaris')) return { length: 4.00, width: 1.80, height: 1.45, wheelbase: 2.56 };
     if (normalized.startsWith('f1-05')) return { length: 4.65, width: 1.80, height: 0.95, wheelbase: 3.10 };
     if (normalized.startsWith('f1-21')) return { length: 5.63, width: 2.00, height: 0.95, wheelbase: 3.60 };
     if (normalized.startsWith('f1-26') || normalized.startsWith('f1-')) return { length: 5.50, width: 1.90, height: 0.95, wheelbase: 3.40 };
@@ -1192,18 +1190,6 @@ export const CARS: CarSpec[] = [
     engineType: 'turbo-i4',
     soundProfile: 'coupe_turbo_i4',
     defaultLivery: makeLivery('#f8fafc', '#dc2626', '#111827', '25', { template: 'racing-stripes', rimFinish: 'gloss-black' }),
-  },
-  {
-    id: 'toyota-gr-yaris',
-    name: 'Toyota GR Yaris Morizo',
-    manufacturer: 'Toyota',
-    classId: CarClassId.TRACK_COUPE,
-    silhouette: 'coupe',
-    attributes: { topSpeed: 64, acceleration: 71, corneringGrip: 76, braking: 73, efficiency: 87 },
-    tradeoffNote: 'GR-FOUR rally-bred AWD punch and carbon roof lightness; explosive agility through technical chicanes.',
-    engineType: 'turbo-i4',
-    soundProfile: 'coupe_turbo_i4',
-    defaultLivery: makeLivery('#dc2626', '#111827', '#ffffff', '60', { template: 'two-tone', rimFinish: 'gloss-black' }),
   },
 
   // ================= PRODUCTION SUPERCARS & HYPERCARS =================

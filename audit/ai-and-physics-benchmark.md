@@ -163,7 +163,6 @@ Audited **all 76 vehicles** in `CARS` across **7 flagship circuits** (`spa-franc
 | `spa-francorchamps` | `TRACK_COUPE` | `nissan-gtr-nismo` | 4.17s | 11.07s | 276.4 | 46.23s | 58.08s | 58.98s | 2:43.30 | 255.9 | 4.9m / 7.0m |
 | `spa-francorchamps` | `TRACK_COUPE` | `renault-clio-v6` | 5.17s | 14.98s | 247.0 | 49.45s | 60.98s | 61.92s | 2:52.35 | 236.2 | 4.9m / 7.0m |
 | `spa-francorchamps` | `TRACK_COUPE` | `honda-civic-type-r` | 4.98s | 13.90s | 257.9 | 48.58s | 60.27s | 61.18s | 2:50.03 | 242.3 | 4.9m / 7.0m |
-| `spa-francorchamps` | `TRACK_COUPE` | `toyota-gr-yaris` | 4.80s | 13.90s | 247.0 | 48.60s | 60.13s | 60.97s | 2:49.70 | 238.4 | 5.0m / 7.0m |
 | `spa-francorchamps` | `SUPERCAR` | `ferrari-296-gtb` | 2.72s | 6.58s | 334.8 | 39.20s | 49.68s | 50.07s | 2:18.95 | 304.0 | 4.8m / 7.0m |
 | `spa-francorchamps` | `SUPERCAR` | `mclaren-750s` | 2.72s | 6.53s | 344.3 | 38.98s | 49.48s | 49.82s | 2:18.28 | 307.9 | 4.8m / 7.0m |
 | `spa-francorchamps` | `SUPERCAR` | `ferrari-sf90` | 2.63s | 6.32s | 349.1 | 38.80s | 49.35s | 49.62s | 2:17.77 | 311.0 | 4.8m / 7.0m |
@@ -239,7 +238,6 @@ Audited **all 76 vehicles** in `CARS` across **7 flagship circuits** (`spa-franc
 | `monza` | `TRACK_COUPE` | `nissan-gtr-nismo` | 4.17s | 11.07s | 276.4 | 42.12s | 40.93s | 45.03s | 2:08.08 | 272.3 | 3.6m / 6.8m |
 | `monza` | `TRACK_COUPE` | `renault-clio-v6` | 5.17s | 14.98s | 247.0 | 44.67s | 43.58s | 47.50s | 2:15.75 | 245.9 | 3.6m / 6.8m |
 | `monza` | `TRACK_COUPE` | `honda-civic-type-r` | 4.98s | 13.90s | 257.9 | 43.97s | 42.87s | 46.88s | 2:13.72 | 254.0 | 3.6m / 6.8m |
-| `monza` | `TRACK_COUPE` | `toyota-gr-yaris` | 4.80s | 13.90s | 247.0 | 44.05s | 42.97s | 46.83s | 2:13.85 | 248.5 | 3.6m / 6.8m |
 | `monza` | `SUPERCAR` | `ferrari-296-gtb` | 2.72s | 6.58s | 334.8 | 35.57s | 34.65s | 38.22s | 1:48.43 | 327.7 | 3.7m / 6.8m |
 | `monza` | `SUPERCAR` | `mclaren-750s` | 2.72s | 6.53s | 344.3 | 35.43s | 34.45s | 38.03s | 1:47.92 | 333.1 | 3.7m / 6.8m |
 | `monza` | `SUPERCAR` | `ferrari-sf90` | 2.63s | 6.32s | 349.1 | 35.20s | 34.23s | 37.88s | 1:47.32 | 337.4 | 3.7m / 6.8m |

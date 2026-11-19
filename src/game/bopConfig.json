@@ -305,12 +305,6 @@
     "downforceMult": 1.0,
     "brakingMult": 1.0
   },
-  "toyota-gr-yaris": {
-    "topSpeedMult": 1.0,
-    "gripMult": 1.0,
-    "downforceMult": 1.0,
-    "brakingMult": 1.0
-  },
   "ferrari-296-gtb": {
     "topSpeedMult": 1.0,
     "gripMult": 1.0,

@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+import shutil
 import subprocess
 import time
 from collections import defaultdict
@@ -14,6 +15,7 @@ OBS_DIM = 43
 ACT_DIM = 3
 HIDDEN_DIM = 64
 WEIGHTS_PATH = os.path.join("src", "game", "aiPolicyWeights.json")
+BACKUP_WEIGHTS_PATH = os.path.join("src", "game", "aiPolicyWeights.best.json")
 METRICS_PATH = os.path.join("audit", "ppo_metrics.jsonl")
 DASHBOARD_PATH = os.path.join("audit", "ppo_dashboard.html")
 
@@ -21,7 +23,7 @@ CLASS_ORDER = ["F1", "Hypercar", "LMP2", "GT3", "GT4", "Other"]
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim: int = OBS_DIM, act_dim: int = ACT_DIM, init_log_std: float = -0.6):
+    def __init__(self, obs_dim: int = OBS_DIM, act_dim: int = ACT_DIM, init_log_std: float = -0.7):
         super().__init__()
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, HIDDEN_DIM),
@@ -29,7 +31,6 @@ class ActorCritic(nn.Module):
             nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
             nn.Tanh(),
             nn.Linear(HIDDEN_DIM, act_dim),
-            nn.Tanh(),
         )
         self.log_std = nn.Parameter(torch.full((act_dim,), init_log_std))
 
@@ -54,17 +55,20 @@ class ActorCritic(nn.Module):
             action = dist.sample()
         log_prob = dist.log_prob(action).sum(dim=-1)
         entropy = dist.entropy().sum(dim=-1)
-        return action, log_prob, entropy, value
+        return action, log_prob, entropy, value, mean
 
 
-def load_actor_from_json(model: ActorCritic, path: str) -> bool:
+def load_actor_from_json(model: ActorCritic, path: str) -> tuple[bool, float]:
     if not os.path.exists(path):
-        return False
+        return False, -1e9
     with open(path, "r", encoding="utf-8") as f:
         d = json.load(f)
+    if d.get("version", 1) < 2:
+        print(f"Skipping {path}: legacy v1 tanh-bounded weights incompatible with full-pedal v2 policy")
+        return False, -1e9
     if len(d.get("w0", [])) != HIDDEN_DIM:
         print(f"Skipping {path}: hidden dim {len(d.get('w0', []))} != {HIDDEN_DIM}")
-        return False
+        return False, -1e9
     layers = [m for m in model.actor if isinstance(m, nn.Linear)]
     with torch.no_grad():
         layers[0].weight.copy_(torch.tensor(d["w0"], dtype=torch.float32))
@@ -73,13 +77,14 @@ def load_actor_from_json(model: ActorCritic, path: str) -> bool:
         layers[1].bias.copy_(torch.tensor(d["b1"], dtype=torch.float32))
         layers[2].weight.copy_(torch.tensor(d["w2"], dtype=torch.float32))
         layers[2].bias.copy_(torch.tensor(d["b2"], dtype=torch.float32))
-    return True
+    prev_best = float(d.get("meta", {}).get("meanStepReward", -1e9))
+    return True, prev_best
 
 
 def export_actor_to_json(model: ActorCritic, path: str, metadata: dict):
     layers = [m for m in model.actor if isinstance(m, nn.Linear)]
     payload = {
-        "version": 1,
+        "version": 2,
         "obsDim": OBS_DIM,
         "actDim": ACT_DIM,
         "hiddenDim": HIDDEN_DIM,
@@ -94,6 +99,7 @@ def export_actor_to_json(model: ActorCritic, path: str, metadata: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
+    shutil.copy2(path, BACKUP_WEIGHTS_PATH)
 
 
 def write_dashboard_html(
@@ -104,7 +110,6 @@ def write_dashboard_html(
     os.makedirs(os.path.dirname(DASHBOARD_PATH), exist_ok=True)
     latest = history[-1]
 
-    # Per-class rows
     present_classes = [c for c in CLASS_ORDER if c in latest["classes"]] + [
         c for c in sorted(latest["classes"].keys()) if c not in CLASS_ORDER
     ]
@@ -127,7 +132,6 @@ def write_dashboard_html(
           <td>{c['samples']:,}</td>
         </tr>"""
 
-    # Per-track rows (showing fastest class lap on each track)
     tracks = sorted(latest["tracks"].keys())
     track_rows = ""
     for tid in tracks:
@@ -322,33 +326,39 @@ def main():
     parser.add_argument("--tracks", nargs="*", default=None)
     parser.add_argument("--cars", nargs="*", default=None)
     parser.add_argument("--scratch", action="store_true", help="Ignore existing aiPolicyWeights.json and train from zero")
+    parser.add_argument("--reset-best", action="store_true", help="Allow overwriting checkpoint even if reward baseline changed")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training PPO on device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
 
     from_scratch = args.scratch or not os.path.exists(WEIGHTS_PATH)
-    init_log_std = -0.6 if from_scratch else -1.6
+    init_log_std = -0.7 if from_scratch else -1.6
     model = ActorCritic(init_log_std=init_log_std).to(device)
 
-    if not from_scratch and load_actor_from_json(model, WEIGHTS_PATH):
-        print(f"Warm-started actor from {WEIGHTS_PATH}")
+    loaded, prev_best = (False, -1e9) if from_scratch else load_actor_from_json(model, WEIGHTS_PATH)
+    if loaded:
+        print(f"Warm-started actor from {WEIGHTS_PATH} (previous best reward: {prev_best:+.4f})")
     else:
         from_scratch = True
-        print("Training completely from scratch (random initialization + self-annealing schedules).")
+        print("Training completely from scratch (full-pedal v2 actor + self-annealing schedules).")
 
     os.makedirs("audit", exist_ok=True)
     if os.path.exists(METRICS_PATH):
         os.remove(METRICS_PATH)
 
-    lr_start = 3e-4 if from_scratch else 1e-4
+    critic_lr_start = 3e-4
+    actor_lr_start = 3e-4 if from_scratch else 8e-5
     lr_end = 2e-5
-    ent_start = 0.015 if from_scratch else 0.004
+    ent_start = 0.012 if from_scratch else 0.004
     ent_end = 0.0015
-    max_std_start = 0.65 if from_scratch else 0.22
-    max_std_end = 0.14
+    max_std_start = 0.50 if from_scratch else 0.20
+    max_std_end = 0.12
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr_start, eps=1e-5)
+    optimizer = torch.optim.Adam([
+        {"params": list(model.actor.parameters()) + [model.log_std], "lr": actor_lr_start},
+        {"params": model.critic.parameters(), "lr": critic_lr_start},
+    ], eps=1e-5)
 
     worker = spawn_env_worker()
     worker.stdin.write(json.dumps({"cmd": "init", "numEnvs": args.envs, "tracks": args.tracks, "cars": args.cars}) + "\n")
@@ -362,8 +372,9 @@ def main():
     vf_coef = 0.5
     epochs = 6
     minibatch_size = (args.envs * args.steps) // 8
+    critic_warmup_updates = 0 if from_scratch else 60
 
-    best_reward = -1e9
+    best_reward = -1e9 if (from_scratch or args.reset_best) else prev_best
     best_laps_track_class: dict[tuple[str, str], float] = {}
     best_laps_class: dict[str, tuple[float, str]] = {}
     history: list[dict] = []
@@ -373,12 +384,16 @@ def main():
         for update in range(1, args.updates + 1):
             frac = (update - 1) / max(1, args.updates - 1)
             cos_decay = 0.5 * (1.0 + math.cos(math.pi * frac))
-            cur_lr = lr_end + (lr_start - lr_end) * cos_decay
+            actor_ramp = 1.0 if from_scratch else min(1.0, max(0.0, (update - critic_warmup_updates) / 40.0))
+            cur_actor_lr = (lr_end + (actor_lr_start - lr_end) * cos_decay) * actor_ramp
+            cur_critic_lr = lr_end + (critic_lr_start - lr_end) * cos_decay
             cur_ent = ent_end + (ent_start - ent_end) * cos_decay
             cur_max_std = max_std_end + (max_std_start - max_std_end) * cos_decay
 
-            for pg in optimizer.param_groups:
-                pg["lr"] = cur_lr
+            optimizer.param_groups[0]["lr"] = cur_actor_lr
+            optimizer.param_groups[1]["lr"] = cur_critic_lr
+            cur_lr = cur_actor_lr if update > critic_warmup_updates else cur_critic_lr
+
             with torch.no_grad():
                 model.log_std.clamp_(max=math.log(cur_max_std))
 
@@ -399,14 +414,15 @@ def main():
                 obs_buf[step] = obs
                 obs_t = torch.from_numpy(obs).to(device)
                 with torch.no_grad():
-                    action, logp, _, value = model.get_action_and_value(obs_t)
+                    action, logp, _, value, _ = model.get_action_and_value(obs_t)
 
-                act_np = np.clip(action.cpu().numpy(), -1.0, 1.0)
-                act_buf[step] = act_np
+                raw_act_np = action.cpu().numpy()
+                env_act_np = np.clip(raw_act_np, -1.0, 1.0)
+                act_buf[step] = raw_act_np
                 logp_buf[step] = logp.cpu().numpy()
                 val_buf[step] = value.cpu().numpy()
 
-                worker.stdin.write(json.dumps({"cmd": "step", "actions": act_np.tolist()}) + "\n")
+                worker.stdin.write(json.dumps({"cmd": "step", "actions": env_act_np.tolist()}) + "\n")
                 worker.stdin.flush()
                 step_resp = json.loads(worker.stdout.readline())
 
@@ -474,7 +490,7 @@ def main():
                 np.random.shuffle(indices)
                 for start in range(0, total_samples, minibatch_size):
                     mb_idx = indices[start : start + minibatch_size]
-                    _, new_logp, entropy, new_val = model.get_action_and_value(b_obs[mb_idx], b_act[mb_idx])
+                    _, new_logp, entropy, new_val, new_mean = model.get_action_and_value(b_obs[mb_idx], b_act[mb_idx])
                     ratio = torch.exp(new_logp - b_logp[mb_idx])
 
                     pg_loss1 = -b_adv[mb_idx] * ratio
@@ -482,7 +498,11 @@ def main():
                     pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                     v_loss = 0.5 * ((new_val - b_ret[mb_idx]) ** 2).mean()
-                    loss = pg_loss - cur_ent * entropy.mean() + vf_coef * v_loss
+                    mean_reg = 1e-4 * (new_mean.pow(2)).mean()
+                    if update <= critic_warmup_updates:
+                        loss = vf_coef * v_loss
+                    else:
+                        loss = pg_loss - cur_ent * entropy.mean() + vf_coef * v_loss + mean_reg
 
                     optimizer.zero_grad()
                     loss.backward()
@@ -538,7 +558,8 @@ def main():
                 write_dashboard_html(history, best_laps_track_class, best_laps_class)
 
             saved_tag = ""
-            if update >= 15 and mean_rew > best_reward:
+            min_save_update = max(15, critic_warmup_updates + 1)
+            if update >= min_save_update and mean_rew > best_reward:
                 best_reward = mean_rew
                 export_actor_to_json(
                     model,
@@ -552,12 +573,16 @@ def main():
                 )
                 saved_tag = " [SAVED]"
 
-            f1_spd = per_class_summary.get("F1", {}).get("avgSpeed", 0.0)
-            gt3_spd = per_class_summary.get("GT3", {}).get("avgSpeed", 0.0)
+            cls_str = " ".join(
+                f"{tag}:{per_class_summary[cid]['avgSpeed']:5.1f}"
+                for cid, tag in [("F1", "F1"), ("Hypercar", "HY"), ("LMP2", "P2"), ("GT3", "GT3"), ("GT4", "GT4")]
+                if cid in per_class_summary
+            )
+            warmup_tag = " (critic warmup)" if update <= critic_warmup_updates else ""
             print(
                 f"Update {update:04d}/{args.updates} | Rew: {mean_rew:+.3f} | "
-                f"Avg: {mean_spd:5.1f} (F1:{f1_spd:5.1f} GT3:{gt3_spd:5.1f}) | "
-                f"Off: {off_pct:4.1f}% | BestLap: {best_lap:>7} | {sps:,} steps/s{saved_tag}"
+                f"Avg: {mean_spd:5.1f} [{cls_str}] | "
+                f"Off: {off_pct:4.1f}% | BestLap: {best_lap:>7} | {sps:,} steps/s{warmup_tag}{saved_tag}"
             )
     finally:
         worker.terminate()

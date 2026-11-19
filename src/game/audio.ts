@@ -161,7 +161,6 @@ export const SOUND_PRESET_CATALOG: Array<{ id: SoundProfileId; label: string; gr
   { id: 'coupe_turbo_i6', label: 'Track Coupe — BMW M2 CS (Turbo I6)', group: 'Production' },
   { id: 'coupe_turbo_v6', label: 'Track Coupe — Nissan GT-R NISMO (TT V6)', group: 'Production' },
   { id: 'coupe_na_v6', label: 'Track Coupe — Renault Clio V6 (3.0L NA V6)', group: 'Production' },
-  { id: 'coupe_turbo_i4', label: 'Track Coupe — Civic Type R / GR Yaris (Turbo I4)', group: 'Production' },
   { id: 'supercar_v12', label: 'Supercar — Aston Valkyrie Road (6.5L V12)', group: 'Supercars' },
   { id: 'supercar_flatplane_v8', label: 'Supercar — SF90 / 918 / 750S / Jesko / W1 (V8)', group: 'Supercars' },
   { id: 'supercar_v6_hybrid', label: 'Supercar — Ferrari 296 GTB / F80 (V6 Hybrid)', group: 'Supercars' },
@@ -269,7 +268,7 @@ export function inferSoundProfileId(
   if (carId.includes('m2-cs')) return 'coupe_turbo_i6';
   if (carId.includes('gtr-nismo')) return 'coupe_turbo_v6';
   if (carId.includes('clio-v6')) return 'coupe_na_v6';
-  if (carId.includes('civic') || carId.includes('yaris')) return 'coupe_turbo_i4';
+  if (carId.includes('civic')) return 'coupe_turbo_i4';
 
   // Supercars
   if (carId.includes('296-gtb') || carId.includes('ferrari-f80')) return 'supercar_v6_hybrid';

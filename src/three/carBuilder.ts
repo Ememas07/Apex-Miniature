@@ -1448,25 +1448,6 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     sharkFinStyle: 'none',
     caliperColor: '#dc2626',
   },
-  'toyota-gr-yaris': {
-    cabinStyle: 'hatchback-clio',
-    cabinOffsetZ: -0.08,
-    cabinScaleW: 1.02,
-    cabinScaleH: 1.04,
-    cabinScaleL: 0.92,
-    noseHeightRatio: 0.64,
-    tailHeightRatio: 0.92,
-    widthScale: 1.01,
-    lengthScale: 0.91,
-    haunchScale: 1.14,
-    grilleStyle: 'clio-hatch',
-    headlightStyle: 'blade',
-    sidepodStyle: 'clean-street',
-    rearDeckStyle: 'roof-spoiler-hatch',
-    exhaustStyle: 'rear-dual',
-    sharkFinStyle: 'none',
-    caliperColor: '#dc2626',
-  },
 
   // ================= PRODUCTION SUPERCARS & HYPERCARS (8 cars) =================
   'ferrari-296-gtb': {
