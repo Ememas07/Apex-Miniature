@@ -487,7 +487,7 @@ export function RaceHUD({
                   <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
                     {hud.specialActive ? 'STRAIGHT (LOW DRAG +12%)' : 'CORNER (HIGH DOWNFORCE)'}
                   </strong>{' '}
-                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                  <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
                 </span>
               ) : carSpecial.specialType === 'attack-mode' ? (
                 <span>
@@ -497,39 +497,43 @@ export function RaceHUD({
                       ? `ACTIVE ${hud.attackModeTimer?.toFixed(1) ?? '15.0'}s (+15% PWR)`
                       : `${hud.attackModeUsesRemaining ?? 2}/2 USES READY`}
                   </strong>{' '}
-                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                  <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
                 </span>
               ) : carSpecial.specialType === 'v10-overboost' ? (
                 <span>
                   V10 Overboost:{' '}
                   <strong className={hud.specialActive ? 'text-red-400 font-bold' : 'text-slate-200'}>
-                    {hud.specialActive ? 'OVERBOOST (+8% PWR, +35% FUEL)' : `${hud.specialCharge}% READY`}
+                    {hud.specialActive
+                      ? `ON ${hud.specialCharge}% (+8% PWR, +35% FUEL)`
+                      : `${hud.specialCharge}% READY`}
                   </strong>{' '}
-                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                  <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
                 </span>
               ) : carSpecial.specialType === 'rich-fuel-overboost' ? (
                 <span>
                   Rich Fuel Overboost:{' '}
                   <strong className={hud.specialActive ? 'text-amber-400 font-bold' : 'text-slate-200'}>
-                    {hud.specialActive ? 'RICH MAP (+8% PWR, +35% FUEL)' : `${hud.specialCharge}% READY`}
+                    {hud.specialActive
+                      ? `ON ${hud.specialCharge}% (+8% PWR, +35% FUEL)`
+                      : `${hud.specialCharge}% READY`}
                   </strong>{' '}
-                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                  <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
                 </span>
               ) : carSpecial.specialType === 'high-beam-flash' ? (
                 <span>
                   High Beams:{' '}
                   <strong className={hud.specialActive ? 'text-amber-300' : 'text-slate-200'}>
-                    {hud.specialActive ? 'FLASHING TRAFFIC' : 'READY'}
+                    {hud.specialActive ? 'FLASHING TRAFFIC' : 'OFF (READY)'}
                   </strong>{' '}
-                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                  <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
                 </span>
               ) : (
                 <span>
                   {carSpecial.specialLabel}:{' '}
                   <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
-                    {hud.specialActive ? 'ACTIVE (+15% ACCEL)' : `${hud.specialCharge}% (HOLD)`}
+                    {hud.specialActive ? `ON ${hud.specialCharge}% (+15% ACCEL)` : `${hud.specialCharge}% READY`}
                   </strong>{' '}
-                  <span className="text-[10px] text-slate-500">[Shift/E]</span>
+                  <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
                 </span>
               )}
             </span>

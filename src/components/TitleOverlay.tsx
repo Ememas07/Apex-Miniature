@@ -213,7 +213,7 @@ export function TitleOverlay({
       {/* Bottom flat borderless control hint */}
       <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
         <span>
-          WASD / Arrows Drive · Space Class Special · C Camera · M Mute · P Pause
+          WASD / Arrows / Controller (R2/L2/Stick) Drive · Space / Shift / E / X Toggle Special · R-Stick / C Camera · M Mute · P Pause
         </span>
         <span className="text-slate-200/90">Press Enter to launch active setup</span>
       </div>

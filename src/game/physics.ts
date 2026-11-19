@@ -101,8 +101,8 @@ export interface ControlInput {
   throttle: number; // 0..1
   brake: number; // 0..1
   steer: number; // -1 (left) .. +1 (right)
-  specialPressed: boolean; // edge-triggered or held depending on class
-  specialJustPressed?: boolean; // edge-triggered activation
+  specialPressed: boolean; // legacy / current button state; falls back to trigger if specialJustPressed is omitted
+  specialJustPressed?: boolean; // edge-triggered toggle activation (preferred)
   shiftUp?: boolean;
   shiftDown?: boolean;
 }
@@ -614,7 +614,7 @@ export function stepCarPhysics(
 
   const halfW = compiledTrack.spec.trackWidth * 0.5;
 
-  // Class / car-specific special activation / toggle
+  // Class / car-specific special toggle activation (press once ON, press again OFF, auto-OFF on depletion/expiry)
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
   const specialType = resolvedSpecial.specialType;
   const isSpecialTriggered = input.specialJustPressed ?? input.specialPressed;
@@ -631,34 +631,49 @@ export function stepCarPhysics(
       break;
     }
     case 'attack-mode': {
-      // 2 uses per race, 15s duration: enables AWD acceleration boost and +15% power
-      if (isSpecialTriggered && car.attackModeUsesRemaining > 0 && car.attackModeTimer <= 0) {
-        car.attackModeUsesRemaining -= 1;
-        car.attackModeTimer = 15.0;
-        car.specialActive = true;
+      // 2 uses per race, 15s duration: toggle ON to deploy AWD boost, toggle again to deactivate/stow early
+      if (isSpecialTriggered) {
+        if (car.specialActive) {
+          car.specialActive = false;
+          car.attackModeTimer = 0;
+        } else if (car.attackModeUsesRemaining > 0 && car.attackModeTimer <= 0) {
+          car.attackModeUsesRemaining -= 1;
+          car.attackModeTimer = 15.0;
+          car.specialActive = true;
+        }
       }
-      if (car.attackModeTimer > 0) {
+      if (car.specialActive && car.attackModeTimer > 0) {
         car.attackModeTimer = Math.max(0, car.attackModeTimer - dt);
         car.specialCharge = Math.round((car.attackModeTimer / 15.0) * 100);
         if (car.attackModeTimer <= 0) {
           car.specialActive = false;
         }
       } else {
+        car.specialActive = false;
         car.specialCharge = car.attackModeUsesRemaining * 50;
       }
       break;
     }
     case 'ers-overtake':
     case 'hybrid-deploy': {
-      // Hold or toggle to deploy rechargeable battery for +15% acceleration
-      if (input.specialPressed && car.specialCharge > 1) {
-        car.specialActive = true;
-        car.specialCharge = Math.max(0, car.specialCharge - dt * 20);
-      } else {
-        car.specialActive = false;
+      // Toggle ON/OFF to deploy rechargeable battery for +15% acceleration; auto-OFF when depleted
+      if (isSpecialTriggered) {
+        if (car.specialActive) {
+          car.specialActive = false;
+        } else if (car.specialCharge > 1) {
+          car.specialActive = true;
+        }
+      }
+      if (car.specialActive) {
+        if (car.specialCharge > 0) {
+          car.specialCharge = Math.max(0, car.specialCharge - dt * 20);
+        }
+        if (car.specialCharge <= 0) {
+          car.specialActive = false;
+        }
       }
       if (!car.specialActive) {
-        // Recharges under braking
+        // Recharges under braking and lightly off-deployment
         const rechargeRate = input.brake > 0.2 ? 22 : 3.5;
         car.specialCharge = Math.min(100, car.specialCharge + dt * rechargeRate);
       }
@@ -666,20 +681,35 @@ export function stepCarPhysics(
     }
     case 'v10-overboost':
     case 'rich-fuel-overboost': {
-      // Temporary +8% power/RPM surge with +35% fuel burn while active (NA V10 / Valkyrie / Glickenhaus)
-      if (input.specialPressed && car.specialCharge > 2) {
-        car.specialActive = true;
-        car.specialCharge = Math.max(0, car.specialCharge - dt * 15);
+      // Toggle ON/OFF for +8% power/RPM surge with +35% fuel burn while active; auto-OFF when depleted
+      if (isSpecialTriggered) {
+        if (car.specialActive) {
+          car.specialActive = false;
+        } else if (car.specialCharge > 2) {
+          car.specialActive = true;
+        }
+      }
+      if (car.specialActive) {
+        if (car.specialCharge > 0) {
+          car.specialCharge = Math.max(0, car.specialCharge - dt * 15);
+        }
+        if (car.specialCharge <= 0) {
+          car.specialActive = false;
+        }
       } else {
-        car.specialActive = false;
         car.specialCharge = Math.min(100, car.specialCharge + dt * 10);
       }
       break;
     }
     case 'high-beam-flash': {
-      // Flashes headlights and signals slower traffic ahead to yield
-      car.specialActive = Boolean(input.specialPressed);
-      car.flashingHeadlights = car.specialActive;
+      // Toggle ON/OFF to flash headlights and signal slower traffic ahead to yield
+      if (isSpecialTriggered) {
+        car.specialActive = !car.specialActive;
+      }
+      // Preserve Traffic-Smart AI proximity flashing while player toggling controls headlights directly
+      car.flashingHeadlights = car.isPlayer
+        ? car.specialActive
+        : car.specialActive || car.flashingHeadlights;
       break;
     }
     default: {
@@ -2415,7 +2445,7 @@ export function computeAIControl(
     throttle = Math.min(throttle, 0.84);
   }
 
-  // Trigger Class / Car Special on straights when clear ahead
+  // Trigger Class / Car Special on straights when clear ahead (toggle semantics)
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
   const onStraight = nearCurv < 0.01 && Math.abs(steer) < 0.18 && maxBrakeRatio < 0.5;
   let specialPressed = false;
@@ -2426,11 +2456,15 @@ export function computeAIControl(
     if (onStraight && !car.specialActive && car.attackModeUsesRemaining > 0 && car.speed > 25) {
       specialPressed = true;
     }
-  } else if (onStraight && !car.specialActive && car.specialCharge > 50 && car.speed > 24 && !leadCar) {
-    specialPressed = true;
+  } else if (resolvedSpecial.specialType !== 'high-beam-flash') {
+    if (onStraight && !car.specialActive && car.specialCharge > 50 && car.speed > 24 && !leadCar) {
+      specialPressed = true;
+    } else if ((!onStraight || brake > 0.25) && car.specialActive) {
+      specialPressed = true;
+    }
   }
 
-  return { throttle, brake, steer, specialPressed };
+  return { throttle, brake, steer, specialPressed, specialJustPressed: specialPressed };
 }
 
 export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTrack): DriverStandingsEntry[] {

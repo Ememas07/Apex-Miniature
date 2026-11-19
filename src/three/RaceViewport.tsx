@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { computeCameraFrame } from '../game/camera';
 import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from '../game/cars';
+import { blendDrivingInputs, GamepadController } from '../game/gamepad';
 import { MultiplayerClient } from '../game/multiplayer';
 import { computeNeuralAIControl } from '../game/aiNeuralPolicy';
 import {
@@ -130,6 +131,11 @@ export function RaceViewport(props: RaceViewportProps) {
     targetOrbitDist: number;
     isDraggingOrbit: boolean;
     orbitLastInteractTime: number;
+    hoodLookYaw: number;
+    hoodLookPitch: number;
+    isoYawOffset: number;
+    isoPitchOffset: number;
+    isoLastInteractTime: number;
     lastCameraMode: CameraMode;
     rebuildWorld: () => void;
   } | null>(null);
@@ -254,6 +260,11 @@ export function RaceViewport(props: RaceViewportProps) {
       targetOrbitDist: 11.5,
       isDraggingOrbit: false,
       orbitLastInteractTime: 0,
+      hoodLookYaw: 0,
+      hoodLookPitch: 0,
+      isoYawOffset: 0,
+      isoPitchOffset: 0,
+      isoLastInteractTime: 0,
       lastCameraMode: propsRef.current.cameraMode,
       rebuildWorld: () => {},
     };
@@ -552,8 +563,13 @@ export function RaceViewport(props: RaceViewportProps) {
       keysPressed.delete(e.code);
     };
 
+    const gamepadController = new GamepadController();
+    gamepadController.attach(window);
+
     const clearKeys = () => {
       keysPressed.clear();
+      sim.specialJustPressed = false;
+      gamepadController.resetEdgeState();
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -663,6 +679,11 @@ export function RaceViewport(props: RaceViewportProps) {
 
       const playerCar = sim.cars.find((c) => c.isPlayer) ?? null;
 
+      if (activePhase !== 'playing' && activePhase !== 'qualifying') {
+        sim.specialJustPressed = false;
+        gamepadController.resetEdgeState();
+      }
+
       if (activePhase === 'title') {
         // Live world tour: AI cars race smoothly around the circuit while camera glides!
         for (let i = 0; i < sim.cars.length; i++) {
@@ -733,36 +754,32 @@ export function RaceViewport(props: RaceViewportProps) {
           rainMesh.visible = false;
         }
 
-        // Read keyboard + gamepad player controls
-        let throttle = keysPressed.has('KeyW') || keysPressed.has('ArrowUp') ? 1 : 0;
-        let brake = keysPressed.has('KeyS') || keysPressed.has('ArrowDown') ? 1 : 0;
-        let steer =
+        // Read keyboard + gamepad (PS4/DualShock & standard Gamepad API) controls
+        const kbThrottle = keysPressed.has('KeyW') || keysPressed.has('ArrowUp') ? 1 : 0;
+        const kbBrake = keysPressed.has('KeyS') || keysPressed.has('ArrowDown') ? 1 : 0;
+        const kbSteer =
           (keysPressed.has('KeyD') || keysPressed.has('ArrowRight') ? 1 : 0) -
           (keysPressed.has('KeyA') || keysPressed.has('ArrowLeft') ? 1 : 0);
-        let specialPressed =
-          sim.specialJustPressed ||
+
+        const gp = gamepadController.poll();
+        if (gp.hasAnyInput) {
+          sim.audio.init();
+        }
+
+        const { throttle, brake, steer } = blendDrivingInputs(
+          { throttle: kbThrottle, brake: kbBrake, steer: kbSteer },
+          gp,
+        );
+
+        // Edge-triggered special toggle from keyboard (Space/Shift/E) or PS4 Cross/X (buttons[0])
+        const specialJustPressed = sim.specialJustPressed || gp.specialJustPressed;
+        const specialPressed =
+          specialJustPressed ||
           keysPressed.has('ShiftLeft') ||
           keysPressed.has('ShiftRight') ||
           keysPressed.has('KeyE') ||
-          keysPressed.has('Space');
-
-        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        const gp = gamepads[0];
-        if (gp) {
-          const axisX = gp.axes[0] ?? 0;
-          if (Math.abs(axisX) > 0.14) steer = axisX;
-          if (gp.buttons[7]?.value > 0.1) throttle = gp.buttons[7].value;
-          if (gp.buttons[6]?.value > 0.1) brake = gp.buttons[6].value;
-          if (
-            gp.buttons[0]?.pressed ||
-            gp.buttons[2]?.pressed ||
-            gp.buttons[4]?.pressed ||
-            gp.buttons[5]?.pressed
-          ) {
-            specialPressed = true;
-            sim.specialJustPressed = true;
-          }
-        }
+          keysPressed.has('Space') ||
+          gp.specialPressed;
 
         if (sim.countdown <= 0) {
           for (let i = 0; i < sim.cars.length; i++) {
@@ -774,7 +791,7 @@ export function RaceViewport(props: RaceViewportProps) {
                 brake,
                 steer,
                 specialPressed,
-                specialJustPressed: sim.specialJustPressed,
+                specialJustPressed,
               };
               stepCarPhysics(
                 c,
@@ -822,15 +839,19 @@ export function RaceViewport(props: RaceViewportProps) {
           if (impact > 5) {
             sim.trauma = Math.min(1, sim.trauma + impact * 0.045);
           }
-        } else if (playerCar) {
-          // Grid staging / neutral launch revving during starting-lights countdown
-          const targetGridRpm = throttle > 0.05 ? Math.min(1.0, 0.18 + throttle * 0.84) : 0.18;
-          const rate = throttle > 0.05 ? 4.5 : 3.0;
-          const nextRpm =
-            playerCar.rpmNormalized < targetGridRpm
-              ? Math.min(targetGridRpm, playerCar.rpmNormalized + dt * rate)
-              : Math.max(targetGridRpm, playerCar.rpmNormalized - dt * rate);
-          playerCar.rpmNormalized = nextRpm;
+        } else {
+          // Discard buffered toggle triggers during starting-lights countdown
+          sim.specialJustPressed = false;
+          if (playerCar) {
+            // Grid staging / neutral launch revving during starting-lights countdown
+            const targetGridRpm = throttle > 0.05 ? Math.min(1.0, 0.18 + throttle * 0.84) : 0.18;
+            const rate = throttle > 0.05 ? 4.5 : 3.0;
+            const nextRpm =
+              playerCar.rpmNormalized < targetGridRpm
+                ? Math.min(targetGridRpm, playerCar.rpmNormalized + dt * rate)
+                : Math.max(targetGridRpm, playerCar.rpmNormalized - dt * rate);
+            playerCar.rpmNormalized = nextRpm;
+          }
         }
 
         // Send multiplayer telemetry at 20Hz if connected in a room
@@ -867,6 +888,11 @@ export function RaceViewport(props: RaceViewportProps) {
 
           if (mode !== sim.lastCameraMode) {
             sim.lastCameraMode = mode;
+            sim.hoodLookYaw = 0;
+            sim.hoodLookPitch = 0;
+            sim.isoYawOffset = 0;
+            sim.isoPitchOffset = 0;
+            sim.isoLastInteractTime = 0;
             if (mode === 'orbit') {
               sim.chaseHeading = playerCar.heading;
               sim.orbitYawOffset = sim.targetOrbitYawOffset = 0;
@@ -879,15 +905,32 @@ export function RaceViewport(props: RaceViewportProps) {
             const DEFAULT_CHASE_PITCH = 0.28;
             const SNAP_BACK_DELAY_MS = 2200;
 
+            // Gamepad Right Stick (axes[2], axes[3]) camera orbit control
+            const isRightStickOrbiting = gp.cameraX !== 0 || gp.cameraY !== 0;
+            if (isRightStickOrbiting) {
+              const STICK_YAW_SPEED = 2.4;
+              const STICK_PITCH_SPEED = 1.6;
+              sim.targetOrbitYawOffset -= gp.cameraX * STICK_YAW_SPEED * dt;
+              sim.targetOrbitPitch = Math.max(
+                0.08,
+                Math.min(1.18, sim.targetOrbitPitch + gp.cameraY * STICK_PITCH_SPEED * dt),
+              );
+              sim.orbitLastInteractTime = now;
+            }
+
             // Smoothly follow car heading so turning rotates the camera with the car to see ahead
             let hDiff = playerCar.heading - sim.chaseHeading;
             while (hDiff > Math.PI) hDiff -= Math.PI * 2;
             while (hDiff < -Math.PI) hDiff += Math.PI * 2;
-            const headingFollowRate = sim.isDraggingOrbit ? 4.0 : 9.5;
+            const headingFollowRate = sim.isDraggingOrbit || isRightStickOrbiting ? 4.0 : 9.5;
             sim.chaseHeading += hDiff * (1 - Math.exp(-headingFollowRate * dt));
 
             // Snap user orbit offset smoothly back behind the car after idle delay
-            if (!sim.isDraggingOrbit && now - sim.orbitLastInteractTime > SNAP_BACK_DELAY_MS) {
+            if (
+              !sim.isDraggingOrbit &&
+              !isRightStickOrbiting &&
+              now - sim.orbitLastInteractTime > SNAP_BACK_DELAY_MS
+            ) {
               while (sim.targetOrbitYawOffset > Math.PI) sim.targetOrbitYawOffset -= Math.PI * 2;
               while (sim.targetOrbitYawOffset < -Math.PI) sim.targetOrbitYawOffset += Math.PI * 2;
               const snapDamp = 1 - Math.exp(-3.8 * dt);
@@ -941,7 +984,39 @@ export function RaceViewport(props: RaceViewportProps) {
               camera.updateProjectionMatrix();
             }
           } else {
-            const camFrame = computeCameraFrame(mode, playerCar, pPitch, pRoll);
+            let lookOffset: { yaw: number; pitch: number } | undefined;
+            if (mode === 'hood') {
+              // Right-stick smooth glance left/right and up/down from hood cam, auto-centering when released
+              const targetHoodYaw = gp.cameraX * 0.95;
+              const targetHoodPitch = gp.cameraY * 0.26;
+              const lookDamp = 1 - Math.exp(-12 * dt);
+              sim.hoodLookYaw += (targetHoodYaw - sim.hoodLookYaw) * lookDamp;
+              sim.hoodLookPitch += (targetHoodPitch - sim.hoodLookPitch) * lookDamp;
+              if (Math.abs(sim.hoodLookYaw) < 0.001 && targetHoodYaw === 0) sim.hoodLookYaw = 0;
+              if (Math.abs(sim.hoodLookPitch) < 0.001 && targetHoodPitch === 0) sim.hoodLookPitch = 0;
+              if (sim.hoodLookYaw !== 0 || sim.hoodLookPitch !== 0) {
+                lookOffset = { yaw: sim.hoodLookYaw, pitch: sim.hoodLookPitch };
+              }
+            } else if (mode === 'isometric') {
+              const isStickActive = gp.cameraX !== 0 || gp.cameraY !== 0;
+              if (isStickActive) {
+                sim.isoYawOffset -= gp.cameraX * 2.0 * dt;
+                sim.isoPitchOffset = Math.max(-0.8, Math.min(0.8, sim.isoPitchOffset + gp.cameraY * 1.4 * dt));
+                sim.isoLastInteractTime = now;
+              } else if (now - sim.isoLastInteractTime > 2200) {
+                while (sim.isoYawOffset > Math.PI) sim.isoYawOffset -= Math.PI * 2;
+                while (sim.isoYawOffset < -Math.PI) sim.isoYawOffset += Math.PI * 2;
+                const snapDamp = 1 - Math.exp(-3.8 * dt);
+                sim.isoYawOffset += (0 - sim.isoYawOffset) * snapDamp;
+                sim.isoPitchOffset += (0 - sim.isoPitchOffset) * snapDamp;
+                if (Math.abs(sim.isoYawOffset) < 0.002) sim.isoYawOffset = 0;
+                if (Math.abs(sim.isoPitchOffset) < 0.002) sim.isoPitchOffset = 0;
+              }
+              if (sim.isoYawOffset !== 0 || sim.isoPitchOffset !== 0) {
+                lookOffset = { yaw: sim.isoYawOffset, pitch: sim.isoPitchOffset };
+              }
+            }
+            const camFrame = computeCameraFrame(mode, playerCar, pPitch, pRoll, lookOffset);
 
             if (camFrame.isLocked) {
               // Hood Cam: locked rigidly to car's full 3D orientation (pitch & roll), zero velocity lag
@@ -1228,6 +1303,7 @@ export function RaceViewport(props: RaceViewportProps) {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', clearKeys);
       document.removeEventListener('visibilitychange', clearKeys);
+      gamepadController.detach(window);
       window.removeEventListener('resize', onResize);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);

@@ -16,6 +16,11 @@ import {
 import { CarClassId, LiveryConfig, TrackSpec, TrackWaypoint } from './types';
 import { TRACKS, compileTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
 import {
+  GamepadController,
+  applySteeringCurve,
+  blendDrivingInputs,
+} from './gamepad';
+import {
   CUSTOM_TRACK_TEMPLATES,
   NODE_COLLIDER_RADIUS_MULTIPLIER,
   NODE_HIT_RADIUS_PX,
@@ -2350,6 +2355,178 @@ test('Straight-Line Stability: residual yaw & lateral drift settle cleanly on co
     }
   }
 });
+
+test('GamepadController: PS4/DualShock axes, analog triggers, deadzones, edge-triggered X, and safe disconnect', () => {
+  // Deadzone + smooth steering response curve
+  assert.equal(applySteeringCurve(0.05, 0.1), 0);
+  assert.equal(applySteeringCurve(-0.09, 0.1), 0);
+  const midSteer = applySteeringCurve(0.55, 0.1);
+  assert.ok(midSteer > 0.25 && midSteer < 0.5, `Expected smooth mid-range steering curve, got ${midSteer}`);
+  assert.equal(applySteeringCurve(1.0, 0.1), 1);
+  assert.equal(applySteeringCurve(-1.0, 0.1), -1);
+
+  const controller = new GamepadController();
+
+  // Safe handling when no controllers are connected or list contains nulls
+  const empty = controller.poll([null, undefined]);
+  assert.equal(empty.connected, false);
+  assert.equal(empty.throttle, 0);
+  assert.equal(empty.brake, 0);
+  assert.equal(empty.steer, 0);
+  assert.equal(empty.specialJustPressed, false);
+
+  const makePad = (opts: {
+    r2?: number;
+    l2?: number;
+    lx?: number;
+    rx?: number;
+    ry?: number;
+    cross?: boolean;
+  }) => ({
+    index: 0,
+    id: 'Sony DualShock 4',
+    connected: true,
+    mapping: 'standard',
+    axes: [opts.lx ?? 0, 0, opts.rx ?? 0, opts.ry ?? 0],
+    buttons: [
+      { pressed: Boolean(opts.cross), value: opts.cross ? 1 : 0 }, // 0: Cross / X
+      { pressed: false, value: 0 },
+      { pressed: false, value: 0 },
+      { pressed: false, value: 0 },
+      { pressed: false, value: 0 },
+      { pressed: false, value: 0 },
+      { pressed: (opts.l2 ?? 0) > 0.5, value: opts.l2 ?? 0 }, // 6: L2
+      { pressed: (opts.r2 ?? 0) > 0.5, value: opts.r2 ?? 0 }, // 7: R2
+    ],
+  });
+
+  // Poll 1: Press Cross/X, half R2, slight L2, steer right, right-stick look
+  const s1 = controller.poll([makePad({ r2: 0.52, l2: 0.24, lx: 0.6, rx: -0.5, ry: 0.4, cross: true })]);
+  assert.equal(s1.connected, true);
+  assert.ok(s1.throttle > 0.45 && s1.throttle < 0.55);
+  assert.ok(s1.brake > 0.15 && s1.brake < 0.25);
+  assert.ok(s1.steer > 0.3 && s1.steer < 0.6);
+  assert.ok(s1.cameraX < -0.2);
+  assert.ok(s1.cameraY > 0.1);
+  assert.equal(s1.specialPressed, true);
+  assert.equal(s1.specialJustPressed, true);
+
+  // Poll 2: Cross/X still held -> edge trigger MUST be false
+  const s2 = controller.poll([makePad({ r2: 1.0, cross: true })]);
+  assert.equal(s2.specialPressed, true);
+  assert.equal(s2.specialJustPressed, false);
+
+  // Poll 3: Release Cross/X
+  const s3 = controller.poll([makePad({ cross: false })]);
+  assert.equal(s3.specialPressed, false);
+  assert.equal(s3.specialJustPressed, false);
+
+  // Poll 4: Press Cross/X again -> edge trigger fires again
+  const s4 = controller.poll([makePad({ cross: true })]);
+  assert.equal(s4.specialJustPressed, true);
+
+  // Disconnect mid-hold -> returns clean neutral state without throwing
+  const disconnected = controller.poll([null]);
+  assert.equal(disconnected.connected, false);
+  assert.equal(disconnected.specialPressed, false);
+  assert.equal(disconnected.specialJustPressed, false);
+
+  // Keyboard & Gamepad blending yields cleanly
+  const blendedKb = blendDrivingInputs({ throttle: 1, brake: 0, steer: -1 }, { connected: true, throttle: 0, brake: 0, steer: 0 });
+  assert.deepEqual(blendedKb, { throttle: 1, brake: 0, steer: -1 });
+  const blendedGp = blendDrivingInputs({ throttle: 0, brake: 0, steer: 0 }, { connected: true, throttle: 0.7, brake: 0.2, steer: 0.45 });
+  assert.deepEqual(blendedGp, { throttle: 0.7, brake: 0.2, steer: 0.45 });
+});
+
+test('Specials operate in toggle mode across classes: press ON, stays ON without hold, press OFF, and auto-OFF on depletion', () => {
+  const spa = compileTrack(TRACKS[0]);
+
+  // 1. ERS / Hybrid Deploy (e.g. GTP / F1 2021)
+  const gtp = CARS.find((c) => c.id === 'porsche-963')!;
+  const ersCar = createCarSimState({
+    id: 'ers-toggle',
+    name: 'ERS Toggle',
+    isPlayer: true,
+    carId: gtp.id,
+    livery: gtp.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'medium',
+  });
+  const opts = { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [ersCar] };
+
+  // Press once -> ON
+  stepCarPhysics(ersCar, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, opts);
+  assert.equal(ersCar.specialActive, true);
+  const chargeAfterStart = ersCar.specialCharge;
+
+  // Release button -> stays ON and keeps draining
+  stepCarPhysics(ersCar, { throttle: 1, brake: 0, steer: 0, specialPressed: false, specialJustPressed: false }, spa, 0.5, opts);
+  assert.equal(ersCar.specialActive, true);
+  assert.ok(ersCar.specialCharge < chargeAfterStart, 'Charge should drain while toggled ON');
+
+  // Hold button without edge -> stays ON (no flicker)
+  stepCarPhysics(ersCar, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: false }, spa, 1 / 60, opts);
+  assert.equal(ersCar.specialActive, true);
+
+  // Press again (rising edge) -> toggles OFF and recharges
+  const chargeBeforeOff = ersCar.specialCharge;
+  stepCarPhysics(ersCar, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 0.5, opts);
+  assert.equal(ersCar.specialActive, false);
+  assert.ok(ersCar.specialCharge > chargeBeforeOff, 'Charge should recharge after toggling OFF');
+
+  // Toggle ON again and run until depletion -> auto-turns OFF
+  stepCarPhysics(ersCar, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, opts);
+  assert.equal(ersCar.specialActive, true);
+  for (let i = 0; i < 400 && ersCar.specialActive; i++) {
+    stepCarPhysics(ersCar, { throttle: 1, brake: 0, steer: 0, specialPressed: false, specialJustPressed: false }, spa, 1 / 60, opts);
+  }
+  assert.equal(ersCar.specialActive, false, 'ERS special should auto-deactivate when charge depletes');
+
+  // 2. High-Beam Flash (GT3): press ON, release stays ON, press again turns OFF
+  const gt3 = CARS.find((c) => c.id === 'ferrari-296-gt3')!;
+  const gt3Car = createCarSimState({
+    id: 'gt3-toggle',
+    name: 'GT3 Toggle',
+    isPlayer: true,
+    carId: gt3.id,
+    livery: gt3.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'medium',
+  });
+  const gt3Opts = { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [gt3Car] };
+  stepCarPhysics(gt3Car, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, gt3Opts);
+  assert.equal(gt3Car.specialActive, true);
+  assert.equal(gt3Car.flashingHeadlights, true);
+  stepCarPhysics(gt3Car, { throttle: 1, brake: 0, steer: 0, specialPressed: false, specialJustPressed: false }, spa, 1 / 60, gt3Opts);
+  assert.equal(gt3Car.specialActive, true);
+  assert.equal(gt3Car.flashingHeadlights, true);
+  stepCarPhysics(gt3Car, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, gt3Opts);
+  assert.equal(gt3Car.specialActive, false);
+  assert.equal(gt3Car.flashingHeadlights, false);
+
+  // 3. V10 Overboost: press ON, release stays ON, press again turns OFF
+  const v10 = CARS.find((c) => c.id === 'f1-05-renault')!;
+  const v10Car = createCarSimState({
+    id: 'v10-toggle',
+    name: 'V10 Toggle',
+    isPlayer: true,
+    carId: v10.id,
+    livery: v10.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  const v10Opts = { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [v10Car] };
+  stepCarPhysics(v10Car, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, v10Opts);
+  assert.equal(v10Car.specialActive, true);
+  stepCarPhysics(v10Car, { throttle: 1, brake: 0, steer: 0, specialPressed: false, specialJustPressed: false }, spa, 1 / 60, v10Opts);
+  assert.equal(v10Car.specialActive, true);
+  stepCarPhysics(v10Car, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, v10Opts);
+  assert.equal(v10Car.specialActive, false);
+});
+
 
 
 
