@@ -2245,7 +2245,7 @@ test('Straight-Line Stability: residual yaw & lateral drift settle cleanly on co
   const monza = compileTrack(TRACKS.find((t) => t.id === 'monza') ?? TRACKS[0]);
   const sample = sampleTrackAtT(monza, 0.02); // Main straight
 
-  for (const carId of ['porsche-963', 'f1-26-mercedes', 'porsche-911-gt3-r']) {
+  for (const carId of ['porsche-963', 'f1-26-mercedes', 'oreca-07', 'porsche-911-gt3-r', 'porsche-cayman-gt4-rs']) {
     for (const dt of [1 / 60, 1 / 120]) {
       const spec = getCarById(carId);
       const car = createCarSimState({
@@ -2273,7 +2273,7 @@ test('Straight-Line Stability: residual yaw & lateral drift settle cleanly on co
       car.yawRate = -0.42;
       car.steerAngle = 0.12;
 
-      const stepsHalfSec = Math.round(0.5 / dt);
+      const stepsHalfSec = Math.round(0.4 / dt);
       for (let i = 0; i < stepsHalfSec; i++) {
         stepCarPhysics(
           car,
@@ -2288,20 +2288,21 @@ test('Straight-Line Stability: residual yaw & lateral drift settle cleanly on co
       const settledRightZ = Math.sin(car.heading);
       const settledVLat = car.vx * settledRightX + car.vz * settledRightZ;
 
-      assert.ok(
-        Math.abs(car.steerAngle) < 0.002,
-        `${carId} (${Math.round(1 / dt)}Hz): steerAngle should self-center to 0, got ${car.steerAngle}`,
+      assert.equal(
+        car.steerAngle,
+        0,
+        `${carId} (${Math.round(1 / dt)}Hz): steerAngle should self-center cleanly to exact 0, got ${car.steerAngle}`,
       );
       assert.ok(
-        Math.abs(car.yawRate ?? 0) < 0.03,
+        Math.abs(car.yawRate ?? 0) < 0.02,
         `${carId} (${Math.round(1 / dt)}Hz): yawRate should settle cleanly, got ${car.yawRate}`,
       );
       assert.ok(
-        Math.abs(settledVLat) < 0.25,
+        Math.abs(settledVLat) < 0.15,
         `${carId} (${Math.round(1 / dt)}Hz): lateral drift vLat should damp out cleanly, got ${settledVLat}`,
       );
 
-      // Verify zero wandering/pendulum over the next 0.5s straight
+      // Verify zero wandering/pendulum over the next 0.4s straight
       const headingAfterSettle = car.heading;
       for (let i = 0; i < stepsHalfSec; i++) {
         stepCarPhysics(
@@ -2314,7 +2315,7 @@ test('Straight-Line Stability: residual yaw & lateral drift settle cleanly on co
       }
       const wander = Math.abs(car.heading - headingAfterSettle);
       assert.ok(
-        wander < 0.02,
+        wander < 0.015,
         `${carId} (${Math.round(1 / dt)}Hz): car should track dead straight without wandering, got ${wander} rad`,
       );
     }
