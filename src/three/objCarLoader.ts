@@ -469,19 +469,48 @@ function convertSourceMaterial(
       metalness: 0.78,
     });
   } else if (/numberplate|num_plate|^plate$|^numpan\d*$|^numberdigi\d*$/i.test(lowerMat)) {
-    const plateTexture = ctx.track(
-      createNumberPlateTexture(
-        ctx.livery,
-        ctx.carSpec.classId,
-        ctx.maxAniso,
-      ),
-    );
-    built = new THREE.MeshStandardMaterial({
-      name: matName,
-      map: plateTexture,
-      roughness: 0.35,
-      metalness: 0.05,
-    });
+    if (ctx.isV2Pipeline) {
+      // V2 pipeline models remap all body/plate sub-meshes into SIX_ZONE_UV_ATLAS;
+      // binding a full-quad plate texture would stretch/crop giant distorted digits.
+      let atlasTex: THREE.Texture | null = null;
+      if (ctx.livery.customTexture) {
+        try {
+          const loader = new THREE.TextureLoader();
+          atlasTex = ctx.track(loader.load(ctx.livery.customTexture));
+          atlasTex.colorSpace = THREE.SRGBColorSpace;
+          atlasTex.wrapS = THREE.RepeatWrapping;
+          atlasTex.wrapT = THREE.RepeatWrapping;
+          atlasTex.anisotropy = ctx.maxAniso;
+        } catch {
+          atlasTex = ctx.getProceduralLiveryTexture();
+        }
+      } else {
+        atlasTex = ctx.getProceduralLiveryTexture();
+      }
+      built = new THREE.MeshPhysicalMaterial({
+        name: matName,
+        color: 0xffffff,
+        map: atlasTex,
+        roughness: 0.28,
+        metalness: 0.14,
+        clearcoat: 0.9,
+        clearcoatRoughness: 0.14,
+      });
+    } else {
+      const plateTexture = ctx.track(
+        createNumberPlateTexture(
+          ctx.livery,
+          ctx.carSpec.classId,
+          ctx.maxAniso,
+        ),
+      );
+      built = new THREE.MeshStandardMaterial({
+        name: matName,
+        map: plateTexture,
+        roughness: 0.35,
+        metalness: 0.05,
+      });
+    }
   } else if (/chrome|steel|alum|magnesium|metal|exhaust/i.test(lowerMat)) {
     built = new THREE.MeshStandardMaterial({
       name: matName,

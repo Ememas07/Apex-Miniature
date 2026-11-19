@@ -486,12 +486,42 @@ export function LiveryStudioModal({
     } else if (type === 'plate') {
       // Stamp authentic motorsport category numberplates onto standard UV zones: hood and door flanks
       const num = livery.driverNumber || '99';
-      // Hood plate (top zone)
-      drawNumberplateToContext(ctx, Math.round(w * 0.168), Math.round(h * 0.146), Math.round(w * 0.125), Math.round(h * 0.09), carSpec.classId, livery.numberPlateStyle, num);
-      // Left door plate
-      drawNumberplateToContext(ctx, Math.round(w * 0.674), Math.round(h * 0.074), Math.round(w * 0.133), Math.round(h * 0.094), carSpec.classId, livery.numberPlateStyle, num);
-      // Right door plate
-      drawNumberplateToContext(ctx, Math.round(w * 0.674), Math.round(h * 0.316), Math.round(w * 0.133), Math.round(h * 0.094), carSpec.classId, livery.numberPlateStyle, num);
+      // Hood plate (top zone, rotated 180 deg so it reads upright from the front)
+      drawNumberplateToContext(
+        ctx,
+        Math.round(w * 0.176),
+        Math.round(h * 0.16),
+        Math.round(w * 0.109),
+        Math.round(h * 0.086),
+        carSpec.classId,
+        livery.numberPlateStyle,
+        num,
+        { rotateRad: Math.PI },
+      );
+      // Left door plate (flipX to match LEFT_SIDE UV projection, positioned below side windows)
+      drawNumberplateToContext(
+        ctx,
+        Math.round(w * 0.674),
+        Math.round(h * 0.117),
+        Math.round(w * 0.094),
+        Math.round(h * 0.078),
+        carSpec.classId,
+        livery.numberPlateStyle,
+        num,
+        { flipX: true },
+      );
+      // Right door plate (flipX to match RIGHT_SIDE UV projection, positioned below side windows)
+      drawNumberplateToContext(
+        ctx,
+        Math.round(w * 0.674),
+        Math.round(h * 0.357),
+        Math.round(w * 0.094),
+        Math.round(h * 0.078),
+        carSpec.classId,
+        livery.numberPlateStyle,
+        num,
+        { flipX: true },
+      );
     }
 
     const dataUrl = canvas.toDataURL('image/png');
