@@ -1,4 +1,8 @@
 import aiPolicyWeightsRaw from './aiPolicyWeights.json';
+import aiPolicyWeightsV1Raw from './aiPolicyWeights_v1.json';
+import aiPolicyWeightsV2Raw from './aiPolicyWeights_v2.json';
+import aiPolicyWeightsV3Raw from './aiPolicyWeights_v3.json';
+import aiPolicyWeightsV4Raw from './aiPolicyWeights_v4.json';
 import { BoPMultipliers } from './cars';
 import {
   CarSimState,
@@ -96,31 +100,6 @@ export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
 export const AI_POLICY_WEIGHTS: PolicyWeights =
   validatePolicyWeights(aiPolicyWeightsRaw) ?? (aiPolicyWeightsRaw as PolicyWeights);
 
-const OPTIONAL_VARIANT_MODULES: Record<string, unknown> = (() => {
-  try {
-    const globFn = (import.meta as unknown as {
-      glob?: (pattern: string, opts: { eager: boolean }) => Record<string, unknown>;
-    }).glob;
-    if (typeof globFn === 'function') {
-      return globFn('./aiPolicyWeights_v[1-4].json', { eager: true });
-    }
-  } catch {
-    // Node/tsx test runners without Vite import.meta.glob
-  }
-  return {};
-})();
-
-function loadOptionalVariant(suffix: 'v1' | 'v2' | 'v3' | 'v4'): PolicyWeights | null {
-  const key = `./aiPolicyWeights_${suffix}.json`;
-  const mod = OPTIONAL_VARIANT_MODULES[key] as { default?: unknown } | unknown;
-  if (!mod) return null;
-  const raw =
-    typeof mod === 'object' && mod !== null && 'default' in mod
-      ? (mod as { default: unknown }).default
-      : mod;
-  return validatePolicyWeights(raw);
-}
-
 const VARIANT_META: Record<
   AiPolicyVariantId,
   { label: string; shortLabel: string; description: string }
@@ -155,10 +134,10 @@ const VARIANT_META: Record<
 const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
   const weightsById: Record<AiPolicyVariantId, PolicyWeights | null> = {
     base: validatePolicyWeights(aiPolicyWeightsRaw),
-    v1: loadOptionalVariant('v1'),
-    v2: loadOptionalVariant('v2'),
-    v3: loadOptionalVariant('v3'),
-    v4: loadOptionalVariant('v4'),
+    v1: validatePolicyWeights(aiPolicyWeightsV1Raw),
+    v2: validatePolicyWeights(aiPolicyWeightsV2Raw),
+    v3: validatePolicyWeights(aiPolicyWeightsV3Raw),
+    v4: validatePolicyWeights(aiPolicyWeightsV4Raw),
   };
   const out = {} as Record<AiPolicyVariantId, AiPolicyVariantInfo>;
   for (const id of AI_POLICY_VARIANT_IDS) {

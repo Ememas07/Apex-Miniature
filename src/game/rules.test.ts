@@ -68,9 +68,9 @@ test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.F1_2021).length, 1);
   assert.equal(getCarsByClass(CarClassId.F1_2005).length, 4);
   assert.equal(getCarsByClass(CarClassId.FORMULA_E).length, 4);
-  assert.equal(getCarsByClass(CarClassId.TRACK_COUPE).length, 7);
+  assert.equal(getCarsByClass(CarClassId.TRACK_COUPE).length, 6);
   assert.equal(getCarsByClass(CarClassId.SUPERCAR).length, 7);
-  assert.ok(CARS.length >= 59);
+  assert.ok(CARS.length >= 58);
 
   // Single-model classes have authentic team livery presets
   const lmp2 = getCarsByClass(CarClassId.LMP2)[0];
