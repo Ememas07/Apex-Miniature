@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GarageModal } from './components/GarageModal';
 import { LiveryStudioModal } from './components/LiveryStudioModal';
+import { MultiplayerModal } from './components/MultiplayerModal';
 import { PauseModal } from './components/PauseModal';
 import { RaceHUD } from './components/RaceHUD';
-import { RaceSetupModal } from './components/RaceSetupModal';
+import { RaceMenuModal } from './components/RaceMenuModal';
 import { ResultsModal } from './components/ResultsModal';
-import { SinglePlayerModal } from './components/SinglePlayerModal';
 import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
 import { TrackStudioModal } from './components/TrackStudioModal';
@@ -69,9 +68,8 @@ export default function App() {
     return params.get('autostart') === '1' ? 1 : 0;
   });
 
-  const [garageOpen, setGarageOpen] = useState(false);
-  const [setupOpen, setSetupOpen] = useState(false);
-  const [singlePlayerOpen, setSinglePlayerOpen] = useState(false);
+  const [raceMenuOpen, setRaceMenuOpen] = useState(false);
+  const [multiplayerOpen, setMultiplayerOpen] = useState(false);
   const [trackStudioOpen, setTrackStudioOpen] = useState(false);
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
   const [soundStudioOpen, setSoundStudioOpen] = useState(false);
@@ -132,14 +130,18 @@ export default function App() {
       if (startedRoom?.config) {
         setRaceConfig((prev) => mergeSharedRoomConfig(prev, startedRoom.config));
       }
-      setSetupOpen(false);
-      setGarageOpen(false);
+      setRaceMenuOpen(false);
+      setMultiplayerOpen(false);
       setTrackStudioOpen(false);
+      setLiveryStudioOpen(false);
+      setSoundStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
       setRunNonce((n) => n + 1);
       const useQuali = startedRoom?.config?.qualifyingEnabled ?? qualifyingEnabledRef.current;
-      setPhase(useQuali ? 'qualifying' : 'playing');
+      const targetPhase = useQuali ? 'qualifying' : 'playing';
+      setActivePrePausePhase(targetPhase);
+      setPhase(targetPhase);
     };
     mp.onError = (msg) => setMpError(msg);
     mp.onConnectionModeChange = (mode) => setConnectionMode(mode);
@@ -149,9 +151,11 @@ export default function App() {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    setGarageOpen(false);
-    setSetupOpen(false);
+    setRaceMenuOpen(false);
+    setMultiplayerOpen(false);
     setTrackStudioOpen(false);
+    setLiveryStudioOpen(false);
+    setSoundStudioOpen(false);
     setFinalSnapshot(null);
     setQualiBanner(null);
 
@@ -177,12 +181,14 @@ export default function App() {
           // Ignore disconnect errors when switching to offline Single Player
         }
         setRoom(null);
+        setMpError(null);
       }
       setRaceConfig((prev) => ({ ...prev, ...patch }));
-      setSinglePlayerOpen(false);
-      setGarageOpen(false);
-      setSetupOpen(false);
+      setRaceMenuOpen(false);
+      setMultiplayerOpen(false);
       setTrackStudioOpen(false);
+      setLiveryStudioOpen(false);
+      setSoundStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
       const targetPhase =
@@ -194,14 +200,21 @@ export default function App() {
     [room],
   );
 
+  const handleReturnToTitle = useCallback(() => {
+    setRaceMenuOpen(false);
+    setMultiplayerOpen(false);
+    setFinalSnapshot(null);
+    setQualiBanner(null);
+    setPhase('title');
+  }, []);
+
   // Enter / Space shortcut on Title screen
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (
         phase !== 'title' ||
-        garageOpen ||
-        setupOpen ||
-        singlePlayerOpen ||
+        raceMenuOpen ||
+        multiplayerOpen ||
         trackStudioOpen ||
         liveryStudioOpen ||
         soundStudioOpen
@@ -217,9 +230,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     phase,
-    garageOpen,
-    setupOpen,
-    singlePlayerOpen,
+    raceMenuOpen,
+    multiplayerOpen,
     trackStudioOpen,
     liveryStudioOpen,
     soundStudioOpen,
@@ -338,8 +350,8 @@ export default function App() {
     setCustomTracksNonce((n) => n + 1);
     handleUpdateConfig({ trackId: saved.id, customTrack: saved });
     setTrackStudioOpen(false);
-    setSetupOpen(false);
-    setGarageOpen(false);
+    setRaceMenuOpen(false);
+    setMultiplayerOpen(false);
     setFinalSnapshot(null);
     setQualiBanner(null);
     setActivePrePausePhase('playing');
@@ -374,74 +386,45 @@ export default function App() {
 
       {/* Title Screen */}
       {phase === 'title' &&
-        !garageOpen &&
-        !setupOpen &&
-        !singlePlayerOpen &&
+        !raceMenuOpen &&
+        !multiplayerOpen &&
         !trackStudioOpen &&
         !liveryStudioOpen &&
         !soundStudioOpen && (
           <TitleOverlay
             raceConfig={raceConfig}
             roomCode={room?.code ?? null}
-            onStartRace={handleStartSession}
-            onOpenSinglePlayer={() => setSinglePlayerOpen(true)}
-            onOpenGarage={() => setGarageOpen(true)}
-            onOpenSetup={() => setSetupOpen(true)}
+            onOpenRace={() => {
+              setMultiplayerOpen(false);
+              setRaceMenuOpen(true);
+            }}
+            onOpenMultiplayer={() => {
+              setRaceMenuOpen(false);
+              setMultiplayerOpen(true);
+            }}
             onOpenStudio={() => handleOpenStudio()}
             onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
             onOpenSoundStudio={() => setSoundStudioOpen(true)}
           />
         )}
 
-      {/* Single Player Mode (Practice / Hotlap & Quick Race vs AI) */}
-      {singlePlayerOpen && (
-        <SinglePlayerModal
+      {/* Unified Single-Player Race Setup */}
+      {raceMenuOpen && (
+        <RaceMenuModal
           config={raceConfig}
           customTracksNonce={customTracksNonce}
-          onStartPractice={handleStartSinglePlayer}
-          onStartQuickRace={handleStartSinglePlayer}
-          onClose={() => setSinglePlayerOpen(false)}
-        />
-      )}
-
-      {/* Interactive IMSA Sound Studio */}
-      {soundStudioOpen && (
-        <SoundEditorModal
-          currentCarId={raceConfig.playerCarId}
-          onClose={() => setSoundStudioOpen(false)}
-        />
-      )}
-
-      {/* 3D Livery Studio & UV Painter */}
-      {liveryStudioOpen && (
-        <LiveryStudioModal
-          initialCarId={raceConfig.playerCarId}
-          initialLivery={raceConfig.playerLivery}
-          onApplyLivery={(carId, newLivery) => {
-            if (carId !== raceConfig.playerCarId) {
-              handleSelectCar(carId, newLivery);
-            } else {
-              handleChangeLivery(newLivery);
-            }
-          }}
-          onClose={() => setLiveryStudioOpen(false)}
-        />
-      )}
-
-      {/* Garage & Livery Customizer */}
-      {garageOpen && (
-        <GarageModal
-          selectedCarId={raceConfig.playerCarId}
-          livery={raceConfig.playerLivery}
+          onUpdateConfig={handleUpdateConfig}
           onSelectCar={handleSelectCar}
           onChangeLivery={handleChangeLivery}
-          onClose={() => setGarageOpen(false)}
+          onStartRace={handleStartSinglePlayer}
+          onOpenStudio={(trackToEdit) => handleOpenStudio(trackToEdit)}
+          onClose={() => setRaceMenuOpen(false)}
         />
       )}
 
-      {/* Track Catalog, Multi-Class Rules & Multiplayer Setup */}
-      {setupOpen && (
-        <RaceSetupModal
+      {/* Unified Multiplayer Room Creation & Lobby */}
+      {multiplayerOpen && (
+        <MultiplayerModal
           config={raceConfig}
           room={room}
           myPeerId={mpClientRef.current.peerId}
@@ -453,12 +436,18 @@ export default function App() {
           onCreateRoom={async (name) => {
             try {
               setMpError(null);
+              const mpConfig: RaceConfig = {
+                ...raceConfig,
+                sessionMode: 'race',
+                totalLaps: raceConfig.totalLaps > 0 ? raceConfig.totalLaps : 5,
+              };
+              setRaceConfig(mpConfig);
               await mpClientRef.current?.createRoom(
                 name,
-                raceConfig.playerCarId,
-                raceConfig.playerLivery,
-                raceConfig,
-                getCarById(raceConfig.playerCarId).classId,
+                mpConfig.playerCarId,
+                mpConfig.playerLivery,
+                mpConfig,
+                getCarById(mpConfig.playerCarId).classId,
               );
             } catch (err: unknown) {
               setMpError(err instanceof Error ? err.message : 'Failed to create room');
@@ -482,13 +471,37 @@ export default function App() {
             try {
               mpClientRef.current?.leaveRoom();
               setRoom(null);
+              setMpError(null);
             } catch (err: unknown) {
               setMpError(err instanceof Error ? err.message : 'Error leaving room');
             }
           }}
           onStartFromLobby={handleStartSession}
-          onClose={() => setSetupOpen(false)}
-          onOpenStudio={(trackToEdit) => handleOpenStudio(trackToEdit)}
+          onClose={() => setMultiplayerOpen(false)}
+        />
+      )}
+
+      {/* Interactive IMSA Sound Studio (Untouched) */}
+      {soundStudioOpen && (
+        <SoundEditorModal
+          currentCarId={raceConfig.playerCarId}
+          onClose={() => setSoundStudioOpen(false)}
+        />
+      )}
+
+      {/* 3D Livery Studio & UV Painter (Untouched) */}
+      {liveryStudioOpen && (
+        <LiveryStudioModal
+          initialCarId={raceConfig.playerCarId}
+          initialLivery={raceConfig.playerLivery}
+          onApplyLivery={(carId, newLivery) => {
+            if (carId !== raceConfig.playerCarId) {
+              handleSelectCar(carId, newLivery);
+            } else {
+              handleChangeLivery(newLivery);
+            }
+          }}
+          onClose={() => setLiveryStudioOpen(false)}
         />
       )}
 
@@ -517,11 +530,7 @@ export default function App() {
           onCycleCamera={handleCycleCamera}
           onToggleMute={handleToggleMute}
           onTogglePause={handleTogglePause}
-          onReturnToTitle={() => {
-            setFinalSnapshot(null);
-            setQualiBanner(null);
-            setPhase('title');
-          }}
+          onReturnToTitle={handleReturnToTitle}
         />
       )}
 
@@ -561,11 +570,7 @@ export default function App() {
             setRunNonce((n) => n + 1);
             setPhase(activePrePausePhase);
           }}
-          onReturnToTitle={() => {
-            setFinalSnapshot(null);
-            setQualiBanner(null);
-            setPhase('title');
-          }}
+          onReturnToTitle={handleReturnToTitle}
         />
       )}
 
@@ -576,10 +581,7 @@ export default function App() {
           trackName={track.name}
           adaptiveBoost={raceConfig.aiAdaptiveBoost}
           onRaceAgain={handleStartSession}
-          onReturnToTitle={() => {
-            setFinalSnapshot(null);
-            setPhase('title');
-          }}
+          onReturnToTitle={handleReturnToTitle}
         />
       )}
     </main>

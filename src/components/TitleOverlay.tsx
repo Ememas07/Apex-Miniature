@@ -5,22 +5,18 @@ import { RaceConfig } from '../game/types';
 interface TitleOverlayProps {
   raceConfig: RaceConfig;
   roomCode: string | null;
-  onStartRace: () => void;
-  onOpenSinglePlayer?: () => void;
-  onOpenGarage: () => void;
-  onOpenSetup: () => void;
-  onOpenStudio?: () => void;
-  onOpenLiveryStudio?: () => void;
-  onOpenSoundStudio?: () => void;
+  onOpenRace: () => void;
+  onOpenMultiplayer: () => void;
+  onOpenStudio: () => void;
+  onOpenLiveryStudio: () => void;
+  onOpenSoundStudio: () => void;
 }
 
 export function TitleOverlay({
   raceConfig,
   roomCode,
-  onStartRace,
-  onOpenSinglePlayer,
-  onOpenGarage,
-  onOpenSetup,
+  onOpenRace,
+  onOpenMultiplayer,
   onOpenStudio,
   onOpenLiveryStudio,
   onOpenSoundStudio,
@@ -28,6 +24,10 @@ export function TitleOverlay({
   const car = getCarById(raceConfig.playerCarId);
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
   const classMeta = CAR_CLASSES[car.classId];
+  const aiCount =
+    raceConfig.noAi || raceConfig.sessionMode === 'practice'
+      ? 0
+      : Math.max(0, raceConfig.aiBotCount ?? 11);
 
   return (
     <div
@@ -41,15 +41,21 @@ export function TitleOverlay({
       {/* Top quiet session line */}
       <div className="flex items-center justify-between text-xs tracking-wider text-slate-300">
         <div className="flex items-center gap-3">
-          <span className="font-display font-bold text-slate-100">APEX MINIATURE</span>
+          <span className="font-display font-bold text-slate-100 whitespace-nowrap">APEX MINIATURE</span>
           <span aria-hidden="true" className="text-slate-600">/</span>
-          <span className="text-slate-400">All {CARS.length} Cars & {TRACKS.length} Circuits Unlocked</span>
+          <span className="text-slate-400">
+            All {CARS.length} Cars & {TRACKS.length} Circuits Unlocked
+          </span>
         </div>
         <div className="flex items-center gap-4 pointer-events-auto">
           {roomCode && (
-            <div className="text-xs font-telemetry text-amber-400">
+            <button
+              type="button"
+              onClick={onOpenMultiplayer}
+              className="text-xs font-telemetry text-amber-400 hover:text-amber-300 cursor-pointer whitespace-nowrap"
+            >
               Room {roomCode}
-            </div>
+            </button>
           )}
         </div>
       </div>
@@ -111,21 +117,13 @@ export function TitleOverlay({
             <span>{track.name}</span>
             <span aria-hidden="true">·</span>
             <span className="tabular-nums">
-              {raceConfig.sessionMode === 'practice'
+              {aiCount === 0
                 ? raceConfig.totalLaps <= 0
-                  ? 'Practice · Continuous'
-                  : `Practice · ${raceConfig.totalLaps} Laps`
-                : `${raceConfig.totalLaps} Laps`}
+                  ? 'Solo Practice · Continuous'
+                  : `Solo Practice · ${raceConfig.totalLaps} Laps`
+                : `${aiCount} AI Opponents · ${raceConfig.totalLaps} Laps`}
             </span>
-            <span aria-hidden="true">·</span>
-            <span>
-              {raceConfig.sessionMode === 'practice'
-                ? 'Solo Hotlap'
-                : raceConfig.activeClasses.length > 1
-                ? `${raceConfig.activeClasses.length}-Class Grid`
-                : 'Single Class'}
-            </span>
-            {raceConfig.sessionMode !== 'practice' && (
+            {aiCount > 0 && (
               <>
                 <span aria-hidden="true">·</span>
                 <span>{raceConfig.qualifyingEnabled ? '1-Lap Quali' : 'Grid Start'}</span>
@@ -134,95 +132,81 @@ export function TitleOverlay({
           </div>
         </div>
 
-        {/* Primary & Secondary Actions */}
-        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
-          <button
-            type="button"
-            data-start="true"
-            onClick={onStartRace}
-            className="px-7 py-3.5 rounded-md bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-base tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 shadow-lg shadow-red-950/50"
-          >
-            {raceConfig.sessionMode === 'practice'
-              ? 'Start Practice'
-              : raceConfig.qualifyingEnabled
-              ? 'Start Qualifying'
-              : 'Hit the Track'}
-          </button>
-
-          {onOpenSinglePlayer && (
+        {/* Consolidated Top-Level Navigation */}
+        <div className="space-y-4">
+          {/* Primary Play Modes: Race & Multiplayer */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             <button
               type="button"
-              data-testid="btn-open-single-player"
-              onClick={onOpenSinglePlayer}
-              className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-emerald-500/35 hover:border-emerald-400 text-emerald-300 hover:text-white font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              data-testid="btn-open-race"
+              data-start="true"
+              onClick={onOpenRace}
+              className="px-8 py-3.5 rounded-md bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-base tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 shadow-lg shadow-red-950/50"
             >
-              Single Player
+              Race
             </button>
-          )}
 
-          <button
-            type="button"
-            onClick={onOpenGarage}
-            className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-white/15 text-slate-100 font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0"
-          >
-            Garage & Livery
-          </button>
-
-          {onOpenLiveryStudio && (
             <button
               type="button"
-              onClick={onOpenLiveryStudio}
-              className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-indigo-500/30 hover:border-indigo-400 text-indigo-300 hover:text-white font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
+              data-testid="btn-open-multiplayer"
+              onClick={onOpenMultiplayer}
+              className="px-6 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-white/20 hover:border-white/35 text-slate-100 font-display font-bold text-sm tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2.5"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
-                <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
-                <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
-                <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
-                <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
-              </svg>
-              Livery Studio
+              <span>Multiplayer</span>
+              {roomCode && (
+                <span className="font-telemetry text-xs text-amber-400">({roomCode})</span>
+              )}
             </button>
-          )}
+          </div>
 
-          {onOpenSoundStudio && (
-            <button
-              type="button"
-              data-testid="btn-open-sound-studio"
-              onClick={onOpenSoundStudio}
-              className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-amber-500/30 hover:border-amber-400 text-amber-300 hover:text-white font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-              </svg>
-              Sound Studio
-            </button>
-          )}
+          {/* 3 Studio Menus (Preserved As-Is) */}
+          <div className="pt-3 border-t border-white/10">
+            <div className="text-[11px] font-medium text-slate-400 mb-2.5">Studios</div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                data-testid="btn-open-livery-studio"
+                onClick={onOpenLiveryStudio}
+                className="px-4 py-2.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-indigo-500/30 hover:border-indigo-400 text-indigo-300 hover:text-white font-semibold text-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                  <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                  <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                  <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+                </svg>
+                Livery Studio
+              </button>
 
-          <button
-            type="button"
-            onClick={onOpenSetup}
-            className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-white/15 text-slate-100 font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0"
-          >
-            Track & Multiplayer
-          </button>
+              <button
+                type="button"
+                data-testid="btn-open-sound-studio"
+                onClick={onOpenSoundStudio}
+                className="px-4 py-2.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-amber-500/30 hover:border-amber-400 text-amber-300 hover:text-white font-semibold text-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </svg>
+                Sound Studio
+              </button>
 
-          {onOpenStudio && (
-            <button
-              type="button"
-              data-testid="btn-open-studio"
-              onClick={onOpenStudio}
-              className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-sky-500/30 hover:border-sky-400 text-sky-300 hover:text-white font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 20h9" />
-                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-              </svg>
-              Track Studio
-            </button>
-          )}
+              <button
+                type="button"
+                data-testid="btn-open-studio"
+                onClick={onOpenStudio}
+                className="px-4 py-2.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-sky-500/30 hover:border-sky-400 text-sky-300 hover:text-white font-semibold text-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+                Track Studio
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -231,7 +215,7 @@ export function TitleOverlay({
         <span>
           WASD / Arrows Drive · Space Class Special · C Camera · M Mute · P Pause
         </span>
-        <span className="text-slate-200/90">Press Enter or Space to start</span>
+        <span className="text-slate-200/90">Press Enter to launch active setup</span>
       </div>
     </div>
   );
