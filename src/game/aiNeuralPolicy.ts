@@ -178,7 +178,7 @@ const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
 function readStoredMix(): AiPolicyMixWeights {
   if (typeof window === 'undefined' || !window.localStorage) {
     return { ...DEFAULT_POLICY_MIX };
-  }
+  } 
   try {
     const raw = window.localStorage.getItem(POLICY_MIX_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_POLICY_MIX };
