@@ -99,43 +99,20 @@ export function computeCameraFrame(
     };
   }
 
-  if (mode === 'orbit') {
-    return {
-      position: {
-        x: car.x - Math.sin(car.heading) * 12.0,
-        y: Math.max(car.y + 0.45, car.y + 5.2),
-        z: car.z - Math.cos(car.heading) * 12.0,
-      },
-      lookAt: {
-        x: car.x,
-        y: car.y + 0.8,
-        z: car.z,
-      },
-      fov: 52,
-      isLocked: true,
-    };
-  }
-
-  // Chase camera modes ('chase-34' | 'high-chase')
-  const isChase34 = mode === 'chase-34';
-  const backDist = isChase34 ? 14.5 : 21.0;
-  const height = isChase34 ? 9.5 : 16.5;
-  const lookAhead = 8.5;
-
-  const targetFov = 48 + Math.min(12, (car.speed / 55) * 10);
-
+  // Unified Chase-Orbit camera ('orbit' default)
+  const targetFov = 50 + Math.min(10, (car.speed / 60) * 8);
   return {
     position: {
-      x: car.x - Math.sin(car.heading) * backDist,
-      y: car.y + height,
-      z: car.z - Math.cos(car.heading) * backDist,
+      x: car.x - Math.sin(car.heading) * 11.5,
+      y: Math.max(car.y + 0.55, car.y + 3.9),
+      z: car.z - Math.cos(car.heading) * 11.5,
     },
     lookAt: {
-      x: car.x + Math.sin(car.heading) * lookAhead,
-      y: car.y + 0.6,
-      z: car.z + Math.cos(car.heading) * lookAhead,
+      x: car.x,
+      y: car.y + 0.85,
+      z: car.z,
     },
     fov: targetFov,
-    isLocked: false,
+    isLocked: true,
   };
 }

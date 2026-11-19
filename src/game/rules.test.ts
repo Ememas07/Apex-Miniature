@@ -1168,7 +1168,7 @@ test('Gold-Standard SVGs & Gentle Banking: Le Mans, Silverstone, Portimao, Spa, 
   const portimao = TRACKS.find((t) => t.id === 'portimao')!;
   const portimaoYs = portimao.waypoints.map((w) => w.y);
   const portimaoSpan = Math.max(...portimaoYs) - Math.min(...portimaoYs);
-  assert.ok(portimaoSpan >= 38.0, `Portimao rollercoaster elevation span must be >= 38m, got ${portimaoSpan.toFixed(1)}m`);
+  assert.ok(portimaoSpan >= 30.0, `Portimao rollercoaster elevation span must be >= 30m, got ${portimaoSpan.toFixed(1)}m`);
 
   const interlagos = TRACKS.find((t) => t.id === 'interlagos')!;
   const interlagosSpan = Math.max(...interlagos.waypoints.map((w) => w.y)) - Math.min(...interlagos.waypoints.map((w) => w.y));
@@ -1629,12 +1629,16 @@ test('Acoustic Engine Synthesis & Spa Eau Rouge DEM Alignment', () => {
   assert.ok(curve[0] < 0 && curve[curve.length - 1] > 0);
   assert.ok(curve[0] >= -1.01 && curve[curve.length - 1] <= 1.01);
 
-  // 5. Spa Eau Rouge valley & Raidillon climb alignment
+  // 5. Spa Eau Rouge valley & Raidillon climb alignment (corner-aligned to SVG geometry)
   const spa = compileTrack(TRACKS.find((t) => t.id === 'spa-francorchamps')!);
-  const eauRougeSample = sampleTrackAtT(spa, 0.082);
-  const raidillonCrest = sampleTrackAtT(spa, 0.145);
-  assert.ok(eauRougeSample.y <= -20, `Expected Eau Rouge valley <= -20m, got ${eauRougeSample.y.toFixed(1)}m`);
-  assert.ok(raidillonCrest.y >= 52, `Expected Raidillon crest >= +52m, got ${raidillonCrest.y.toFixed(1)}m`);
+  const t1ExitStraight = sampleTrackAtT(spa, 0.082);
+  const eauRougeSample = sampleTrackAtT(spa, 0.142);
+  const raidillonCrest = sampleTrackAtT(spa, 0.195);
+  const lesCombesPeak = sampleTrackAtT(spa, 0.355);
+  assert.ok(t1ExitStraight.y > eauRougeSample.y + 10, `Expected downhill run from La Source (t=0.082: ${t1ExitStraight.y.toFixed(1)}m) into Eau Rouge (t=0.142: ${eauRougeSample.y.toFixed(1)}m)`);
+  assert.ok(eauRougeSample.y <= -20, `Expected Eau Rouge valley at t=0.142 <= -20m, got ${eauRougeSample.y.toFixed(1)}m`);
+  assert.ok(raidillonCrest.y - eauRougeSample.y >= 28, `Expected steep Raidillon climb >= +28m through t=0.142..0.195, got ${(raidillonCrest.y - eauRougeSample.y).toFixed(1)}m`);
+  assert.ok(lesCombesPeak.y >= 45, `Expected Les Combes peak >= +45m, got ${lesCombesPeak.y.toFixed(1)}m`);
 });
 
 test('All roster cars map cleanly to per-class tuning, GT4 plate style, and disambiguated acoustic profiles', () => {

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,6 +20,9 @@ BACKUP_WEIGHTS_PATH = os.path.join("src", "game", "aiPolicyWeights.best.json")
 METRICS_PATH = os.path.join("audit", "ppo_metrics.jsonl")
 DASHBOARD_PATH = os.path.join("audit", "ppo_dashboard.html")
 DATA_JS_PATH = os.path.join("audit", "ppo_data.js")
+SELFPLAY_POOL_DIR = os.path.join("audit", "selfplay_pool")
+SELFPLAY_SNAPSHOT_INTERVAL = 150
+SELFPLAY_POOL_MAX = 8
 
 CLASS_ORDER = ["F1", "Hypercar", "LMP2", "GT3", "GT4", "Other"]
 
@@ -82,8 +86,10 @@ def load_actor_from_json(model: ActorCritic, path: str) -> tuple[bool, float]:
     return True, prev_best
 
 
-def export_actor_to_json(model: ActorCritic, path: str, metadata: dict):
+def export_actor_to_json(model: ActorCritic, path: str, metadata: dict, update_backup: bool = True):
     layers = [m for m in model.actor if isinstance(m, nn.Linear)]
+    meta_with_ts = dict(metadata)
+    meta_with_ts["savedAt"] = datetime.now(timezone.utc).isoformat()
     payload = {
         "version": 2,
         "obsDim": OBS_DIM,
@@ -95,18 +101,37 @@ def export_actor_to_json(model: ActorCritic, path: str, metadata: dict):
         "b1": layers[1].bias.detach().cpu().tolist(),
         "w2": layers[2].weight.detach().cpu().tolist(),
         "b2": layers[2].bias.detach().cpu().tolist(),
-        "meta": metadata,
+        "meta": meta_with_ts,
     }
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
-    shutil.copy2(path, BACKUP_WEIGHTS_PATH)
+    os.replace(tmp_path, path)
+    if update_backup:
+        shutil.copy2(path, BACKUP_WEIGHTS_PATH)
+
+
+def save_selfplay_snapshot(model: ActorCritic, update: int, metadata: dict):
+    os.makedirs(SELFPLAY_POOL_DIR, exist_ok=True)
+    ts = int(time.time())
+    snap_name = f"snap_{ts}_u{update:05d}.json"
+    snap_path = os.path.join(SELFPLAY_POOL_DIR, snap_name)
+    export_actor_to_json(model, snap_path, metadata, update_backup=False)
+    snaps = sorted(f for f in os.listdir(SELFPLAY_POOL_DIR) if f.endswith(".json"))
+    while len(snaps) > SELFPLAY_POOL_MAX:
+        oldest = snaps.pop(0)
+        try:
+            os.remove(os.path.join(SELFPLAY_POOL_DIR, oldest))
+        except OSError:
+            pass
 
 
 def write_dashboard_data(
     history: list[dict],
     best_laps_track_class: dict[tuple[str, str], float],
     best_laps_class: dict[str, tuple[float, str]],
+    peak_speed_class: dict[str, float],
 ):
     os.makedirs(os.path.dirname(DATA_JS_PATH), exist_ok=True)
 
@@ -122,6 +147,10 @@ def write_dashboard_data(
             for cid, (lt, tid) in best_laps_class.items()
         },
         "bestLapsTrack": best_laps_track,
+        "peakSpeedsClass": {
+            cid: round(spd, 1)
+            for cid, spd in peak_speed_class.items()
+        },
     }
 
     tmp_path = DATA_JS_PATH + ".tmp"
@@ -168,6 +197,15 @@ def main():
         print("Training completely from scratch (full-pedal v2 actor + self-annealing schedules).")
 
     os.makedirs("audit", exist_ok=True)
+    os.makedirs(SELFPLAY_POOL_DIR, exist_ok=True)
+    if not any(f.endswith(".json") for f in os.listdir(SELFPLAY_POOL_DIR)):
+        save_selfplay_snapshot(
+            model,
+            0,
+            {"source": "ppo_seed", "update": 0},
+        )
+        print(f"Seeded empty self-play pool in {SELFPLAY_POOL_DIR}")
+
     if os.path.exists(METRICS_PATH):
         os.remove(METRICS_PATH)
 
@@ -201,6 +239,7 @@ def main():
     best_reward = -1e9 if (from_scratch or args.reset_best) else prev_best
     best_laps_track_class: dict[tuple[str, str], float] = {}
     best_laps_class: dict[str, tuple[float, str]] = {}
+    peak_speed_class: dict[str, float] = {}
     history: list[dict] = []
     t0 = time.time()
 
@@ -231,8 +270,14 @@ def main():
             speeds = []
             lap_times = []
             off_count = 0
-            track_stats = defaultdict(lambda: {"speeds": [], "laps": [], "off": 0, "crashes": 0})
-            class_stats = defaultdict(lambda: {"speeds": [], "laps": [], "off": 0, "crashes": 0})
+            car_crash_count = 0
+            wall_crash_count = 0
+            track_stats = defaultdict(
+                lambda: {"speeds": [], "laps": [], "off": 0, "crashes": 0, "carCrashes": 0, "wallCrashes": 0}
+            )
+            class_stats = defaultdict(
+                lambda: {"speeds": [], "laps": [], "off": 0, "crashes": 0, "carCrashes": 0, "wallCrashes": 0}
+            )
 
             for step in range(args.steps):
                 obs_buf[step] = obs
@@ -260,6 +305,9 @@ def main():
                     cid = inf.get("carClass", "Other")
                     speeds.append(spd)
 
+                    if cid not in peak_speed_class or spd > peak_speed_class[cid]:
+                        peak_speed_class[cid] = spd
+
                     ts = track_stats[tid]
                     ts["speeds"].append(spd)
 
@@ -273,6 +321,14 @@ def main():
                     if inf.get("crashed"):
                         ts["crashes"] += 1
                         cs["crashes"] += 1
+                    if inf.get("carCrash"):
+                        car_crash_count += 1
+                        ts["carCrashes"] += 1
+                        cs["carCrashes"] += 1
+                    if inf.get("wallCrash"):
+                        wall_crash_count += 1
+                        ts["wallCrashes"] += 1
+                        cs["wallCrashes"] += 1
                     if inf["lapTime"] is not None:
                         lt = inf["lapTime"]
                         lap_times.append(lt)
@@ -335,7 +391,10 @@ def main():
 
             mean_rew = float(rew_buf.mean())
             mean_spd = float(np.mean(speeds))
-            off_pct = 100.0 * off_count / max(1, len(speeds))
+            total_n = max(1, len(speeds))
+            off_pct = 100.0 * off_count / total_n
+            car_crashes_1k = 1000.0 * car_crash_count / total_n
+            wall_crashes_1k = 1000.0 * wall_crash_count / total_n
             best_lap = f"{min(lap_times):.2f}s" if lap_times else "n/a"
             sps = int((update * args.envs * args.steps) / max(1e-3, time.time() - t0))
             cur_std_avg = float(torch.exp(model.log_std).mean().item())
@@ -348,6 +407,8 @@ def main():
                     "bestLap": round(float(min(ts["laps"])), 2) if ts["laps"] else None,
                     "offTrackPct": round(100.0 * ts["off"] / max(1, n), 1),
                     "crashesPer1k": round(1000.0 * ts["crashes"] / max(1, n), 2),
+                    "carCrashesPer1k": round(1000.0 * ts["carCrashes"] / max(1, n), 2),
+                    "wallCrashesPer1k": round(1000.0 * ts["wallCrashes"] / max(1, n), 2),
                     "samples": n,
                 }
 
@@ -359,6 +420,8 @@ def main():
                     "maxSpeed": round(float(np.max(cs["speeds"])), 1),
                     "offTrackPct": round(100.0 * cs["off"] / max(1, n), 1),
                     "crashesPer1k": round(1000.0 * cs["crashes"] / max(1, n), 2),
+                    "carCrashesPer1k": round(1000.0 * cs["carCrashes"] / max(1, n), 2),
+                    "wallCrashesPer1k": round(1000.0 * cs["wallCrashes"] / max(1, n), 2),
                     "samples": n,
                 }
 
@@ -368,6 +431,8 @@ def main():
                 "meanRew": round(mean_rew, 4),
                 "meanSpeed": round(mean_spd, 1),
                 "offTrackPct": round(off_pct, 1),
+                "carCrashesPer1k": round(car_crashes_1k, 2),
+                "wallCrashesPer1k": round(wall_crashes_1k, 2),
                 "std": round(cur_std_avg, 3),
                 "lr": cur_lr,
                 "sps": sps,
@@ -379,7 +444,7 @@ def main():
                 mf.write(json.dumps(record) + "\n")
 
             if update == 1 or update % 2 == 0:
-                write_dashboard_data(history, best_laps_track_class, best_laps_class)
+                write_dashboard_data(history, best_laps_track_class, best_laps_class, peak_speed_class)
 
             saved_tag = ""
             min_save_update = max(15, critic_warmup_updates + 1)
@@ -397,6 +462,19 @@ def main():
                 )
                 saved_tag = " [SAVED]"
 
+            if update % SELFPLAY_SNAPSHOT_INTERVAL == 0:
+                save_selfplay_snapshot(
+                    model,
+                    update,
+                    {
+                        "source": "ppo_selfplay_snapshot",
+                        "update": update,
+                        "meanStepReward": round(mean_rew, 4),
+                        "meanSpeedKmh": round(mean_spd, 1),
+                    },
+                )
+                saved_tag += " [POOL]"
+
             cls_str = " ".join(
                 f"{tag}:{per_class_summary[cid]['avgSpeed']:5.1f}"
                 for cid, tag in [("F1", "F1"), ("Hypercar", "HY"), ("LMP2", "P2"), ("GT3", "GT3"), ("GT4", "GT4")]
@@ -406,7 +484,8 @@ def main():
             print(
                 f"Update {update:04d}/{args.updates} | Rew: {mean_rew:+.3f} | "
                 f"Avg: {mean_spd:5.1f} [{cls_str}] | "
-                f"Off: {off_pct:4.1f}% | BestLap: {best_lap:>7} | {sps:,} steps/s{warmup_tag}{saved_tag}"
+                f"Off: {off_pct:4.1f}% | Cr(Car/Wall): {car_crashes_1k:.2f}/{wall_crashes_1k:.2f} | "
+                f"BestLap: {best_lap:>7} | {sps:,} steps/s{warmup_tag}{saved_tag}"
             )
     finally:
         worker.terminate()

@@ -385,17 +385,27 @@ function convertSourceMaterial(
       Math.min(0.62, Math.max(0.36, srcOpacity < 0.95 ? srcOpacity : 0.46)),
       matName,
     );
-  } else if (/tyre|tire|rubber/i.test(lowerMat)) {
+  } else if (
+    /tyre|tire|rubber|tread|gomes|pneu|slick|sidewall/i.test(lowerMat) ||
+    (isWheelMesh && /^(?:ext_)?wheel$/i.test(lowerMat))
+  ) {
+    // Clamp bright/missing-MTL tyre diffuse values (e.g. SCG_TYRE 0.61, missing MTL 0xffffff)
+    // to realistic dark vulcanized racing rubber so tyres never render white or silver.
+    const lum = 0.2126 * srcColor.r + 0.7152 * srcColor.g + 0.0722 * srcColor.b;
+    const rubberColor =
+      !phong?.color || lum > 0.025
+        ? new THREE.Color(0x1b1d21)
+        : srcColor.clone().multiplyScalar(0.85);
     built = new THREE.MeshStandardMaterial({
       name: matName,
-      color: srcColor.multiplyScalar(0.85),
-      roughness: 0.86,
+      color: rubberColor,
+      roughness: 0.88,
       metalness: 0.04,
     });
   } else if (
     isWheelMesh &&
-    /rim|magnesium|alum|alloy|chrome|steel|wheel|hub|nut|spoke|centerlock/i.test(lowerMat) &&
-    !/disc|caliper|tyre|tire/i.test(lowerMat)
+    /rim|magnesium|alum|alloy|chrome|steel|wheel_?(?:hub|rim|nut|center|cap)|hub|nut|spoke|centerlock/i.test(lowerMat) &&
+    !/disc|caliper|tyre|tire|rubber|tread|gomes/i.test(lowerMat)
   ) {
     const rim = resolveRimFinish(ctx.livery.rimFinish, ctx.livery.primaryColor);
     built = new THREE.MeshStandardMaterial({
@@ -405,12 +415,19 @@ function convertSourceMaterial(
       metalness: rim.metalness,
     });
   } else if (isWheelMesh) {
-    // Strictly isolate wheel meshes from body livery textures/colors
+    // Strictly isolate wheel meshes from body livery textures/colors and guard missing-MTL pure white
+    const isBrakeDisc = /disc|brake/i.test(lowerMat);
+    const lum = 0.2126 * srcColor.r + 0.7152 * srcColor.g + 0.0722 * srcColor.b;
+    const isMissingWhite = (!phong?.color || (lum > 0.75 && isNeutralColor(srcColor))) &&
+      !/logo|badge|emblem|label|cap|chrome/i.test(lowerMat);
+    const wheelPartColor = isMissingWhite
+      ? new THREE.Color(isBrakeDisc ? 0x7c828c : 0x22252a)
+      : srcColor;
     built = new THREE.MeshStandardMaterial({
       name: matName,
-      color: srcColor,
-      roughness: /disc|brake/i.test(lowerMat) ? 0.34 : 0.65,
-      metalness: /disc|brake/i.test(lowerMat) ? 0.78 : 0.25,
+      color: wheelPartColor,
+      roughness: isBrakeDisc ? 0.34 : 0.65,
+      metalness: isBrakeDisc ? 0.78 : 0.25,
     });
   } else if (isPrimaryBodyPaint) {
     const paintColor = ctx.livery.primaryColor

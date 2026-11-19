@@ -408,16 +408,32 @@ export function buildTrackEnvironment(
     insideRoadFlags[k] = res.insideRoad ? 1 : 0;
   }
 
-  // Cut out terrain triangles touching the road + apron footprint; outer turf skirts seamlessly bridge from apron outer edge out to terrain.
+  // Cut out terrain triangles touching or bridging across the road + apron footprint (vertices, edge midpoints, and centroid);
+  // outer turf skirts seamlessly bridge from apron outer edge out to terrain.
   const origIndex = groundGeo.getIndex();
   if (origIndex) {
     const srcIdx = origIndex.array;
     const filteredIdx: number[] = [];
+    const crossesRoad = (x: number, z: number): boolean => {
+      const q = getNearestRoadSegment(x, z);
+      return Boolean(q.bestSeg && (q.inApronCorridor || q.bestDist <= q.bestSegHalfW + 4.6));
+    };
     for (let t = 0; t < srcIdx.length; t += 3) {
       const a = srcIdx[t];
       const b = srcIdx[t + 1];
       const c = srcIdx[t + 2];
       if (insideRoadFlags[a] || insideRoadFlags[b] || insideRoadFlags[c]) {
+        continue;
+      }
+      const ax = posAttr.getX(a), az = posAttr.getZ(a);
+      const bx = posAttr.getX(b), bz = posAttr.getZ(b);
+      const cx = posAttr.getX(c), cz = posAttr.getZ(c);
+      if (
+        crossesRoad((ax + bx + cx) / 3, (az + bz + cz) / 3) ||
+        crossesRoad((ax + bx) * 0.5, (az + bz) * 0.5) ||
+        crossesRoad((bx + cx) * 0.5, (bz + cz) * 0.5) ||
+        crossesRoad((cx + ax) * 0.5, (cz + az) * 0.5)
+      ) {
         continue;
       }
       filteredIdx.push(a, b, c);
@@ -488,27 +504,28 @@ export function buildTrackEnvironment(
       const isOverpass = s.y - minOtherY > 3.5;
 
       // Dynamically cap outer skirt width on inside of tight hairpins AND before reaching any non-adjacent road corridor
+      const avgSegLen = Math.max(1.0, compiled.totalLength / Math.max(1, n));
       const isInsideTurn = s.curvature * side > 0.004;
       let maxSafeOuter = isInsideTurn
-        ? Math.min(32.0, Math.max(5.8, 0.72 / Math.abs(s.curvature) - hw))
+        ? Math.min(32.0, Math.max(5.4, 0.72 / Math.abs(s.curvature) - hw))
         : 32.0;
 
-      // March along outward normal to stop skirt cleanly before crossing another leg (e.g., Monaco Beau Rivage -> Harbor)
-      const checkSkip = Math.max(12, Math.floor(n * 0.04));
-      for (let dProbe = 7.0; dProbe <= maxSafeOuter; dProbe += 2.5) {
+      // March along outward normal to stop skirt cleanly before crossing another leg (including tight hairpins & chicanes)
+      const checkSkip = Math.max(4, Math.min(18, Math.ceil((hw + 14.0) / avgSegLen)));
+      for (let dProbe = 5.5; dProbe <= maxSafeOuter; dProbe += 1.8) {
         const px = s.x + s.nx * side * (hw + dProbe) * cosB;
         const pz = s.z + s.nz * side * (hw + dProbe) * cosB;
         let hitOther = false;
-        for (let k = 0; k < n; k += 2) {
+        for (let k = 0; k < n; k++) {
           const stepD = Math.min(Math.abs(k - (i % n)), n - Math.abs(k - (i % n)));
           if (stepD < checkSkip) continue;
           const o = compiled.samples[k];
           const ohw = o.width ? o.width * 0.5 : halfW;
           const dx = px - o.x;
           const dz = pz - o.z;
-          const clearR = ohw + 4.8;
+          const clearR = ohw + 3.6;
           if (dx * dx + dz * dz < clearR * clearR) {
-            maxSafeOuter = Math.max(5.2, dProbe - 1.8);
+            maxSafeOuter = Math.max(4.9, dProbe - 1.8);
             hitOther = true;
             break;
           }
@@ -517,8 +534,8 @@ export function buildTrackEnvironment(
       }
 
       const innerEdge = hw + 4.70;
-      const midEdge = Math.min(hw + 13.0, hw + 4.70 + Math.max(0.4, (maxSafeOuter - 4.70) * 0.4));
-      const outerEdge = hw + Math.max(5.2, maxSafeOuter);
+      const midEdge = Math.min(hw + 13.0, hw + 4.70 + Math.max(0.3, (maxSafeOuter - 4.70) * 0.4));
+      const outerEdge = hw + Math.max(5.0, maxSafeOuter);
 
       const ix = s.x + s.nx * side * innerEdge * cosB;
       const iz = s.z + s.nz * side * innerEdge * cosB;
@@ -564,23 +581,36 @@ export function buildTrackEnvironment(
         const tris = side === 1
           ? [[p0, p1, c0], [p1, c1, c0], [p1, p2, c1], [p2, c2, c1]]
           : [[p1, p0, c0], [p1, c0, c1], [p2, p1, c1], [p2, c1, c2]];
+        const pointClipsRoad = (qx: number, qy: number, qz: number): boolean => {
+          const segCheck = getNearestRoadSegment(qx, qz);
+          if (!segCheck.bestSeg) return false;
+          if (!segCheck.inApronCorridor && segCheck.bestDist >= segCheck.bestSegHalfW + 2.2) return false;
+          const bSeg = segCheck.bestSeg;
+          const bt = segCheck.bestT;
+          const ry = bSeg.ay + bt * (bSeg.by - bSeg.ay);
+          const rBank = bSeg.abank + bt * (bSeg.bbank - bSeg.abank);
+          const rNx = bSeg.anx + bt * (bSeg.bnx - bSeg.anx);
+          const rNz = bSeg.anz + bt * (bSeg.bnz - bSeg.anz);
+          const lat = (qx - segCheck.bestPx) * rNx + (qz - segCheck.bestPz) * rNz;
+          const clampedLat = Math.max(-(segCheck.bestSegHalfW + 4.8), Math.min(segCheck.bestSegHalfW + 4.8, lat));
+          const rSurfY = ry + clampedLat * Math.sin(rBank);
+          const minSurfY = segCheck.lowestCorridorY < Infinity ? Math.min(rSurfY, segCheck.lowestCorridorY) : rSurfY;
+          return qy > minSurfY - 0.10;
+        };
         for (const [ta, tb, tc] of tris) {
-          const cx = (positions[ta * 3] + positions[tb * 3] + positions[tc * 3]) / 3;
-          const cy = (positions[ta * 3 + 1] + positions[tb * 3 + 1] + positions[tc * 3 + 1]) / 3;
-          const cz = (positions[ta * 3 + 2] + positions[tb * 3 + 2] + positions[tc * 3 + 2]) / 3;
-          const segCheck = getNearestRoadSegment(cx, cz);
-          if (segCheck.bestSeg && (segCheck.inApronCorridor || segCheck.bestDist < segCheck.bestSegHalfW + 5.0)) {
-            const bSeg = segCheck.bestSeg;
-            const bt = segCheck.bestT;
-            const ry = bSeg.ay + bt * (bSeg.by - bSeg.ay);
-            const rBank = bSeg.abank + bt * (bSeg.bbank - bSeg.abank);
-            const rNx = bSeg.anx + bt * (bSeg.bnx - bSeg.anx);
-            const rNz = bSeg.anz + bt * (bSeg.bnz - bSeg.anz);
-            const lat = (cx - segCheck.bestPx) * rNx + (cz - segCheck.bestPz) * rNz;
-            const clampedLat = Math.max(-(segCheck.bestSegHalfW + 4.8), Math.min(segCheck.bestSegHalfW + 4.8, lat));
-            const rSurfY = ry + clampedLat * Math.sin(rBank);
-            const minSurfY = segCheck.lowestCorridorY < Infinity ? Math.min(rSurfY, segCheck.lowestCorridorY) : rSurfY;
-            if (cy > minSurfY - 0.15) continue;
+          const ax = positions[ta * 3], ay = positions[ta * 3 + 1], az = positions[ta * 3 + 2];
+          const bx = positions[tb * 3], by = positions[tb * 3 + 1], bz = positions[tb * 3 + 2];
+          const cx = positions[tc * 3], cy = positions[tc * 3 + 1], cz = positions[tc * 3 + 2];
+          if (
+            pointClipsRoad((ax + bx + cx) / 3, (ay + by + cy) / 3, (az + bz + cz) / 3) ||
+            pointClipsRoad((ax + bx) * 0.5, (ay + by) * 0.5, (az + bz) * 0.5) ||
+            pointClipsRoad((bx + cx) * 0.5, (by + cy) * 0.5, (bz + cz) * 0.5) ||
+            pointClipsRoad((cx + ax) * 0.5, (cy + ay) * 0.5, (cz + az) * 0.5) ||
+            pointClipsRoad(ax, ay, az) ||
+            pointClipsRoad(bx, by, bz) ||
+            pointClipsRoad(cx, cy, cz)
+          ) {
+            continue;
           }
           indices.push(ta, tb, tc);
         }
@@ -618,10 +648,97 @@ export function buildTrackEnvironment(
   );
   const roadMesh = new THREE.Mesh(roadGeo, roadMat);
   roadMesh.receiveShadow = true;
+  roadMesh.renderOrder = 2;
   group.add(roadMesh);
 
-  // 4. Gravel / Turf Runoff Apron under Track (y - 0.020m, strictly above depressed terrain & skirts)
-  const apronGeo = track(buildRibbonGeometry(compiled.samples, halfW + 4.8, -0.02, 24, true, compiled.spec.trackWidth));
+  // 4. Gravel / Turf Runoff Apron under Track (y - 0.030m, curvature-clamped so inner hairpin edges never fold over asphalt)
+  const buildSafeApronGeometry = (): THREE.BufferGeometry => {
+    const pts = compiled.samples;
+    const n = pts.length;
+    const vertCount = (n + 1) * 2;
+    const positions = new Float32Array(vertCount * 3);
+    const normals = new Float32Array(vertCount * 3);
+    const uvs = new Float32Array(vertCount * 2);
+    const indices: number[] = [];
+
+    let accLen = 0;
+    for (let i = 0; i <= n; i++) {
+      const p = pts[i % n];
+      if (i > 0) {
+        const prev = pts[(i - 1) % n];
+        accLen += Math.hypot(p.x - prev.x, p.z - prev.z);
+      }
+      const vCoord = accLen / 24;
+      const roadHW = p.width ? p.width * 0.5 : halfW;
+      const targetHW = roadHW + 4.8;
+      const curv = p.curvature || 0;
+      // On inside of tight hairpins (radius < targetHW), clamp inner apron width to avoid self-intersection fold-over
+      const safeRadius = Math.abs(curv) > 0.005 ? 0.88 / Math.abs(curv) : targetHW;
+      const leftHW = curv < -0.005 ? Math.max(roadHW + 0.15, Math.min(targetHW, safeRadius)) : targetHW;
+      const rightHW = curv > 0.005 ? Math.max(roadHW + 0.15, Math.min(targetHW, safeRadius)) : targetHW;
+
+      const bank = p.banking || 0;
+      const cosB = Math.cos(bank);
+      const sinB = Math.sin(bank);
+
+      const lx = p.x - p.nx * leftHW * cosB;
+      let ly = p.y - 0.03 - leftHW * sinB;
+      const lz = p.z - p.nz * leftHW * cosB;
+
+      const rx = p.x + p.nx * rightHW * cosB;
+      let ry = p.y - 0.03 + rightHW * sinB;
+      const rz = p.z + p.nz * rightHW * cosB;
+
+      // Ensure apron edges never protrude above an adjacent lower road leg (e.g. Monaco/Montreal/Interlagos hairpins)
+      const qL = getNearestRoadSegment(lx, lz);
+      if (qL.lowestCorridorY < Infinity && ly > qL.lowestCorridorY - 0.03 && p.y - qL.lowestCorridorY < 3.5) {
+        ly = qL.lowestCorridorY - 0.03;
+      }
+      const qR = getNearestRoadSegment(rx, rz);
+      if (qR.lowestCorridorY < Infinity && ry > qR.lowestCorridorY - 0.03 && p.y - qR.lowestCorridorY < 3.5) {
+        ry = qR.lowestCorridorY - 0.03;
+      }
+
+      const base = i * 2;
+      positions[base * 3] = lx;
+      positions[base * 3 + 1] = ly;
+      positions[base * 3 + 2] = lz;
+      positions[(base + 1) * 3] = rx;
+      positions[(base + 1) * 3 + 1] = ry;
+      positions[(base + 1) * 3 + 2] = rz;
+
+      const vertNx = -p.nx * sinB;
+      const vertNy = cosB;
+      const vertNz = -p.nz * sinB;
+      normals[base * 3] = vertNx;
+      normals[base * 3 + 1] = vertNy;
+      normals[base * 3 + 2] = vertNz;
+      normals[(base + 1) * 3] = vertNx;
+      normals[(base + 1) * 3 + 1] = vertNy;
+      normals[(base + 1) * 3 + 2] = vertNz;
+
+      uvs[base * 2] = 0;
+      uvs[base * 2 + 1] = vCoord;
+      uvs[(base + 1) * 2] = 1;
+      uvs[(base + 1) * 2 + 1] = vCoord;
+
+      if (i > 0) {
+        const a = (i - 1) * 2;
+        const b = a + 1;
+        const c = i * 2;
+        const d = c + 1;
+        indices.push(a, b, c, b, d, c);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    return geo;
+  };
+  const apronGeo = track(buildSafeApronGeometry());
   const apronMat = track(
     new THREE.MeshStandardMaterial({
       color: compiled.spec.scenery === 'desert' ? 0xc49c6e : 0x3b483d,
@@ -634,6 +751,7 @@ export function buildTrackEnvironment(
   );
   const apronMesh = new THREE.Mesh(apronGeo, apronMat);
   apronMesh.receiveShadow = true;
+  apronMesh.renderOrder = 1;
   group.add(apronMesh);
 
   // 5. Stylized Oversized Die-Cast Apex Kerbs (y + 0.020m, strictly proud of asphalt)

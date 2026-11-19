@@ -76,10 +76,10 @@ export default function App() {
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
-    const cam = params.get('camera') as CameraMode;
-    return cam === 'isometric' || cam === 'high-chase' || cam === 'chase-34' || cam === 'hood' || cam === 'orbit'
+    const cam = params.get('camera');
+    return cam === 'isometric' || cam === 'hood' || cam === 'orbit'
       ? cam
-      : 'chase-34';
+      : 'orbit';
   });
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
@@ -253,15 +253,11 @@ export default function App() {
 
   const handleCycleCamera = useCallback(() => {
     setCameraMode((prev) =>
-      prev === 'chase-34'
+      prev === 'orbit'
         ? 'hood'
         : prev === 'hood'
-        ? 'high-chase'
-        : prev === 'high-chase'
-        ? 'orbit'
-        : prev === 'orbit'
         ? 'isometric'
-        : 'chase-34',
+        : 'orbit',
     );
   }, []);
 

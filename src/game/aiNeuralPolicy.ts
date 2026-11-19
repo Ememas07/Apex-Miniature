@@ -3,6 +3,7 @@ import { BoPMultipliers } from './cars';
 import {
   CarSimState,
   computeAIControl,
+  computeClassGripProfile,
   ControlInput,
 } from './physics';
 import { CompiledTrack, sampleTrackAtT } from './tracks';
@@ -19,9 +20,14 @@ export interface PolicyWeights {
   b1: number[];
   w2: number[][];
   b2: number[];
+  meta?: Record<string, unknown>;
 }
 
 export const AI_POLICY_WEIGHTS: PolicyWeights = aiPolicyWeightsRaw as PolicyWeights;
+
+if (typeof console !== 'undefined') {
+  console.info('[AI Policy]', AI_POLICY_WEIGHTS.meta);
+}
 
 export const LOOKAHEAD_METERS = [12, 25, 42, 65, 95, 135, 185, 250];
 export const TRAFFIC_SLOTS = 4;
@@ -87,7 +93,17 @@ export function buildObservationVector(
     ((attrs.topSpeed * 3.6) * activeBop.topSpeedMult) / 360;
   const normGrip =
     ((attrs.corneringGrip / 100 * 2.2) * activeBop.gripMult) / 2.2;
-  const normDownforce = (activeBop.downforceMult) / 3.0;
+  const { classDownforceBonus } = computeClassGripProfile(
+    car.carSpec.classId,
+    90,
+    undefined,
+    activeBop.downforceMult,
+  );
+  const classAeroPeak = Math.max(0, classDownforceBonus - 1.0);
+  const normDownforce = Math.min(
+    1.5,
+    (classAeroPeak / 0.55) * (0.7 + 0.3 * (attrs.corneringGrip / 100)),
+  );
   const normBraking =
     ((attrs.braking / 100 * 2.2) * activeBop.brakingMult) / 2.2;
 
@@ -260,12 +276,13 @@ export function computeNeuralAIControl(
 
   const skillTarget = mapDifficultyToSkillTarget(difficulty, car.aiPaceMultiplier);
   const prevSteer = car.steerAngle;
+  // Always feed in-distribution skillTarget = 1.0 to match PPO training (headlessEnv.ts)
   const obs = buildObservationVector(
     car,
     compiledTrack,
     allCars,
     prevSteer,
-    skillTarget,
+    1.0,
     car.bopMultipliers,
   );
 
@@ -274,7 +291,7 @@ export function computeNeuralAIControl(
     return heuristic;
   }
 
-  // Guardrail safety containment: if car drifts excessively wide, heuristic off-track override takes priority
+  // Guardrail safety containment: only intervene when car genuinely leaves the track (> 1.05 halfW)
   const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
   const halfW = (currentSample.width ?? compiledTrack.spec.trackWidth) * 0.5;
   const offTrackRatio = Math.abs(car.lateralOffset) / Math.max(1, halfW);
@@ -283,12 +300,23 @@ export function computeNeuralAIControl(
   let blendedThrottle = policyOut.throttle;
   let blendedBrake = policyOut.brake;
 
-  if (offTrackRatio > 0.82) {
-    // Smoothly blend toward heuristic recovery steering
-    const blendWeight = Math.min(1.0, (offTrackRatio - 0.82) / 0.18);
+  if (offTrackRatio > 1.05) {
+    // Smoothly blend toward heuristic recovery over 1.05..1.25
+    const blendWeight = Math.min(1.0, (offTrackRatio - 1.05) / 0.20);
     blendedSteer = policyOut.steer * (1 - blendWeight) + heuristic.steer * blendWeight;
-    blendedThrottle = Math.min(policyOut.throttle, heuristic.throttle);
-    blendedBrake = Math.max(policyOut.brake, heuristic.brake);
+    blendedThrottle =
+      policyOut.throttle * (1 - blendWeight) +
+      Math.min(policyOut.throttle, heuristic.throttle) * blendWeight;
+    blendedBrake =
+      policyOut.brake * (1 - blendWeight) +
+      Math.max(policyOut.brake, heuristic.brake) * blendWeight;
+  }
+
+  // Apply post-inference difficulty pacing cleanly (Alien untouched at 1.0)
+  const isAlien = difficulty === 'Alien' || (difficulty === undefined && skillTarget >= 1.0);
+  if (!isAlien) {
+    const throttleScale = Math.max(0.75, Math.min(1.0, 0.70 + 0.30 * skillTarget));
+    blendedThrottle *= throttleScale;
   }
 
   // Preserve DRS / special triggers and manual transmission signals from heuristic

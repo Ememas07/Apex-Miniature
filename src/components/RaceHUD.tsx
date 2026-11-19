@@ -544,12 +544,8 @@ export function RaceHUD({
                 Cam:{' '}
                 {hud.cameraMode === 'hood'
                   ? 'Hood'
-                  : hud.cameraMode === 'chase-34'
-                  ? 'Chase'
-                  : hud.cameraMode === 'high-chase'
-                  ? 'High Chase'
                   : hud.cameraMode === 'orbit'
-                  ? 'Orbit'
+                  ? 'Chase'
                   : 'Isometric'}{' '}
                 · [C]
               </span>
