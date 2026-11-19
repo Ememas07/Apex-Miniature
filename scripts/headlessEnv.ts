@@ -156,8 +156,10 @@ rl.on('line', (line) => {
       const slot = slots[i];
       const act = actions[i];
       const steer = Math.max(-1, Math.min(1, act[0]));
-      const throttle = Math.max(0, Math.min(1, (act[1] + 1) * 0.5));
-      const brake = Math.max(0, Math.min(1, (act[2] + 1) * 0.5));
+      const rawThrottle = Math.max(-1, Math.min(1, act[1]));
+      const rawBrake = Math.max(-1, Math.min(1, act[2]));
+      const throttle = (rawThrottle + 1) * 0.5;
+      const brake = (rawBrake + 1) * 0.5;
 
       const input: ControlInput = {
         steer,
@@ -181,11 +183,12 @@ rl.on('line', (line) => {
         const curSp = sampleTrackAtT(slot.track, slot.car.trackT);
         const wallLat = (curSp.width ?? slot.track.spec.trackWidth) * 0.5 + 3.0;
         if (Math.abs(slot.car.lateralOffset) > wallLat) {
+          const wallSide: 1 | -1 = slot.car.lateralOffset > 0 ? 1 : -1;
           resolveWallContact(
             slot.car,
             curSp,
-            wallLat,
-            slot.car.lateralOffset > 0 ? 1 : -1,
+            wallSide * wallLat,
+            wallSide,
             SUB_DT,
           );
         }

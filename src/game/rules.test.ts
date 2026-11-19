@@ -64,8 +64,8 @@ test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.F1_2005).length, 4);
   assert.equal(getCarsByClass(CarClassId.FORMULA_E).length, 4);
   assert.equal(getCarsByClass(CarClassId.TRACK_COUPE).length, 7);
-  assert.equal(getCarsByClass(CarClassId.SUPERCAR).length, 8);
-  assert.ok(CARS.length >= 60);
+  assert.equal(getCarsByClass(CarClassId.SUPERCAR).length, 7);
+  assert.ok(CARS.length >= 59);
 
   // Single-model classes have authentic team livery presets
   const lmp2 = getCarsByClass(CarClassId.LMP2)[0];
@@ -977,7 +977,10 @@ test('Smooth Wall-Sliding Collisions, Depenetration & 25 km/h Damage Threshold',
   resolveWallContact(car, sample, wallLateral, 1, 1 / 60);
   assert.ok(car.aeroDamage > 0 && car.aeroDamage <= 3.5, `Expected 75% reduced damage accumulation (< 3.5), got ${car.aeroDamage}`);
   assert.equal(car.wallCollisionCooldown, 0.5, 'Expected 0.5s wall collision cooldown');
-  assert.ok(car.speed >= 25.0, `Expected car to slide along wall without dead stopping, got speed ${car.speed}`);
+  assert.ok(
+    car.speed >= 15.0 && car.speed < 25.0,
+    `Expected car to scrub noticeable speed on barrier hit without dead stopping, got speed ${car.speed}`,
+  );
 
   // 3. 100% damage caps performance penalty at 11% (car remains fully drivable)
   car.aeroDamage = 100;
@@ -1609,7 +1612,7 @@ test('Acoustic Engine Synthesis & Spa Eau Rouge DEM Alignment', () => {
   assert.ok(raidillonCrest.y >= 52, `Expected Raidillon crest >= +52m, got ${raidillonCrest.y.toFixed(1)}m`);
 });
 
-test('All 76 cars map cleanly to per-class tuning, GT4 plate style, and disambiguated acoustic profiles', () => {
+test('All roster cars map cleanly to per-class tuning, GT4 plate style, and disambiguated acoustic profiles', () => {
   // Every car's class resolves cleanly within tuning bounds
   for (const car of CARS) {
     const profile = resolveTuningConfig(car.classId);
@@ -2042,6 +2045,115 @@ test('Single Player Practice mode tracks S1/S2/S3 sectors and supports continuou
     'Best sector times should be tracked',
   );
 });
+
+test('PPO Neural Policy Inference supports v1 tanh fallback and v2 linear clamped [-1, 1] outputs', async () => {
+  const { evaluateNeuralPolicy } = await import('./aiNeuralPolicy');
+  const obs = new Array(43).fill(0);
+  const zeroMat64x43 = Array.from({ length: 64 }, () => new Array(43).fill(0));
+  const zeroMat64x64 = Array.from({ length: 64 }, () => new Array(64).fill(0));
+  const zeroMat3x64 = Array.from({ length: 3 }, () => new Array(64).fill(0));
+  const baseWeights = {
+    obsDim: 43,
+    hiddenDim: 64,
+    actDim: 3,
+    w0: zeroMat64x43,
+    b0: new Array(64).fill(0),
+    w1: zeroMat64x64,
+    b1: new Array(64).fill(0),
+    w2: zeroMat3x64,
+    b2: [0.5, 2.5, -2.5], // raw sums: 0.5, 2.5, -2.5
+  };
+
+  // v1 applies Math.tanh to layer 2: tanh(0.5) ≈ 0.4621, tanh(2.5) ≈ 0.9866 -> throttle ≈ 0.9933
+  const v1 = evaluateNeuralPolicy(obs, { ...baseWeights, version: 1 })!;
+  assert.ok(Math.abs(v1.steer - Math.tanh(0.5)) < 1e-4, `Expected tanh(0.5) for v1 steer, got ${v1.steer}`);
+  assert.ok(v1.throttle < 0.998 && v1.throttle > 0.98, `Expected tanh(2.5) mapped throttle for v1, got ${v1.throttle}`);
+
+  // v2 skips Math.tanh and clamps raw directly to [-1, 1]: steer = 0.5, throttle = 1.0, brake = 0.0
+  const v2 = evaluateNeuralPolicy(obs, { ...baseWeights, version: 2 })!;
+  assert.ok(Math.abs(v2.steer - 0.5) < 1e-4, `Expected exact linear 0.5 for v2 steer, got ${v2.steer}`);
+  assert.equal(v2.throttle, 1.0, 'Expected clamped +1 -> 1.0 throttle for v2');
+  assert.equal(v2.brake, 0.0, 'Expected clamped -1 -> 0.0 brake for v2');
+});
+
+test('Car Roster Update: Jesko removed and ferrari-sf90 ID converted to Ferrari 488 GTB', () => {
+  assert.equal(CARS.find((c) => c.id === 'koenigsegg-jesko'), undefined, 'Jesko must be removed from CARS');
+  const car488 = CARS.find((c) => c.id === 'ferrari-sf90');
+  assert.ok(car488, 'Internal ID ferrari-sf90 must remain present');
+  assert.equal(car488.name, 'Ferrari 488 GTB');
+  assert.equal(getCarById('ferrari-sf90').name, 'Ferrari 488 GTB');
+});
+
+test('Physics Tweaks: sustained wall contact scrubs speed consistently and GTP turns in cleanly without heavy understeer', () => {
+  const spa = compileTrack(TRACKS[0]);
+  const sample = sampleTrackAtT(spa, 0.25);
+  const wallLat = spa.spec.trackWidth * 0.5 + 6.2;
+
+  // 1. Sustained wall scraping for 0.25s scrubs >60% speed consistently at 60Hz (browser) and 120Hz (headlessEnv)
+  const runScrape = (steps: number, dt: number) => {
+    const gtp = getCarById('porsche-963');
+    const c = createCarSimState({
+      id: `scrape-${steps}`,
+      name: 'Scrape Test',
+      isPlayer: true,
+      carId: gtp.id,
+      livery: gtp.defaultLivery,
+      gridSlot: 0,
+      compiledTrack: spa,
+      compound: 'soft',
+    });
+    c.speed = 40;
+    c.vx = sample.tx * 40;
+    c.vz = sample.tz * 40;
+    for (let i = 0; i < steps; i++) {
+      c.lateralOffset = wallLat + 0.1;
+      resolveWallContact(c, sample, wallLat, 1, dt);
+    }
+    return c.speed;
+  };
+  const speed60Hz = runScrape(15, 1 / 60);
+  const speed120Hz = runScrape(30, 1 / 120);
+  assert.ok(speed60Hz < 12.0, `Expected heavy speed scrub over 0.25s wall grind at 60Hz, got ${speed60Hz}`);
+  assert.ok(
+    Math.abs(speed60Hz - speed120Hz) < 1.5,
+    `Expected dt-consistent wall damping between 60Hz (${speed60Hz}) and 120Hz (${speed120Hz})`,
+  );
+
+  // 2. GTP turn-in responsiveness: at 45 m/s medium steer builds crisp yaw without heavy understeer
+  const gtp = getCarById('porsche-963');
+  const car = createCarSimState({
+    id: 'gtp-turnin',
+    name: 'GTP Turn-In',
+    isPlayer: true,
+    carId: gtp.id,
+    livery: gtp.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  car.speed = 45;
+  car.heading = Math.atan2(sample.tx, sample.tz);
+  car.vx = Math.sin(car.heading) * 45;
+  car.vz = Math.cos(car.heading) * 45;
+  car.x = sample.x;
+  car.z = sample.z;
+  car.trackT = 0.25;
+
+  const startHeading = car.heading;
+  for (let i = 0; i < 30; i++) {
+    stepCarPhysics(
+      car,
+      { throttle: 0.65, brake: 0, steer: 0.55, specialPressed: false },
+      spa,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 5, isQualifying: true, allCars: [car], bopEnabled: true },
+    );
+  }
+  const headingDelta = Math.abs(car.heading - startHeading);
+  assert.ok(headingDelta > 0.18, `Expected pointy GTP turn-in rotation > 0.18 rad in 0.5s, got ${headingDelta}`);
+  assert.ok(car.understeerFactor < 0.35, `Expected low GTP understeer on medium turn-in, got ${car.understeerFactor}`);
+});
+
 
 
 

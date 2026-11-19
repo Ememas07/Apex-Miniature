@@ -9,7 +9,10 @@ import { CompiledTrack, sampleTrackAtT } from './tracks';
 import { AIDifficulty } from './types';
 
 export interface PolicyWeights {
+  version?: number;
   obsDim: number;
+  hiddenDim?: number;
+  actDim?: number;
   w0: number[][];
   b0: number[];
   w1: number[][];
@@ -211,7 +214,8 @@ export function evaluateNeuralPolicy(
     h1[i] = Math.tanh(sum);
   }
 
-  // Layer 2: 64 -> 3 (linear action heads)
+  // Layer 2: 64 -> 3 (linear clamped [-1, 1] for version >= 2; tanh fallback for version === 1)
+  const useLinearOutput = (weights.version ?? 1) >= 2;
   const out = new Float32Array(3);
   const w2 = weights.w2;
   const b2 = weights.b2;
@@ -222,7 +226,8 @@ export function evaluateNeuralPolicy(
     for (let j = 0; j < 64; j++) {
       sum += row[j] * h1[j];
     }
-    out[i] = sum;
+    const raw = useLinearOutput ? sum : Math.tanh(sum);
+    out[i] = Math.max(-1, Math.min(1, raw));
   }
 
   return {

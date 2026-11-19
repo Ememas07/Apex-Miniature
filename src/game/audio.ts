@@ -163,7 +163,7 @@ export const SOUND_PRESET_CATALOG: Array<{ id: SoundProfileId; label: string; gr
   { id: 'coupe_na_v6', label: 'Track Coupe — Renault Clio V6 (3.0L NA V6)', group: 'Production' },
   { id: 'coupe_turbo_i4', label: 'Track Coupe — Civic Type R / GR Yaris (Turbo I4)', group: 'Production' },
   { id: 'supercar_v12', label: 'Supercar — Aston Valkyrie Road (6.5L V12)', group: 'Supercars' },
-  { id: 'supercar_flatplane_v8', label: 'Supercar — SF90 / 918 / 750S / Jesko / W1 (V8)', group: 'Supercars' },
+  { id: 'supercar_flatplane_v8', label: 'Supercar — 488 / 918 / 750S / W1 (V8)', group: 'Supercars' },
   { id: 'supercar_v6_hybrid', label: 'Supercar — Ferrari 296 GTB / F80 (V6 Hybrid)', group: 'Supercars' },
 ];
 
@@ -277,7 +277,6 @@ export function inferSoundProfileId(
     carId.includes('918') ||
     carId.includes('sf90') ||
     carId.includes('750s') ||
-    carId.includes('jesko') ||
     carId.includes('mclaren-w1')
   ) {
     return 'supercar_flatplane_v8';
@@ -1295,7 +1294,7 @@ export function getBaseAcousticProfile(
         intakeCenterHz: 1550,
         intakeHighRpmThreshold: 0.58,
         hasHybridWhine:
-          carId.includes('918') || carId.includes('sf90') || carId.includes('mclaren-w1'),
+          carId.includes('918') || carId.includes('mclaren-w1'),
         hybridWhineLevel: 0.06,
         mguLaunchDominant: false,
         hasTurboFlutter: !carId.includes('918'),

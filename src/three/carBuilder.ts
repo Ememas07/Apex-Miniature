@@ -281,7 +281,6 @@ interface ClosedWheelDesign {
     | 'civic-fl5'
     | 'supra-nose'
     | 'alpine-arrow'
-    | 'jesko-aero'
     | 'f80-blade'
     | 'w1-aero'
     | 'lmp-intake';
@@ -310,7 +309,6 @@ interface ClosedWheelDesign {
     | 'active-lip'
     | 'deck-tunnel'
     | 'roof-spoiler-hatch'
-    | 'jesko-boomerang'
     | 'w1-longtail';
   exhaustStyle: 'rear-dual' | 'rear-center' | 'top-exit' | 'side-exit' | 'clio-center-twin';
   sharkFinStyle: 'none' | 'tall-proto' | 'curved-lmh' | 'roof-scoop';
@@ -1510,13 +1508,13 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
   'ferrari-sf90': {
     cabinStyle: 'mid-engine-buttress',
     cabinOffsetZ: 0.08,
-    cabinScaleW: 0.98,
+    cabinScaleW: 0.96,
     cabinScaleH: 0.90,
-    cabinScaleL: 0.98,
+    cabinScaleL: 0.96,
     noseHeightRatio: 0.50,
-    tailHeightRatio: 0.88,
-    widthScale: 1.02,
-    lengthScale: 1.01,
+    tailHeightRatio: 0.86,
+    widthScale: 1.0,
+    lengthScale: 0.99,
     hoodStyle: 'pontoon-channel',
     grilleStyle: 'ferrari-split',
     headlightStyle: 'c-clamp',
@@ -1563,26 +1561,6 @@ const CLOSED_WHEEL_DESIGNS: Record<string, ClosedWheelDesign> = {
     exhaustStyle: 'top-exit',
     sharkFinStyle: 'roof-scoop',
     caliperColor: '#a3e635',
-  },
-  'koenigsegg-jesko': {
-    cabinStyle: 'mid-engine-buttress',
-    cabinOffsetZ: 0.12,
-    cabinScaleW: 0.92,
-    cabinScaleH: 0.88,
-    cabinScaleL: 1.0,
-    noseHeightRatio: 0.48,
-    tailHeightRatio: 0.82,
-    widthScale: 1.03,
-    lengthScale: 1.02,
-    hoodStyle: 'pontoon-channel',
-    haunchScale: 1.10,
-    grilleStyle: 'jesko-aero',
-    headlightStyle: 'blade',
-    sidepodStyle: 'undercut',
-    rearDeckStyle: 'jesko-boomerang',
-    exhaustStyle: 'rear-center',
-    sharkFinStyle: 'none',
-    caliperColor: '#16a34a',
   },
   'ferrari-f80': {
     cabinStyle: 'mid-engine-buttress',
@@ -3255,25 +3233,6 @@ export function buildDiecastCar(
       spoiler.position.set(0, spoilerY, spoilerZ);
       spoiler.castShadow = true;
       bodyGroup.add(spoiler);
-    } else if (design.rearDeckStyle === 'jesko-boomerang') {
-      for (const sx of [-0.36, 0.36]) {
-        const pylon = new THREE.Mesh(track(new THREE.BoxGeometry(0.042, 0.42, 0.20)), matteTrimMat);
-        pylon.position.set(sx, 0.84, -bodyLen * 0.38);
-        pylon.rotation.x = 0.22;
-        bodyGroup.add(pylon);
-      }
-      const bWingWidth = bodyWidth * 1.02;
-      const bWing = new THREE.Mesh(track(createAirfoilWingGeometry(bWingWidth, 0.30, 0.05)), wingMat);
-      bWing.position.set(0, 1.04, -bodyLen * 0.45);
-      bWing.castShadow = true;
-      bodyGroup.add(bWing);
-      for (const sx of [-bWingWidth * 0.5, bWingWidth * 0.5]) {
-        const ep = new THREE.Mesh(track(new THREE.BoxGeometry(0.034, 0.20, 0.34)), carbonMat);
-        ep.position.set(sx, 0.99, -bodyLen * 0.45);
-        ep.rotation.z = sx < 0 ? -0.18 : 0.18;
-        bodyGroup.add(ep);
-      }
-      rearWingFlap = bWing;
     } else if (design.rearDeckStyle === 'w1-longtail') {
       const w1Wing = new THREE.Mesh(track(createAirfoilWingGeometry(bodyWidth * 0.94, 0.30, 0.052)), wingMat);
       w1Wing.position.set(0, 0.84, -bodyLen * 0.50);
