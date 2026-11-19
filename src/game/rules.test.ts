@@ -2241,6 +2241,86 @@ test('Floating Nametags: distinct human vs AI class badges and clean distance sc
   assert.ok(farHuman.opacity < midAi.opacity, 'Human peer nametag should fade smoothly near max distance');
 });
 
+test('Straight-Line Stability: residual yaw & lateral drift settle cleanly on corner exit at 60Hz and 120Hz', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza') ?? TRACKS[0]);
+  const sample = sampleTrackAtT(monza, 0.02); // Main straight
+
+  for (const carId of ['porsche-963', 'f1-26-mercedes', 'porsche-911-gt3-r']) {
+    for (const dt of [1 / 60, 1 / 120]) {
+      const spec = getCarById(carId);
+      const car = createCarSimState({
+        id: `stab-${carId}-${dt}`,
+        name: 'Stability Tester',
+        isPlayer: true,
+        carId: spec.id,
+        livery: spec.defaultLivery,
+        gridSlot: 0,
+        compiledTrack: monza,
+        compound: 'soft',
+      });
+
+      const trackHeading = Math.atan2(sample.tx, sample.tz);
+      const rightX = -Math.cos(trackHeading);
+      const rightZ = Math.sin(trackHeading);
+      car.x = sample.x;
+      car.z = sample.z;
+      car.trackT = 0.02;
+      car.heading = trackHeading;
+      car.speed = 65;
+      // Inject realistic corner-exit disturbance: lateral drift, yaw rate, and lingering steer angle
+      car.vx = Math.sin(trackHeading) * 65 + rightX * 2.4;
+      car.vz = Math.cos(trackHeading) * 65 + rightZ * 2.4;
+      car.yawRate = -0.42;
+      car.steerAngle = 0.12;
+
+      const stepsHalfSec = Math.round(0.5 / dt);
+      for (let i = 0; i < stepsHalfSec; i++) {
+        stepCarPhysics(
+          car,
+          { throttle: 0.9, brake: 0, steer: 0, specialPressed: false },
+          monza,
+          dt,
+          { trackWetness: 0, totalLaps: 5, isQualifying: true, allCars: [car], bopEnabled: true },
+        );
+      }
+
+      const settledRightX = -Math.cos(car.heading);
+      const settledRightZ = Math.sin(car.heading);
+      const settledVLat = car.vx * settledRightX + car.vz * settledRightZ;
+
+      assert.ok(
+        Math.abs(car.steerAngle) < 0.002,
+        `${carId} (${Math.round(1 / dt)}Hz): steerAngle should self-center to 0, got ${car.steerAngle}`,
+      );
+      assert.ok(
+        Math.abs(car.yawRate ?? 0) < 0.03,
+        `${carId} (${Math.round(1 / dt)}Hz): yawRate should settle cleanly, got ${car.yawRate}`,
+      );
+      assert.ok(
+        Math.abs(settledVLat) < 0.25,
+        `${carId} (${Math.round(1 / dt)}Hz): lateral drift vLat should damp out cleanly, got ${settledVLat}`,
+      );
+
+      // Verify zero wandering/pendulum over the next 0.5s straight
+      const headingAfterSettle = car.heading;
+      for (let i = 0; i < stepsHalfSec; i++) {
+        stepCarPhysics(
+          car,
+          { throttle: 1.0, brake: 0, steer: 0, specialPressed: false },
+          monza,
+          dt,
+          { trackWetness: 0, totalLaps: 5, isQualifying: true, allCars: [car], bopEnabled: true },
+        );
+      }
+      const wander = Math.abs(car.heading - headingAfterSettle);
+      assert.ok(
+        wander < 0.02,
+        `${carId} (${Math.round(1 / dt)}Hz): car should track dead straight without wandering, got ${wander} rad`,
+      );
+    }
+  }
+});
+
 
 
 

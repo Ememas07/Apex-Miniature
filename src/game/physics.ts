@@ -1185,11 +1185,30 @@ export function stepCarPhysics(
   const yawInertia = (isGTP ? 0.19 : 0.20) * massKg * wheelbase * wheelbase;
 
   const steerInput = Math.max(-1, Math.min(1, input.steer));
-  const maxSteerAngle = 0.46 * (1.0 - 0.58 * Math.min(1, car.speed / Math.max(38, maxSpeedBase * 0.85)));
-  const targetSteerAngle = steerInput * maxSteerAngle;
-  car.steerAngle += (targetSteerAngle - car.steerAngle) * Math.min(1, dt * 18.0);
-
+  const steerMag = Math.abs(steerInput);
   const speedNorm = Math.min(1, car.speed / Math.max(1, maxSpeedBase));
+
+  // High-speed progressive small-input sensitivity (prevents straight-line sway without dulling low/mid-speed turn-in)
+  const highSpeedBlend = Math.max(0, (speedNorm - 0.45) / 0.55);
+  const shapedSteerInput =
+    steerMag > 0
+      ? Math.sign(steerInput) * Math.pow(steerMag, 1.0 + 0.45 * highSpeedBlend)
+      : 0;
+  const maxSteerAngle = 0.46 * (1.0 - 0.64 * Math.min(1, car.speed / Math.max(38, maxSpeedBase * 0.85)));
+  const targetSteerAngle = shapedSteerInput * maxSteerAngle;
+
+  // Fast caster self-centering with exact-zero snap on release; crisp turn-in response on input
+  const isReturningToCenter = steerMag < 0.04 || Math.abs(targetSteerAngle) < Math.abs(car.steerAngle);
+  const steerRate = steerMag < 0.04 ? 26.0 + 14.0 * speedNorm : isReturningToCenter ? 24.0 : 18.5;
+  car.steerAngle += (targetSteerAngle - car.steerAngle) * (1 - Math.exp(-steerRate * dt));
+  if (steerMag < 0.015 && Math.abs(car.steerAngle) < 0.0025) {
+    car.steerAngle = 0;
+  }
+
+  // Smooth blend between active cornering (straightness=0) and straight-line/exit tracking (straightness=1)
+  const steerActivity = Math.min(1, Math.max(steerMag, Math.abs(car.steerAngle) / Math.max(0.05, maxSteerAngle)));
+  const straightness = Math.max(0, 1.0 - steerActivity * 2.5);
+
   // Trail-braking bonus: braking while turning loads and sharpens front-axle bite
   const trailBrakeBonus = brake > 0.05 && brake < 0.75 && Math.abs(steerInput) > 0.2 ? 1.20 : 1.0;
   const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
@@ -1214,7 +1233,8 @@ export function stepCarPhysics(
   let vFwd = car.speed * moveSign;
   let rYaw = -(car.yawRate ?? 0); // positive = turning right (-heading)
 
-  const staticFrontShare = bAxle / wheelbase + (isGTP ? 0.045 : 0.020);
+  // Preserve pointy front-axle balance during active cornering while keeping neutral/rear-planted stability on straights
+  const staticFrontShare = bAxle / wheelbase + (isGTP ? 0.045 : 0.020) * steerActivity;
   const weightTransfer = (brake * 0.14 - throttle * 0.065) * (car.speed > 2 ? 1 : 0);
   const frontShare = Math.max(0.38, Math.min(0.65, staticFrontShare + weightTransfer));
   const rearShare = 1.0 - frontShare;
@@ -1222,15 +1242,21 @@ export function stepCarPhysics(
   // Lateral tire friction limit (mu * Fz) in Newtons
   const latGripAccel = availableGrip * 11.8;
   const fMaxTotalN = massKg * latGripAccel;
-  const fMaxFrontN = fMaxTotalN * frontShare * (isReversing ? 0.75 : 1.0) * (isGTP ? 1.12 : 1.045);
-  const fMaxRearN = fMaxTotalN * rearShare * (
-    isGTP && throttle > 0.80 && Math.abs(steerInput) > 0.25 && car.speed > 12 && car.speed < 72
+  const frontTurnInMult = 1.0 + (isGTP ? 0.12 : 0.045) * steerActivity;
+  const rearStraightAeroPlant =
+    1.0 + (0.14 + (isFormula || isGTP || isLMP2 ? 0.08 : 0.02)) * speedNorm * speedNorm * straightness;
+  const fMaxFrontN = fMaxTotalN * frontShare * (isReversing ? 0.75 : 1.0) * frontTurnInMult;
+  const fMaxRearN =
+    fMaxTotalN *
+    rearShare *
+    rearStraightAeroPlant *
+    (isGTP && throttle > 0.80 && Math.abs(steerInput) > 0.25 && car.speed > 12 && car.speed < 72
       ? Math.max(0.85, 1.0 - (throttle - 0.80) * 0.45)
-      : 1.0
-  );
+      : 1.0);
 
-  const cAlphaFront = fMaxFrontN * (isGTP ? 10.8 : 10.3);
-  const cAlphaRear = fMaxRearN * 9.2;
+  // High small-slip cornering stiffness with positive straight-line stability margin (b * cAlphaRear > a * cAlphaFront)
+  const cAlphaFront = fMaxFrontN * (isGTP ? 12.2 : 11.6);
+  const cAlphaRear = fMaxRearN * (12.8 + 2.4 * straightness + 1.8 * speedNorm * straightness);
 
   let understeerAccum = 0;
   if (car.speed < 0.35 && Math.abs(throttle) < 0.05 && Math.abs(brake) < 0.05) {
@@ -1263,6 +1289,13 @@ export function stepCarPhysics(
 
       rYaw += yawAccel * subDt;
 
+      // Speed-scaled yaw-rate damping: gentle chassis damping in corners, crisp settling on corner exits & straights
+      const yawDampRate = (0.8 + 1.2 * speedNorm) + straightness * (7.5 + 9.5 * speedNorm);
+      rYaw *= Math.exp(-yawDampRate * subDt);
+      if (straightness > 0.85 && Math.abs(rYaw) < 0.008) {
+        rYaw = 0;
+      }
+
       // Enforce physical tire-friction yaw ceiling across all speeds (and wheelbase geometry below 12 m/s)
       const maxTireYaw = latGripAccel / Math.max(2.5, speedForwardAbs);
       if (car.speed < 12.0) {
@@ -1287,6 +1320,15 @@ export function stepCarPhysics(
       if (car.speed < 4.5) {
         const crawlDamp = Math.exp(-subDt * (6.0 - car.speed));
         vLat *= crawlDamp;
+      } else if (straightness > 0.05) {
+        // Small-slip lateral tire bite on straights/exits kills residual sideways drift smoothly
+        const slipRatio = Math.min(1, Math.abs(vLat) / (speedForwardAbs * 0.10));
+        const smallSlipWeight = 1.0 - 0.55 * slipRatio;
+        const latSettleRate = straightness * (5.0 + 4.5 * speedNorm) * smallSlipWeight;
+        vLat *= Math.exp(-latSettleRate * subDt);
+        if (straightness > 0.85 && Math.abs(vLat) < 0.04) {
+          vLat = 0;
+        }
       }
 
       const frontRatio = Math.min(1, Math.abs(fyF) / Math.max(1, fMaxFrontN));
