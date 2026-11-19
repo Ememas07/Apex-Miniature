@@ -212,8 +212,12 @@ export function createLiveryTexture(
 
   if (plateStyle !== 'none') {
     if (isSingleSeater) {
-      // Single-seaters (F1 / Formula E): Bold stylized racing number on the nose cone without a boxed plate
+      // Single-seaters (F1 / Formula E): Bold stylized racing number on the nose cone facing forward
+      // TOP UV zone has +Z (nose) at top of canvas (cy=13) and +X (left) at left of canvas (cx=13),
+      // so rotating 180 deg makes the nose number read right-side-up when viewed from the front.
       ctx.save();
+      ctx.translate(118, 86);
+      ctx.rotate(Math.PI);
       ctx.font = '900 42px "Oxanium", "Arial Black", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -221,22 +225,30 @@ export function createLiveryTexture(
       // Crisp contrast outline
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = 6;
-      ctx.strokeText(num, 118, 65);
+      ctx.strokeText(num, 0, 0, 72);
 
       // Inner number color
       ctx.fillStyle = tertiaryColor.toLowerCase() !== primaryColor.toLowerCase() ? tertiaryColor : '#ffffff';
-      ctx.fillText(num, 118, 65);
+      ctx.fillText(num, 0, 0, 72);
       ctx.restore();
     } else if (!isRoadSupercar || plateStyle !== 'auto') {
       // Endurance / GT / Prototype / Touring (GT3, GT4, LMP2, GTP, Track Coupe): Boxed category numberplates
-      // Top / Hood Numberplate (centered on hood)
-      drawNumberplateToContext(ctx, 86, 75, 64, 46, classId, plateStyle, num);
+      // Top / Hood Numberplate (centered on hood, rotated 180 deg so it reads upright from the front)
+      drawNumberplateToContext(ctx, 90, 82, 56, 44, classId, plateStyle, num, {
+        rotateRad: Math.PI,
+      });
 
-      // Left Door Numberplate (in LEFT_SIDE zone)
-      drawNumberplateToContext(ctx, 345, 38, 68, 48, classId, plateStyle, num);
+      // Left Door Numberplate (LEFT_SIDE zone: u increases tail->nose while outside view goes nose->tail, so flipX)
+      // Placed at y=60..100 (nv ~0.18..0.56) so it sits cleanly on the door/sidepod below side windows.
+      drawNumberplateToContext(ctx, 345, 60, 48, 40, classId, plateStyle, num, {
+        flipX: true,
+      });
 
-      // Right Door Numberplate (in RIGHT_SIDE zone)
-      drawNumberplateToContext(ctx, 345, 162, 68, 48, classId, plateStyle, num);
+      // Right Door Numberplate (RIGHT_SIDE zone: u increases nose->tail while outside view goes tail->nose, so flipX)
+      // Placed at y=183..223 (nv ~0.18..0.56) so it sits cleanly on the door/sidepod below side windows.
+      drawNumberplateToContext(ctx, 345, 183, 48, 40, classId, plateStyle, num, {
+        flipX: true,
+      });
     }
   }
 
@@ -244,6 +256,12 @@ export function createLiveryTexture(
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAniso;
   return tex;
+}
+
+export interface NumberplateTransform {
+  flipX?: boolean;
+  flipY?: boolean;
+  rotateRad?: number;
 }
 
 /**
@@ -258,8 +276,18 @@ export function drawNumberplateToContext(
   classId: CarClassId,
   plateStyle: LiveryConfig['numberPlateStyle'] = 'auto',
   driverNumber = '1',
+  transform?: NumberplateTransform,
 ): void {
   ctx.save();
+  if (transform && (transform.flipX || transform.flipY || transform.rotateRad)) {
+    const cx = px + pw * 0.5;
+    const cy = py + ph * 0.5;
+    ctx.translate(cx, cy);
+    if (transform.rotateRad) ctx.rotate(transform.rotateRad);
+    ctx.scale(transform.flipX ? -1 : 1, transform.flipY ? -1 : 1);
+    ctx.translate(-cx, -cy);
+  }
+
   const plate = resolveNumberPlateColors(classId, plateStyle);
   const num = validateDriverNumber(driverNumber);
   const categoryLabel =
@@ -292,12 +320,12 @@ export function drawNumberplateToContext(
   ctx.font = `800 ${Math.max(8, Math.round(headerH * 0.72))}px "Oxanium", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(categoryLabel, px + pw * 0.5, py + headerH * 0.52);
+  ctx.fillText(categoryLabel, px + pw * 0.5, py + headerH * 0.52, pw - 6);
 
-  // Driver number in lower plate area
+  // Driver number in lower plate area (clamped to inner width so 3-digit numbers never overflow)
   ctx.fillStyle = '#0a0d14';
-  ctx.font = `900 ${Math.max(12, Math.round(ph * 0.58))}px "Oxanium", "Arial Black", sans-serif`;
-  ctx.fillText(num, px + pw * 0.5, py + headerH + (ph - headerH) * 0.54);
+  ctx.font = `900 ${Math.max(12, Math.round(ph * 0.56))}px "Oxanium", "Arial Black", sans-serif`;
+  ctx.fillText(num, px + pw * 0.5, py + headerH + (ph - headerH) * 0.54, pw - 8);
   ctx.restore();
 }
 
