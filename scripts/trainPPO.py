@@ -18,6 +18,7 @@ WEIGHTS_PATH = os.path.join("src", "game", "aiPolicyWeights.json")
 BACKUP_WEIGHTS_PATH = os.path.join("src", "game", "aiPolicyWeights.best.json")
 METRICS_PATH = os.path.join("audit", "ppo_metrics.jsonl")
 DASHBOARD_PATH = os.path.join("audit", "ppo_dashboard.html")
+DATA_JS_PATH = os.path.join("audit", "ppo_data.js")
 
 CLASS_ORDER = ["F1", "Hypercar", "LMP2", "GT3", "GT4", "Other"]
 
