@@ -267,7 +267,7 @@ export function getNormalizedPolicyMix(
   }));
 }
 
-if (typeof console !== 'undefined') {
+if (typeof window !== 'undefined' && typeof console !== 'undefined') {
   console.info('[AI Policy]', AI_POLICY_WEIGHTS.meta);
 }
 

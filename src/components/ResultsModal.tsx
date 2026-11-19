@@ -15,7 +15,11 @@ export function ResultsModal({
   onRaceAgain,
   onReturnToTitle,
 }: ResultsModalProps) {
-  const playerRow = snapshot.standings.find((s) => s.isPlayer) ?? snapshot.standings[0];
+  const isAiRace = snapshot.sessionMode === 'ai-race';
+  const focusRow = isAiRace
+    ? snapshot.standings[0]
+    : snapshot.standings.find((s) => s.isPlayer) ?? snapshot.standings[0];
+  const winnerCar = focusRow ? getCarById(focusRow.carId) : null;
 
   return (
     <div
@@ -28,17 +32,23 @@ export function ResultsModal({
         {/* Header */}
         <div className="px-6 py-5 border-b border-white/10 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="text-xs text-slate-400">{trackName} · Final Classification</div>
+            <div className="text-xs text-slate-400">
+              {trackName} · {isAiRace ? 'AI Race Classification' : 'Final Classification'}
+            </div>
             <h2 className="text-2xl font-display font-extrabold text-white mt-0.5">
-              Finished P{playerRow.position} Overall · P{playerRow.classPosition} in Class
+              {isAiRace && focusRow
+                ? `Winner: ${focusRow.name} · ${winnerCar?.name ?? ''}`
+                : `Finished P${focusRow.position} Overall · P${focusRow.classPosition} in Class`}
             </h2>
           </div>
 
           <div className="flex items-center gap-6 text-right">
             <div>
-              <span className="text-[11px] text-slate-400 block">Best Lap</span>
+              <span className="text-[11px] text-slate-400 block">
+                {isAiRace ? 'Winner Best Lap' : 'Best Lap'}
+              </span>
               <span className="font-telemetry text-sm font-bold text-emerald-400">
-                {formatLapTime(playerRow.bestLapTime)}
+                {formatLapTime(focusRow.bestLapTime)}
               </span>
             </div>
           </div>
@@ -62,10 +72,17 @@ export function ResultsModal({
               {snapshot.standings.map((row) => {
                 const cls = CAR_CLASSES[row.classId];
                 const car = getCarById(row.carId);
+                const highlight = isAiRace ? row.position === 1 : row.isPlayer;
                 return (
                   <tr
                     key={row.id}
-                    className={row.isPlayer ? 'bg-red-950/35 text-white font-semibold' : 'text-slate-300'}
+                    className={
+                      highlight
+                        ? isAiRace
+                          ? 'bg-emerald-950/35 text-white font-semibold'
+                          : 'bg-red-950/35 text-white font-semibold'
+                        : 'text-slate-300'
+                    }
                   >
                     <td className="py-2.5 pr-3 font-telemetry">{row.position}</td>
                     <td className="py-2.5 pr-3">

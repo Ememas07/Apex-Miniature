@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { CarsShowcaseModal } from './components/CarsShowcaseModal';
 import { LiveryStudioModal } from './components/LiveryStudioModal';
 import { MultiplayerModal } from './components/MultiplayerModal';
 import { PauseModal } from './components/PauseModal';
@@ -7,6 +8,7 @@ import { RaceMenuModal } from './components/RaceMenuModal';
 import { ResultsModal } from './components/ResultsModal';
 import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
+import { TracksShowcaseModal } from './components/TracksShowcaseModal';
 import { TrackStudioModal } from './components/TrackStudioModal';
 import { CARS, getCarById } from './game/cars';
 import { registerCustomTrackInMemory } from './game/customTracks';
@@ -28,10 +30,11 @@ import {
   PitStrategy,
   RaceConfig,
   RoomState,
+  SpectatorCameraMode,
   TireCompound,
   TrackSpec,
 } from './game/types';
-import { RaceViewport } from './three/RaceViewport';
+import { RaceViewport, SpectateControls } from './three/RaceViewport';
 
 const INITIAL_CAR = CARS[0]; // Ferrari 499P
 
@@ -69,6 +72,8 @@ export default function App() {
 
   const [raceMenuOpen, setRaceMenuOpen] = useState(false);
   const [multiplayerOpen, setMultiplayerOpen] = useState(false);
+  const [carsShowcaseOpen, setCarsShowcaseOpen] = useState(false);
+  const [tracksShowcaseOpen, setTracksShowcaseOpen] = useState(false);
   const [trackStudioOpen, setTrackStudioOpen] = useState(false);
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
   const [soundStudioOpen, setSoundStudioOpen] = useState(false);
@@ -80,6 +85,8 @@ export default function App() {
       ? cam
       : 'orbit';
   });
+  const [spectatorCameraMode, setSpectatorCameraMode] = useState<SpectatorCameraMode>('spectate');
+  const spectateControlsRef = useRef<SpectateControls | null>(null);
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
     nextCompound: 'soft',
@@ -131,6 +138,8 @@ export default function App() {
       }
       setRaceMenuOpen(false);
       setMultiplayerOpen(false);
+      setCarsShowcaseOpen(false);
+      setTracksShowcaseOpen(false);
       setTrackStudioOpen(false);
       setLiveryStudioOpen(false);
       setSoundStudioOpen(false);
@@ -152,17 +161,20 @@ export default function App() {
     }
     setRaceMenuOpen(false);
     setMultiplayerOpen(false);
+    setCarsShowcaseOpen(false);
+    setTracksShowcaseOpen(false);
     setTrackStudioOpen(false);
     setLiveryStudioOpen(false);
     setSoundStudioOpen(false);
     setFinalSnapshot(null);
     setQualiBanner(null);
+    setSpectatorCameraMode('spectate');
 
-    if (room && room.hostId === mpClientRef.current?.peerId && raceConfig.sessionMode !== 'practice') {
+    if (room && room.hostId === mpClientRef.current?.peerId && raceConfig.sessionMode === 'race') {
       mpClientRef.current.startRace();
     }
-    const targetPhase =
-      raceConfig.sessionMode !== 'practice' && raceConfig.qualifyingEnabled ? 'qualifying' : 'playing';
+    const useQuali = raceConfig.sessionMode === 'race' && raceConfig.qualifyingEnabled;
+    const targetPhase = useQuali ? 'qualifying' : 'playing';
     setActivePrePausePhase(targetPhase);
     setRunNonce((n) => n + 1);
     setPhase(targetPhase);
@@ -185,13 +197,16 @@ export default function App() {
       setRaceConfig((prev) => ({ ...prev, ...patch }));
       setRaceMenuOpen(false);
       setMultiplayerOpen(false);
+      setCarsShowcaseOpen(false);
+      setTracksShowcaseOpen(false);
       setTrackStudioOpen(false);
       setLiveryStudioOpen(false);
       setSoundStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
-      const targetPhase =
-        patch.sessionMode !== 'practice' && patch.qualifyingEnabled ? 'qualifying' : 'playing';
+      setSpectatorCameraMode('spectate');
+      const useQuali = patch.sessionMode === 'race' && Boolean(patch.qualifyingEnabled);
+      const targetPhase = useQuali ? 'qualifying' : 'playing';
       setActivePrePausePhase(targetPhase);
       setRunNonce((n) => n + 1);
       setPhase(targetPhase);
@@ -202,8 +217,11 @@ export default function App() {
   const handleReturnToTitle = useCallback(() => {
     setRaceMenuOpen(false);
     setMultiplayerOpen(false);
+    setCarsShowcaseOpen(false);
+    setTracksShowcaseOpen(false);
     setFinalSnapshot(null);
     setQualiBanner(null);
+    setSpectatorCameraMode('spectate');
     setPhase('title');
   }, []);
 
@@ -214,6 +232,8 @@ export default function App() {
         phase !== 'title' ||
         raceMenuOpen ||
         multiplayerOpen ||
+        carsShowcaseOpen ||
+        tracksShowcaseOpen ||
         trackStudioOpen ||
         liveryStudioOpen ||
         soundStudioOpen
@@ -231,6 +251,8 @@ export default function App() {
     phase,
     raceMenuOpen,
     multiplayerOpen,
+    carsShowcaseOpen,
+    tracksShowcaseOpen,
     trackStudioOpen,
     liveryStudioOpen,
     soundStudioOpen,
@@ -344,6 +366,7 @@ export default function App() {
         phase={phase}
         raceConfig={raceConfig}
         cameraMode={cameraMode}
+        spectatorCameraMode={spectatorCameraMode}
         muted={muted}
         pitStrategy={pitStrategy}
         runNonce={runNonce}
@@ -354,9 +377,13 @@ export default function App() {
         onQualifyingFinish={handleQualifyingFinish}
         onTogglePause={handleTogglePause}
         onCycleCamera={handleCycleCamera}
+        onSpectatorCameraModeChange={setSpectatorCameraMode}
         onToggleMute={handleToggleMute}
         onPitHandlerReady={(handler) => {
           pitHandlerRef.current = handler;
+        }}
+        onSpectateControlsReady={(controls) => {
+          spectateControlsRef.current = controls;
         }}
       />
 
@@ -364,6 +391,8 @@ export default function App() {
       {phase === 'title' &&
         !raceMenuOpen &&
         !multiplayerOpen &&
+        !carsShowcaseOpen &&
+        !tracksShowcaseOpen &&
         !trackStudioOpen &&
         !liveryStudioOpen &&
         !soundStudioOpen && (
@@ -372,12 +401,27 @@ export default function App() {
             roomCode={room?.code ?? null}
             onOpenRace={() => {
               setMultiplayerOpen(false);
+              if (raceConfig.sessionMode === 'ai-race') {
+                handleUpdateConfig({ sessionMode: 'race' });
+              }
+              setRaceMenuOpen(true);
+            }}
+            onOpenHostAiRace={() => {
+              setMultiplayerOpen(false);
+              handleUpdateConfig({
+                sessionMode: 'ai-race',
+                noAi: false,
+                aiBotCount: Math.max(2, raceConfig.aiBotCount || 11),
+                totalLaps: raceConfig.totalLaps > 0 ? raceConfig.totalLaps : 5,
+              });
               setRaceMenuOpen(true);
             }}
             onOpenMultiplayer={() => {
               setRaceMenuOpen(false);
               setMultiplayerOpen(true);
             }}
+            onOpenCarsShowcase={() => setCarsShowcaseOpen(true)}
+            onOpenTracksShowcase={() => setTracksShowcaseOpen(true)}
             onOpenStudio={() => handleOpenStudio()}
             onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
             onOpenSoundStudio={() => setSoundStudioOpen(true)}
@@ -491,6 +535,28 @@ export default function App() {
         />
       )}
 
+      {/* Cars Showcase 3D Menu */}
+      {carsShowcaseOpen && (
+        <CarsShowcaseModal
+          selectedCarId={raceConfig.playerCarId}
+          selectedLivery={raceConfig.playerLivery}
+          onSelectCar={handleSelectCar}
+          onClose={() => setCarsShowcaseOpen(false)}
+        />
+      )}
+
+      {/* Tracks Showcase 3D Menu */}
+      {tracksShowcaseOpen && (
+        <TracksShowcaseModal
+          selectedTrackId={raceConfig.trackId}
+          selectedCustomTrack={raceConfig.customTrack}
+          onSelectTrack={(trackId, customTrack) => {
+            handleUpdateConfig({ trackId, customTrack });
+          }}
+          onClose={() => setTracksShowcaseOpen(false)}
+        />
+      )}
+
       {/* Active Race / Qualifying HUD */}
       {(phase === 'playing' || phase === 'qualifying') && hud && (
         <RaceHUD
@@ -504,6 +570,9 @@ export default function App() {
             pitHandlerRef.current ? pitHandlerRef.current(action, nextCompound) : false
           }
           onCycleCamera={handleCycleCamera}
+          onToggleSpectatorCameraMode={() => spectateControlsRef.current?.toggleCameraMode()}
+          onCycleSpectatedCar={(dir) => spectateControlsRef.current?.cycleCar(dir)}
+          onSelectSpectatedCar={(carId) => spectateControlsRef.current?.selectCar(carId)}
           onToggleMute={handleToggleMute}
           onTogglePause={handleTogglePause}
           onReturnToTitle={handleReturnToTitle}

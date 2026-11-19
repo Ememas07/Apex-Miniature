@@ -24,7 +24,7 @@ import {
 import { getSavedCustomTracks } from '../game/customTracks';
 import { ConnectionMode } from '../game/multiplayer';
 import { generateRandomScenario } from '../game/randomScenario';
-import { TRACKS, compileTrack, filterTracks, getTrackById } from '../game/tracks';
+import { TRACKS, compileTrack, filterTracks, formatTargetLapMMSS, getTrackById } from '../game/tracks';
 import {
   CarClassId,
   LiveryConfig,
@@ -34,6 +34,7 @@ import {
   TrackSpec,
 } from '../game/types';
 import { GarageViewport } from '../three/GarageViewport';
+import { AiPolicyMixPanel } from './AiPolicyMixPanel';
 
 interface MultiplayerModalProps {
   config: RaceConfig;
@@ -619,11 +620,31 @@ export function MultiplayerModal({
                 </div>
               </div>
 
+              {aiFillCount > 0 && <AiPolicyMixPanel compact={true} />}
+
               {/* Circuit Selector */}
               <div className="pt-3 border-t border-white/10 space-y-3">
+                <div className="p-3 rounded border border-white/10 bg-[#0d1118] flex items-center justify-between gap-3">
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="text-[11px] text-slate-400 truncate">
+                      Selected: <span className="text-white font-semibold">{selectedTrack.name}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {selectedTrack.city ? `${selectedTrack.city} · ` : ''}
+                      {selectedTrack.country}
+                      {selectedTrack.circuitLengthKm ? ` · ${selectedTrack.circuitLengthKm.toFixed(2)} km` : ''}
+                      {` · Est. ${formatTargetLapMMSS(selectedTrack.targetLapSeconds)}`}
+                    </div>
+                    {selectedTrack.circuitInfo && (
+                      <div className="text-[10px] text-slate-500 line-clamp-1">{selectedTrack.circuitInfo}</div>
+                    )}
+                  </div>
+                  <TrackOutlineMini track={selectedTrack} />
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-slate-200">
-                    Room Circuit: <span className="text-white">{selectedTrack.name}</span>
+                    Room Circuit
                   </span>
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -688,7 +709,12 @@ export function MultiplayerModal({
                         <div className="min-w-0">
                           <div className="text-xs font-semibold truncate">{trk.name}</div>
                           <div className="text-[11px] text-slate-400 truncate mt-0.5">
-                            {trk.country} · ~{Math.round(trk.targetLapSeconds)}s
+                            {trk.city ? `${trk.city} · ` : ''}
+                            {trk.country}
+                          </div>
+                          <div className="text-[10px] font-telemetry text-slate-400 truncate mt-0.5">
+                            {trk.circuitLengthKm ? `${trk.circuitLengthKm.toFixed(2)} km · ` : ''}
+                            {trk.corners}T · ~{formatTargetLapMMSS(trk.targetLapSeconds)}
                           </div>
                         </div>
                         <TrackOutlineMini track={trk} />
@@ -893,13 +919,18 @@ export function MultiplayerModal({
                                     customTrack: isCustom ? trk : undefined,
                                   })
                                 }
-                                className={`px-3 py-2 rounded border text-left text-xs transition-colors cursor-pointer truncate ${
+                                className={`px-3 py-2 rounded border text-left text-xs transition-colors cursor-pointer ${
                                   active
                                     ? 'bg-[#1c2434] border-red-500 text-white font-semibold'
                                     : 'bg-[#151a24] border-white/10 text-slate-300 hover:bg-[#1a202d]'
                                 }`}
                               >
-                                {trk.name}
+                                <div className="truncate font-semibold">{trk.name}</div>
+                                <div className="text-[10px] text-slate-400 truncate">
+                                  {trk.city ? `${trk.city}, ${trk.country}` : trk.country}
+                                  {' · '}
+                                  ~{formatTargetLapMMSS(trk.targetLapSeconds)}
+                                </div>
                               </button>
                             );
                           })}

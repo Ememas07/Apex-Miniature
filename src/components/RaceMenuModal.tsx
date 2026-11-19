@@ -34,7 +34,13 @@ import {
   importTrackFromString,
 } from '../game/customTracks';
 import { generateRandomScenario } from '../game/randomScenario';
-import { TRACKS, compileTrack, filterTracks, getTrackById } from '../game/tracks';
+import {
+  TRACKS,
+  compileTrack,
+  filterTracks,
+  formatTargetLapMMSS,
+  getTrackById,
+} from '../game/tracks';
 import {
   AIDifficulty,
   CarClassId,
@@ -49,6 +55,7 @@ import {
   TrackSpec,
 } from '../game/types';
 import { GarageAngle, GarageViewport } from '../three/GarageViewport';
+import { AiPolicyMixPanel } from './AiPolicyMixPanel';
 
 interface RaceMenuModalProps {
   config: RaceConfig;
@@ -186,11 +193,28 @@ export function RaceMenuModal({
     [customTracks, regionFilter, trackSearch],
   );
 
-  const aiCount = config.noAi || config.sessionMode === 'practice' ? 0 : Math.max(0, Math.min(23, config.aiBotCount ?? 11));
-  const isSolo = aiCount === 0;
+  const isAiRace = config.sessionMode === 'ai-race';
+  const aiCount = isAiRace
+    ? Math.max(2, Math.min(24, config.aiBotCount ?? config.gridSize ?? 12))
+    : config.noAi || config.sessionMode === 'practice'
+    ? 0
+    : Math.max(0, Math.min(23, config.aiBotCount ?? 11));
+  const isSolo = !isAiRace && aiCount === 0;
   const bopScore = computeBoPEquilibriumScore(activeCar.attributes).toFixed(1);
 
   const setAiOpponents = (nextCount: number) => {
+    if (isAiRace) {
+      const clampedAiRace = Math.max(2, Math.min(24, Math.round(nextCount)));
+      onUpdateConfig({
+        aiBotCount: clampedAiRace,
+        noAi: false,
+        gridSize: clampedAiRace,
+        sessionMode: 'ai-race',
+        qualifyingEnabled: false,
+        totalLaps: config.totalLaps > 0 ? config.totalLaps : 5,
+      });
+      return;
+    }
     const clamped = Math.max(0, Math.min(23, Math.round(nextCount)));
     if (clamped === 0) {
       onUpdateConfig({
@@ -245,6 +269,24 @@ export function RaceMenuModal({
   };
 
   const handleLaunch = () => {
+    if (isAiRace) {
+      onStartRace({
+        sessionMode: 'ai-race',
+        trackId: config.trackId,
+        customTrack: config.customTrack,
+        activeClasses: config.activeClasses,
+        totalLaps: config.totalLaps > 0 ? config.totalLaps : 5,
+        aiBotCount: aiCount,
+        gridSize: aiCount,
+        noAi: false,
+        aiDifficulty: config.aiDifficulty,
+        qualifyingEnabled: false,
+        weather: config.weather,
+        startingCompound: config.startingCompound,
+      });
+      return;
+    }
+
     if (isSolo) {
       onStartRace({
         sessionMode: 'practice',
@@ -300,12 +342,14 @@ export function RaceMenuModal({
               RACE SETUP
             </h2>
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 truncate">
-              <span className="text-slate-200 font-medium">{activeCar.name}</span>
+              <span className="text-slate-200 font-medium">
+                {isAiRace ? 'All-AI Broadcast Grid' : activeCar.name}
+              </span>
               <span aria-hidden="true">·</span>
               <span>{selectedTrack.name}</span>
               <span aria-hidden="true">·</span>
               <span className="tabular-nums">
-                {isSolo ? 'Solo Practice' : `${aiCount} AI Opponents`}
+                {isAiRace ? `${aiCount} AI Racers` : isSolo ? 'Solo Practice' : `${aiCount} AI Opponents`}
               </span>
               <span aria-hidden="true">·</span>
               <span className="tabular-nums">
@@ -334,7 +378,13 @@ export function RaceMenuModal({
             className="flex items-center gap-2 px-6 py-2.5 rounded-md bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-sm tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 shadow-lg shadow-red-950/50"
           >
             <Flag className="w-4 h-4" />
-            {isSolo ? 'Start Practice' : config.qualifyingEnabled ? 'Start Qualifying' : 'Start Race'}
+            {isAiRace
+              ? 'Start AI Race'
+              : isSolo
+              ? 'Start Practice'
+              : config.qualifyingEnabled
+              ? 'Start Qualifying'
+              : 'Start Race'}
           </button>
           <button
             type="button"
@@ -401,9 +451,77 @@ export function RaceMenuModal({
 
           {/* Session & AI Opponents Configuration */}
           <div className="p-5 space-y-5 flex-1">
-            {/* AI Opponents Stepper & Slider (0 = Solo Practice, 1-23 = Race) */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
+            {/* Session Format Switcher */}
+            <div>
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                Session Mode
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  data-testid="mode-race"
+                  onClick={() =>
+                    onUpdateConfig({
+                      sessionMode: 'race',
+                      noAi: false,
+                      aiBotCount: aiCount > 0 ? Math.min(23, aiCount) : 11,
+                      gridSize: (aiCount > 0 ? Math.min(23, aiCount) : 11) + 1,
+                      totalLaps: config.totalLaps > 0 ? config.totalLaps : 5,
+                    })
+                  }
+                  className={`py-2 px-2 rounded text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
+                    !isSolo && !isAiRace
+                      ? 'bg-red-600 border-red-400 text-white'
+                      : 'bg-[#141923] border-white/10 text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Drive Race
+                </button>
+                <button
+                  type="button"
+                  data-testid="mode-practice"
+                  onClick={() => setAiOpponents(0)}
+                  className={`py-2 px-2 rounded text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
+                    isSolo
+                      ? 'bg-emerald-600/30 border-emerald-400 text-emerald-200'
+                      : 'bg-[#141923] border-white/10 text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Solo Practice
+                </button>
+                <button
+                  type="button"
+                  data-testid="mode-ai-race"
+                  onClick={() => {
+                    const nextAi = Math.max(2, Math.min(24, config.aiBotCount || 12));
+                    onUpdateConfig({
+                      sessionMode: 'ai-race',
+                      noAi: false,
+                      aiBotCount: nextAi,
+                      gridSize: nextAi,
+                      qualifyingEnabled: false,
+                      totalLaps: config.totalLaps > 0 ? config.totalLaps : 5,
+                    });
+                  }}
+                  className={`py-2 px-2 rounded text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
+                    isAiRace
+                      ? 'bg-sky-600 border-sky-400 text-white'
+                      : 'bg-[#141923] border-white/10 text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Host AI Race
+                </button>
+              </div>
+              {isAiRace && (
+                <p className="mt-2 text-[11px] text-sky-300 leading-relaxed">
+                  All-AI Spectator Broadcast — cycle between AI cars with Chase Orbit or fly anywhere around the circuit in Freecam.
+                </p>
+              )}
+            </div>
+
+            {/* AI Opponents Stepper & Slider (0 = Solo Practice, 1-23 = Race, 2-24 = Host AI Race) */}
+            <div className="space-y-3 pt-1 border-t border-white/10">
+              <div className="flex items-center justify-between pt-2">
                 <div className="flex items-center gap-2">
                   {isSolo ? (
                     <Gauge className="w-4 h-4 text-emerald-400" />
@@ -411,7 +529,7 @@ export function RaceMenuModal({
                     <Users className="w-4 h-4 text-red-400" />
                   )}
                   <label htmlFor="race-ai-slider" className="text-xs font-display font-bold text-white uppercase tracking-wider">
-                    AI Opponents
+                    {isAiRace ? 'AI Grid Cars' : 'AI Opponents'}
                   </label>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -419,7 +537,7 @@ export function RaceMenuModal({
                     type="button"
                     data-testid="btn-ai-minus"
                     onClick={() => setAiOpponents(aiCount - 1)}
-                    disabled={aiCount <= 0}
+                    disabled={isAiRace ? aiCount <= 2 : aiCount <= 0}
                     aria-label="Decrease AI opponents"
                     className="w-7 h-7 rounded bg-[#161c28] hover:bg-[#20293a] disabled:opacity-35 border border-white/10 flex items-center justify-center text-slate-200 cursor-pointer"
                   >
@@ -435,7 +553,7 @@ export function RaceMenuModal({
                     type="button"
                     data-testid="btn-ai-plus"
                     onClick={() => setAiOpponents(aiCount + 1)}
-                    disabled={aiCount >= 23}
+                    disabled={isAiRace ? aiCount >= 24 : aiCount >= 23}
                     aria-label="Increase AI opponents"
                     className="w-7 h-7 rounded bg-[#161c28] hover:bg-[#20293a] disabled:opacity-35 border border-white/10 flex items-center justify-center text-slate-200 cursor-pointer"
                   >
@@ -448,8 +566,8 @@ export function RaceMenuModal({
                 id="race-ai-slider"
                 data-testid="slider-ai-opponents"
                 type="range"
-                min={0}
-                max={23}
+                min={isAiRace ? 2 : 0}
+                max={isAiRace ? 24 : 23}
                 value={aiCount}
                 onChange={(e) => setAiOpponents(Number(e.target.value))}
                 className="w-full accent-red-600 cursor-pointer"
@@ -457,13 +575,21 @@ export function RaceMenuModal({
 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
-                  {[
-                    { label: 'Solo (0)', val: 0 },
-                    { label: '5 AI', val: 5 },
-                    { label: '11 AI', val: 11 },
-                    { label: '19 AI', val: 19 },
-                    { label: '23 AI', val: 23 },
-                  ].map((preset) => (
+                  {(isAiRace
+                    ? [
+                        { label: '6 AI', val: 6 },
+                        { label: '12 AI', val: 12 },
+                        { label: '18 AI', val: 18 },
+                        { label: '24 AI', val: 24 },
+                      ]
+                    : [
+                        { label: 'Solo (0)', val: 0 },
+                        { label: '5 AI', val: 5 },
+                        { label: '11 AI', val: 11 },
+                        { label: '19 AI', val: 19 },
+                        { label: '23 AI', val: 23 },
+                      ]
+                  ).map((preset) => (
                     <button
                       key={preset.val}
                       type="button"
@@ -481,7 +607,11 @@ export function RaceMenuModal({
                   ))}
                 </div>
                 <span className="text-[11px] text-slate-400 tabular-nums">
-                  {isSolo ? 'Solo Practice / Hotlap' : `${aiCount + 1}-Car Grid`}
+                  {isAiRace
+                    ? `${aiCount}-Car AI Grid`
+                    : isSolo
+                    ? 'Solo Practice / Hotlap'
+                    : `${aiCount + 1}-Car Grid`}
                 </span>
               </div>
             </div>
@@ -551,6 +681,9 @@ export function RaceMenuModal({
                     </div>
                   </div>
 
+                  {/* AI Policy Blending Panel */}
+                  <AiPolicyMixPanel compact={true} />
+
                   {/* Multi-Class Opponent Pool */}
                   <div>
                     <div className="flex items-center justify-between text-xs mb-1.5">
@@ -596,7 +729,7 @@ export function RaceMenuModal({
               )}
 
               {/* Weather & Qualifying Row */}
-              <div className={`grid gap-2 ${isSolo ? 'grid-cols-2' : 'grid-cols-2'}`}>
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   data-testid="btn-weather-toggle"
@@ -620,7 +753,11 @@ export function RaceMenuModal({
                   )}
                 </button>
 
-                {!isSolo ? (
+                {isAiRace ? (
+                  <div className="flex items-center justify-center px-3 py-2 rounded border border-sky-500/30 bg-[#121620] text-xs text-sky-300 font-medium whitespace-nowrap">
+                    Spectate + Freecam
+                  </div>
+                ) : !isSolo ? (
                   <button
                     type="button"
                     onClick={() => onUpdateConfig({ qualifyingEnabled: !config.qualifyingEnabled })}
@@ -1162,6 +1299,41 @@ export function RaceMenuModal({
 
             {tab === 'track' && (
               <div className="space-y-4">
+                {/* Compact Selected Circuit Preview & Details */}
+                <div className="p-3.5 rounded-md border border-white/12 bg-[#0d1118] flex items-center justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                      <span className="text-red-400 font-semibold uppercase tracking-wider">Selected Circuit</span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        {selectedTrack.city ? `${selectedTrack.city}, ` : ''}
+                        {selectedTrack.country}
+                      </span>
+                      {selectedTrack.circuitLengthKm && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-telemetry text-slate-200">
+                            {selectedTrack.circuitLengthKm.toFixed(2)} km
+                          </span>
+                        </>
+                      )}
+                      <span aria-hidden="true">·</span>
+                      <span className="font-telemetry text-emerald-400">
+                        Est. {formatTargetLapMMSS(selectedTrack.targetLapSeconds)}
+                      </span>
+                    </div>
+                    <div className="text-sm font-display font-bold text-white truncate">
+                      {selectedTrack.name}
+                    </div>
+                    {selectedTrack.circuitInfo && (
+                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                        {selectedTrack.circuitInfo}
+                      </p>
+                    )}
+                  </div>
+                  <TrackOutlineSvg track={selectedTrack} />
+                </div>
+
                 {/* Search */}
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1291,7 +1463,7 @@ export function RaceMenuModal({
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold truncate text-white">{trk.name}</div>
                                 <div className="mt-0.5 text-[11px] text-slate-400">
-                                  {trk.scenery} · {trk.corners} turns · ~{trk.targetLapSeconds}s
+                                  {trk.scenery} · {trk.corners} turns · ~{formatTargetLapMMSS(trk.targetLapSeconds)}
                                 </div>
                               </div>
                               <TrackOutlineSvg track={trk} />
@@ -1385,12 +1557,19 @@ export function RaceMenuModal({
                         >
                           <div className="min-w-0 pr-2.5">
                             <div className="text-sm font-semibold truncate">{trk.name}</div>
-                            <div className="mt-1 text-[11px] text-slate-400">
+                            <div className="mt-0.5 text-[11px] text-slate-400 truncate">
+                              {trk.city ? `${trk.city} · ` : ''}
                               {trk.country} · {trk.seriesTags.join(' / ')}
                             </div>
                             <div className="mt-0.5 text-[11px] font-telemetry text-slate-400">
-                              {trk.corners} turns · ~{Math.round(trk.targetLapSeconds)}s lap
+                              {trk.circuitLengthKm ? `${trk.circuitLengthKm.toFixed(2)} km · ` : ''}
+                              {trk.corners} turns · ~{formatTargetLapMMSS(trk.targetLapSeconds)}
                             </div>
+                            {trk.circuitInfo && (
+                              <div className="mt-1 text-[10px] text-slate-500 line-clamp-1">
+                                {trk.circuitInfo}
+                              </div>
+                            )}
                           </div>
                           <TrackOutlineSvg track={trk} />
                         </button>
