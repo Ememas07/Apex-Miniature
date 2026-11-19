@@ -29,6 +29,11 @@ import {
 } from '../game/types';
 import { MotorsportAudioEngine } from './audioEngine';
 import { BuiltCarRig } from './carBuilder';
+import {
+  CarNametagHandle,
+  computeNametagDistanceStyle,
+  createCarNametagSprite,
+} from './nametagSprite';
 import { buildCarRigAsync } from './objCarLoader';
 import { buildTrackEnvironment, BuiltTrackScene } from './trackBuilder';
 import { telemetryRecorder } from '../game/telemetryRecorder';
@@ -101,6 +106,7 @@ export function RaceViewport(props: RaceViewportProps) {
     compiledTrack: ReturnType<typeof compileTrack>;
     cars: CarSimState[];
     carRigs: Map<string, BuiltCarRig>;
+    carNametags: Map<string, CarNametagHandle>;
     countdown: number;
     trackWetness: number;
     rainTimer: number;
@@ -223,6 +229,7 @@ export function RaceViewport(props: RaceViewportProps) {
       compiledTrack: initialCompiled,
       cars: [] as CarSimState[],
       carRigs: new Map<string, BuiltCarRig>(),
+      carNametags: new Map<string, CarNametagHandle>(),
       countdown: 3.0,
       trackWetness: 0,
       rainTimer: 0,
@@ -277,12 +284,17 @@ export function RaceViewport(props: RaceViewportProps) {
       scene.background = new THREE.Color(builtTrack.skyColor);
       scene.fog = new THREE.FogExp2(builtTrack.fogColor, 0.0017);
 
-      // Clear old cars
+      // Clear old cars & dispose nametag textures/sprites
       sim.carRigs.forEach((rig) => {
         scene.remove(rig.root);
         rig.dispose();
       });
       sim.carRigs.clear();
+      sim.carNametags.forEach((tag) => {
+        scene.remove(tag.sprite);
+        tag.dispose();
+      });
+      sim.carNametags.clear();
       sim.cars = [];
 
       const isQuali = currentPhase === 'qualifying';
@@ -429,6 +441,25 @@ export function RaceViewport(props: RaceViewportProps) {
           scene.add(rig.root);
           sim.carRigs.set(c.id, rig);
         });
+
+        // Create floating billboarded nametag ONCE on spawn for all remote players & AI (hide on local player's car)
+        if (!c.isPlayer && currentPhase !== 'title') {
+          const carHeight = c.carSpec.dimensions?.height ?? 1.25;
+          const tag = createCarNametagSprite(
+            {
+              id: c.id,
+              driverName: c.name,
+              classId: c.carSpec.classId,
+              isHumanPeer: c.isHumanPeer,
+              accentColor: c.livery.primaryColor,
+            },
+            carHeight,
+            maxAniso,
+          );
+          tag.sprite.position.set(c.x, c.y + tag.baseHeightOffset, c.z);
+          scene.add(tag.sprite);
+          sim.carNametags.set(c.id, tag);
+        }
       }
 
       const isAutostart = typeof window !== 'undefined' && window.location.search.includes('autostart=1');
@@ -994,6 +1025,29 @@ export function RaceViewport(props: RaceViewportProps) {
         }
       }
 
+      // Sync Floating Billboarded Nametags (position, distance scaling & opacity fade — zero per-frame texture creation)
+      const showNametags = activePhase === 'playing' || activePhase === 'qualifying' || activePhase === 'paused';
+      for (let i = 0; i < sim.cars.length; i++) {
+        const c = sim.cars[i];
+        const tag = sim.carNametags.get(c.id);
+        if (!tag) continue;
+        if (!showNametags || c.isPlayer) {
+          tag.sprite.visible = false;
+          continue;
+        }
+        const dx = c.x - camera.position.x;
+        const dy = c.y + tag.baseHeightOffset - camera.position.y;
+        const dz = c.z - camera.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        const style = computeNametagDistanceStyle(dist, tag.isHumanPeer);
+        tag.sprite.visible = style.visible;
+        if (style.visible) {
+          tag.sprite.position.set(c.x, c.y + tag.baseHeightOffset + style.heightLift, c.z);
+          tag.sprite.scale.set(style.scaleY * tag.aspect, style.scaleY, 1);
+          tag.material.opacity = style.opacity;
+        }
+      }
+
       // Update Pooled Slipstream Airflow Streaks around player
       if (playerCar && (activePhase === 'playing' || activePhase === 'qualifying')) {
         const showSlip = playerCar.inSlipstream && playerCar.speed > 18;
@@ -1150,6 +1204,11 @@ export function RaceViewport(props: RaceViewportProps) {
       window.removeEventListener('apex-audio-volume', onAudioVol);
       window.removeEventListener('apex-audio-mute', onAudioMute);
       sim.carRigs.forEach((rig) => rig.dispose());
+      sim.carNametags.forEach((tag) => {
+        scene.remove(tag.sprite);
+        tag.dispose();
+      });
+      sim.carNametags.clear();
       sim.trackScene?.dispose();
       slipGeo.dispose();
       slipMat.dispose();

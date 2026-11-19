@@ -40,6 +40,29 @@ export function getRoomRestUrl(code: string): string {
   return `${basePath}api/rooms/${encodeURIComponent(normalizedCode)}`;
 }
 
+/**
+ * Strips client-local car and livery fields so shared room broadcasts never overwrite
+ * another player's locally chosen car or paint in the multiplayer lobby or on race start.
+ */
+export function extractSharedRoomConfigPatch(patch: Partial<RaceConfig>): Partial<RaceConfig> {
+  const { playerCarId: _carId, playerLivery: _livery, ...shared } = patch;
+  return shared;
+}
+
+export function mergeSharedRoomConfig(
+  localConfig: RaceConfig,
+  incomingRoomConfig?: Partial<RaceConfig> | null,
+): RaceConfig {
+  if (!incomingRoomConfig) return localConfig;
+  const shared = extractSharedRoomConfigPatch(incomingRoomConfig);
+  return {
+    ...localConfig,
+    ...shared,
+    playerCarId: localConfig.playerCarId,
+    playerLivery: localConfig.playerLivery,
+  };
+}
+
 export class MultiplayerClient {
   private ws: WebSocket | null = null;
   private channel: BroadcastChannel | null = null;

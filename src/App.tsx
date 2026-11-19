@@ -11,7 +11,12 @@ import { TitleOverlay } from './components/TitleOverlay';
 import { TrackStudioModal } from './components/TrackStudioModal';
 import { CAR_CLASSES, CARS, getCarById } from './game/cars';
 import { registerCustomTrackInMemory } from './game/customTracks';
-import { ConnectionMode, MultiplayerClient } from './game/multiplayer';
+import {
+  ConnectionMode,
+  extractSharedRoomConfigPatch,
+  mergeSharedRoomConfig,
+  MultiplayerClient,
+} from './game/multiplayer';
 import { computeUpdatedAdaptiveBoost, formatLapTime } from './game/physics';
 import { getTrackById } from './game/tracks';
 import {
@@ -116,7 +121,7 @@ export default function App() {
         if (nextRoom.config.customTrack) {
           registerCustomTrackInMemory(nextRoom.config.customTrack);
         }
-        setRaceConfig((prev) => ({ ...prev, ...nextRoom.config }));
+        setRaceConfig((prev) => mergeSharedRoomConfig(prev, nextRoom.config));
       }
     };
     mp.onRaceStart = (startedRoom) => {
@@ -125,7 +130,7 @@ export default function App() {
         registerCustomTrackInMemory(startedRoom.config.customTrack);
       }
       if (startedRoom?.config) {
-        setRaceConfig((prev) => ({ ...prev, ...startedRoom.config }));
+        setRaceConfig((prev) => mergeSharedRoomConfig(prev, startedRoom.config));
       }
       setSetupOpen(false);
       setGarageOpen(false);
@@ -285,7 +290,10 @@ export default function App() {
     setRaceConfig((prev) => {
       const next = { ...prev, ...patch };
       if (room && room.hostId === mpClientRef.current?.peerId) {
-        mpClientRef.current.updateConfig(patch);
+        const sharedPatch = extractSharedRoomConfigPatch(patch);
+        if (Object.keys(sharedPatch).length > 0) {
+          mpClientRef.current.updateConfig(sharedPatch);
+        }
       }
       return next;
     });
@@ -304,7 +312,7 @@ export default function App() {
         activeClasses: classes,
       };
     });
-    mpClientRef.current?.updatePeer({ carId, livery: resetLivery });
+    mpClientRef.current?.updatePeer({ carId, classId: car.classId, livery: resetLivery });
   };
 
   const handleChangeLivery = (livery: LiveryConfig) => {

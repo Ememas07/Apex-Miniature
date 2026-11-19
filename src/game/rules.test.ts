@@ -2154,6 +2154,93 @@ test('Physics Tweaks: sustained wall contact scrubs speed consistently and GTP t
   assert.ok(car.understeerFactor < 0.35, `Expected low GTP understeer on medium turn-in, got ${car.understeerFactor}`);
 });
 
+test('Multiplayer Room Config Sync: preserves local client car & livery while syncing shared room settings', async () => {
+  const { mergeSharedRoomConfig, extractSharedRoomConfigPatch } = await import('./multiplayer');
+  const localCar = getCarById('porsche-911-gt3-r');
+  const hostCar = getCarById('ferrari-499p');
+
+  const localConfig = {
+    trackId: 'spa-francorchamps',
+    activeClasses: [CarClassId.GT3],
+    playerCarId: localCar.id,
+    playerLivery: { ...localCar.defaultLivery, primaryColor: '#16a34a', driverNumber: '77' },
+    gridSize: 12,
+    totalLaps: 5,
+    weather: 'dry' as const,
+    startingCompound: 'medium' as const,
+    qualifyingEnabled: false,
+    aiDifficulty: 'Pro' as const,
+    aiAdaptiveBoost: 0,
+    aiBotCount: 11,
+    noAi: false,
+    sessionMode: 'race' as const,
+  };
+
+  const incomingHostConfig = {
+    ...localConfig,
+    trackId: 'monza',
+    totalLaps: 10,
+    playerCarId: hostCar.id,
+    playerLivery: { ...hostCar.defaultLivery, primaryColor: '#c8102e', driverNumber: '51' },
+  };
+
+  const merged = mergeSharedRoomConfig(localConfig, incomingHostConfig);
+  assert.equal(merged.trackId, 'monza', 'Shared trackId should sync from room');
+  assert.equal(merged.totalLaps, 10, 'Shared totalLaps should sync from room');
+  assert.equal(merged.playerCarId, localCar.id, 'Local client car must never be overwritten by host car');
+  assert.equal(merged.playerLivery.primaryColor, '#16a34a', 'Local client livery must never be overwritten by host livery');
+  assert.equal(merged.playerLivery.driverNumber, '77');
+
+  const sharedPatch = extractSharedRoomConfigPatch({
+    playerCarId: hostCar.id,
+    playerLivery: hostCar.defaultLivery,
+    trackId: 'suzuka',
+  });
+  assert.equal('playerCarId' in sharedPatch, false, 'playerCarId must be stripped from shared room config patch');
+  assert.equal('playerLivery' in sharedPatch, false, 'playerLivery must be stripped from shared room config patch');
+  assert.equal(sharedPatch.trackId, 'suzuka');
+});
+
+test('Floating Nametags: distinct human vs AI class badges and clean distance scaling/fade', async () => {
+  const { formatNametagLabel, computeNametagDistanceStyle } = await import('../three/nametagSprite');
+
+  const humanTag = formatNametagLabel({
+    id: 'peer-1',
+    driverName: 'Alex Vance',
+    classId: CarClassId.HYPERCAR_GTP,
+    isHumanPeer: true,
+  });
+  assert.equal(humanTag.badgeText, 'PLAYER');
+  assert.equal(humanTag.nameText, 'Alex Vance');
+  assert.equal(humanTag.classShortText, 'GTP');
+  assert.equal(humanTag.isHumanPeer, true);
+
+  const aiF1Tag = formatNametagLabel({
+    id: 'ai-0',
+    driverName: 'L. Rossi',
+    classId: CarClassId.F1_2026,
+    isHumanPeer: false,
+  });
+  assert.equal(aiF1Tag.badgeText, 'AI • F1');
+  assert.equal(aiF1Tag.nameText, 'L. Rossi');
+  assert.equal(aiF1Tag.isHumanPeer, false);
+
+  // Distance scaling & opacity fade checks
+  const tooClose = computeNametagDistanceStyle(1.0, false);
+  assert.equal(tooClose.visible, false, 'Nametag right on camera lens should be hidden');
+
+  const midAi = computeNametagDistanceStyle(45, false);
+  assert.equal(midAi.visible, true);
+  assert.ok(midAi.opacity > 0.7 && midAi.scaleY > 0.7);
+
+  const farAi = computeNametagDistanceStyle(200, false);
+  assert.equal(farAi.visible, false, 'Distant AI nametag beyond fade-out range should be hidden');
+
+  const farHuman = computeNametagDistanceStyle(190, true);
+  assert.equal(farHuman.visible, true, 'Human peer nametag should stay visible further than AI');
+  assert.ok(farHuman.opacity < midAi.opacity, 'Human peer nametag should fade smoothly near max distance');
+});
+
 
 
 

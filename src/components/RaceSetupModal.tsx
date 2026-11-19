@@ -150,6 +150,7 @@ export function RaceSetupModal({
       ...car.defaultLivery,
       driverNumber: config.playerLivery.driverNumber || car.defaultLivery.driverNumber,
     };
+    const isHostOrOffline = !room || room.hostId === myPeerId;
     const nextClasses = config.activeClasses.includes(car.classId)
       ? config.activeClasses
       : [car.classId, ...config.activeClasses].slice(0, 3);
@@ -157,7 +158,7 @@ export function RaceSetupModal({
     onUpdateConfig({
       playerCarId: car.id,
       playerLivery: nextLivery,
-      activeClasses: nextClasses,
+      ...(isHostOrOffline ? { activeClasses: nextClasses } : {}),
     });
     onUpdatePeer?.({ carId: car.id, classId: car.classId, livery: nextLivery });
   };
@@ -864,7 +865,7 @@ export function RaceSetupModal({
                       {/* 3D Turntable Car & Livery Preview */}
                       <div className="h-44 w-full rounded-lg overflow-hidden relative bg-[#090c12] border border-white/10 shadow-inner">
                         <GarageViewport carSpec={playerCar} livery={config.playerLivery} autoRotate={true} />
-                        <div className="absolute bottom-2 right-2 text-[10px] text-slate-400 bg-black/60 px-2 py-0.5 rounded backdrop-blur pointer-events-none">
+                        <div className="absolute bottom-2 right-2 text-[10px] text-slate-300 bg-[#090c12]/85 px-2 py-0.5 rounded border border-white/10 pointer-events-none">
                           Drag to spin · 3D Turntable
                         </div>
                       </div>

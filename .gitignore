@@ -17,3 +17,10 @@ scripts/.dem_cache.json
 !/models/raw-cars/porsche-cayman-gt4-rs.kn5
 !/models/raw-cars/porsche-963.kn5
 audit/*.jsonl
+checkpoints/
+*.pt
+*.pth
+__pycache__/
+*.pyc
+server.js
+
