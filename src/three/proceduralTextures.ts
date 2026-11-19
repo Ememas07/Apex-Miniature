@@ -232,23 +232,38 @@ export function createLiveryTexture(
       ctx.fillText(num, 0, 0, 72);
       ctx.restore();
     } else if (!isRoadSupercar || plateStyle !== 'auto') {
-      // Endurance / GT / Prototype / Touring (GT3, GT4, LMP2, GTP, Track Coupe): Boxed category numberplates
-      // Top / Hood Numberplate (centered on hood, rotated 180 deg so it reads upright from the front)
-      drawNumberplateToContext(ctx, 90, 82, 56, 44, classId, plateStyle, num, {
-        rotateRad: Math.PI,
-      });
+      // Endurance / GT / Prototype / Touring: Compact category numberplates aligned to flat body panels.
+      // SIX_ZONE_UV_ATLAS reference (512x512 canvas):
+      //   TOP:        u=[0.026..0.434] (cx=13..222, center=118), v=[0.026..0.974] (nose at top cy=13)
+      //   LEFT_SIDE:  u=[0.466..0.974] (nu = (z-minZ)/spanZ, tail->nose), cy=[13.3..119.8] (top->bottom)
+      //   RIGHT_SIDE: u=[0.466..0.974] (nu = (maxZ-z)/spanZ, nose->tail), cy=[136.2..242.7] (top->bottom)
+      const isPrototype =
+        classId === CarClassId.HYPERCAR_GTP || classId === CarClassId.LMP2;
 
-      // Left Door Numberplate (LEFT_SIDE zone: u increases tail->nose while outside view goes nose->tail, so flipX)
-      // Placed at y=60..100 (nv ~0.18..0.56) so it sits cleanly on the door/sidepod below side windows.
-      drawNumberplateToContext(ctx, 345, 60, 48, 40, classId, plateStyle, num, {
-        flipX: true,
-      });
-
-      // Right Door Numberplate (RIGHT_SIDE zone: u increases nose->tail while outside view goes tail->nose, so flipX)
-      // Placed at y=183..223 (nv ~0.18..0.56) so it sits cleanly on the door/sidepod below side windows.
-      drawNumberplateToContext(ctx, 345, 183, 48, 40, classId, plateStyle, num, {
-        flipX: true,
-      });
+      if (isPrototype) {
+        // GTP / LMP2: compact plates placed cleanly on the flat nose deck and flat lower-mid sidepod wall
+        // (nv ~0.17..0.37, well below the curved sidepod shoulder / cockpit undercut)
+        drawNumberplateToContext(ctx, 104, 84, 28, 22, classId, plateStyle, num, {
+          rotateRad: Math.PI,
+        });
+        drawNumberplateToContext(ctx, 347, 80, 28, 22, classId, plateStyle, num, {
+          flipX: true,
+        });
+        drawNumberplateToContext(ctx, 362, 203, 28, 22, classId, plateStyle, num, {
+          flipX: true,
+        });
+      } else {
+        // GT3 / GT4 / Track Coupe: compact plates centered cleanly on the flat hood and flat door panels
+        drawNumberplateToContext(ctx, 102, 86, 32, 25, classId, plateStyle, num, {
+          rotateRad: Math.PI,
+        });
+        drawNumberplateToContext(ctx, 356, 68, 30, 24, classId, plateStyle, num, {
+          flipX: true,
+        });
+        drawNumberplateToContext(ctx, 351, 191, 30, 24, classId, plateStyle, num, {
+          flipX: true,
+        });
+      }
     }
   }
 

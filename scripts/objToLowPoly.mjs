@@ -1712,6 +1712,247 @@ function classifyAndProjectSixZoneUV(ax, ay, az, bx, by, bz, cx, cy, cz, groupNa
   return [projPt(ax, ay, az), projPt(bx, by, bz), projPt(cx, cy, cz)];
 }
 
+const INTERIOR_OR_OPEN_SHELL_RE =
+  /(?:interior|cockpit|cabin|dash|seat|tub|roll|cage|floor|under|chassis|diffuser|vent|intake|duct|grill|mesh|wing|splitter|cockpit_?int|mirror|steering|wheel_?well)/i;
+
+/**
+ * Detects and repairs inverted triangle winding/normals per connected mesh component,
+ * and adds back-facing shell faces to single-sided interior / cockpit / open-shell meshes
+ * so converted models never exhibit transparent or see-through backface-culling holes.
+ */
+function repairWindingAndInteriors(groupOutputs, opts = {}) {
+  const solidifyInteriors = opts.solidifyInteriors !== false;
+  let carMinX = Infinity, carMaxX = -Infinity;
+  let carMinY = Infinity, carMaxY = -Infinity;
+  let carMinZ = Infinity, carMaxZ = -Infinity;
+
+  for (const grp of groupOutputs) {
+    for (const batch of grp.batches) {
+      const pos = batch.positions;
+      const idx = batch.indices;
+      for (let i = 0; i < idx.length; i++) {
+        const vi = idx[i] * 3;
+        const x = pos[vi], y = pos[vi + 1], z = pos[vi + 2];
+        if (x < carMinX) carMinX = x;
+        if (x > carMaxX) carMaxX = x;
+        if (y < carMinY) carMinY = y;
+        if (y > carMaxY) carMaxY = y;
+        if (z < carMinZ) carMinZ = z;
+        if (z > carMaxZ) carMaxZ = z;
+      }
+    }
+  }
+  const carCx = Number.isFinite(carMinX) ? (carMinX + carMaxX) * 0.5 : 0;
+  const carCy = Number.isFinite(carMinY) ? (carMinY + carMaxY) * 0.5 : 0.45;
+  const carCz = Number.isFinite(carMinZ) ? (carMinZ + carMaxZ) * 0.5 : 0;
+
+  let flippedTris = 0;
+  let solidifiedTris = 0;
+
+  for (const grp of groupOutputs) {
+    const isGlassGroup = grp.name === 'GLASS';
+    const isWheelGroup = Boolean(classifyWheelCorner(grp.name));
+    if (isGlassGroup) continue;
+
+    for (const batch of grp.batches) {
+      const pos = batch.positions;
+      const indices = new Uint32Array(batch.indices);
+      const triCount = Math.floor(indices.length / 3);
+      if (triCount === 0) continue;
+
+      const matName = batch.material || '';
+      const isInteriorNamed =
+        INTERIOR_OR_OPEN_SHELL_RE.test(grp.name) || INTERIOR_OR_OPEN_SHELL_RE.test(matName);
+
+      // Build undirected edge -> list of { tri, dir } (dir = +1 if edge goes lo->hi, -1 if hi->lo)
+      const edgeMap = new Map();
+      const triKeys = new Set();
+      for (let t = 0; t < triCount; t++) {
+        const a = indices[t * 3];
+        const b = indices[t * 3 + 1];
+        const c = indices[t * 3 + 2];
+        const sortedKey = [a, b, c].sort((u, v) => u - v).join(',');
+        triKeys.add(`${a},${b},${c}`);
+        triKeys.add(`${b},${c},${a}`);
+        triKeys.add(`${c},${a},${b}`);
+        void sortedKey;
+
+        const edges = [[a, b], [b, c], [c, a]];
+        for (let e = 0; e < 3; e++) {
+          const u = edges[e][0];
+          const v = edges[e][1];
+          const lo = u < v ? u : v;
+          const hi = u < v ? v : u;
+          const key = `${lo}_${hi}`;
+          let arr = edgeMap.get(key);
+          if (!arr) {
+            arr = [];
+            edgeMap.set(key, arr);
+          }
+          arr.push({ tri: t, dir: u < v ? 1 : -1 });
+        }
+      }
+
+      // Build triangle adjacency for manifold edges (shared by exactly 2 triangles)
+      const adj = Array.from({ length: triCount }, () => []);
+      let boundaryEdgeCount = 0;
+      let totalEdgeCount = 0;
+      for (const list of edgeMap.values()) {
+        totalEdgeCount++;
+        if (list.length === 1) {
+          boundaryEdgeCount++;
+        } else if (list.length === 2) {
+          const e0 = list[0];
+          const e1 = list[1];
+          // Consistent winding requires opposite edge directions (e0.dir === -e1.dir)
+          const sameDir = e0.dir === e1.dir;
+          adj[e0.tri].push({ to: e1.tri, flip: sameDir });
+          adj[e1.tri].push({ to: e0.tri, flip: sameDir });
+        }
+      }
+
+      // 1. Propagate consistent winding per connected component & orient outward
+      const visited = new Uint8Array(triCount);
+      const flipFlag = new Uint8Array(triCount);
+      const queue = [];
+
+      for (let start = 0; start < triCount; start++) {
+        if (visited[start]) continue;
+        const comp = [];
+        visited[start] = 1;
+        flipFlag[start] = 0;
+        queue.length = 0;
+        queue.push(start);
+
+        let qHead = 0;
+        while (qHead < queue.length) {
+          const cur = queue[qHead++];
+          comp.push(cur);
+          const curFlip = flipFlag[cur];
+          for (const edge of adj[cur]) {
+            if (!visited[edge.to]) {
+              visited[edge.to] = 1;
+              flipFlag[edge.to] = edge.flip ? (curFlip ^ 1) : curFlip;
+              queue.push(edge.to);
+            }
+          }
+        }
+
+        // Apply relative winding consistency inside this component first
+        for (const t of comp) {
+          if (flipFlag[t]) {
+            const tmp = indices[t * 3 + 1];
+            indices[t * 3 + 1] = indices[t * 3 + 2];
+            indices[t * 3 + 2] = tmp;
+            flippedTris++;
+          }
+        }
+
+        // Evaluate signed volume (closed shells) and outward normal alignment (open shells)
+        let signedVol6 = 0;
+        let outwardScore = 0;
+        let totalArea = 0;
+        let compCx = 0, compCy = 0, compCz = 0;
+        for (const t of comp) {
+          const i0 = indices[t * 3] * 3;
+          const i1 = indices[t * 3 + 1] * 3;
+          const i2 = indices[t * 3 + 2] * 3;
+          compCx += (pos[i0] + pos[i1] + pos[i2]) / 3;
+          compCy += (pos[i0 + 1] + pos[i1 + 1] + pos[i2 + 1]) / 3;
+          compCz += (pos[i0 + 2] + pos[i1 + 2] + pos[i2 + 2]) / 3;
+        }
+        const invComp = 1 / Math.max(1, comp.length);
+        compCx *= invComp;
+        compCy *= invComp;
+        compCz *= invComp;
+
+        // Reference center: wheel/closed components use own centroid; body panels use car centroid
+        const refX = isWheelGroup || comp.length > 24 ? compCx : carCx;
+        const refY = isWheelGroup || comp.length > 24 ? compCy : carCy;
+        const refZ = isWheelGroup || comp.length > 24 ? compCz : carCz;
+
+        for (const t of comp) {
+          const i0 = indices[t * 3] * 3;
+          const i1 = indices[t * 3 + 1] * 3;
+          const i2 = indices[t * 3 + 2] * 3;
+          const ax = pos[i0] - refX, ay = pos[i0 + 1] - refY, az = pos[i0 + 2] - refZ;
+          const bx = pos[i1] - refX, by = pos[i1 + 1] - refY, bz = pos[i1 + 2] - refZ;
+          const cx = pos[i2] - refX, cy = pos[i2 + 1] - refY, cz = pos[i2 + 2] - refZ;
+
+          const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+          const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+          const nx = e1y * e2z - e1z * e2y;
+          const ny = e1z * e2x - e1x * e2z;
+          const nz = e1x * e2y - e1y * e2x;
+          const area2 = Math.hypot(nx, ny, nz);
+          if (area2 < 1e-10) continue;
+
+          // 6 * signed tetrahedron volume relative to ref center
+          signedVol6 += ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx);
+
+          const mx = (ax + bx + cx) / 3;
+          const my = (ay + by + cy) / 3;
+          const mz = (az + bz + cz) / 3;
+          const mLen = Math.hypot(mx, my, mz) || 1;
+          outwardScore += (nx * mx + ny * my + nz * mz) / mLen;
+          totalArea += area2;
+        }
+
+        const boundaryRatio = boundaryEdgeCount / Math.max(1, totalEdgeCount);
+        const isClosedShell = boundaryRatio < 0.08 && comp.length >= 4;
+        const shouldFlipWholeComponent = isClosedShell
+          ? signedVol6 < -1e-6
+          : !isInteriorNamed && totalArea > 1e-6 && outwardScore < -0.22 * totalArea;
+
+        if (shouldFlipWholeComponent) {
+          for (const t of comp) {
+            const tmp = indices[t * 3 + 1];
+            indices[t * 3 + 1] = indices[t * 3 + 2];
+            indices[t * 3 + 2] = tmp;
+            flippedTris++;
+          }
+        }
+      }
+
+      // 2. Solidify single-sided interior / cockpit / open-shell batches with reversed back-faces
+      // so interior views never suffer from backface-culling transparency holes.
+      const boundaryRatio = boundaryEdgeCount / Math.max(1, totalEdgeCount);
+      const needsDoubleSidedShell =
+        solidifyInteriors && !isWheelGroup && (isInteriorNamed || boundaryRatio >= 0.14);
+
+      if (needsDoubleSidedShell) {
+        const extra = [];
+        const existingDir = new Set();
+        for (let t = 0; t < triCount; t++) {
+          const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+          existingDir.add(`${a},${b},${c}`);
+          existingDir.add(`${b},${c},${a}`);
+          existingDir.add(`${c},${a},${b}`);
+        }
+        for (let t = 0; t < triCount; t++) {
+          const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+          // Only append reversed face if opposite winding is not already present
+          if (!existingDir.has(`${a},${c},${b}`)) {
+            extra.push(a, c, b);
+            solidifiedTris++;
+          }
+        }
+        if (extra.length > 0) {
+          const merged = new Uint32Array(indices.length + extra.length);
+          merged.set(indices, 0);
+          merged.set(extra, indices.length);
+          batch.indices = merged;
+          continue;
+        }
+      }
+
+      batch.indices = indices;
+    }
+  }
+
+  return { flippedTris, solidifiedTris };
+}
+
 function writeObjAndMtl(outObjPath, outMtlPath, carName, groupOutputs, parsedMaterials, opts = {}) {
   const flat = Boolean(opts.flat);
   const legacy = Boolean(opts.legacy);
@@ -2255,13 +2496,17 @@ export function convertCarFile(inputPath, outputDir, opts = {}) {
     }
   }
 
+  const groupList = [...groupedOut.values()];
+  // Repair inverted face winding/normals and eliminate transparent/see-through interior shells
+  const windingReport = repairWindingAndInteriors(groupList, fullOpts);
+
   const outObjPath = path.join(carOutDir, `${canonicalName}.obj`);
   const outMtlPath = path.join(carOutDir, `${canonicalName}.mtl`);
   const outTris = writeObjAndMtl(
     outObjPath,
     outMtlPath,
     canonicalName,
-    [...groupedOut.values()],
+    groupList,
     materials,
     fullOpts,
   );

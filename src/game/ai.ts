@@ -3,7 +3,6 @@
  */
 export {
   computeAIControl,
-  computeUpdatedAdaptiveBoost,
   getDifficultyMultiplier,
   resolveTuningConfig,
   TUNING_BOUNDS,
@@ -15,6 +14,23 @@ export {
   computeNeuralAIControl,
   buildObservationVector,
   evaluateNeuralPolicy,
+  evaluateBlendedNeuralPolicy,
   mapDifficultyToSkillTarget,
+  validatePolicyWeights,
+  getAiPolicyVariants,
+  getActiveAiPolicyMix,
+  setActiveAiPolicyMix,
+  selectSingleAiPolicyVariant,
+  subscribeAiPolicyMix,
+  getNormalizedPolicyMix,
+  AI_POLICY_VARIANT_IDS,
+  DEFAULT_POLICY_MIX,
   AI_POLICY_WEIGHTS,
+} from './aiNeuralPolicy';
+
+export type {
+  AiPolicyVariantId,
+  AiPolicyMixWeights,
+  AiPolicyVariantInfo,
+  PolicyWeights,
 } from './aiNeuralPolicy';

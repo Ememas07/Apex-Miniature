@@ -23,7 +23,249 @@ export interface PolicyWeights {
   meta?: Record<string, unknown>;
 }
 
-export const AI_POLICY_WEIGHTS: PolicyWeights = aiPolicyWeightsRaw as PolicyWeights;
+export type AiPolicyVariantId = 'base' | 'v1' | 'v2' | 'v3' | 'v4';
+
+export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = [
+  'base',
+  'v1',
+  'v2',
+  'v3',
+  'v4',
+] as const;
+
+export type AiPolicyMixWeights = Record<AiPolicyVariantId, number>;
+
+export interface AiPolicyVariantInfo {
+  id: AiPolicyVariantId;
+  label: string;
+  shortLabel: string;
+  description: string;
+  weights: PolicyWeights | null;
+  loaded: boolean;
+  hiddenDim: number | null;
+  obsDim: number | null;
+}
+
+export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
+  base: 100,
+  v1: 0,
+  v2: 0,
+  v3: 0,
+  v4: 0,
+};
+
+const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v1';
+
+export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const candidate = raw as Partial<PolicyWeights>;
+  if (
+    !Array.isArray(candidate.w0) ||
+    !Array.isArray(candidate.b0) ||
+    !Array.isArray(candidate.w1) ||
+    !Array.isArray(candidate.b1) ||
+    !Array.isArray(candidate.w2) ||
+    !Array.isArray(candidate.b2)
+  ) {
+    return null;
+  }
+  const hiddenDim = candidate.hiddenDim ?? candidate.w0.length;
+  const obsDim = candidate.obsDim ?? candidate.w0[0]?.length ?? 43;
+  const actDim = candidate.actDim ?? candidate.w2.length ?? 3;
+  if (
+    obsDim !== 43 ||
+    actDim !== 3 ||
+    hiddenDim <= 0 ||
+    candidate.w0.length !== hiddenDim ||
+    candidate.b0.length !== hiddenDim ||
+    candidate.w1.length !== hiddenDim ||
+    candidate.b1.length !== hiddenDim ||
+    candidate.w2.length !== actDim ||
+    candidate.b2.length !== actDim
+  ) {
+    return null;
+  }
+  return {
+    ...(candidate as PolicyWeights),
+    obsDim,
+    hiddenDim,
+    actDim,
+  };
+}
+
+export const AI_POLICY_WEIGHTS: PolicyWeights =
+  validatePolicyWeights(aiPolicyWeightsRaw) ?? (aiPolicyWeightsRaw as PolicyWeights);
+
+const OPTIONAL_VARIANT_MODULES: Record<string, unknown> = (() => {
+  try {
+    const globFn = (import.meta as unknown as {
+      glob?: (pattern: string, opts: { eager: boolean }) => Record<string, unknown>;
+    }).glob;
+    if (typeof globFn === 'function') {
+      return globFn('./aiPolicyWeights_v[1-4].json', { eager: true });
+    }
+  } catch {
+    // Node/tsx test runners without Vite import.meta.glob
+  }
+  return {};
+})();
+
+function loadOptionalVariant(suffix: 'v1' | 'v2' | 'v3' | 'v4'): PolicyWeights | null {
+  const key = `./aiPolicyWeights_${suffix}.json`;
+  const mod = OPTIONAL_VARIANT_MODULES[key] as { default?: unknown } | unknown;
+  if (!mod) return null;
+  const raw =
+    typeof mod === 'object' && mod !== null && 'default' in mod
+      ? (mod as { default: unknown }).default
+      : mod;
+  return validatePolicyWeights(raw);
+}
+
+const VARIANT_META: Record<
+  AiPolicyVariantId,
+  { label: string; shortLabel: string; description: string }
+> = {
+  base: {
+    label: 'Baseline Policy',
+    shortLabel: 'Base',
+    description: 'Default shipped neural policy (aiPolicyWeights.json)',
+  },
+  v1: {
+    label: 'v1 Clean Apex',
+    shortLabel: 'v1 Apex',
+    description: 'Safety & survival focus, anti-stall < 25 km/h floor, gamma 0.995',
+  },
+  v2: {
+    label: 'v2 Momentum',
+    shortLabel: 'v2 Mom.',
+    description: 'Anti-deceleration, jerk & pedal-overlap smoothing, higher entropy',
+  },
+  v3: {
+    label: 'v3 Aggressive Pace',
+    shortLabel: 'v3 Pace',
+    description: '128-unit hidden MLP, 0.60 forward progress, wider kerb usage',
+  },
+  v4: {
+    label: 'v4 Curriculum',
+    shortLabel: 'v4 Curr.',
+    description: '2-phase solo hotlap (35%) -> traffic self-play (65%)',
+  },
+};
+
+const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
+  const weightsById: Record<AiPolicyVariantId, PolicyWeights | null> = {
+    base: validatePolicyWeights(aiPolicyWeightsRaw),
+    v1: loadOptionalVariant('v1'),
+    v2: loadOptionalVariant('v2'),
+    v3: loadOptionalVariant('v3'),
+    v4: loadOptionalVariant('v4'),
+  };
+  const out = {} as Record<AiPolicyVariantId, AiPolicyVariantInfo>;
+  for (const id of AI_POLICY_VARIANT_IDS) {
+    const w = weightsById[id];
+    out[id] = {
+      id,
+      ...VARIANT_META[id],
+      weights: w,
+      loaded: Boolean(w),
+      hiddenDim: w ? w.hiddenDim ?? w.w0.length : null,
+      obsDim: w ? w.obsDim : null,
+    };
+  }
+  return out;
+})();
+
+function readStoredMix(): AiPolicyMixWeights {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { ...DEFAULT_POLICY_MIX };
+  }
+  try {
+    const raw = window.localStorage.getItem(POLICY_MIX_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_POLICY_MIX };
+    const parsed = JSON.parse(raw) as Partial<Record<AiPolicyVariantId, unknown>>;
+    const next: AiPolicyMixWeights = { ...DEFAULT_POLICY_MIX };
+    let anyFinite = false;
+    for (const id of AI_POLICY_VARIANT_IDS) {
+      const val = Number(parsed[id]);
+      if (Number.isFinite(val) && val >= 0) {
+        next[id] = Math.min(100, val);
+        anyFinite = true;
+      }
+    }
+    return anyFinite ? next : { ...DEFAULT_POLICY_MIX };
+  } catch {
+    return { ...DEFAULT_POLICY_MIX };
+  }
+}
+
+let activePolicyMix: AiPolicyMixWeights = readStoredMix();
+const mixListeners = new Set<(mix: AiPolicyMixWeights) => void>();
+
+export function getAiPolicyVariants(): AiPolicyVariantInfo[] {
+  return AI_POLICY_VARIANT_IDS.map((id) => POLICY_REGISTRY[id]);
+}
+
+export function getActiveAiPolicyMix(): AiPolicyMixWeights {
+  return { ...activePolicyMix };
+}
+
+export function setActiveAiPolicyMix(next: Partial<AiPolicyMixWeights>): void {
+  const updated: AiPolicyMixWeights = { ...activePolicyMix };
+  for (const id of AI_POLICY_VARIANT_IDS) {
+    if (next[id] !== undefined) {
+      const n = Number(next[id]);
+      updated[id] = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+    }
+  }
+  activePolicyMix = updated;
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem(POLICY_MIX_STORAGE_KEY, JSON.stringify(activePolicyMix));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+  for (const listener of mixListeners) {
+    listener({ ...activePolicyMix });
+  }
+}
+
+export function selectSingleAiPolicyVariant(id: AiPolicyVariantId): void {
+  const mix: AiPolicyMixWeights = { base: 0, v1: 0, v2: 0, v3: 0, v4: 0 };
+  mix[id] = 100;
+  setActiveAiPolicyMix(mix);
+}
+
+export function subscribeAiPolicyMix(listener: (mix: AiPolicyMixWeights) => void): () => void {
+  mixListeners.add(listener);
+  return () => {
+    mixListeners.delete(listener);
+  };
+}
+
+export function getNormalizedPolicyMix(
+  mix: AiPolicyMixWeights = activePolicyMix,
+): Array<{ id: AiPolicyVariantId; fraction: number; weights: PolicyWeights }> {
+  const candidates: Array<{ id: AiPolicyVariantId; rawWeight: number; weights: PolicyWeights }> = [];
+  let total = 0;
+  for (const id of AI_POLICY_VARIANT_IDS) {
+    const info = POLICY_REGISTRY[id];
+    const w = mix[id] ?? 0;
+    if (info.loaded && info.weights && w > 0) {
+      candidates.push({ id, rawWeight: w, weights: info.weights });
+      total += w;
+    }
+  }
+  if (total <= 0 || candidates.length === 0) {
+    const fallback = POLICY_REGISTRY.base.weights;
+    return fallback ? [{ id: 'base', fraction: 1, weights: fallback }] : [];
+  }
+  return candidates.map((c) => ({
+    id: c.id,
+    fraction: c.rawWeight / total,
+    weights: c.weights,
+  }));
+}
 
 if (typeof console !== 'undefined') {
   console.info('[AI Policy]', AI_POLICY_WEIGHTS.meta);
@@ -185,28 +427,31 @@ export function buildObservationVector(
 }
 
 /**
- * Runs forward inference on the 43-input [64, 64] tanh MLP neural driver policy.
+ * Runs forward inference on a 43-input [H, H] tanh MLP neural driver policy (supports any hiddenDim e.g. 64 or 128).
  */
 export function evaluateNeuralPolicy(
   obs: number[],
   weights: PolicyWeights = AI_POLICY_WEIGHTS,
 ): { steer: number; throttle: number; brake: number } | null {
+  const hiddenDim = weights?.hiddenDim ?? weights?.w0?.length ?? 64;
   if (
     !weights ||
     weights.obsDim !== 43 ||
     !weights.w0 ||
     !weights.w1 ||
     !weights.w2 ||
+    weights.w0.length !== hiddenDim ||
+    weights.w1.length !== hiddenDim ||
     obs.length !== 43
   ) {
     return null;
   }
 
-  // Layer 0: 43 -> 64 (tanh)
-  const h0 = new Float32Array(64);
+  // Layer 0: 43 -> hiddenDim (tanh)
+  const h0 = new Float32Array(hiddenDim);
   const w0 = weights.w0;
   const b0 = weights.b0;
-  for (let i = 0; i < 64; i++) {
+  for (let i = 0; i < hiddenDim; i++) {
     let sum = b0[i] ?? 0;
     const row = w0[i];
     if (!row) continue;
@@ -216,21 +461,21 @@ export function evaluateNeuralPolicy(
     h0[i] = Math.tanh(sum);
   }
 
-  // Layer 1: 64 -> 64 (tanh)
-  const h1 = new Float32Array(64);
+  // Layer 1: hiddenDim -> hiddenDim (tanh)
+  const h1 = new Float32Array(hiddenDim);
   const w1 = weights.w1;
   const b1 = weights.b1;
-  for (let i = 0; i < 64; i++) {
+  for (let i = 0; i < hiddenDim; i++) {
     let sum = b1[i] ?? 0;
     const row = w1[i];
     if (!row) continue;
-    for (let j = 0; j < 64; j++) {
+    for (let j = 0; j < hiddenDim; j++) {
       sum += row[j] * h0[j];
     }
     h1[i] = Math.tanh(sum);
   }
 
-  // Layer 2: 64 -> 3 (linear clamped [-1, 1] for version >= 2; tanh fallback for version === 1)
+  // Layer 2: hiddenDim -> 3 (linear clamped [-1, 1] for version >= 2; tanh fallback for version === 1)
   const useLinearOutput = (weights.version ?? 1) >= 2;
   const out = new Float32Array(3);
   const w2 = weights.w2;
@@ -239,7 +484,7 @@ export function evaluateNeuralPolicy(
     let sum = b2[i] ?? 0;
     const row = w2[i];
     if (!row) continue;
-    for (let j = 0; j < 64; j++) {
+    for (let j = 0; j < hiddenDim; j++) {
       sum += row[j] * h1[j];
     }
     const raw = useLinearOutput ? sum : Math.tanh(sum);
@@ -250,6 +495,42 @@ export function evaluateNeuralPolicy(
     steer: Math.max(-1, Math.min(1, out[0])),
     throttle: Math.max(0, Math.min(1, (out[1] + 1) * 0.5)),
     brake: Math.max(0, Math.min(1, (out[2] + 1) * 0.5)),
+  };
+}
+
+/**
+ * Evaluates all loaded policies in the active percentage mix and computes the weighted average action.
+ */
+export function evaluateBlendedNeuralPolicy(
+  obs: number[],
+  mix: AiPolicyMixWeights = activePolicyMix,
+): { steer: number; throttle: number; brake: number } | null {
+  const entries = getNormalizedPolicyMix(mix);
+  if (entries.length === 0) return null;
+  if (entries.length === 1) {
+    return evaluateNeuralPolicy(obs, entries[0].weights);
+  }
+
+  let steer = 0;
+  let throttle = 0;
+  let brake = 0;
+  let weightSum = 0;
+
+  for (let i = 0; i < entries.length; i++) {
+    const { fraction, weights } = entries[i];
+    const res = evaluateNeuralPolicy(obs, weights);
+    if (!res) continue;
+    steer += res.steer * fraction;
+    throttle += res.throttle * fraction;
+    brake += res.brake * fraction;
+    weightSum += fraction;
+  }
+
+  if (weightSum <= 0) return null;
+  return {
+    steer: Math.max(-1, Math.min(1, steer / weightSum)),
+    throttle: Math.max(0, Math.min(1, throttle / weightSum)),
+    brake: Math.max(0, Math.min(1, brake / weightSum)),
   };
 }
 
@@ -286,7 +567,7 @@ export function computeNeuralAIControl(
     car.bopMultipliers,
   );
 
-  const policyOut = evaluateNeuralPolicy(obs);
+  const policyOut = evaluateBlendedNeuralPolicy(obs);
   if (!policyOut) {
     return heuristic;
   }

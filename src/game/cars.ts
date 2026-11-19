@@ -56,8 +56,8 @@ export const CAR_CLASSES: Record<CarClassId, CarClassMeta> = {
     badgeTextColor: '#ffffff',
     basePaceIndex: 0.96,
     forwardGears: 6,
-    specialType: 'high-beam-flash',
-    specialLabel: 'High-Beam Flash',
+    specialType: 'none',
+    specialLabel: 'None',
     defaultHeadlightTint: 'crystal-white',
   },
   [CarClassId.GT3]: {
@@ -69,8 +69,8 @@ export const CAR_CLASSES: Record<CarClassId, CarClassMeta> = {
     badgeTextColor: '#ffffff',
     basePaceIndex: 0.87,
     forwardGears: 6,
-    specialType: 'high-beam-flash',
-    specialLabel: 'High-Beam Flash',
+    specialType: 'none',
+    specialLabel: 'None',
     defaultHeadlightTint: 'endurance-yellow',
   },
   [CarClassId.GT4]: {
@@ -82,8 +82,8 @@ export const CAR_CLASSES: Record<CarClassId, CarClassMeta> = {
     badgeTextColor: '#ffffff',
     basePaceIndex: 0.81,
     forwardGears: 6,
-    specialType: 'high-beam-flash',
-    specialLabel: 'High-Beam Flash',
+    specialType: 'none',
+    specialLabel: 'None',
     defaultHeadlightTint: 'crystal-white',
   },
   [CarClassId.F1_2026]: {
@@ -147,8 +147,8 @@ export const CAR_CLASSES: Record<CarClassId, CarClassMeta> = {
     badgeTextColor: '#111827',
     basePaceIndex: 0.78,
     forwardGears: 6,
-    specialType: 'high-beam-flash',
-    specialLabel: 'High-Beam Flash',
+    specialType: 'none',
+    specialLabel: 'None',
     defaultHeadlightTint: 'crystal-white',
   },
   [CarClassId.SUPERCAR]: {
@@ -160,8 +160,8 @@ export const CAR_CLASSES: Record<CarClassId, CarClassMeta> = {
     badgeTextColor: '#ffffff',
     basePaceIndex: 0.89,
     forwardGears: 7,
-    specialType: 'high-beam-flash',
-    specialLabel: 'High-Beam Flash',
+    specialType: 'none',
+    specialLabel: 'None',
     defaultHeadlightTint: 'crystal-white',
   },
 };
@@ -1509,8 +1509,14 @@ export function filterCars(
   const tokens = q.split(/\s+/).filter(Boolean);
   return base.filter((c) => {
     const cls = CAR_CLASSES[c.classId];
-    const haystack = `${c.name} ${c.manufacturer} ${c.id} ${c.classId} ${cls.name} ${cls.shortName} ${c.tradeoffNote}`.toLowerCase();
-    return tokens.every((tok) => haystack.includes(tok));
+    const searchable = `${c.name} ${c.manufacturer} ${c.id} ${cls.name} ${cls.shortName}`.toLowerCase();
+    const words = searchable.split(/[^a-z0-9]+/).filter(Boolean);
+    return tokens.every((tok) => {
+      if (tok.length <= 3) {
+        return words.some((w) => w.startsWith(tok));
+      }
+      return searchable.includes(tok);
+    });
   });
 }
 

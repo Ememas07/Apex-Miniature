@@ -20,7 +20,6 @@ export type ClassSpecialType =
   | 'ers-overtake'
   | 'v10-overboost'
   | 'rich-fuel-overboost'
-  | 'high-beam-flash'
   | 'hybrid-deploy';
 
 export interface BoPAttributes {
@@ -166,6 +165,7 @@ export interface TrackSpec {
   name: string;
   shortName: string;
   country: string;
+  city?: string;
   region: TrackRegion;
   seriesTags: ('IMSA' | 'WEC' | 'F1')[];
   flagship: boolean;
@@ -175,6 +175,8 @@ export interface TrackSpec {
   kerbSecondary: string;
   trackWidth: number;
   targetLapSeconds: number;
+  circuitLengthKm?: number;
+  circuitInfo?: string;
   corners: number;
   waypoints: TrackWaypoint[];
   isCustom?: boolean;
@@ -200,7 +202,9 @@ export interface PitStrategy {
   nextCompound: TireCompound;
 }
 
-export type SinglePlayerSessionMode = 'race' | 'practice';
+export type SinglePlayerSessionMode = 'race' | 'practice' | 'ai-race';
+
+export type SpectatorCameraMode = 'spectate' | 'freecam';
 
 export interface RaceConfig {
   trackId: string;
@@ -216,7 +220,6 @@ export interface RaceConfig {
   startingCompound: TireCompound;
   qualifyingEnabled: boolean;
   aiDifficulty: AIDifficulty;
-  aiAdaptiveBoost: number; // -0.06 to +0.08 learned from player lap times
   roomCode?: string;
   sessionMode?: SinglePlayerSessionMode;
 }
@@ -299,6 +302,10 @@ export interface HudSnapshot {
   qualiResultTime: number | null;
   qualiGridPos: number | null;
   sessionMode?: SinglePlayerSessionMode;
+  spectatorCameraMode?: SpectatorCameraMode;
+  spectatedCarId?: string | null;
+  spectatedDriverName?: string;
+  spectatedCarName?: string;
   currentSector?: 1 | 2 | 3;
   sectorTimes?: [number | null, number | null, number | null];
   bestSectorTimes?: [number | null, number | null, number | null];

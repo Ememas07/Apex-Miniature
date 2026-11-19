@@ -228,8 +228,8 @@ test('Traffic-Smart AI flashes headlights when approaching slower GT3 traffic', 
   fastCar.lateralOffset = 0;
   fastCar.totalTime = 0.05; // ensures floor(totalTime * 6) % 2 === 0
 
-  computeAIControl(fastCar, daytona, [fastCar, slowCar], 1 / 60, 0);
-  assert.equal(fastCar.flashingHeadlights, true);
+  const ctrl = computeAIControl(fastCar, daytona, [fastCar, slowCar], 1 / 60, 0);
+  assert.equal(Number.isFinite(ctrl.throttle), true);
 });
 
 test('Driver number validation and standings calculation work cleanly', () => {
@@ -446,7 +446,7 @@ test('Issue 3: Class Special Abilities function across all distinct classes incl
     1 / 60,
     { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [gt3Car] },
   );
-  assert.equal(gt3Car.flashingHeadlights, true);
+  assert.equal(gt3Car.specialActive, false);
 });
 
 test('Issue 6: AI Anti-Stuck Watchdog resets car aligned at 35 km/h if stationary for > 1.5s', () => {
@@ -2204,7 +2204,6 @@ test('Multiplayer Room Config Sync: preserves local client car & livery while sy
     startingCompound: 'medium' as const,
     qualifyingEnabled: false,
     aiDifficulty: 'Pro' as const,
-    aiAdaptiveBoost: 0,
     aiBotCount: 11,
     noAi: false,
     sessionMode: 'race' as const,
@@ -2483,7 +2482,7 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
   }
   assert.equal(ersCar.specialActive, false, 'ERS special should auto-deactivate when charge depletes');
 
-  // 2. High-Beam Flash (GT3): press ON, release stays ON, press again turns OFF
+  // 2. GT3 high-beam flash removed: pressing special does not activate any gadget
   const gt3 = CARS.find((c) => c.id === 'ferrari-296-gt3')!;
   const gt3Car = createCarSimState({
     id: 'gt3-toggle',
@@ -2493,18 +2492,11 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
     livery: gt3.defaultLivery,
     gridSlot: 1,
     compiledTrack: spa,
-    compound: 'medium',
+    compound: 'soft',
   });
   const gt3Opts = { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [gt3Car] };
   stepCarPhysics(gt3Car, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, gt3Opts);
-  assert.equal(gt3Car.specialActive, true);
-  assert.equal(gt3Car.flashingHeadlights, true);
-  stepCarPhysics(gt3Car, { throttle: 1, brake: 0, steer: 0, specialPressed: false, specialJustPressed: false }, spa, 1 / 60, gt3Opts);
-  assert.equal(gt3Car.specialActive, true);
-  assert.equal(gt3Car.flashingHeadlights, true);
-  stepCarPhysics(gt3Car, { throttle: 1, brake: 0, steer: 0, specialPressed: true, specialJustPressed: true }, spa, 1 / 60, gt3Opts);
   assert.equal(gt3Car.specialActive, false);
-  assert.equal(gt3Car.flashingHeadlights, false);
 
   // 3. V10 Overboost: press ON, release stays ON, press again turns OFF
   const v10 = CARS.find((c) => c.id === 'f1-05-renault')!;

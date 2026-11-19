@@ -738,6 +738,68 @@ export const TRACKS: TrackSpec[] = [
   },
 ];
 
+const TRACK_LOCATION_META: Record<string, { city: string; circuitLengthKm: number; circuitInfo: string }> = {
+  "spa-francorchamps": { city: "Stavelot, Wallonia", circuitLengthKm: 7.00, circuitInfo: "High-speed Ardennes forest circuit featuring Eau Rouge, Raidillon, Kemmel Straight, and Blanchimont." },
+  "daytona-road": { city: "Daytona Beach, Florida", circuitLengthKm: 5.73, circuitInfo: "31-degree banked tri-oval combined with a technical infield road course and the Bus Stop chicane." },
+  "laguna-seca": { city: "Monterey, California", circuitLengthKm: 3.60, circuitInfo: "Dry coastal hillside circuit famous for the steep Andretti Hairpin and plunging Corkscrew." },
+  "le-mans": { city: "Le Mans, Pays de la Loire", circuitLengthKm: 13.63, circuitInfo: "Endurance cathedral mixing Mulsanne Straight draft battles with Porsche Curves and Dunlop." },
+  "monza": { city: "Monza, Lombardy", circuitLengthKm: 5.79, circuitInfo: "Temple of Speed inside Royal Villa Park—flat-out straights, Variante del Rettifilo, and Parabolica." },
+  "silverstone": { city: "Silverstone, Northamptonshire", circuitLengthKm: 5.89, circuitInfo: "Former RAF airfield defined by sweeping Maggotts–Becketts–Chapel aero complexes." },
+  "suzuka": { city: "Suzuka, Mie Prefecture", circuitLengthKm: 5.81, circuitInfo: "Figure-eight crossover layout featuring S-Curves, Spoon, and 130R." },
+  "monaco": { city: "Monte Carlo, Monaco", circuitLengthKm: 3.34, circuitInfo: "Tight harbourfront street circuit through Casino Square, Tunnel, and Rascasse." },
+  "cota": { city: "Austin, Texas", circuitLengthKm: 5.51, circuitInfo: "Steep Turn 1 climb into a flowing stadium sequence and long back-straight braking zone." },
+  "sebring": { city: "Sebring, Florida", circuitLengthKm: 6.02, circuitInfo: "Historic concrete-and-asphalt endurance airfield with bumpy Sunset Bend." },
+  "long-beach": { city: "Long Beach, California", circuitLengthKm: 3.17, circuitInfo: "Oceanfront street circuit sweeping past Shoreline Drive and the Fountain roundabout." },
+  "detroit-street": { city: "Detroit, Michigan", circuitLengthKm: 2.65, circuitInfo: "Downtown waterfront street grid with 90-degree corners and heavy concrete braking." },
+  "mid-ohio": { city: "Lexington, Ohio", circuitLengthKm: 3.63, circuitInfo: "Rolling parkland road course featuring the Keyhole and technical Madness esses." },
+  "watkins-glen": { city: "Watkins Glen, New York", circuitLengthKm: 5.55, circuitInfo: "Finger Lakes high-grip circuit with the Inner Loop Bus Stop and sweeping Boot." },
+  "mosport": { city: "Bowmanville, Ontario", circuitLengthKm: 3.96, circuitInfo: "Blind cresting elevation and fast off-camber turns in the Ontario hills." },
+  "lime-rock": { city: "Lakeville, Connecticut", circuitLengthKm: 2.41, circuitInfo: "Classic short, ultra-rhythm Berkshire bullring with uphill chicane." },
+  "road-america": { city: "Elkhart Lake, Wisconsin", circuitLengthKm: 6.51, circuitInfo: "Kettle Moraine parkland circuit with long straights, Carousel, and Canada Corner." },
+  "vir": { city: "Alton, Virginia", circuitLengthKm: 5.26, circuitInfo: "Scenic Dan River valley course with Oak Tree and Climbing Esses." },
+  "indianapolis-road": { city: "Speedway, Indiana", circuitLengthKm: 3.93, circuitInfo: "Combines the Brickyard frontstretch and Turn 1 oval banking with a flat infield." },
+  "road-atlanta": { city: "Braselton, Georgia", circuitLengthKm: 4.09, circuitInfo: "Dramatic elevation plunge under the Suzuki bridge into the final chicane." },
+  "montreal": { city: "Montreal, Quebec", circuitLengthKm: 4.36, circuitInfo: "Île Notre-Dame island circuit of hard braking zones and Wall of Champions." },
+  "miami": { city: "Miami Gardens, Florida", circuitLengthKm: 5.41, circuitInfo: "Hard Rock Stadium campus track with rapid sweepers and back-straight DRS." },
+  "las-vegas": { city: "Las Vegas, Nevada", circuitLengthKm: 6.20, circuitInfo: "Nighttime Strip boulevard blast linking long flat-out runs with 90-degree corners." },
+  "mexico-city": { city: "Mexico City, CDMX", circuitLengthKm: 4.30, circuitInfo: "High-altitude Magdalena Mixhuca circuit cutting through Foro Sol stadium." },
+  "interlagos": { city: "São Paulo, Brazil", circuitLengthKm: 4.31, circuitInfo: "Counter-clockwise amphitheater circuit from Senna S down to Junção." },
+  "imola": { city: "Imola, Emilia-Romagna", circuitLengthKm: 4.91, circuitInfo: "Old-school anti-clockwise Italian classic through Tamburello, Acque Minerali, and Rivazza." },
+  "barcelona": { city: "Montmeló, Catalonia", circuitLengthKm: 4.66, circuitInfo: "All-round aero benchmark circuit combining Turn 3 sweeper and heavy braking." },
+  "madring": { city: "IFEMA Madrid, Spain", circuitLengthKm: 5.47, circuitInfo: "Modern urban hybrid circuit pairing banked sweepers with technical street sectors." },
+  "red-bull-ring": { city: "Spielberg, Styria", circuitLengthKm: 4.32, circuitInfo: "Alpine circuit of big climbs, heavy uphill braking, and fast downhill corners." },
+  "hungaroring": { city: "Mogyoród, Pest", circuitLengthKm: 4.38, circuitInfo: "Twisty, relentless hillside bowl demanding high downforce and rhythm." },
+  "zandvoort": { city: "Zandvoort, North Holland", circuitLengthKm: 4.26, circuitInfo: "North Sea coastal dunes with steep banking at Hugenholtz and Arie Luyendyk." },
+  "paul-ricard": { city: "Le Castellet, Provence", circuitLengthKm: 5.84, circuitInfo: "High-speed Mistral Straight into sweeping Signes and technical final sector." },
+  "baku": { city: "Baku, Azerbaijan", circuitLengthKm: 6.00, circuitInfo: "Caspian Sea street circuit blending Old City castle walls with a 2.2 km blast." },
+  "portimao": { city: "Portimão, Algarve", circuitLengthKm: 4.65, circuitInfo: "Rollercoaster Portuguese hillside track with blind crests and sweeping drops." },
+  "fuji": { city: "Oyama, Shizuoka", circuitLengthKm: 4.56, circuitInfo: "Mount Fuji foothills track dominated by a 1.47 km main straight and technical Sector 3." },
+  "shanghai": { city: "Jiading, Shanghai", circuitLengthKm: 5.45, circuitInfo: "Snail-shell Turn 1–2 complex feeding a long back straight and hairpin." },
+  "singapore": { city: "Marina Bay, Singapore", circuitLengthKm: 4.94, circuitInfo: "Humid floodlit waterfront street track with 19 relentless corners." },
+  "sepang": { city: "Sepang, Selangor", circuitLengthKm: 5.54, circuitInfo: "Wide tropical circuit featuring double hairpins and sweeping high-speed bends." },
+  "bahrain": { city: "Sakhir, Bahrain", circuitLengthKm: 5.41, circuitInfo: "Floodlit desert circuit renowned for Turn 1 braking duels and heavy traction." },
+  "jeddah": { city: "Jeddah, Makkah", circuitLengthKm: 6.17, circuitInfo: "Ultra-fast Red Sea corniche street circuit with blind wall-lined esses." },
+  "lusail": { city: "Lusail, Qatar", circuitLengthKm: 5.42, circuitInfo: "Flowing desert track of medium-high-speed triple-apex sweepers." },
+  "yas-marina": { city: "Yas Island, Abu Dhabi", circuitLengthKm: 5.28, circuitInfo: "Twilight marina circuit pairing long straights with the hotel waterfront sector." },
+  "albert-park": { city: "Melbourne, Victoria", circuitLengthKm: 5.28, circuitInfo: "Fast, flowing lakeside parkland street track around Albert Park Lake." },
+};
+
+for (const tr of TRACKS) {
+  const meta = TRACK_LOCATION_META[tr.id];
+  if (meta) {
+    tr.city = meta.city;
+    tr.circuitLengthKm = meta.circuitLengthKm;
+    tr.circuitInfo = meta.circuitInfo;
+  }
+}
+
+export function formatTargetLapMMSS(totalSeconds: number): string {
+  const safe = Math.max(0, Math.round(totalSeconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 export function getTrackById(id: string): TrackSpec {
   const builtin = TRACKS.find((t) => t.id === id);
   if (builtin) return builtin;
@@ -1394,7 +1456,7 @@ export function filterTracks(
   const tokens = q.split(/\s+/).filter(Boolean);
   return pool.filter((t) => {
     const isCCW = CCW_CIRCUIT_IDS.has(t.id);
-    const baseText = `${t.name} ${t.shortName} ${t.country} ${t.id} ${t.seriesTags.join(' ')} ${t.region} ${t.scenery}`.toLowerCase();
+    const baseText = `${t.name} ${t.shortName} ${t.country} ${t.city ?? ''} ${t.id} ${t.seriesTags.join(' ')} ${t.region} ${t.scenery}`.toLowerCase();
     return tokens.every((tok) => {
       if (tok === 'ccw' || tok === 'counterclockwise' || tok === 'counter-clockwise' || tok === 'anticlockwise') {
         return isCCW;

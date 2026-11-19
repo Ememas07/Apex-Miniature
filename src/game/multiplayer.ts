@@ -11,7 +11,6 @@ export interface PeerTelemetryPacket {
   trackT: number;
   totalDistance: number;
   specialActive: boolean;
-  flashingHeadlights: boolean;
 }
 
 export type ConnectionMode = 'server' | 'local-relay' | 'connecting' | 'disconnected';

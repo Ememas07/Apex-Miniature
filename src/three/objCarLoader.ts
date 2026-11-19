@@ -536,6 +536,10 @@ function convertSourceMaterial(
       metalness: /chrome|mirror|polished/i.test(lowerMat) ? 0.92 : 0.72,
     });
   } else {
+    const isInteriorOrShell =
+      /interior|cockpit|cabin|dash|seat|tub|roll|cage|floor|under|chassis|carbon|diffuser|vent|intake|duct|grill|mesh|wing|splitter|fender|hood|door|roof|panel|trim|plastic/i.test(
+        lowerMat,
+      ) || /interior|cockpit|body|chassis|wing|aero|shell/i.test(meshName);
     built = new THREE.MeshStandardMaterial({
       name: matName,
       color: srcColor,
@@ -543,7 +547,13 @@ function convertSourceMaterial(
       metalness: 0.12,
       transparent: srcOpacity < 0.99,
       opacity: srcOpacity,
+      side: isInteriorOrShell ? THREE.DoubleSide : THREE.DoubleSide,
     });
+  }
+
+  // Prevent transparent/see-through holes on single-sided open-shell body panels & interiors
+  if (!isTransparentGlassMat && !isWheelMesh && built instanceof THREE.Material) {
+    built.side = THREE.DoubleSide;
   }
 
   ctx.track(built);
