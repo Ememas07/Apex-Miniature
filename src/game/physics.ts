@@ -237,8 +237,8 @@ export function computeClassGripProfile(
       };
     case CarClassId.HYPERCAR_GTP:
       return {
-        classGripMult: 0.88,
-        classDownforceBonus: 1.0 + Math.min(0.22, speed / 78.0) * dfScale,
+        classGripMult: 0.93,
+        classDownforceBonus: 1.0 + Math.min(0.30, (speed / 72.0) * 0.30) * dfScale,
       };
     case CarClassId.LMP2:
       return {
@@ -447,7 +447,7 @@ export function computeUpdatedAdaptiveBoost(
 /**
  * Resolves car contact against barriers, guardrails and invisible pit walls:
  * 1. Depenetration: pushes car out of wall collision normal (normal * depth + 0.05m) every frame
- * 2. Tangent wall-sliding: projects velocity onto wall tangent (v_slide = v - (v . n)n) with 0.07 scraping friction and 0.15 restitution
+ * 2. Tangent wall-damping: dt-normalized heavy barrier scraping friction + normal-impact scrub and low restitution (0.10) so cars lose speed noticeably instead of sliding cleanly along walls
  * 3. Outward yaw alignment toward wall tangent so car glances off smoothly instead of sticking dead
  * 4. Damage: ignores impacts < 25 km/h (0 damage); heavy impacts accumulated at 0.25x rate with 0.5s cooldown
  */
@@ -467,25 +467,27 @@ export function resolveWallContact(
   car.z -= sample.nz * (side * pushDist);
   car.lateralOffset = side === 1 ? wallLat - 0.05 : wallLat + 0.05;
 
-  // Velocity projection onto wall tangent: v_slide = v - (v . n)n
+  // Heavy dt-normalized barrier friction + normal-impact scrub and low restitution (0.10)
+  // Consistent across browser 60Hz (dt=1/60) and headlessEnv 120Hz substeps (dt=1/120)
   const vNorm = side * (car.vx * sample.nx + car.vz * sample.nz);
   const vTan = car.vx * sample.tx + car.vz * sample.tz;
 
-  // Tangent slide with modest scraping friction (0.07) and gentle restitution (0.15)
-  const vSlide = vTan * 0.93;
-  const vBounce = vNorm > 0 ? -0.15 * vNorm : 0;
+  const scrapeRetention = Math.exp(-8.5 * Math.max(dt, 1 / 240));
+  const impactRetention = Math.max(0.74, 1.0 - Math.max(0, vNorm - 3.0) * 0.016);
+  const vSlide = vTan * scrapeRetention * impactRetention;
+  const vBounce = vNorm > 0 ? -0.10 * vNorm : 0;
 
   car.vx = vSlide * sample.tx + (side * vBounce) * sample.nx;
   car.vz = vSlide * sample.tz + (side * vBounce) * sample.nz;
   car.speed = Math.max(0, Math.min(car.speed, Math.abs(vSlide)));
-  car.yawRate = (car.yawRate ?? 0) * 0.25;
+  car.yawRate = (car.yawRate ?? 0) * 0.15;
 
-  // Outward yaw alignment toward wall tangent so car glances off smoothly
+  // Outward yaw alignment toward wall tangent so car glances off instead of pinning
   const wallHeading = Math.atan2(sample.tx, sample.tz);
   let headingDiff = wallHeading - car.heading;
   while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
   while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
-  car.heading += headingDiff * Math.min(1.0, dt * 8.5);
+  car.heading += headingDiff * Math.min(1.0, dt * 10.5);
 
   // Collision damage threshold & cooldown:
   // Ignore low-speed grazing impacts below 25 km/h (6.944 m/s) -> 0 damage
@@ -1180,16 +1182,16 @@ export function stepCarPhysics(
   const wheelbase = Math.max(2.4, Math.min(3.7, dims.wheelbase ?? 2.8));
   const aAxle = wheelbase * 0.49;
   const bAxle = wheelbase * 0.51;
-  const yawInertia = 0.24 * massKg * wheelbase * wheelbase;
+  const yawInertia = (isGTP ? 0.19 : 0.20) * massKg * wheelbase * wheelbase;
 
   const steerInput = Math.max(-1, Math.min(1, input.steer));
-  const maxSteerAngle = 0.44 * (1.0 - 0.72 * Math.min(1, car.speed / Math.max(35, maxSpeedBase * 0.78)));
+  const maxSteerAngle = 0.46 * (1.0 - 0.58 * Math.min(1, car.speed / Math.max(38, maxSpeedBase * 0.85)));
   const targetSteerAngle = steerInput * maxSteerAngle;
-  car.steerAngle += (targetSteerAngle - car.steerAngle) * Math.min(1, dt * 11.5);
+  car.steerAngle += (targetSteerAngle - car.steerAngle) * Math.min(1, dt * 18.0);
 
   const speedNorm = Math.min(1, car.speed / Math.max(1, maxSpeedBase));
-  // Trail-braking bonus: gentle braking (0.08..0.7) while turning sharpens front bite
-  const trailBrakeBonus = brake > 0.08 && brake < 0.7 && Math.abs(steerInput) > 0.25 ? 1.14 : 1.0;
+  // Trail-braking bonus: braking while turning loads and sharpens front-axle bite
+  const trailBrakeBonus = brake > 0.05 && brake < 0.75 && Math.abs(steerInput) > 0.2 ? 1.20 : 1.0;
   const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
   const bankingGripBonus = 1.0 + Math.sin(Math.abs(sampleBank)) * 0.35;
   const { classGripMult, classDownforceBonus } = computeClassGripProfile(classId, car.speed, tuning, bop.downforceMult);
@@ -1212,22 +1214,22 @@ export function stepCarPhysics(
   let vFwd = car.speed * moveSign;
   let rYaw = -(car.yawRate ?? 0); // positive = turning right (-heading)
 
-  const staticFrontShare = bAxle / wheelbase;
-  const weightTransfer = (brake * 0.11 - throttle * 0.08) * (car.speed > 2 ? 1 : 0);
-  const frontShare = Math.max(0.34, Math.min(0.62, staticFrontShare + weightTransfer));
+  const staticFrontShare = bAxle / wheelbase + (isGTP ? 0.045 : 0.020);
+  const weightTransfer = (brake * 0.14 - throttle * 0.065) * (car.speed > 2 ? 1 : 0);
+  const frontShare = Math.max(0.38, Math.min(0.65, staticFrontShare + weightTransfer));
   const rearShare = 1.0 - frontShare;
 
   // Lateral tire friction limit (mu * Fz) in Newtons
-  const latGripAccel = availableGrip * 11.5;
+  const latGripAccel = availableGrip * 11.8;
   const fMaxTotalN = massKg * latGripAccel;
-  const fMaxFrontN = fMaxTotalN * frontShare * (isReversing ? 0.75 : 1.0);
+  const fMaxFrontN = fMaxTotalN * frontShare * (isReversing ? 0.75 : 1.0) * (isGTP ? 1.12 : 1.045);
   const fMaxRearN = fMaxTotalN * rearShare * (
-    isGTP && throttle > 0.75 && Math.abs(steerInput) > 0.25 && car.speed > 14 && car.speed < 55
-      ? Math.max(0.76, 1.0 - (throttle - 0.75) * 0.65)
+    isGTP && throttle > 0.80 && Math.abs(steerInput) > 0.25 && car.speed > 12 && car.speed < 72
+      ? Math.max(0.85, 1.0 - (throttle - 0.80) * 0.45)
       : 1.0
   );
 
-  const cAlphaFront = fMaxFrontN * 7.8;
+  const cAlphaFront = fMaxFrontN * (isGTP ? 10.8 : 10.3);
   const cAlphaRear = fMaxRearN * 9.2;
 
   let understeerAccum = 0;
@@ -1255,7 +1257,7 @@ export function stepCarPhysics(
       // Apply lateral tire acceleration in body frame + subtle front steering scrub
       vLat += ((fyF + fyR) / massKg + bankLatAccel) * subDt;
       if (Math.abs(vFwd) > 1.0) {
-        const steerDragDecel = (Math.abs(fyF * Math.sin(delta)) / massKg) * 0.35 * subDt;
+        const steerDragDecel = (Math.abs(fyF * Math.sin(delta)) / massKg) * 0.25 * subDt;
         vFwd -= Math.sign(vFwd) * Math.min(Math.abs(vFwd), steerDragDecel);
       }
 
@@ -1288,16 +1290,16 @@ export function stepCarPhysics(
       }
 
       const frontRatio = Math.min(1, Math.abs(fyF) / Math.max(1, fMaxFrontN));
-      if (Math.abs(alphaF) > 0.11 && frontRatio > 0.72) {
-        understeerAccum = Math.max(understeerAccum, Math.min(1, (Math.abs(alphaF) - 0.11) * 3.8));
+      if (Math.abs(alphaF) > 0.14 && frontRatio > 0.78) {
+        understeerAccum = Math.max(understeerAccum, Math.min(1, (Math.abs(alphaF) - 0.14) * 3.4));
       }
     }
   }
 
   car.speed = Math.min(effectiveMaxSpeed * 1.05, Math.max(0, moveSign * vFwd));
   car.understeerFactor = understeerAccum;
-  if (car.understeerFactor > 0.08 && car.speed > 12) {
-    car.speed = Math.max(10.0, car.speed - car.understeerFactor * 9.5 * dt);
+  if (car.understeerFactor > 0.10 && car.speed > 12) {
+    car.speed = Math.max(10.0, car.speed - car.understeerFactor * 6.5 * dt);
   }
 
   car.heading -= rYaw * dt;

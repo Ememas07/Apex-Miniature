@@ -17,12 +17,12 @@
       "aiBrakeMarginScale": 1.0609
     },
     "HYPERCAR_GTP": {
-      "downforceScale": 0.9406,
-      "brakeForceScale": 0.9479,
+      "downforceScale": 1.04,
+      "brakeForceScale": 1.00,
       "dragScale": 1.0,
-      "lowSpeedGripScale": 1.0326,
-      "aiCornerSpeedScale": 0.9843,
-      "aiBrakeMarginScale": 1.0537
+      "lowSpeedGripScale": 1.05,
+      "aiCornerSpeedScale": 0.99,
+      "aiBrakeMarginScale": 1.04
     },
     "F1_2026": {
       "downforceScale": 1.0936,

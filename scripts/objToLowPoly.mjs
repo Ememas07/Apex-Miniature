@@ -113,10 +113,9 @@ export const REAL_WORLD_CAR_DIMENSIONS = {
   'aston-valkyrie-road': 4.50,
   'ferrari-296-gtb': 4.565,
   'mclaren-750s': 4.569,
-  'koenigsegg-jesko': 4.61,
   'mclaren-w1': 4.635,
   'porsche-918-spyder': 4.643,
-  'ferrari-sf90': 4.71,
+  'ferrari-sf90': 4.568,
   'ferrari-f80': 4.84,
 
   // Formula E (~5.02 m)

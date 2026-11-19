@@ -318,10 +318,10 @@
     "brakingMult": 1.0
   },
   "ferrari-sf90": {
-    "topSpeedMult": 1.0,
-    "gripMult": 1.0,
-    "downforceMult": 1.0,
-    "brakingMult": 1.0
+    "topSpeedMult": 0.99,
+    "gripMult": 1.01,
+    "downforceMult": 1.01,
+    "brakingMult": 1.01
   },
   "porsche-918-spyder": {
     "topSpeedMult": 1.0,
@@ -330,12 +330,6 @@
     "brakingMult": 1.0
   },
   "aston-valkyrie-road": {
-    "topSpeedMult": 1.0,
-    "gripMult": 1.0,
-    "downforceMult": 1.0,
-    "brakingMult": 1.0
-  },
-  "koenigsegg-jesko": {
     "topSpeedMult": 1.0,
     "gripMult": 1.0,
     "downforceMult": 1.0,
