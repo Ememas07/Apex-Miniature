@@ -109,6 +109,7 @@ export default function App() {
   const [customTracksNonce, setCustomTracksNonce] = useState(0);
   const qualifyingEnabledRef = useRef(raceConfig.qualifyingEnabled);
   qualifyingEnabledRef.current = raceConfig.qualifyingEnabled;
+  const lastRaceStartTimeRef = useRef(0);
 
   // Sync document.body.dataset.state
   useEffect(() => {
@@ -129,6 +130,10 @@ export default function App() {
       }
     };
     mp.onRaceStart = (startedRoom) => {
+      const now = Date.now();
+      if (now - lastRaceStartTimeRef.current < 1000) return;
+      lastRaceStartTimeRef.current = now;
+
       setRoom(startedRoom);
       if (startedRoom?.config?.customTrack) {
         registerCustomTrackInMemory(startedRoom.config.customTrack);
@@ -145,6 +150,7 @@ export default function App() {
       setSoundStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
+      setSpectatorCameraMode('spectate');
       setRunNonce((n) => n + 1);
       const useQuali = startedRoom?.config?.qualifyingEnabled ?? qualifyingEnabledRef.current;
       const targetPhase = useQuali ? 'qualifying' : 'playing';
@@ -153,9 +159,13 @@ export default function App() {
     };
     mp.onError = (msg) => setMpError(msg);
     mp.onConnectionModeChange = (mode) => setConnectionMode(mode);
+    setConnectionMode(mp.connectionMode);
   }, []);
 
   const handleStartSession = useCallback(() => {
+    const now = Date.now();
+    if (now - lastRaceStartTimeRef.current < 1000) return;
+
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -172,7 +182,9 @@ export default function App() {
 
     if (room && room.hostId === mpClientRef.current?.peerId && raceConfig.sessionMode === 'race') {
       mpClientRef.current.startRace();
+      return;
     }
+    lastRaceStartTimeRef.current = now;
     const useQuali = raceConfig.sessionMode === 'race' && raceConfig.qualifyingEnabled;
     const targetPhase = useQuali ? 'qualifying' : 'playing';
     setActivePrePausePhase(targetPhase);

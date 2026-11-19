@@ -23,7 +23,7 @@ export function getDeploymentBasePath(): string {
   }
   if (!p.startsWith('/')) p = '/' + p;
   if (!p.endsWith('/')) p = p + '/';
-  return p;
+  return p.replace(/\/+/g, '/');
 }
 
 export function getWebSocketUrl(): string {
@@ -67,6 +67,9 @@ export class MultiplayerClient {
   private channel: BroadcastChannel | null = null;
   private connectPromise: Promise<void> | null = null;
   private outboundQueue: string[] = [];
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private manualDisconnect = false;
+  private isStartingRace = false;
   public peerId: string;
   public room: RoomState | null = null;
   public connected = false;
@@ -174,8 +177,10 @@ export class MultiplayerClient {
         }
       } else if (type === 'relay:room_start') {
         if (this.room && this.room.code === msg.code) {
-          this.room = { ...this.room, started: true };
-          this.onRaceStart?.(this.room);
+          if (!this.room.started) {
+            this.room = { ...this.room, started: true };
+            this.onRaceStart?.(this.room);
+          }
         }
       } else if (type === 'relay:race_telemetry') {
         const pId = String(msg.peerId || '');
@@ -227,7 +232,28 @@ export class MultiplayerClient {
     }
   }
 
+  disconnect() {
+    this.manualDisconnect = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+    this.connected = false;
+    this.setConnectionMode('disconnected');
+  }
+
   connect(): Promise<void> {
+    this.manualDisconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.connected = true;
       this.setConnectionMode('server');
@@ -257,6 +283,10 @@ export class MultiplayerClient {
         clearTimeout(timeoutId);
         this.connectPromise = null;
         if (success && activeSocket && activeSocket.readyState === WebSocket.OPEN) {
+          if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+          }
           this.ws = activeSocket;
           this.connected = true;
           this.setConnectionMode('server');
@@ -282,6 +312,10 @@ export class MultiplayerClient {
         activeSocket = socket;
 
         socket.onopen = () => {
+          if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+          }
           finishConnect(true);
         };
 
@@ -299,8 +333,12 @@ export class MultiplayerClient {
             this.setConnectionMode('server');
             this.onRoomUpdate?.(this.room);
           } else if (type === 'room:started') {
-            this.room = msg.room as RoomState;
-            this.onRaceStart?.(this.room);
+            const incomingRoom = msg.room as RoomState;
+            const wasStarted = this.room?.started;
+            this.room = incomingRoom;
+            if (!wasStarted) {
+              this.onRaceStart?.(this.room);
+            }
           } else if (type === 'room:error') {
             this.onError?.(String(msg.message || 'Multiplayer error'));
           } else if (type === 'race:peer_telemetry') {
@@ -318,6 +356,12 @@ export class MultiplayerClient {
             this.setConnectionMode(this.channel ? 'local-relay' : 'disconnected');
           }
           if (!settled) finishConnect(false);
+          if (!this.manualDisconnect && !this.reconnectTimer) {
+            this.reconnectTimer = setTimeout(() => {
+              this.reconnectTimer = null;
+              this.connect().catch(() => {});
+            }, 2500);
+          }
         };
 
         socket.onerror = () => {
@@ -523,7 +567,10 @@ export class MultiplayerClient {
   }
 
   startRace() {
+    if (this.isStartingRace) return;
     if (this.room) {
+      if (this.room.started) return;
+      this.isStartingRace = true;
       this.room = { ...this.room, started: true };
       this.broadcastRelay({
         type: 'relay:room_start',
@@ -534,6 +581,9 @@ export class MultiplayerClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'room:start' }));
     }
+    setTimeout(() => {
+      this.isStartingRace = false;
+    }, 1500);
   }
 
   sendTelemetry(packet: PeerTelemetryPacket) {
@@ -549,6 +599,7 @@ export class MultiplayerClient {
   }
 
   leaveRoom() {
+    this.isStartingRace = false;
     if (this.room) {
       this.broadcastRelay({
         type: 'relay:room_leave',

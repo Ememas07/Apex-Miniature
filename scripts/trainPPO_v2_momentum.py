@@ -44,6 +44,7 @@ REWARD_WEIGHTS = {
     "carCrash": 4.5,
     "wallCrash": 5.0,
     "stallStopSpeed": 4.5,
+    "ttcPenalty": 0.20,
 }
 
 

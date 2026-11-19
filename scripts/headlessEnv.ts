@@ -15,8 +15,10 @@ console.debug = redirectToStderr;
 const { createCarSimState, resolveWallContact, stepCarPhysics } = await import('../src/game/physics');
 const { buildObservationVector } = await import('../src/game/aiNeuralPolicy');
 const { compileTrack, sampleTrackAtT, TRACKS } = await import('../src/game/tracks');
+const { CARS, getAllSelectableCars } = await import('../src/game/cars');
 
 interface MlpWeights {
+  version?: number;
   w0: number[][];
   b0: number[];
   w1: number[][];
@@ -41,6 +43,7 @@ export interface RewardWeights {
   decelThreshold: number;
   decelPenalty: number;
   stallStopSpeed: number;
+  ttcPenalty?: number;
 }
 
 export interface TrafficMix {
@@ -65,6 +68,7 @@ const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
   decelThreshold: 0.45,
   decelPenalty: 0.0,
   stallStopSpeed: 4.0,
+  ttcPenalty: 0.0,
 };
 
 const DEFAULT_TRAFFIC_MIX: TrafficMix = {
@@ -96,14 +100,7 @@ interface EnvSlot {
   lapsCompleted: number;
 }
 
-const DEFAULT_CARS = [
-  'f1-26-mercedes',
-  'porsche-963',
-  'oreca-07',
-  'porsche-911-gt3-r',
-  'porsche-cayman-gt4-rs',
-  'porsche-911-gt3-rs',
-];
+const DEFAULT_CARS: string[] = CARS.map((c: any) => c.id);
 
 const WEIGHTS_PATH = path.resolve(process.cwd(), 'src/game/aiPolicyWeights.json');
 const POOL_DIR = path.resolve(process.cwd(), 'audit/selfplay_pool');
@@ -118,17 +115,19 @@ let resetCounter = 0;
 
 function parsePolicyWeights(raw: any): MlpWeights | null {
   if (!raw || typeof raw !== 'object') return null;
+  const version = typeof raw.version === 'number' ? raw.version : undefined;
   // Standard trainPPO.py v2 export format (w0/b0, w1/b1, w2/b2)
   if (raw.w0 && raw.b0 && raw.w1 && raw.b1 && raw.w2 && raw.b2) {
-    return { w0: raw.w0, b0: raw.b0, w1: raw.w1, b1: raw.b1, w2: raw.w2, b2: raw.b2 };
+    return { version, w0: raw.w0, b0: raw.b0, w1: raw.w1, b1: raw.b1, w2: raw.w2, b2: raw.b2 };
   }
   // Fallback for 1-indexed keys
   if (raw.w1 && raw.b1 && raw.w2 && raw.b2 && raw.w3 && raw.b3) {
-    return { w0: raw.w1, b0: raw.b1, w1: raw.w2, b1: raw.b2, w2: raw.w3, b2: raw.b3 };
+    return { version, w0: raw.w1, b0: raw.b1, w1: raw.w2, b1: raw.b2, w2: raw.w3, b2: raw.b3 };
   }
   if (Array.isArray(raw.layers) && raw.layers.length >= 3) {
     const [l1, l2, l3] = raw.layers;
     return {
+      version,
       w0: l1.w ?? l1.weights,
       b0: l1.b ?? l1.biases,
       w1: l2.w ?? l2.weights,
@@ -242,19 +241,22 @@ function runNeuralPolicy(obs: number[], policy: MlpWeights): ControlInput {
   const h2 = denseLayer(h1, policy.w1, policy.b1, true);
   const act = denseLayer(h2, policy.w2, policy.b2, false);
 
-  const steer = Math.max(-1, Math.min(1, act[0]));
-  const rawThrottle = Math.max(-1, Math.min(1, act[1]));
-  const rawBrake = Math.max(-1, Math.min(1, act[2]));
+  const isV2 = (policy.version ?? 1) >= 2;
+  const steer = isV2 ? Math.max(-1, Math.min(1, act[0])) : Math.tanh(act[0]);
+  const rawThrottle = isV2 ? Math.max(-1, Math.min(1, act[1])) : Math.tanh(act[1]);
+  const rawBrake = isV2 ? Math.max(-1, Math.min(1, act[2])) : Math.tanh(act[2]);
 
   return {
     steer,
-    throttle: (rawThrottle + 1) * 0.5,
-    brake: (rawBrake + 1) * 0.5,
+    throttle: Math.max(0, Math.min(1, (rawThrottle + 1) * 0.5)),
+    brake: Math.max(0, Math.min(1, (rawBrake + 1) * 0.5)),
     specialPressed: false,
   };
 }
 
 function getCarClass(carId: string): string {
+  const spec = CARS.find((c: any) => c.id === carId);
+  if (spec?.classId) return spec.classId;
   if (carId.startsWith('f1-')) return 'F1';
   if (carId.includes('963') || carId.includes('hypercar') || carId.includes('499p') || carId.includes('valkyrie')) return 'Hypercar';
   if (carId.includes('oreca') || carId.includes('ligier') || carId.includes('lmp2')) return 'LMP2';
@@ -263,15 +265,53 @@ function getCarClass(carId: string): string {
   return 'Other';
 }
 
+const TIGHT_STREET_TRACK_IDS = new Set([
+  'monaco',
+  'long-beach',
+  'detroit-street',
+  'baku',
+  'singapore',
+  'jeddah',
+  'las-vegas',
+  'madring',
+  'macau',
+]);
+
 const compiledTracks = new Map<string, CompiledTrack>();
 
 function getCompiledTrack(trackId?: string): CompiledTrack {
   if (trackId && compiledTracks.has(trackId)) return compiledTracks.get(trackId)!;
-  const spec = trackId ? TRACKS.find((t) => t.id === trackId) ?? TRACKS[0] : TRACKS[Math.floor(Math.random() * TRACKS.length)];
+  let spec: (typeof TRACKS)[number];
+  if (trackId) {
+    spec = TRACKS.find((t: any) => t.id === trackId) ?? TRACKS[0];
+  } else {
+    // 3x sampling weight for narrow/street circuits when trackIds is not explicitly constrained
+    const weighted: (typeof TRACKS)[number][] = [];
+    for (const t of TRACKS) {
+      const weight = TIGHT_STREET_TRACK_IDS.has(t.id) ? 3 : 1;
+      for (let w = 0; w < weight; w++) {
+        weighted.push(t);
+      }
+    }
+    spec = weighted[Math.floor(Math.random() * weighted.length)];
+  }
   if (!compiledTracks.has(spec.id)) {
     compiledTracks.set(spec.id, compileTrack(spec, 720));
   }
   return compiledTracks.get(spec.id)!;
+}
+
+function getSharpCornerStartT(track: CompiledTrack): number {
+  for (let i = 0; i < track.samples.length; i++) {
+    const sp = track.samples[i];
+    if (Math.abs(sp.curvature) > 0.015) {
+      const distBefore = 180 + Math.random() * 80; // 180..260m
+      let startDist = sp.s - distBefore;
+      while (startDist < 0) startDist += track.totalLength;
+      return (startDist % track.totalLength) / track.totalLength;
+    }
+  }
+  return 0.96; // fallback to standing-start grid
 }
 
 function spawnCarAt(
@@ -369,39 +409,85 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
   const cId = cPool[Math.floor(Math.random() * cPool.length)];
   const track = getCompiledTrack(tId);
 
-  const startT = randomStart ? Math.random() : 0;
-  const latRatio = randomStart ? (Math.random() - 0.5) * 0.8 : 0;
-  const initSpeed = randomStart ? 16 + Math.random() * 18 : 0;
-  const car = spawnCarAt(track, cId, 'rl_agent', startT, latRatio, initSpeed);
-
-  // Configurable traffic diet (default: 30% solo hotlap, 30% scripted traffic, 40% neural self-play)
-  const traffic: TrafficBot[] = [];
+  // Determine traffic conditions
   const roll = Math.random();
-  const scriptedCutoff = trafficMix.soloRatio + trafficMix.scriptedRatio;
+  const isTraffic = randomStart && roll >= trafficMix.soloRatio;
+  const isTightPack = isTraffic && Math.random() < 0.35;
 
-  if (roll >= trafficMix.soloRatio && roll < scriptedCutoff) {
-    // Scripted slower multiclass traffic
-    const numTraffic = 4;
-    for (let k = 0; k < numTraffic; k++) {
-      const offsetMeters = 22 + k * 34 + Math.random() * 14;
-      const tOffset = offsetMeters / Math.max(200, track.totalLength);
+  let startT: number;
+  let latRatio: number;
+  let initSpeed: number;
+
+  if (!randomStart) {
+    startT = 0;
+    latRatio = 0;
+    initSpeed = 0;
+  } else if (isTightPack) {
+    // 35% of traffic episodes: Tight Grid Pack / T1 Funnel scenario (~180-260m before first sharp corner)
+    startT = getSharpCornerStartT(track);
+    latRatio = (Math.random() - 0.5) * 0.6;
+    initSpeed = 18 + Math.random() * 14; // 18..32 m/s matched initial speed
+  } else {
+    startT = Math.random();
+    latRatio = (Math.random() - 0.5) * 0.8;
+    initSpeed = 16 + Math.random() * 18;
+  }
+
+  const car = spawnCarAt(track, cId, 'rl_agent', startT, latRatio, initSpeed);
+  const traffic: TrafficBot[] = [];
+
+  if (isTightPack) {
+    // Spawn 4-5 rivals tightly staggered ahead/beside (+8m to +45m longitudinal, across both left and right lanes)
+    const numRivals = 4 + (Math.random() < 0.5 ? 1 : 0);
+    for (let k = 0; k < numRivals; k++) {
+      const longOffset = 8 + (k / (numRivals - 1)) * 37 + (Math.random() - 0.5) * 4;
+      const tOffset = longOffset / Math.max(200, track.totalLength);
+      const laneRatio = (k % 2 === 0 ? 1 : -1) * (0.18 + Math.random() * 0.35);
       const botCarId = cPool[Math.floor(Math.random() * cPool.length)];
-      const laneRatio = (k % 2 === 0 ? 1 : -1) * (0.2 + Math.random() * 0.35);
-      const paceScale = 0.62 + Math.random() * 0.3;
-      const botInitSpeed = Math.max(14, initSpeed * paceScale);
-      const botCar = spawnCarAt(track, botCarId, `traffic_${k}`, startT + tOffset, laneRatio, botInitSpeed);
-      traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale });
+      const botSpeed = Math.max(16, Math.min(34, initSpeed + (Math.random() - 0.5) * 3.0));
+      let botT = (startT + tOffset) % 1;
+      if (botT < 0) botT += 1;
+      const botCar = spawnCarAt(track, botCarId, `pack_bot_${k}`, botT, laneRatio, botSpeed);
+      const useNeural = policyPool.length > 0 && Math.random() < 0.5;
+      if (useNeural) {
+        const policy = policyPool[Math.floor(Math.random() * policyPool.length)];
+        const paceScale = 0.92 + Math.random() * 0.08;
+        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale });
+      } else {
+        const paceScale = 0.75 + Math.random() * 0.20;
+        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale });
+      }
     }
-  } else if (roll >= scriptedCutoff && roll < scriptedCutoff + trafficMix.selfplayRatio && policyPool.length > 0) {
-    // Neural self-play: 3 same-class rivals (1 slightly behind, 2 ahead)
-    const offsets = [-18 - Math.random() * 10, 16 + Math.random() * 12, 42 + Math.random() * 18];
-    for (let k = 0; k < offsets.length; k++) {
-      const tOffset = offsets[k] / Math.max(200, track.totalLength);
-      const laneRatio = (k % 2 === 0 ? 1 : -1) * (0.18 + Math.random() * 0.32);
-      const policy = policyPool[Math.floor(Math.random() * policyPool.length)];
-      const paceScale = 0.94 + Math.random() * 0.06;
-      const botCar = spawnCarAt(track, cId, `selfplay_${k}`, startT + tOffset, laneRatio, initSpeed);
-      traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale });
+  } else if (isTraffic) {
+    const scriptedCutoff = trafficMix.soloRatio + trafficMix.scriptedRatio;
+    if (roll < scriptedCutoff) {
+      // Scripted slower multiclass traffic
+      const numTraffic = 4;
+      for (let k = 0; k < numTraffic; k++) {
+        const offsetMeters = 22 + k * 34 + Math.random() * 14;
+        const tOffset = offsetMeters / Math.max(200, track.totalLength);
+        const botCarId = cPool[Math.floor(Math.random() * cPool.length)];
+        const laneRatio = (k % 2 === 0 ? 1 : -1) * (0.2 + Math.random() * 0.35);
+        const paceScale = 0.62 + Math.random() * 0.3;
+        const botInitSpeed = Math.max(14, initSpeed * paceScale);
+        let botT = (startT + tOffset) % 1;
+        if (botT < 0) botT += 1;
+        const botCar = spawnCarAt(track, botCarId, `traffic_${k}`, botT, laneRatio, botInitSpeed);
+        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale });
+      }
+    } else if (policyPool.length > 0) {
+      // Neural self-play: 3 same-class rivals (1 slightly behind, 2 ahead)
+      const offsets = [-18 - Math.random() * 10, 16 + Math.random() * 12, 42 + Math.random() * 18];
+      for (let k = 0; k < offsets.length; k++) {
+        const tOffset = offsets[k] / Math.max(200, track.totalLength);
+        const laneRatio = (k % 2 === 0 ? 1 : -1) * (0.18 + Math.random() * 0.32);
+        const policy = policyPool[Math.floor(Math.random() * policyPool.length)];
+        const paceScale = 0.94 + Math.random() * 0.06;
+        let botT = (startT + tOffset) % 1;
+        if (botT < 0) botT += 1;
+        const botCar = spawnCarAt(track, cId, `selfplay_${k}`, botT, laneRatio, initSpeed);
+        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale });
+      }
     }
   }
 
@@ -444,14 +530,162 @@ rl.on('line', (line) => {
   if (!line.trim()) return;
   const msg = JSON.parse(line);
 
+  if (msg.cmd === 'catalog') {
+    const tracks = TRACKS.map((t: any) => ({ id: t.id, name: t.name }));
+    const baseCars = CARS.map((c: any) => ({ id: c.id, name: c.name, classId: c.classId }));
+    const selectableCars = getAllSelectableCars().map((c: any) => ({ id: c.id, name: c.name, classId: c.classId }));
+    process.stdout.write(JSON.stringify({ tracks, baseCars, selectableCars }) + '\n');
+    return;
+  }
+
+  if (msg.cmd === 'eval_batch') {
+    const pairs: Array<{ trackId: string; carId: string }> = msg.pairs ?? [];
+    let policy: MlpWeights | null = null;
+    if (msg.weights && typeof msg.weights === 'object') {
+      policy = parsePolicyWeights(msg.weights);
+    } else if (typeof msg.weightsPath === 'string' && msg.weightsPath.trim()) {
+      const pPath = path.resolve(process.cwd(), msg.weightsPath.trim());
+      if (fs.existsSync(pPath)) {
+        try {
+          policy = parsePolicyWeights(JSON.parse(fs.readFileSync(pPath, 'utf8')));
+        } catch (e: any) {
+          console.error(`[eval_batch] Failed to parse weights from ${pPath}:`, e.message);
+        }
+      }
+    }
+    if (!policy && policyPool.length > 0) {
+      policy = policyPool[0];
+    }
+    if (!policy) {
+      refreshPolicyPool();
+      policy = policyPool[0] ?? null;
+    }
+
+    const POLICY_DT = 1 / 30;
+    const SUBSTEPS = 4;
+    const SUB_DT = POLICY_DT / SUBSTEPS;
+    const defaultMaxSteps: number = msg.maxSteps ?? 4500;
+
+    const results: Array<{
+      trackId: string;
+      carId: string;
+      carClass: string;
+      completed: boolean;
+      bestLapTime: number | null;
+      avgSpeedKmh: number;
+      offTrackPct: number;
+      wallCrash: number;
+      steps: number;
+    }> = [];
+
+    for (const pair of pairs) {
+      const track = getCompiledTrack(pair.trackId);
+      const cId = pair.carId;
+      const car = spawnCarAt(track, cId, 'eval_agent', 0, 0, 0);
+      const carClass = getCarClass(cId);
+
+      // Long tracks like Le Mans scale up to 8000 steps
+      const maxSteps = track.totalLength > 10000 ? Math.max(defaultMaxSteps, 8000) : defaultMaxSteps;
+
+      let totalSpeedMps = 0;
+      let offTrackSteps = 0;
+      let wallCrashCount = 0;
+      let prevDmg = car.aeroDamage;
+      let prevT = car.trackT;
+      let completedLap = false;
+      let completedLapTime: number | null = null;
+      let crashed = false;
+      let step = 0;
+
+      for (; step < maxSteps; step++) {
+        totalSpeedMps += car.speed;
+        const absLat = Math.abs(car.lateralOffset);
+        const sp = sampleTrackAtT(track, car.trackT);
+        const halfW = (sp.width ?? track.spec.trackWidth) * 0.5;
+
+        if (absLat > halfW + 1.0) {
+          offTrackSteps++;
+        }
+
+        const wallOrContactDmg = car.aeroDamage > prevDmg + 0.02;
+        if (wallOrContactDmg || absLat > halfW + 5.5) {
+          wallCrashCount++;
+        }
+        if (step > 90 && car.speed < 1.0) {
+          crashed = true;
+          break;
+        }
+
+        // Lap crossing check (from >0.85 to <0.15 after at least 150 steps)
+        if (prevT > 0.85 && car.trackT < 0.15 && step > 150) {
+          completedLap = true;
+          completedLapTime = car.lastLapTime ?? (step * POLICY_DT);
+          break;
+        }
+
+        if (wallCrashCount > 0) {
+          crashed = true;
+          break;
+        }
+
+        // Step physics with neural policy
+        let ctrl: ControlInput;
+        if (policy) {
+          const obs = buildObservationVector(car, track, [car], car.steerAngle, 1.0, car.bopMultipliers);
+          ctrl = runNeuralPolicy(obs, policy);
+        } else {
+          ctrl = { steer: 0, throttle: 0.5, brake: 0, specialPressed: false };
+        }
+
+        prevT = car.trackT;
+        prevDmg = car.aeroDamage;
+
+        for (let s = 0; s < SUBSTEPS; s++) {
+          stepCarPhysics(car, ctrl, track, SUB_DT, {
+            trackWetness: 0,
+            totalLaps: 99,
+            isQualifying: true,
+            allCars: [car],
+            bopEnabled: true,
+          });
+          const bSp = sampleTrackAtT(track, car.trackT);
+          const bWall = (bSp.width ?? track.spec.trackWidth) * 0.5 + 3.0;
+          if (Math.abs(car.lateralOffset) > bWall) {
+            resolveWallContact(car, bSp, bWall, car.lateralOffset > 0 ? 1 : -1, SUB_DT);
+          }
+        }
+      }
+
+      const totalSteps = Math.max(1, step);
+      results.push({
+        trackId: pair.trackId,
+        carId: cId,
+        carClass,
+        completed: completedLap && !crashed && wallCrashCount === 0,
+        bestLapTime: completedLapTime != null ? Number(completedLapTime.toFixed(2)) : null,
+        avgSpeedKmh: Number(((totalSpeedMps / totalSteps) * 3.6).toFixed(1)),
+        offTrackPct: Number(((offTrackSteps / totalSteps) * 100).toFixed(1)),
+        wallCrash: wallCrashCount,
+        steps: totalSteps,
+      });
+    }
+
+    process.stdout.write(JSON.stringify({ results }) + '\n');
+    return;
+  }
+
   if (msg.cmd === 'init') {
     policyPool = [];
     applyConfigPatch(msg, true);
     refreshPolicyPool();
-    const n: number = msg.numEnvs ?? 32;
     cfgTracks = msg.tracks;
     cfgCars = msg.cars;
-    slots = Array.from({ length: n }, () => resetSlot(cfgTracks, cfgCars, true));
+    if (Array.isArray(msg.pairs) && msg.pairs.length > 0) {
+      slots = msg.pairs.map((p: { trackId: string; carId: string }) => resetSlot([p.trackId], [p.carId], false));
+    } else {
+      const n: number = msg.numEnvs ?? 32;
+      slots = Array.from({ length: n }, () => resetSlot(cfgTracks, cfgCars, true));
+    }
     process.stdout.write(JSON.stringify({ obs: slots.map(getObs), poolSize: policyPool.length }) + '\n');
     return;
   }
@@ -561,9 +795,14 @@ rl.on('line', (line) => {
       const offTrack = absLat > halfW + 1.0;
       const wallOrContactDmg = slot.car.aeroDamage > prevDmg + 0.02;
 
-      // Check car-to-car proximity and physical contact
+      // Check car-to-car proximity, forward-cone TTC penalty, and physical contact
       let carContact = false;
       let closeProximityPenalty = 0;
+      let ttcPenaltySum = 0;
+      const ttcWeight = rewardWeights.ttcPenalty ?? 0;
+      const headingX = Math.sin(slot.car.heading);
+      const headingZ = Math.cos(slot.car.heading);
+
       for (let b = 0; b < slot.traffic.length; b++) {
         const other = slot.traffic[b].car;
         const dx = other.x - slot.car.x;
@@ -578,9 +817,23 @@ rl.on('line', (line) => {
           const dist = Math.sqrt(distSq);
           closeProximityPenalty += (6.0 - dist) * rewardWeights.closeProximity;
         }
+
+        // Forward-cone Time-To-Collision (TTC) closing penalty within 14m
+        if (ttcWeight > 0 && distSq < 196.0) {
+          const aheadDist = dx * headingX + dz * headingZ;
+          if (aheadDist > 0) {
+            const dist = Math.sqrt(distSq);
+            if (dist < 14.0) {
+              const closingSpeed = slot.car.speed - other.speed;
+              if (closingSpeed > 1.5) {
+                ttcPenaltySum += ttcWeight * (closingSpeed / Math.max(2.0, dist));
+              }
+            }
+          }
+        }
       }
 
-      let reward = forwardMeters * rewardWeights.forwardProgress - closeProximityPenalty;
+      let reward = forwardMeters * rewardWeights.forwardProgress - closeProximityPenalty - ttcPenaltySum;
       if (slot.car.speed < rewardWeights.minSpeedThreshold) {
         reward -= (rewardWeights.minSpeedThreshold - slot.car.speed) * rewardWeights.minSpeedPenalty;
       }

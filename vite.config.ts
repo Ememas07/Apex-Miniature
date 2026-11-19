@@ -127,14 +127,21 @@ export default defineConfig(() => {
     },
     server: {
       host: '0.0.0.0',
-      port: 3000,
+      port: 5173,
       allowedHosts: true as const,
       proxy: {
         '/ws': {
           target: 'ws://localhost:3000',
           ws: true,
         },
+        '/Apex-Miniature/ws': {
+          target: 'ws://localhost:3000',
+          ws: true,
+        },
         '/api': {
+          target: 'http://localhost:3000',
+        },
+        '/Apex-Miniature/api': {
           target: 'http://localhost:3000',
         },
       },

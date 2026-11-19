@@ -77,6 +77,13 @@ function broadcastRoom(room: RoomRecord, payload: unknown, excludePeerId?: strin
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', true);
+  app.use((_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    next();
+  });
   app.use(express.json({ limit: '50mb' }));
 
   app.get(['/api/health', '/Apex-Miniature/api/health'], (_req, res) => {
@@ -98,7 +105,7 @@ async function startServer() {
 
   server.on('upgrade', (request, socket, head) => {
     const pathname = new URL(request.url || '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
-    if (pathname === '/ws' || pathname === '/Apex-Miniature/ws') {
+    if (pathname === '/ws' || pathname.endsWith('/ws')) {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
@@ -216,7 +223,7 @@ async function startServer() {
         }
       } else if (type === 'room:start' && room.hostId === currentPeerId) {
         room.started = true;
-        broadcastRoom(room, { type: 'room:started', room: serializeRoom(room) });
+        broadcastRoom(room, { type: 'room:started', room: serializeRoom(room) }, currentPeerId);
       } else if (type === 'race:telemetry') {
         broadcastRoom(
           room,

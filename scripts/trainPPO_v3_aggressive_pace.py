@@ -39,6 +39,7 @@ REWARD_WEIGHTS = {
     "throttleBrakeOverlap": 0.15,
     "carCrash": 4.5,
     "wallCrash": 5.0,
+    "ttcPenalty": 0.12,
 }
 
 
