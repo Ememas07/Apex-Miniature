@@ -1720,7 +1720,7 @@ const INTERIOR_OR_OPEN_SHELL_RE =
  * and adds back-facing shell faces to single-sided interior / cockpit / open-shell meshes
  * so converted models never exhibit transparent or see-through backface-culling holes.
  */
-function repairWindingAndInteriors(groupOutputs, opts = {}) {
+export function repairWindingAndInteriors(groupOutputs, opts = {}) {
   const solidifyInteriors = opts.solidifyInteriors !== false;
   let carMinX = Infinity, carMaxX = -Infinity;
   let carMinY = Infinity, carMaxY = -Infinity;
@@ -1766,17 +1766,10 @@ function repairWindingAndInteriors(groupOutputs, opts = {}) {
 
       // Build undirected edge -> list of { tri, dir } (dir = +1 if edge goes lo->hi, -1 if hi->lo)
       const edgeMap = new Map();
-      const triKeys = new Set();
       for (let t = 0; t < triCount; t++) {
         const a = indices[t * 3];
         const b = indices[t * 3 + 1];
         const c = indices[t * 3 + 2];
-        const sortedKey = [a, b, c].sort((u, v) => u - v).join(',');
-        triKeys.add(`${a},${b},${c}`);
-        triKeys.add(`${b},${c},${a}`);
-        triKeys.add(`${c},${a},${b}`);
-        void sortedKey;
-
         const edges = [[a, b], [b, c], [c, a]];
         for (let e = 0; e < 3; e++) {
           const u = edges[e][0];
@@ -1795,13 +1788,8 @@ function repairWindingAndInteriors(groupOutputs, opts = {}) {
 
       // Build triangle adjacency for manifold edges (shared by exactly 2 triangles)
       const adj = Array.from({ length: triCount }, () => []);
-      let boundaryEdgeCount = 0;
-      let totalEdgeCount = 0;
       for (const list of edgeMap.values()) {
-        totalEdgeCount++;
-        if (list.length === 1) {
-          boundaryEdgeCount++;
-        } else if (list.length === 2) {
+        if (list.length === 2) {
           const e0 = list[0];
           const e1 = list[1];
           // Consistent winding requires opposite edge directions (e0.dir === -e1.dir)
@@ -1815,6 +1803,7 @@ function repairWindingAndInteriors(groupOutputs, opts = {}) {
       const visited = new Uint8Array(triCount);
       const flipFlag = new Uint8Array(triCount);
       const queue = [];
+      const openShellTrisToSolidify = [];
 
       for (let start = 0; start < triCount; start++) {
         if (visited[start]) continue;
@@ -1848,19 +1837,33 @@ function repairWindingAndInteriors(groupOutputs, opts = {}) {
           }
         }
 
-        // Evaluate signed volume (closed shells) and outward normal alignment (open shells)
+        // Compute per-component edge boundary ratio, signed volume, and outward alignment
+        const compEdgeCounts = new Map();
         let signedVol6 = 0;
         let outwardScore = 0;
         let totalArea = 0;
         let compCx = 0, compCy = 0, compCz = 0;
         for (const t of comp) {
-          const i0 = indices[t * 3] * 3;
-          const i1 = indices[t * 3 + 1] * 3;
-          const i2 = indices[t * 3 + 2] * 3;
+          const a = indices[t * 3];
+          const b = indices[t * 3 + 1];
+          const c = indices[t * 3 + 2];
+          for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+            const ek = u < v ? `${u}_${v}` : `${v}_${u}`;
+            compEdgeCounts.set(ek, (compEdgeCounts.get(ek) || 0) + 1);
+          }
+          const i0 = a * 3;
+          const i1 = b * 3;
+          const i2 = c * 3;
           compCx += (pos[i0] + pos[i1] + pos[i2]) / 3;
           compCy += (pos[i0 + 1] + pos[i1 + 1] + pos[i2 + 1]) / 3;
           compCz += (pos[i0 + 2] + pos[i1 + 2] + pos[i2 + 2]) / 3;
         }
+        let compBoundaryEdges = 0;
+        for (const cnt of compEdgeCounts.values()) {
+          if (cnt === 1) compBoundaryEdges++;
+        }
+        const compBoundaryRatio = compBoundaryEdges / Math.max(1, compEdgeCounts.size);
+
         const invComp = 1 / Math.max(1, comp.length);
         compCx *= invComp;
         compCy *= invComp;
@@ -1898,8 +1901,7 @@ function repairWindingAndInteriors(groupOutputs, opts = {}) {
           totalArea += area2;
         }
 
-        const boundaryRatio = boundaryEdgeCount / Math.max(1, totalEdgeCount);
-        const isClosedShell = boundaryRatio < 0.08 && comp.length >= 4;
+        const isClosedShell = compBoundaryRatio < 0.08 && comp.length >= 4;
         const shouldFlipWholeComponent = isClosedShell
           ? signedVol6 < -1e-6
           : !isInteriorNamed && totalArea > 1e-6 && outwardScore < -0.22 * totalArea;
@@ -1912,15 +1914,22 @@ function repairWindingAndInteriors(groupOutputs, opts = {}) {
             flippedTris++;
           }
         }
+
+        // Track open-shell / interior components that need back-facing shell faces
+        if (
+          solidifyInteriors &&
+          !isWheelGroup &&
+          !isClosedShell &&
+          (isInteriorNamed || compBoundaryRatio >= 0.12)
+        ) {
+          for (const t of comp) openShellTrisToSolidify.push(t);
+        }
       }
 
-      // 2. Solidify single-sided interior / cockpit / open-shell batches with reversed back-faces
+      // 2. Solidify single-sided interior / cockpit / open-shell components with reversed back-faces
       // so interior views never suffer from backface-culling transparency holes.
-      const boundaryRatio = boundaryEdgeCount / Math.max(1, totalEdgeCount);
-      const needsDoubleSidedShell =
-        solidifyInteriors && !isWheelGroup && (isInteriorNamed || boundaryRatio >= 0.14);
-
-      if (needsDoubleSidedShell) {
+      batch.backfaceStartTri = triCount;
+      if (openShellTrisToSolidify.length > 0) {
         const extra = [];
         const existingDir = new Set();
         for (let t = 0; t < triCount; t++) {
@@ -1929,7 +1938,7 @@ function repairWindingAndInteriors(groupOutputs, opts = {}) {
           existingDir.add(`${b},${c},${a}`);
           existingDir.add(`${c},${a},${b}`);
         }
-        for (let t = 0; t < triCount; t++) {
+        for (const t of openShellTrisToSolidify) {
           const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
           // Only append reversed face if opposite winding is not already present
           if (!existingDir.has(`${a},${c},${b}`)) {
@@ -2231,14 +2240,29 @@ function writeObjAndMtl(outObjPath, outMtlPath, carName, groupOutputs, parsedMat
 
           let triUVs = null;
           if (isBodyLiveryGroup) {
-            triUVs = classifyAndProjectSixZoneUV(
-              positions[i0 * 3], positions[i0 * 3 + 1], positions[i0 * 3 + 2],
-              positions[i1 * 3], positions[i1 * 3 + 1], positions[i1 * 3 + 2],
-              positions[i2 * 3], positions[i2 * 3 + 1], positions[i2 * 3 + 2],
-              grp.name,
-              material,
-              bodyBounds,
-            );
+            const isSolidifiedBackface = t >= (batch.backfaceStartTri ?? Infinity);
+            if (isSolidifiedBackface) {
+              // Project using the original front-face winding (i0, i2, i1) so backfaces stay in
+              // the same atlas zone instead of bleeding into the opposite car flank or underside.
+              const [uv0, uv2, uv1] = classifyAndProjectSixZoneUV(
+                positions[i0 * 3], positions[i0 * 3 + 1], positions[i0 * 3 + 2],
+                positions[i2 * 3], positions[i2 * 3 + 1], positions[i2 * 3 + 2],
+                positions[i1 * 3], positions[i1 * 3 + 1], positions[i1 * 3 + 2],
+                grp.name,
+                material,
+                bodyBounds,
+              );
+              triUVs = [uv0, uv1, uv2];
+            } else {
+              triUVs = classifyAndProjectSixZoneUV(
+                positions[i0 * 3], positions[i0 * 3 + 1], positions[i0 * 3 + 2],
+                positions[i1 * 3], positions[i1 * 3 + 1], positions[i1 * 3 + 2],
+                positions[i2 * 3], positions[i2 * 3 + 1], positions[i2 * 3 + 2],
+                grp.name,
+                material,
+                bodyBounds,
+              );
+            }
           } else if (uvs) {
             triUVs = [
               [clamp01(uvs[i0 * 2]), clamp01(uvs[i0 * 2 + 1])],

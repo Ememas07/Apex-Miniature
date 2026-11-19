@@ -32,7 +32,10 @@ import {
   buildCarRigAsync,
   renderUVWireframeToCanvas,
 } from '../three/objCarLoader';
-import { drawNumberplateToContext } from '../three/proceduralTextures';
+import {
+  drawNumberplateToContext,
+  getNumberplatePlacements,
+} from '../three/proceduralTextures';
 
 interface LiveryStudioModalProps {
   initialCarId: string;
@@ -510,44 +513,24 @@ export function LiveryStudioModal({
         ctx.fill();
       }
     } else if (type === 'plate') {
-      // Stamp authentic motorsport category numberplates onto standard UV zones: hood and door flanks
+      // Stamp compact motorsport category numberplates onto verified flat hood and sidepod/door panels
       const num = livery.driverNumber || '99';
-      // Hood plate (top zone, rotated 180 deg so it reads upright from the front)
-      drawNumberplateToContext(
-        ctx,
-        Math.round(w * 0.176),
-        Math.round(h * 0.16),
-        Math.round(w * 0.109),
-        Math.round(h * 0.086),
-        carSpec.classId,
-        livery.numberPlateStyle,
-        num,
-        { rotateRad: Math.PI },
-      );
-      // Left door plate (flipX to match LEFT_SIDE UV projection, positioned below side windows)
-      drawNumberplateToContext(
-        ctx,
-        Math.round(w * 0.674),
-        Math.round(h * 0.117),
-        Math.round(w * 0.094),
-        Math.round(h * 0.078),
-        carSpec.classId,
-        livery.numberPlateStyle,
-        num,
-        { flipX: true },
-      );
-      // Right door plate (flipX to match RIGHT_SIDE UV projection, positioned below side windows)
-      drawNumberplateToContext(
-        ctx,
-        Math.round(w * 0.674),
-        Math.round(h * 0.357),
-        Math.round(w * 0.094),
-        Math.round(h * 0.078),
-        carSpec.classId,
-        livery.numberPlateStyle,
-        num,
-        { flipX: true },
-      );
+      const layout = getNumberplatePlacements(carSpec.classId);
+      const sx = w / 512;
+      const sy = h / 512;
+      for (const spot of [layout.hood, layout.left, layout.right]) {
+        drawNumberplateToContext(
+          ctx,
+          spot.px * sx,
+          spot.py * sy,
+          spot.pw * sx,
+          spot.ph * sy,
+          carSpec.classId,
+          livery.numberPlateStyle,
+          num,
+          spot.transform,
+        );
+      }
     }
 
     const dataUrl = canvas.toDataURL('image/png');

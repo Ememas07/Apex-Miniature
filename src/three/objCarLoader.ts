@@ -235,7 +235,7 @@ function sanitizeBufferGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry
     if (uvFixed) uvAttr.needsUpdate = true;
   }
 
-  const normAttr = geo.getAttribute('normal') as THREE.BufferAttribute | undefined;
+  let normAttr = geo.getAttribute('normal') as THREE.BufferAttribute | undefined;
   let recomputeNorms = !normAttr || normAttr.count !== posAttr.count;
   if (normAttr && !recomputeNorms) {
     const nArr = normAttr.array as Float32Array;
@@ -248,6 +248,66 @@ function sanitizeBufferGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry
   }
   if (recomputeNorms) {
     geo.computeVertexNormals();
+    normAttr = geo.getAttribute('normal') as THREE.BufferAttribute | undefined;
+  }
+
+  // Repair zero-length or globally inverted vertex normals so DoubleSide shading is never inside-out
+  if (normAttr && posAttr.count >= 3) {
+    const nArr = normAttr.array as Float32Array;
+    const idxAttr = geo.getIndex();
+    const triCount = idxAttr ? Math.floor(idxAttr.count / 3) : Math.floor(posAttr.count / 3);
+    let areaWeightedDot = 0;
+    let totalArea2 = 0;
+    let normalsModified = false;
+
+    for (let t = 0; t < triCount; t++) {
+      const i0 = idxAttr ? idxAttr.getX(t * 3) : t * 3;
+      const i1 = idxAttr ? idxAttr.getX(t * 3 + 1) : t * 3 + 1;
+      const i2 = idxAttr ? idxAttr.getX(t * 3 + 2) : t * 3 + 2;
+
+      const ax = posArr[i0 * 3], ay = posArr[i0 * 3 + 1], az = posArr[i0 * 3 + 2];
+      const bx = posArr[i1 * 3], by = posArr[i1 * 3 + 1], bz = posArr[i1 * 3 + 2];
+      const cx = posArr[i2 * 3], cy = posArr[i2 * 3 + 1], cz = posArr[i2 * 3 + 2];
+
+      const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+      const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+      const fnx = e1y * e2z - e1z * e2y;
+      const fny = e1z * e2x - e1x * e2z;
+      const fnz = e1x * e2y - e1y * e2x;
+      const area2 = Math.hypot(fnx, fny, fnz);
+      if (area2 < 1e-10) continue;
+
+      const unx = fnx / area2;
+      const uny = fny / area2;
+      const unz = fnz / area2;
+
+      for (const vi of [i0, i1, i2]) {
+        const o = vi * 3;
+        const vx = nArr[o], vy = nArr[o + 1], vz = nArr[o + 2];
+        const vLen = Math.hypot(vx, vy, vz);
+        if (vLen < 1e-4) {
+          nArr[o] = unx;
+          nArr[o + 1] = uny;
+          nArr[o + 2] = unz;
+          normalsModified = true;
+          areaWeightedDot += area2;
+        } else {
+          areaWeightedDot += ((vx * fnx + vy * fny + vz * fnz) / vLen);
+        }
+        totalArea2 += area2;
+      }
+    }
+
+    if (totalArea2 > 1e-8 && areaWeightedDot < -0.25 * totalArea2) {
+      for (let i = 0; i < nArr.length; i++) {
+        nArr[i] = -nArr[i];
+      }
+      normalsModified = true;
+    }
+
+    if (normalsModified) {
+      normAttr.needsUpdate = true;
+    }
   }
   return geo;
 }
@@ -536,10 +596,6 @@ function convertSourceMaterial(
       metalness: /chrome|mirror|polished/i.test(lowerMat) ? 0.92 : 0.72,
     });
   } else {
-    const isInteriorOrShell =
-      /interior|cockpit|cabin|dash|seat|tub|roll|cage|floor|under|chassis|carbon|diffuser|vent|intake|duct|grill|mesh|wing|splitter|fender|hood|door|roof|panel|trim|plastic/i.test(
-        lowerMat,
-      ) || /interior|cockpit|body|chassis|wing|aero|shell/i.test(meshName);
     built = new THREE.MeshStandardMaterial({
       name: matName,
       color: srcColor,
@@ -547,12 +603,12 @@ function convertSourceMaterial(
       metalness: 0.12,
       transparent: srcOpacity < 0.99,
       opacity: srcOpacity,
-      side: isInteriorOrShell ? THREE.DoubleSide : THREE.DoubleSide,
+      side: THREE.DoubleSide,
     });
   }
 
-  // Prevent transparent/see-through holes on single-sided open-shell body panels & interiors
-  if (!isTransparentGlassMat && !isWheelMesh && built instanceof THREE.Material) {
+  // Prevent transparent/see-through backface-culling holes on open cockpits, interiors, body shells & open rims
+  if (!isTransparentGlassMat && built instanceof THREE.Material) {
     built.side = THREE.DoubleSide;
   }
 
@@ -887,6 +943,7 @@ export function applyCustomTextureToRig(
       if (!isGlass && !isLight) {
         mat.map = texture;
         mat.color.set(0xffffff);
+        mat.side = THREE.DoubleSide;
         mat.needsUpdate = true;
       }
     }

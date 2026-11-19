@@ -38,19 +38,62 @@ export function createCarbonTexture(maxAniso = 4): THREE.CanvasTexture {
 }
 
 /**
- * Creates a crisp 512x512 UV-atlas livery CanvasTexture mapped 1:1 to SIX_ZONE_UV_ATLAS.
- * Correctly renders the active template, 3 color channels, exposed carbon panels,
- * authentic single-seater nose numbers, and endurance/GT/touring class numberplates directly on the UV atlas.
+ * Creates a crisp 1024x1024 (512-unit logical coordinate space) UV-atlas livery CanvasTexture
+ * mapped 1:1 to SIX_ZONE_UV_ATLAS. Correctly renders the active template, 3 color channels,
+ * exposed carbon panels, authentic single-seater nose numbers, and endurance/GT/touring
+ * class numberplates directly on the UV atlas.
  */
+export interface NumberplatePlacement {
+  px: number;
+  py: number;
+  pw: number;
+  ph: number;
+  transform?: NumberplateTransform;
+}
+
+export interface ClassNumberplateLayout {
+  hood: NumberplatePlacement;
+  left: NumberplatePlacement;
+  right: NumberplatePlacement;
+}
+
+/**
+ * Returns compact, flush 512x512 atlas-space numberplate placements aligned to flat body panels.
+ * Verified across GTP/LMP2 sidepods (including ferrari-499p) and GT3/GT4/Track Coupe doors/hoods.
+ */
+export function getNumberplatePlacements(classId: CarClassId): ClassNumberplateLayout {
+  const isPrototype =
+    classId === CarClassId.HYPERCAR_GTP || classId === CarClassId.LMP2;
+
+  if (isPrototype) {
+    // GTP / LMP2: compact plates (16x12 side, 18x14 nose) seated flush on the flat outer sidepod wall
+    // (cy=82..94 in LEFT_SIDE, clear of the curved shoulder <=79 and lower undercut >=96)
+    // and flat center nose deck (cy=86..100 in TOP).
+    return {
+      hood: { px: 109, py: 86, pw: 18, ph: 14, transform: { rotateRad: Math.PI } },
+      left: { px: 348, py: 82, pw: 16, ph: 12, transform: { flipX: true } },
+      right: { px: 373, py: 205, pw: 16, ph: 12, transform: { flipX: true } },
+    };
+  }
+
+  // GT3 / GT4 / Track Coupe / Supercar: compact plates centered on the flat hood and flat door skins
+  return {
+    hood: { px: 109, py: 104, pw: 18, ph: 14, transform: { rotateRad: Math.PI } },
+    left: { px: 356, py: 74, pw: 16, ph: 12, transform: { flipX: true } },
+    right: { px: 365, py: 197, pw: 16, ph: 12, transform: { flipX: true } },
+  };
+}
+
 export function createLiveryTexture(
   livery: LiveryConfig,
   classId: CarClassId,
   maxAniso = 4,
 ): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
+  canvas.width = 1024;
+  canvas.height = 1024;
   const ctx = canvas.getContext('2d')!;
+  ctx.scale(2, 2);
 
   const { primaryColor, secondaryColor, tertiaryColor, template } = livery;
 
@@ -218,52 +261,55 @@ export function createLiveryTexture(
       ctx.save();
       ctx.translate(118, 86);
       ctx.rotate(Math.PI);
-      ctx.font = '900 42px "Oxanium", "Arial Black", sans-serif';
+      ctx.font = '900 34px "Oxanium", "Arial Black", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
       // Crisp contrast outline
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 6;
-      ctx.strokeText(num, 0, 0, 72);
+      ctx.lineWidth = 5;
+      ctx.strokeText(num, 0, 0, 56);
 
       // Inner number color
       ctx.fillStyle = tertiaryColor.toLowerCase() !== primaryColor.toLowerCase() ? tertiaryColor : '#ffffff';
-      ctx.fillText(num, 0, 0, 72);
+      ctx.fillText(num, 0, 0, 56);
       ctx.restore();
     } else if (!isRoadSupercar || plateStyle !== 'auto') {
       // Endurance / GT / Prototype / Touring: Compact category numberplates aligned to flat body panels.
-      // SIX_ZONE_UV_ATLAS reference (512x512 canvas):
-      //   TOP:        u=[0.026..0.434] (cx=13..222, center=118), v=[0.026..0.974] (nose at top cy=13)
-      //   LEFT_SIDE:  u=[0.466..0.974] (nu = (z-minZ)/spanZ, tail->nose), cy=[13.3..119.8] (top->bottom)
-      //   RIGHT_SIDE: u=[0.466..0.974] (nu = (maxZ-z)/spanZ, nose->tail), cy=[136.2..242.7] (top->bottom)
-      const isPrototype =
-        classId === CarClassId.HYPERCAR_GTP || classId === CarClassId.LMP2;
-
-      if (isPrototype) {
-        // GTP / LMP2: compact plates placed cleanly on the flat nose deck and flat lower-mid sidepod wall
-        // (nv ~0.17..0.37, well below the curved sidepod shoulder / cockpit undercut)
-        drawNumberplateToContext(ctx, 104, 84, 28, 22, classId, plateStyle, num, {
-          rotateRad: Math.PI,
-        });
-        drawNumberplateToContext(ctx, 347, 80, 28, 22, classId, plateStyle, num, {
-          flipX: true,
-        });
-        drawNumberplateToContext(ctx, 362, 203, 28, 22, classId, plateStyle, num, {
-          flipX: true,
-        });
-      } else {
-        // GT3 / GT4 / Track Coupe: compact plates centered cleanly on the flat hood and flat door panels
-        drawNumberplateToContext(ctx, 102, 86, 32, 25, classId, plateStyle, num, {
-          rotateRad: Math.PI,
-        });
-        drawNumberplateToContext(ctx, 356, 68, 30, 24, classId, plateStyle, num, {
-          flipX: true,
-        });
-        drawNumberplateToContext(ctx, 351, 191, 30, 24, classId, plateStyle, num, {
-          flipX: true,
-        });
-      }
+      const layout = getNumberplatePlacements(classId);
+      drawNumberplateToContext(
+        ctx,
+        layout.hood.px,
+        layout.hood.py,
+        layout.hood.pw,
+        layout.hood.ph,
+        classId,
+        plateStyle,
+        num,
+        layout.hood.transform,
+      );
+      drawNumberplateToContext(
+        ctx,
+        layout.left.px,
+        layout.left.py,
+        layout.left.pw,
+        layout.left.ph,
+        classId,
+        plateStyle,
+        num,
+        layout.left.transform,
+      );
+      drawNumberplateToContext(
+        ctx,
+        layout.right.px,
+        layout.right.py,
+        layout.right.pw,
+        layout.right.ph,
+        classId,
+        plateStyle,
+        num,
+        layout.right.transform,
+      );
     }
   }
 
@@ -316,31 +362,37 @@ export function drawNumberplateToContext(
       ? 'GT4'
       : 'PRO';
 
+  const borderW = Math.max(0.75, Math.min(2.5, pw * 0.045));
+
   // White plate background
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(px, py, pw, ph);
 
   // Dark outer stroke
   ctx.strokeStyle = '#0a0d14';
-  ctx.lineWidth = Math.max(2, Math.round(pw * 0.04));
+  ctx.lineWidth = borderW;
   ctx.strokeRect(px, py, pw, ph);
 
   // Top category colored header strip
-  const headerH = Math.round(ph * 0.28);
+  const headerH = Math.max(2.5, ph * 0.28);
   ctx.fillStyle = plate.bg;
   ctx.fillRect(px, py, pw, headerH);
 
-  // Header label
+  // Header label scaled proportionally to compact or large plate sizes
+  const innerW = Math.max(4, pw - borderW * 2 - 1);
+  const headerFontPx = Math.max(2.6, headerH * 0.78);
   ctx.fillStyle = plate.text;
-  ctx.font = `800 ${Math.max(8, Math.round(headerH * 0.72))}px "Oxanium", sans-serif`;
+  ctx.font = `800 ${headerFontPx.toFixed(2)}px "Oxanium", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(categoryLabel, px + pw * 0.5, py + headerH * 0.52, pw - 6);
+  ctx.fillText(categoryLabel, px + pw * 0.5, py + headerH * 0.54, innerW);
 
   // Driver number in lower plate area (clamped to inner width so 3-digit numbers never overflow)
+  const bodyH = Math.max(4, ph - headerH);
+  const numFontPx = Math.max(5.5, bodyH * 0.78);
   ctx.fillStyle = '#0a0d14';
-  ctx.font = `900 ${Math.max(12, Math.round(ph * 0.56))}px "Oxanium", "Arial Black", sans-serif`;
-  ctx.fillText(num, px + pw * 0.5, py + headerH + (ph - headerH) * 0.54, pw - 8);
+  ctx.font = `900 ${numFontPx.toFixed(2)}px "Oxanium", "Arial Black", sans-serif`;
+  ctx.fillText(num, px + pw * 0.5, py + headerH + bodyH * 0.55, innerW);
   ctx.restore();
 }
 
