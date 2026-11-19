@@ -30,13 +30,13 @@ interface TitleOverlayProps {
   onOpenSoundStudio: () => void;
 }
 
-const MODERN_MENU_STORAGE_KEY = 'apex_modern_menu_v1';
+const MODERN_MENU_STORAGE_KEY = 'apex_modern_menu_v2';
 
 function loadModernMenuPreference(): boolean {
   try {
-    return window.localStorage.getItem(MODERN_MENU_STORAGE_KEY) === '1';
+    return window.localStorage.getItem(MODERN_MENU_STORAGE_KEY) !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -216,22 +216,18 @@ export function TitleOverlay({
         data-testid="title-overlay"
         data-menu-style="modern"
         className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-5 md:p-8"
-        style={{
-          background:
-            'linear-gradient(90deg, rgba(8,11,16,0.90) 0%, rgba(8,11,16,0.62) 34%, rgba(8,11,16,0.12) 64%, rgba(8,11,16,0.0) 100%)',
-        }}
       >
         {topBar}
 
         {/* Modern Left Paddock Command Column */}
-        <div className="max-w-[440px] w-full pointer-events-auto my-auto space-y-4">
+        <div className="max-w-[430px] w-full pointer-events-auto my-auto space-y-3.5">
           {/* Primary Launch Stack */}
-          <div className="bg-[#0b0e13]/92 border border-white/12 rounded-lg p-4 space-y-3 shadow-2xl">
-            <div className="flex items-center justify-between text-[11px] text-slate-400">
-              <span className="font-display font-bold uppercase tracking-widest text-slate-200">
+          <div className="bg-[#0b0e13]/58 border border-white/15 rounded-lg p-4 space-y-3 shadow-lg">
+            <div className="flex items-center justify-between text-[11px] text-slate-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+              <span className="font-display font-bold uppercase tracking-widest text-white">
                 Paddock Control
               </span>
-              <span className="font-telemetry text-slate-400">
+              <span className="font-telemetry text-slate-200">
                 {raceConfig.aiDifficulty} AI · {raceConfig.weather === 'dynamic-rain' ? 'Dynamic Rain' : 'Dry'}
               </span>
             </div>
@@ -242,7 +238,7 @@ export function TitleOverlay({
                 data-testid="btn-open-race"
                 data-start="true"
                 onClick={onOpenRace}
-                className="w-full px-5 py-3.5 rounded-md bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-base tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-between shadow-lg shadow-red-950/50"
+                className="w-full px-5 py-3.5 rounded-md bg-red-600/92 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-base tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-between shadow-lg shadow-red-950/40"
               >
                 <span className="flex items-center gap-2.5">
                   <Flag className="w-4 h-4" />
@@ -256,7 +252,7 @@ export function TitleOverlay({
                   type="button"
                   data-testid="btn-open-host-ai-race"
                   onClick={onOpenHostAiRace}
-                  className="px-4 py-2.5 rounded-md bg-[#141a24] hover:bg-[#1c2433] border border-amber-500/35 hover:border-amber-400 text-amber-200 hover:text-white font-display font-bold text-xs tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
+                  className="px-4 py-2.5 rounded-md bg-[#121722]/65 hover:bg-[#1a2232]/80 border border-amber-500/40 hover:border-amber-400 text-amber-100 hover:text-white font-display font-bold text-xs tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
                 >
                   <Bot className="w-3.5 h-3.5 text-amber-400" />
                   <span>Host AI Race</span>
@@ -266,7 +262,7 @@ export function TitleOverlay({
                   type="button"
                   data-testid="btn-open-multiplayer"
                   onClick={onOpenMultiplayer}
-                  className="px-4 py-2.5 rounded-md bg-[#141a24] hover:bg-[#1c2433] border border-white/18 hover:border-white/35 text-slate-100 font-display font-bold text-xs tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
+                  className="px-4 py-2.5 rounded-md bg-[#121722]/65 hover:bg-[#1a2232]/80 border border-white/20 hover:border-white/40 text-slate-100 font-display font-bold text-xs tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-center gap-2"
                 >
                   <Users className="w-3.5 h-3.5 text-sky-400" />
                   <span>Multiplayer</span>
@@ -275,9 +271,9 @@ export function TitleOverlay({
               </div>
             </div>
 
-            <div className="pt-1 border-t border-white/10 text-[11px] text-slate-400 flex items-center justify-between gap-2">
+            <div className="pt-1.5 border-t border-white/12 text-[11px] text-slate-200 flex items-center justify-between gap-2 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
               <span className="truncate">{setupModeSummary}</span>
-              <span className="text-slate-500 whitespace-nowrap">Enter to Launch</span>
+              <span className="text-slate-300 whitespace-nowrap">Enter to Launch</span>
             </div>
           </div>
 
@@ -287,7 +283,7 @@ export function TitleOverlay({
             <button
               type="button"
               onClick={onOpenCarsShowcase}
-              className="w-full text-left bg-[#0b0e13]/92 hover:bg-[#111620] border border-white/12 hover:border-white/25 rounded-lg p-3.5 transition-colors cursor-pointer group shadow-xl"
+              className="w-full text-left bg-[#0b0e13]/52 hover:bg-[#111620]/70 border border-white/15 hover:border-white/30 rounded-lg p-3.5 transition-colors cursor-pointer group shadow-lg"
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -298,12 +294,12 @@ export function TitleOverlay({
                     >
                       {classMeta.shortName}
                     </span>
-                    <span className="text-[11px] text-slate-400 truncate">{car.manufacturer}</span>
-                    <span className="font-telemetry text-[11px] text-slate-400">
+                    <span className="text-[11px] text-slate-200 truncate">{car.manufacturer}</span>
+                    <span className="font-telemetry text-[11px] text-slate-300">
                       #{raceConfig.playerLivery.driverNumber}
                     </span>
                   </div>
-                  <div className="font-display font-bold text-sm text-white truncate mt-1">
+                  <div className="font-display font-bold text-sm text-white truncate mt-1 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
                     {car.name}
                   </div>
                 </div>
@@ -312,7 +308,7 @@ export function TitleOverlay({
                   <span>Cars</span>
                 </span>
               </div>
-              <div className="mt-2.5 h-1.5 w-full rounded-full overflow-hidden flex bg-[#161c28]">
+              <div className="mt-2.5 h-1.5 w-full rounded-full overflow-hidden flex bg-black/30">
                 <div className="h-full flex-1" style={{ backgroundColor: raceConfig.playerLivery.primaryColor }} />
                 <div className="h-full w-1/4" style={{ backgroundColor: raceConfig.playerLivery.secondaryColor }} />
                 <div className="h-full w-1/6" style={{ backgroundColor: raceConfig.playerLivery.tertiaryColor }} />
@@ -323,14 +319,14 @@ export function TitleOverlay({
             <button
               type="button"
               onClick={onOpenTracksShowcase}
-              className="w-full text-left bg-[#0b0e13]/92 hover:bg-[#111620] border border-white/12 hover:border-white/25 rounded-lg p-3.5 transition-colors cursor-pointer group shadow-xl flex items-center gap-3.5"
+              className="w-full text-left bg-[#0b0e13]/52 hover:bg-[#111620]/70 border border-white/15 hover:border-white/30 rounded-lg p-3.5 transition-colors cursor-pointer group shadow-lg flex items-center gap-3.5"
             >
-              <div className="bg-[#121824] border border-white/10 rounded p-1.5 shrink-0">
+              <div className="bg-[#0b0e13]/45 border border-white/12 rounded p-1.5 shrink-0">
                 <MiniTrackPreviewSvg track={track} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-slate-400 flex items-center gap-1 truncate">
+                  <span className="text-[11px] text-slate-200 flex items-center gap-1 truncate">
                     <MapPin className="w-3 h-3 text-red-400 shrink-0" />
                     <span className="truncate">{trackLocation}</span>
                   </span>
@@ -339,10 +335,10 @@ export function TitleOverlay({
                     <span>Tracks</span>
                   </span>
                 </div>
-                <div className="font-display font-bold text-sm text-white truncate mt-0.5">
+                <div className="font-display font-bold text-sm text-white truncate mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
                   {track.name}
                 </div>
-                <div className="text-[11px] font-telemetry text-slate-400 mt-0.5">
+                <div className="text-[11px] font-telemetry text-slate-200 mt-0.5">
                   {track.circuitLengthKm ? `${track.circuitLengthKm.toFixed(2)} km` : `${track.corners} Turns`}
                   {' · '}Est. {lapEstMMSS}
                 </div>
@@ -351,14 +347,14 @@ export function TitleOverlay({
           </div>
         </div>
 
-        {/* Bottom Unified Dock: Showcases + Studios + Key Hints */}
+        {/* Bottom Dockless Bar: Showcases + Studios + Key Hints (No Dark Bar Background) */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pointer-events-auto">
-          <div className="bg-[#0b0e13]/92 border border-white/12 rounded-lg p-1.5 flex flex-wrap items-center gap-1.5 shadow-xl">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               data-testid="btn-open-cars-showcase"
               onClick={onOpenCarsShowcase}
-              className="px-3.5 py-2 rounded bg-[#141a24] hover:bg-[#1d2534] border border-white/10 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5"
+              className="px-3.5 py-2 rounded-md bg-[#0b0e13]/55 hover:bg-[#161e2e]/78 border border-white/15 hover:border-white/35 text-xs font-semibold text-white cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors"
             >
               <Car className="w-3.5 h-3.5 text-red-400" />
               <span>Cars Showcase</span>
@@ -368,19 +364,19 @@ export function TitleOverlay({
               type="button"
               data-testid="btn-open-tracks-showcase"
               onClick={onOpenTracksShowcase}
-              className="px-3.5 py-2 rounded bg-[#141a24] hover:bg-[#1d2534] border border-white/10 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5"
+              className="px-3.5 py-2 rounded-md bg-[#0b0e13]/55 hover:bg-[#161e2e]/78 border border-white/15 hover:border-white/35 text-xs font-semibold text-white cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors"
             >
               <Layers className="w-3.5 h-3.5 text-emerald-400" />
               <span>Tracks Showcase</span>
             </button>
 
-            <span aria-hidden="true" className="hidden sm:inline-block w-px h-5 bg-white/10 mx-1" />
+            <span aria-hidden="true" className="hidden sm:inline-block w-px h-5 bg-white/20 mx-0.5" />
 
             <button
               type="button"
               data-testid="btn-open-livery-studio"
               onClick={onOpenLiveryStudio}
-              className="px-3 py-2 rounded bg-[#141a24] hover:bg-[#1d2534] border border-indigo-500/25 text-xs font-semibold text-indigo-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5"
+              className="px-3 py-2 rounded-md bg-[#0b0e13]/55 hover:bg-[#161e2e]/78 border border-indigo-400/35 hover:border-indigo-400 text-xs font-semibold text-indigo-100 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors"
             >
               <Palette className="w-3.5 h-3.5 text-indigo-400" />
               <span>Livery Studio</span>
@@ -390,7 +386,7 @@ export function TitleOverlay({
               type="button"
               data-testid="btn-open-sound-studio"
               onClick={onOpenSoundStudio}
-              className="px-3 py-2 rounded bg-[#141a24] hover:bg-[#1d2534] border border-amber-500/25 text-xs font-semibold text-amber-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5"
+              className="px-3 py-2 rounded-md bg-[#0b0e13]/55 hover:bg-[#161e2e]/78 border border-amber-400/35 hover:border-amber-400 text-xs font-semibold text-amber-100 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors"
             >
               <Volume2 className="w-3.5 h-3.5 text-amber-400" />
               <span>Sound Studio</span>
@@ -400,14 +396,14 @@ export function TitleOverlay({
               type="button"
               data-testid="btn-open-studio"
               onClick={onOpenStudio}
-              className="px-3 py-2 rounded bg-[#141a24] hover:bg-[#1d2534] border border-sky-500/25 text-xs font-semibold text-sky-200 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5"
+              className="px-3 py-2 rounded-md bg-[#0b0e13]/55 hover:bg-[#161e2e]/78 border border-sky-400/35 hover:border-sky-400 text-xs font-semibold text-sky-100 cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors"
             >
               <Wrench className="w-3.5 h-3.5 text-sky-400" />
               <span>Track Studio</span>
             </button>
           </div>
 
-          <div className="text-[11px] text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+          <div className="text-[11px] text-slate-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
             WASD / Arrows / Gamepad Drive · Space / Shift / E Special · C Camera · P Pause
           </div>
         </div>
