@@ -331,6 +331,12 @@
       "mtl": "porsche-963.mtl"
     },
     {
+      "id": "porsche-963-versionb",
+      "folder": "porsche-963_versionb",
+      "obj": "porsche-963_versionb.obj",
+      "mtl": "porsche-963_versionb.mtl"
+    },
+    {
       "id": "porsche-cayman-gt4-rs",
       "folder": "porsche-cayman-gt4-rs",
       "obj": "porsche-cayman-gt4-rs.obj",

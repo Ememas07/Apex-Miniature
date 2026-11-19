@@ -1,124 +1,183 @@
 # Exported by Apex Miniature objToLowPoly.mjs
 
-newmtl Body_AO
-Kd 0.45 0.45 0.45
+newmtl lights_front
+Kd 0.403226 0.404762 0.403226
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Material
-Kd 0.8 0.8 0.8
+newmtl car_chassis
+Kd 0.790323 0.071429 0.080645
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Mirror
+newmtl chrome
+Kd 0.353463 0.354669 0.353463
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black_s
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl EXT_Mechanics
+newmtl HGLOW2
+Kd 0.890196 0.890196 0.890196
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOW
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon
+Kd 0.021484 0.022135 0.025422
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl Metal
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 963_fuelcap
+Kd 0.052514 0.052533 0.067036
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl GLOW
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black
+Kd 0 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl lights_night_side
+Kd 1 1 0.629032
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_chassis_carbon
+Kd 0.790323 0.071429 0.080645
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_chassis_black_s
+Kd 0.790323 0.071429 0.080645
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl 963_hooks_metal
+Kd 0.204291 0 0.007749
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl exhaust
+Kd 0.125353 0.126783 0.125353
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carbon_door
+Kd 0.039252 0.040148 0.049301
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl HGLOWC
+Kd 0.403226 0.404762 0.403226
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Suspension_Calipers
+Kd 0.169292 0.118645 0.124275
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Suspension_Calipers_AT
+Kd 0.169292 0.118645 0.124275
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl car_number_light
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl gp21_cinture
+Kd 0.095231 0.096773 0.067131
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl seatbelt_chrome
+Kd 0.76 0.78 0.82
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl MIRROR
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Rear_Lights
-Kd 0.4 0.4 0.4
+newmtl LCOVERS_LINES
+Kd 0.890196 0.890196 0.890196
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl HGLOB
+Kd 0.741935 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl WINDOWS
+Kd 0.290323 0.269841 0.290323
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl LCOVER_RED
+Kd 0.741935 0 0.016129
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl LCOVERS_REAR
+Kd 0.5 0.5 0.5
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl LCOVERS
+Kd 0.035294 0.156863 0.192157
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl INTERNAL_GLASS
+Kd 0.966797 0.967293 0.966797
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl 963_hub
+Kd 0.079528 0.079528 0.079528
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Break_Lights
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Side_Panels
-Kd 0.45 0.45 0.45
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Leader_Lights
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Carbon_Fiber
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Front_Lights_Carbon
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Front_Lights
-Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Extra_Objects
-Kd 0.45 0.45 0.45
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Numberplate
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_details
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_details_AT
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_details_Flat
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_WiperBrush_Skinned
-Kd 0.35 0.35 0.35
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Disc
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_RIM
-Kd 0.76 0.78 0.82
+newmtl RIM
+Kd 0.023374 0.022554 0.029675
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Tyre
-Kd 0.12 0.12 0.13
+Kd 0.164441 0.178633 0.187405
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Rear_Lights_Glass
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl Front_Lights_Glass
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl Windows
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl Rear_Wing_Lights
-Kd 0.4 0.4 0.4
+newmtl EXT_Brake_Disc
+Kd 0.041803 0.041062 0.052041
 Ks 0.25 0.25 0.25
 Ns 32

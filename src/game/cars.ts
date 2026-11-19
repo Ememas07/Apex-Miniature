@@ -661,7 +661,7 @@ export const CARS: CarSpec[] = [
   },
   {
     id: 'lamborghini-temerario-gt3',
-    name: 'Lamborghini Temerario GT3',
+    name: 'Lamborghini Huracan GT3',
     manufacturer: 'Lamborghini',
     classId: CarClassId.GT3,
     silhouette: 'gt',

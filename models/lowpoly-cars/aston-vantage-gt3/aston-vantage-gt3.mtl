@@ -1,7 +1,7 @@
 # Exported by Apex Miniature objToLowPoly.mjs
 
 newmtl EXT_Emissive_Light_Rear
-Kd 0.3 0.3 0.3
+Kd 0.52035 0.247706 0.250032
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -11,7 +11,7 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Wiper
-Kd 0.3 0.3 0.3
+Kd 0.412361 0.386858 0.415512
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -21,22 +21,32 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Exhaust
-Kd 0.3 0.3 0.3
+Kd 0.412361 0.386858 0.415512
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl NUMBERPLATE
+Kd 0.653982 0.655537 0.653982
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl AUX_LIGHT
-Kd 0.2 0.2 0.2
+Kd 0.529549 0.532986 0.538086
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Emissive_Light_Front
+Kd 0.52035 0.247706 0.250032
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Emissive_Rainlight
-Kd 0.8 0.8 0.8
+Kd 0.52035 0.247706 0.250032
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl MIRROR
-Kd 0.8 0.8 0.8
+Kd 0.588206 0.57566 0.55286
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -46,7 +56,17 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Caliper
-Kd 0.3 0.3 0.3
+Kd 0.412361 0.386858 0.415512
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Lighthouse_Front_Carbon
+Kd 0.15 0.16 0.18
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Carpaint_Inst
+Kd 0.78 0.78 0.8
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -56,7 +76,12 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Grid
-Kd 0.3 0.3 0.3
+Kd 0.123084 0.123719 0.123084
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Lighthouse_Front
+Kd 0.52035 0.247706 0.250032
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -66,37 +91,12 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl WorldGridMaterial
-Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Carpaint_Inst
-Kd 0.78 0.78 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Lighthouse_Front
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Emissive_Light_Front
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl black
-Kd 0.5 0.5 0.5
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Carpaint_Inst2
-Kd 0.78 0.78 0.8
+Kd 0.173986 0.193297 0.14932
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Disc
-Kd 0.76 0.78 0.82
+Kd 0.041992 0.044364 0.058562
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -106,7 +106,7 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Tyre
-Kd 0.12 0.12 0.13
+Kd 0.152596 0.154421 0.1531
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -116,25 +116,25 @@ Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_Banner
-Kd 0.3 0.3 0.3
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl EXT_Glass_Emissive_Rear
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl EXT_Windows
-Kd 0.12 0.16 0.22
+Kd 0.138955 0.144562 0.138955
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42
 
 newmtl EXT_Glass_Emissive_Front
-Kd 0.12 0.16 0.22
+Kd 0.16129 0.206349 0.225806
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl EXT_Glass_Emissive_Rear
+Kd 0.52035 0.247706 0.250032
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl EXT_Windows
+Kd 0.081007 0.082032 0.081007
 Ks 0.25 0.25 0.25
 Ns 32
 d 0.42

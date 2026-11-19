@@ -1,57 +1,72 @@
 # Exported by Apex Miniature objToLowPoly.mjs
 
-newmtl alca
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl carpaint
-Kd 0.78 0.78 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl leather1
-Kd 0.25 0.25 0.25
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl carpet
-Kd 0.5 0.5 0.5
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl black
-Kd 0.3 0.3 0.3
+newmtl grill1
+Kd 0.077369 0.077226 0.077369
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl chrome
-Kd 0.76 0.78 0.82
+Kd 0.163747 0.164435 0.169638
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl black_mat
-Kd 0.3 0.3 0.3
+newmtl black1
+Kd 0.156863 0.156863 0.156863
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl knopki
-Kd 0.4 0.4 0.4
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl knopki_tex
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl stickleather
-Kd 0.25 0.25 0.25
+newmtl black_ext
+Kd 0.311145 0.310624 0.31376
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl carbon
-Kd 0.15 0.16 0.18
+Kd 0.316942 0.316685 0.3234
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl carpaint
+Kd 0.088458 0.088697 0.100145
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl plasticGrey
+Kd 0.709677 0.769841 0.83871
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl reflectBump
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl logo
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl metal
+Kd 0.097278 0.100012 0.099011
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl black_ext_gloss
+Kd 0.059476 0.059369 0.070439
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl wiper
+Kd 0.156863 0.156863 0.156863
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl logo_mant
+Kd 0.4 0.4 0.4
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl red
+Kd 0.435484 0 0
 Ks 0.25 0.25 0.25
 Ns 32
 
@@ -60,401 +75,127 @@ Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl belt
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl setka1
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl black1
-Kd 0.2 0.2 0.2
+newmtl reflectLedBump
+Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl white
-Kd 0.2 0.2 0.2
+Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl gt3rslogocluster
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl colorrpmline
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl arrowchrono
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl central_rpm1
-Kd 0.6 0.6 0.6
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl ledsiplayicon
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl logo
-Kd 0.3 0.3 0.3
+newmtl EXT_PLATE_plastic
+Kd 0.876134 0.869931 0.876134
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl Brake_Caliper
-Kd 0.82 0.08 0.08
+Kd 0.124874 0.129077 0.124874
 Ks 0.25 0.25 0.25
 Ns 32
 
 newmtl EXT_caliper_AT
-Kd 0.4 0.4 0.4
+Kd 0.602098 0.55785 0.007277
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl ledsiplayicon.001
-Kd 0.8 0.8 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl ledyellow
-Kd 0.8 0.8 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl dashleds
-Kd 0.8 0.8 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Mechanics_Plastic
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.001
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl porscheblacklogo
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.004
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.011
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Carlight_line_chrome_white
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl SpoilerCarbon
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.012
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Metal
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl carbonroofhood
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl glassheadlighttaillight
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.002
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl tinttailights
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl redrearlight
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl plasticexterior
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.023
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.021
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Car_syntetic_net
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl odi_LIGHT_rear_v1.1
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.005
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.047
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.003
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl headlightblackpart
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material.013
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl odi_LIGHT_front_v1.1
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl black_matt
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl airventsfront
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl odi_CARPAINT_v1.1
-Kd 0.78 0.78 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl carbondiffuser
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl carbon_mirrors
-Kd 0.15 0.16 0.18
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cky_lateralastanga
-Kd 0.45 0.45 0.45
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cky_paint2
-Kd 0.78 0.78 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl cky_lateraladreapta
-Kd 0.45 0.45 0.45
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Spoilerpartbodypaint
-Kd 0.78 0.78 0.8
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Spoilerpartplastic
-Kd 0.16 0.17 0.19
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl blackglosshoodvents
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl centrelconsolegt3rsplate
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_PLATE
+newmtl belt
 Kd 0.3 0.3 0.3
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl paint_newrs
-Kd 0.78 0.78 0.8
+newmtl leatherPatternDot
+Kd 0.216545 0.217494 0.218435
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Cky_rearbumper
-Kd 0.45 0.45 0.45
+newmtl seam
+Kd 0.134388 0.13444 0.147587
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Material.024
-Kd 0.2 0.2 0.2
+newmtl leather
+Kd 0.151304 0.151212 0.157416
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl hoodrsnormal
-Kd 0.45 0.45 0.45
+newmtl alcantara
+Kd 0.132529 0.133262 0.138892
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl blacknullhood
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl red_noalpha
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl glass_head
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl glassblinkersfrontrear
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl glass_reartrunkstoplight
-Kd 0.82 0.08 0.08
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl exhaust
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl GlassRS
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl Glass_-_Clear.001
-Kd 0.12 0.16 0.22
-Ks 0.25 0.25 0.25
-Ns 32
-d 0.42
-
-newmtl rimmapnew
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material_#37
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl IMG_Rim_RimCapEmblem_GT2RS
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl IMG_Rim_RimCapLabel_GT2RS
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl chrome_black_metal
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl BlackPlanes
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Disc
-Kd 0.76 0.78 0.82
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Tyre
-Kd 0.12 0.12 0.13
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl Material_#31
-Kd 0.2 0.2 0.2
-Ks 0.25 0.25 0.25
-Ns 32
-
-newmtl EXT_Mechanics_Flat
+newmtl reflectBumpB
 Kd 0.4 0.4 0.4
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Material_#33
+newmtl plasticBlack_perforated
+Kd 0.16 0.17 0.19
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl seatbelt
 Kd 0.2 0.2 0.2
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl Material_#27
-Kd 0.2 0.2 0.2
+newmtl windows_black
+Kd 0.156863 0.156863 0.156863
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl glass_clear
+Kd 0.290323 0.285714 0.306452
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl glass_lens
+Kd 0.290323 0.285714 0.306452
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl glass_orange
+Kd 0.12 0.16 0.22
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl glass_red
+Kd 0.435484 0 0
+Ks 0.25 0.25 0.25
+Ns 32
+d 0.42
+
+newmtl texRim
+Kd 0.76 0.78 0.82
 Ks 0.25 0.25 0.25
 Ns 32
 
-newmtl spoilerporsche
-Kd 0.35 0.35 0.35
+newmtl tire
+Kd 0.168536 0.176463 0.172411
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl rim
+Kd 0.164913 0.1649 0.166583
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl rim_carbon
+Kd 0.133159 0.13334 0.142988
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Disc
+Kd 0.159999 0.161443 0.15918
+Ks 0.25 0.25 0.25
+Ns 32
+
+newmtl EXT_Mechanics_Flat
+Kd 0.156863 0.156863 0.156863
 Ks 0.25 0.25 0.25
 Ns 32
