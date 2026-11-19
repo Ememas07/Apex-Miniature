@@ -428,9 +428,18 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
     latRatio = (Math.random() - 0.5) * 0.6;
     initSpeed = 18 + Math.random() * 14; // 18..32 m/s matched initial speed
   } else {
-    startT = Math.random();
-    latRatio = (Math.random() - 0.5) * 0.8;
-    initSpeed = 16 + Math.random() * 18;
+    // 25% of training spawns: true standing start on grid (initSpeed = 0, startT at 0 or -0.02..0.0, latRatio -0.35..0.35)
+    const isStandingStart = Math.random() < 0.25;
+    if (isStandingStart) {
+      const gridOffset = -Math.random() * 0.02; // -0.02..0.0
+      startT = gridOffset < 0 ? 1.0 + gridOffset : gridOffset;
+      latRatio = (Math.random() - 0.5) * 0.7; // -0.35..0.35
+      initSpeed = 0;
+    } else {
+      startT = Math.random();
+      latRatio = (Math.random() - 0.5) * 0.8;
+      initSpeed = 16 + Math.random() * 18;
+    }
   }
 
   const car = spawnCarAt(track, cId, 'rl_agent', startT, latRatio, initSpeed);
@@ -564,7 +573,7 @@ rl.on('line', (line) => {
     const POLICY_DT = 1 / 30;
     const SUBSTEPS = 4;
     const SUB_DT = POLICY_DT / SUBSTEPS;
-    const defaultMaxSteps: number = msg.maxSteps ?? 4500;
+    const defaultMaxSteps: number = msg.maxSteps ?? 6000;
 
     const results: Array<{
       trackId: string;
@@ -581,17 +590,19 @@ rl.on('line', (line) => {
     for (const pair of pairs) {
       const track = getCompiledTrack(pair.trackId);
       const cId = pair.carId;
-      const car = spawnCarAt(track, cId, 'eval_agent', 0, 0, 0);
+      // Spawn at startT = 0.02 with rolling speed 18 m/s, latRatio = 0
+      const car = spawnCarAt(track, cId, 'eval_agent', 0.02, 0, 18.0);
       const carClass = getCarClass(cId);
 
-      // Long tracks like Le Mans scale up to 8000 steps
-      const maxSteps = track.totalLength > 10000 ? Math.max(defaultMaxSteps, 8000) : defaultMaxSteps;
+      // Long tracks like Le Mans scale up to 10000 steps
+      const maxSteps = track.totalLength > 10000 ? Math.max(defaultMaxSteps, 10000) : defaultMaxSteps;
 
       let totalSpeedMps = 0;
       let offTrackSteps = 0;
       let wallCrashCount = 0;
       let prevDmg = car.aeroDamage;
-      let prevT = car.trackT;
+      let distanceTraveledMeters = 0;
+      let lapsCompleted = 0;
       let completedLap = false;
       let completedLapTime: number | null = null;
       let crashed = false;
@@ -611,15 +622,9 @@ rl.on('line', (line) => {
         if (wallOrContactDmg || absLat > halfW + 5.5) {
           wallCrashCount++;
         }
-        if (step > 90 && car.speed < 1.0) {
+        // Disable early stall termination for the first 300 steps so slower cars aren't prematurely killed
+        if (step > 300 && car.speed < 1.0) {
           crashed = true;
-          break;
-        }
-
-        // Lap crossing check (from >0.85 to <0.15 after at least 150 steps)
-        if (prevT > 0.85 && car.trackT < 0.15 && step > 150) {
-          completedLap = true;
-          completedLapTime = car.lastLapTime ?? (step * POLICY_DT);
           break;
         }
 
@@ -637,14 +642,14 @@ rl.on('line', (line) => {
           ctrl = { steer: 0, throttle: 0.5, brake: 0, specialPressed: false };
         }
 
-        prevT = car.trackT;
+        const stepPrevT = car.trackT;
         prevDmg = car.aeroDamage;
 
         for (let s = 0; s < SUBSTEPS; s++) {
           stepCarPhysics(car, ctrl, track, SUB_DT, {
             trackWetness: 0,
             totalLaps: 99,
-            isQualifying: true,
+            isQualifying: false,
             allCars: [car],
             bopEnabled: true,
           });
@@ -652,6 +657,25 @@ rl.on('line', (line) => {
           const bWall = (bSp.width ?? track.spec.trackWidth) * 0.5 + 3.0;
           if (Math.abs(car.lateralOffset) > bWall) {
             resolveWallContact(car, bSp, bWall, car.lateralOffset > 0 ? 1 : -1, SUB_DT);
+          }
+        }
+
+        let deltaT = car.trackT - stepPrevT;
+        if (deltaT < -0.5) deltaT += 1.0;
+        if (deltaT > 0.5) deltaT -= 1.0;
+        const forwardMeters = deltaT * track.totalLength;
+        if (forwardMeters > 0) {
+          distanceTraveledMeters += forwardMeters;
+        }
+
+        // Record a completed clean lap as soon as distanceTraveledMeters >= 0.90 * track.totalLength
+        // on any start/finish crossing (stepPrevT > 0.85 && car.trackT < 0.15)
+        if (stepPrevT > 0.85 && car.trackT < 0.15) {
+          lapsCompleted++;
+          if (distanceTraveledMeters >= 0.90 * track.totalLength) {
+            completedLap = true;
+            completedLapTime = car.lastLapTime ?? (step * POLICY_DT);
+            break;
           }
         }
       }
@@ -879,7 +903,7 @@ rl.on('line', (line) => {
       } else if (
         wallOrContactDmg ||
         absLat > halfW + 5.5 ||
-        (slot.stepsInEpisode > 90 && slot.car.speed < rewardWeights.stallStopSpeed)
+        (slot.stepsInEpisode > 180 && slot.car.speed < rewardWeights.stallStopSpeed)
       ) {
         reward -= rewardWeights.wallCrash;
         crashed = true;

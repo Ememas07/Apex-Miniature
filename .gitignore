@@ -16,7 +16,9 @@ scripts/.dem_cache.json
 !/models/**/.gitignore
 !/models/raw-cars/porsche-cayman-gt4-rs.kn5
 !/models/raw-cars/porsche-963.kn5
-audit/*.jsonl
+audit/**/.jsonl
+audit/**/.json
+audit/**/.csv
 checkpoints/
 *.pt
 *.pth
@@ -24,3 +26,9 @@ __pycache__/
 *.pyc
 server.js
 
+audit/bench_results/**.csv
+audit/bench_results/**.json
+audit/selfplay_pool_v1/
+audit/selfplay_pool_v2/
+audit/selfplay_pool_v3/
+audit/selfplay_pool_v4/

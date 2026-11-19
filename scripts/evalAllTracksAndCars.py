@@ -250,7 +250,7 @@ def main():
     parser.add_argument("--weights", default="src/game/aiPolicyWeights_v1.json", help="Path to policy weights JSON")
     parser.add_argument("--all", action="store_true", help="Automatically loop over v1, v2, v3, v4 checkpoints")
     parser.add_argument("--envs", type=int, default=16, help="Parallel evaluation batch size")
-    parser.add_argument("--max-steps", type=int, default=4500, help="Max steps per episode (default 4500, scaled on Le Mans)")
+    parser.add_argument("--max-steps", type=int, default=6000, help="Max steps per episode (default 6000, 10000 on Le Mans)")
     parser.add_argument("--all-liveries", action="store_true", help="Test all liveries/selectable cars instead of base models")
     parser.add_argument("--tracks", nargs="*", default=None, help="Optional subset of track IDs")
     parser.add_argument("--cars", nargs="*", default=None, help="Optional subset of car IDs")

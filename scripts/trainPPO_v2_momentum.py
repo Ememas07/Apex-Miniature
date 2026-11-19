@@ -29,18 +29,18 @@ SELFPLAY_POOL_MAX = 8
 # - Stronger steering-jerk and throttle-brake overlap regularization
 # - Higher entropy floor ent_end = 0.003 to maintain smooth exploration
 REWARD_WEIGHTS = {
-    "forwardProgress": 0.45,
+    "forwardProgress": 0.50,
     "closeProximity": 0.06,
     "minSpeedThreshold": 18.0,
     "minSpeedPenalty": 0.14,
     "floorSpeedThreshold": 10.0,
     "floorSpeedPenalty": 0.35,
     "decelThreshold": 0.40,
-    "decelPenalty": 0.85,
+    "decelPenalty": 0.55,
     "offTrackBase": 1.2,
     "offTrackSlope": 0.35,
     "steerJerk": 0.22,
-    "throttleBrakeOverlap": 0.45,
+    "throttleBrakeOverlap": 0.30,
     "carCrash": 4.5,
     "wallCrash": 5.0,
     "stallStopSpeed": 4.5,
@@ -204,6 +204,10 @@ def main():
     parser.add_argument("--cars", nargs="*", default=None)
     parser.add_argument("--scratch", action="store_true", help=f"Ignore existing {WEIGHTS_PATH} and train from zero")
     parser.add_argument("--reset-best", action="store_true", help="Allow overwriting checkpoint even if reward baseline changed")
+    parser.add_argument("--no-reset-best", action="store_true", help="Disallow overwriting checkpoint if reward baseline changed")
+    parser.add_argument("--actor-lr", type=float, default=None, help="Override actor_lr_start")
+    parser.add_argument("--ent-end", type=float, default=None, help="Override ent_end")
+    parser.add_argument("--max-std-end", type=float, default=None, help="Override max_std_end")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -231,11 +235,17 @@ def main():
 
     critic_lr_start = 3e-4
     actor_lr_start = 3e-4 if from_scratch else 8e-5
+    if args.actor_lr is not None:
+        actor_lr_start = args.actor_lr
     lr_end = 2e-5
     ent_start = 0.015 if from_scratch else 0.006
     ent_end = 0.003
+    if args.ent_end is not None:
+        ent_end = args.ent_end
     max_std_start = 0.50 if from_scratch else 0.22
     max_std_end = 0.14
+    if args.max_std_end is not None:
+        max_std_end = args.max_std_end
 
     optimizer = torch.optim.Adam([
         {"params": list(model.actor.parameters()) + [model.log_std], "lr": actor_lr_start},
@@ -264,7 +274,8 @@ def main():
     minibatch_size = max(1, (args.envs * args.steps) // 8)
     critic_warmup_updates = 0 if from_scratch else 60
 
-    best_reward = -1e9 if (from_scratch or args.reset_best) else prev_best
+    use_reset_best = args.reset_best and not args.no_reset_best
+    best_reward = -1e9 if (from_scratch or use_reset_best) else prev_best
     best_laps_track_class: dict[tuple[str, str], float] = {}
     best_laps_class: dict[str, tuple[float, str]] = {}
     peak_speed_class: dict[str, float] = {}

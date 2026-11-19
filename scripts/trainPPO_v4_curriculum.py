@@ -25,9 +25,9 @@ SELFPLAY_SNAPSHOT_INTERVAL = 150
 SELFPLAY_POOL_MAX = 8
 
 # 2-phase curriculum:
-# - Phase 1 (first 35% of updates): 100% solo hotlapping to lock in clean racing lines & braking markers
-# - Phase 2 (remaining 65% of updates): linearly ramp in scripted multiclass & neural self-play traffic
-PHASE1_FRAC = 0.35
+# - Phase 1 (first 45% of updates): 100% solo hotlapping to lock in clean racing lines & braking markers
+# - Phase 2 (remaining 55% of updates): linearly ramp in scripted multiclass & neural self-play traffic
+PHASE1_FRAC = 0.45
 TARGET_SCRIPTED_RATIO = 0.35
 TARGET_SELFPLAY_RATIO = 0.45
 
@@ -36,8 +36,8 @@ REWARD_WEIGHTS = {
     "closeProximity": 0.06,
     "minSpeedThreshold": 15.0,
     "minSpeedPenalty": 0.08,
-    "offTrackBase": 1.2,
-    "offTrackSlope": 0.35,
+    "offTrackBase": 1.5,
+    "offTrackSlope": 0.45,
     "steerJerk": 0.06,
     "throttleBrakeOverlap": 0.15,
     "carCrash": 4.5,
@@ -206,7 +206,7 @@ def spawn_env_worker():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PPO v4: 2-Phase Curriculum (35% solo hotlap -> 65% traffic ramp)")
+    parser = argparse.ArgumentParser(description="PPO v4: 2-Phase Curriculum (45% solo hotlap -> 55% traffic ramp)")
     parser.add_argument("--envs", type=int, default=32)
     parser.add_argument("--steps", type=int, default=256)
     parser.add_argument("--updates", type=int, default=1000)
@@ -214,6 +214,10 @@ def main():
     parser.add_argument("--cars", nargs="*", default=None)
     parser.add_argument("--scratch", action="store_true", help=f"Ignore existing {WEIGHTS_PATH} and train from zero")
     parser.add_argument("--reset-best", action="store_true", help="Allow overwriting checkpoint even if reward baseline changed")
+    parser.add_argument("--no-reset-best", action="store_true", help="Disallow overwriting checkpoint if reward baseline changed")
+    parser.add_argument("--actor-lr", type=float, default=None, help="Override actor_lr_start")
+    parser.add_argument("--ent-end", type=float, default=None, help="Override ent_end")
+    parser.add_argument("--max-std-end", type=float, default=None, help="Override max_std_end")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -241,11 +245,17 @@ def main():
 
     critic_lr_start = 3e-4
     actor_lr_start = 3e-4 if from_scratch else 8e-5
+    if args.actor_lr is not None:
+        actor_lr_start = args.actor_lr
     lr_end = 2e-5
     ent_start = 0.012 if from_scratch else 0.004
     ent_end = 0.0015
+    if args.ent_end is not None:
+        ent_end = args.ent_end
     max_std_start = 0.50 if from_scratch else 0.20
     max_std_end = 0.12
+    if args.max_std_end is not None:
+        max_std_end = args.max_std_end
 
     optimizer = torch.optim.Adam([
         {"params": list(model.actor.parameters()) + [model.log_std], "lr": actor_lr_start},
@@ -278,7 +288,8 @@ def main():
     critic_warmup_updates = 0 if from_scratch else 60
     phase1_end = max(1, int(round(PHASE1_FRAC * args.updates)))
 
-    best_reward = -1e9 if (from_scratch or args.reset_best) else prev_best
+    use_reset_best = args.reset_best and not args.no_reset_best
+    best_reward = -1e9 if (from_scratch or use_reset_best) else prev_best
     best_laps_track_class: dict[tuple[str, str], float] = {}
     best_laps_class: dict[str, tuple[float, str]] = {}
     peak_speed_class: dict[str, float] = {}
