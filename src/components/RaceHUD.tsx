@@ -80,53 +80,118 @@ export function RaceHUD({
     >
       {/* TOP BAR CORNERS */}
       <div className="flex items-start justify-between gap-4">
-        {/* Top-Left Cluster: Position, Class, Lap & Live Intervals */}
-        <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 min-w-[230px] shadow-lg">
-          <div className="flex items-baseline justify-between gap-4">
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-display font-extrabold text-white tabular-nums leading-none">
-                P{hud.position}
-              </span>
-              <span className="text-xs text-slate-400 tabular-nums">/{hud.totalCars}</span>
-              <span
-                className="ml-1 px-1.5 py-0.5 text-[10px] font-display font-bold rounded-sm"
-                style={{ backgroundColor: classMeta.plateColor, color: classMeta.badgeTextColor }}
-              >
-                {classMeta.shortName} P{hud.classPosition}
-              </span>
-            </div>
-            <div className="text-right">
-              <span className="text-[11px] text-slate-400 block">
-                {hud.phase === 'qualifying' ? 'QUALI HOTLAP' : 'LAP'}
-              </span>
-              <span className="font-display font-bold text-sm text-white tabular-nums">
-                {hud.lap} / {hud.totalLaps}
-              </span>
-            </div>
-          </div>
+        {/* Top-Left Cluster: Position / Practice Mode, Lap & Live Intervals / Sectors */}
+        <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 min-w-[245px] shadow-lg">
+          {hud.sessionMode === 'practice' ? (
+            <>
+              <div className="flex items-baseline justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl font-display font-extrabold text-emerald-400 tracking-wide leading-none">
+                    PRACTICE
+                  </span>
+                  <span
+                    className="px-1.5 py-0.5 text-[10px] font-display font-bold rounded-sm"
+                    style={{ backgroundColor: classMeta.plateColor, color: classMeta.badgeTextColor }}
+                  >
+                    {classMeta.shortName}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[11px] text-slate-400 block">SOLO HOTLAP</span>
+                  <span className="font-display font-bold text-sm text-white tabular-nums">
+                    {hud.totalLaps > 0 ? `LAP ${hud.lap} / ${hud.totalLaps}` : `LAP ${hud.lap}`}
+                  </span>
+                </div>
+              </div>
 
-          <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Ahead</span>
-              <span className="font-telemetry text-amber-300">
-                {hud.intervalAhead !== null ? `+${hud.intervalAhead.toFixed(2)}s` : 'Leader'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Behind</span>
-              <span className="font-telemetry text-slate-200">
-                {hud.intervalBehind !== null ? `-${hud.intervalBehind.toFixed(2)}s` : '--'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Lap</span>
-              <span className="font-telemetry text-white">{formatLapTime(hud.currentLapTime)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Best</span>
-              <span className="font-telemetry text-emerald-400">{formatLapTime(hud.bestLapTime)}</span>
-            </div>
-          </div>
+              <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Lap</span>
+                  <span className="font-telemetry text-white">{formatLapTime(hud.currentLapTime)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Best</span>
+                  <span className="font-telemetry text-emerald-400">{formatLapTime(hud.bestLapTime)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Last</span>
+                  <span className="font-telemetry text-slate-200">{formatLapTime(hud.lastLapTime)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Sector</span>
+                  <span className="font-telemetry text-sky-300">S{hud.currentSector ?? 1}</span>
+                </div>
+              </div>
+
+              <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-3 gap-2 text-[11px]">
+                {[0, 1, 2].map((idx) => {
+                  const val = hud.sectorTimes?.[idx] ?? hud.lastLapSectorTimes?.[idx] ?? null;
+                  const best = hud.bestSectorTimes?.[idx] ?? null;
+                  const isBest = val !== null && best !== null && Math.abs(val - best) < 0.005;
+                  return (
+                    <div key={idx} className="bg-[#131822] rounded px-1.5 py-1 text-center">
+                      <div className="text-[10px] text-slate-400">S{idx + 1}</div>
+                      <div
+                        className={`font-telemetry font-semibold ${
+                          isBest ? 'text-emerald-400' : val !== null ? 'text-slate-100' : 'text-slate-500'
+                        }`}
+                      >
+                        {val !== null ? `${val.toFixed(2)}s` : '--'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-baseline justify-between gap-4">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-display font-extrabold text-white tabular-nums leading-none">
+                    P{hud.position}
+                  </span>
+                  <span className="text-xs text-slate-400 tabular-nums">/{hud.totalCars}</span>
+                  <span
+                    className="ml-1 px-1.5 py-0.5 text-[10px] font-display font-bold rounded-sm"
+                    style={{ backgroundColor: classMeta.plateColor, color: classMeta.badgeTextColor }}
+                  >
+                    {classMeta.shortName} P{hud.classPosition}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[11px] text-slate-400 block">
+                    {hud.phase === 'qualifying' ? 'QUALI HOTLAP' : 'LAP'}
+                  </span>
+                  <span className="font-display font-bold text-sm text-white tabular-nums">
+                    {hud.lap} / {hud.totalLaps}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Ahead</span>
+                  <span className="font-telemetry text-amber-300">
+                    {hud.intervalAhead !== null ? `+${hud.intervalAhead.toFixed(2)}s` : 'Leader'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Behind</span>
+                  <span className="font-telemetry text-slate-200">
+                    {hud.intervalBehind !== null ? `-${hud.intervalBehind.toFixed(2)}s` : '--'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Lap</span>
+                  <span className="font-telemetry text-white">{formatLapTime(hud.currentLapTime)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Best</span>
+                  <span className="font-telemetry text-emerald-400">{formatLapTime(hud.bestLapTime)}</span>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Contextual Racecraft / Rulebook Alerts */}
           {(hud.inSlipstream || hud.penaltyTimeRemaining > 0 || hud.warningCount > 0 || hud.pitStopRemaining > 0) && (

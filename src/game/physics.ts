@@ -1,4 +1,4 @@
-import { CAR_CLASSES, getCarById, resolveCarSpecial, getCarBoP, BoPMultipliers } from './cars';
+import { CAR_CLASSES, getCarById, resolveCarSpecial, getCarBoP, BoPMultipliers, getRealWorldCarDimensions } from './cars';
 import { CompiledTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
 import tuningConfigRaw from './tuningConfig.json';
 import {
@@ -174,6 +174,11 @@ export interface CarSimState {
   yawRate?: number;
   bopEnabled?: boolean;
   bopMultipliers?: BoPMultipliers;
+  currentSector?: 1 | 2 | 3;
+  sectorStartTime?: number;
+  sectorTimes?: [number | null, number | null, number | null];
+  bestSectorTimes?: [number | null, number | null, number | null];
+  lastLapSectorTimes?: [number | null, number | null, number | null];
 }
 
 /**
@@ -372,6 +377,11 @@ export function createCarSimState(params: {
     yawRate: 0,
     bopEnabled,
     bopMultipliers: bop,
+    currentSector: 1,
+    sectorStartTime: 0,
+    sectorTimes: [null, null, null],
+    bestSectorTimes: [null, null, null],
+    lastLapSectorTimes: [null, null, null],
   };
 }
 
@@ -467,7 +477,8 @@ export function resolveWallContact(
 
   car.vx = vSlide * sample.tx + (side * vBounce) * sample.nx;
   car.vz = vSlide * sample.tz + (side * vBounce) * sample.nz;
-  car.speed = Math.max(0, vSlide);
+  car.speed = Math.max(0, Math.min(car.speed, Math.abs(vSlide)));
+  car.yawRate = (car.yawRate ?? 0) * 0.25;
 
   // Outward yaw alignment toward wall tangent so car glances off smoothly
   const wallHeading = Math.atan2(sample.tx, sample.tz);
@@ -542,6 +553,7 @@ export function stepCarPhysics(
     trackWetness: number;
     totalLaps: number;
     isQualifying: boolean;
+    isPractice?: boolean;
     allCars: CarSimState[];
     bopEnabled?: boolean;
   },
@@ -1022,11 +1034,16 @@ export function stepCarPhysics(
       car.speed = Math.max(0, car.speed - (fBrakeN / massKg) * dt);
     }
 
-    // Natural aero/rolling drag & engine braking when coasting or above effectiveMaxSpeed
+    // Natural aero/rolling drag & realistic RPM/gear-dependent engine braking when coasting or above effectiveMaxSpeed
     if (car.speed > effectiveMaxSpeed) {
       car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
     } else if (throttle < 0.05 && brake < 0.05) {
-      const fEngineBrakeN = massKg * (0.14 * GRAVITY + 0.28 * car.speed * tuning.dragScale);
+      const coastRpm = Math.max(0, Math.min(1, car.rpmNormalized));
+      const gearFactor = totalGears <= 1
+        ? 0.45
+        : Math.max(0.45, Math.min(1.45, 1.35 - ((Math.max(1, car.gear) - 1) / Math.max(1, totalGears - 1)) * 0.75));
+      const engineBrakeG = (isFE ? 0.05 : 0.06) + (isFE ? 0.09 : 0.14) * coastRpm * gearFactor;
+      const fEngineBrakeN = massKg * engineBrakeG * GRAVITY;
       const fCoastN = fAeroDragN + fRollN + fEngineBrakeN;
       car.speed = Math.max(0, car.speed - (fCoastN / massKg) * dt);
     }
@@ -1158,9 +1175,17 @@ export function stepCarPhysics(
     car.speed = Math.max(0, car.speed + slopeGravity * dt);
   }
 
-  // Sim-Cade Steering, Centripetal Cornering Limit, Trail-Braking & Understeer Scrub
+  // Dynamic Tire Friction & Bicycle Slip-Angle Lateral Physics (replaces kinematic nose-pulling)
+  const dims = car.carSpec.dimensions ?? getRealWorldCarDimensions(car.carSpec.id, classId);
+  const wheelbase = Math.max(2.4, Math.min(3.7, dims.wheelbase ?? 2.8));
+  const aAxle = wheelbase * 0.49;
+  const bAxle = wheelbase * 0.51;
+  const yawInertia = 0.24 * massKg * wheelbase * wheelbase;
+
   const steerInput = Math.max(-1, Math.min(1, input.steer));
-  car.steerAngle += (steerInput * 0.5 - car.steerAngle) * Math.min(1, dt * 14);
+  const maxSteerAngle = 0.44 * (1.0 - 0.72 * Math.min(1, car.speed / Math.max(35, maxSpeedBase * 0.78)));
+  const targetSteerAngle = steerInput * maxSteerAngle;
+  car.steerAngle += (targetSteerAngle - car.steerAngle) * Math.min(1, dt * 11.5);
 
   const speedNorm = Math.min(1, car.speed / Math.max(1, maxSpeedBase));
   // Trail-braking bonus: gentle braking (0.08..0.7) while turning sharpens front bite
@@ -1180,48 +1205,114 @@ export function stepCarPhysics(
     bankingGripBonus *
     classDownforceBonus;
 
-  // Centripetal lateral physics cap: realistic centripetal limit matching physical Gs
-  const maxTurnRate = Math.min(
-    availableGrip * 1.45,
-    (availableGrip * 22.0) / Math.max(7.5, car.speed),
+  const rightX = -Math.cos(car.heading);
+  const rightZ = Math.sin(car.heading);
+
+  let vLat = car.vx * rightX + car.vz * rightZ;
+  let vFwd = car.speed * moveSign;
+  let rYaw = -(car.yawRate ?? 0); // positive = turning right (-heading)
+
+  const staticFrontShare = bAxle / wheelbase;
+  const weightTransfer = (brake * 0.11 - throttle * 0.08) * (car.speed > 2 ? 1 : 0);
+  const frontShare = Math.max(0.34, Math.min(0.62, staticFrontShare + weightTransfer));
+  const rearShare = 1.0 - frontShare;
+
+  // Lateral tire friction limit (mu * Fz) in Newtons
+  const latGripAccel = availableGrip * 11.5;
+  const fMaxTotalN = massKg * latGripAccel;
+  const fMaxFrontN = fMaxTotalN * frontShare * (isReversing ? 0.75 : 1.0);
+  const fMaxRearN = fMaxTotalN * rearShare * (
+    isGTP && throttle > 0.75 && Math.abs(steerInput) > 0.25 && car.speed > 14 && car.speed < 55
+      ? Math.max(0.76, 1.0 - (throttle - 0.75) * 0.65)
+      : 1.0
   );
-  const lateralDemand = Math.abs(steerInput) * speedNorm * speedNorm * 1.55;
-  const understeer = Math.max(0, (lateralDemand - availableGrip * 0.56) * 1.65);
-  car.understeerFactor = Math.min(1, understeer);
 
-  // Over-driving entries scrubs speed & pushes the car wide with genuine front-axle washout
-  if (understeer > 0.05 && car.speed > 12) {
-    car.speed = Math.max(11.0, car.speed - understeer * 15.0 * dt);
+  const cAlphaFront = fMaxFrontN * 7.8;
+  const cAlphaRear = fMaxRearN * 9.2;
+
+  let understeerAccum = 0;
+  if (car.speed < 0.35 && Math.abs(throttle) < 0.05 && Math.abs(brake) < 0.05) {
+    vLat = 0;
+    rYaw = 0;
+  } else {
+    const subSteps = dt > 0.008 ? 4 : 2;
+    const subDt = dt / subSteps;
+    const delta = car.steerAngle * moveSign;
+
+    for (let s = 0; s < subSteps; s++) {
+      const vReg = Math.hypot(vFwd, 2.2);
+      const speedForwardAbs = Math.max(0.5, Math.abs(vFwd));
+
+      const alphaF = delta - Math.atan2(vLat + aAxle * rYaw, vReg);
+      const alphaR = -Math.atan2(vLat - bAxle * rYaw, vReg);
+
+      const fyF = fMaxFrontN * Math.tanh((cAlphaFront * alphaF) / Math.max(1, fMaxFrontN));
+      const fyR = fMaxRearN * Math.tanh((cAlphaRear * alphaR) / Math.max(1, fMaxRearN));
+
+      const bankLatAccel = car.speed > 4.0 ? -9.81 * roadTilt.sinBank : 0;
+      const yawAccel = (aAxle * fyF - bAxle * fyR) / yawInertia;
+
+      // Apply lateral tire acceleration in body frame + subtle front steering scrub
+      vLat += ((fyF + fyR) / massKg + bankLatAccel) * subDt;
+      if (Math.abs(vFwd) > 1.0) {
+        const steerDragDecel = (Math.abs(fyF * Math.sin(delta)) / massKg) * 0.35 * subDt;
+        vFwd -= Math.sign(vFwd) * Math.min(Math.abs(vFwd), steerDragDecel);
+      }
+
+      rYaw += yawAccel * subDt;
+
+      // Enforce physical tire-friction yaw ceiling across all speeds (and wheelbase geometry below 12 m/s)
+      const maxTireYaw = latGripAccel / Math.max(2.5, speedForwardAbs);
+      if (car.speed < 12.0) {
+        const maxGeomYaw = (speedForwardAbs * Math.abs(Math.tan(car.steerAngle))) / wheelbase + 0.08;
+        const physicalCap = Math.min(maxGeomYaw * 1.12, maxTireYaw);
+        if (Math.abs(rYaw) > physicalCap) {
+          rYaw = Math.sign(rYaw) * physicalCap;
+        }
+      } else if (Math.abs(rYaw) > maxTireYaw) {
+        rYaw = Math.sign(rYaw) * maxTireYaw;
+      }
+
+      // Energy-conserving body-frame Coriolis rotation by dPsi = rYaw * subDt
+      const dRot = rYaw * subDt;
+      const cosR = Math.cos(dRot);
+      const sinR = Math.sin(dRot);
+      const nextFwd = vFwd * cosR + vLat * sinR;
+      const nextLat = -vFwd * sinR + vLat * cosR;
+      vFwd = nextFwd;
+      vLat = nextLat;
+
+      if (car.speed < 4.5) {
+        const crawlDamp = Math.exp(-subDt * (6.0 - car.speed));
+        vLat *= crawlDamp;
+      }
+
+      const frontRatio = Math.min(1, Math.abs(fyF) / Math.max(1, fMaxFrontN));
+      if (Math.abs(alphaF) > 0.11 && frontRatio > 0.72) {
+        understeerAccum = Math.max(understeerAccum, Math.min(1, (Math.abs(alphaF) - 0.11) * 3.8));
+      }
+    }
   }
 
-  // Progressive exit power-oversteer when overdriven in GTP
-  if (isGTP && throttle > 0.75 && Math.abs(steerInput) > 0.28 && car.speed > 14 && car.speed < 55) {
-    const powerOversteer = (throttle - 0.75) * 4.0 * (Math.abs(steerInput) - 0.28) * 1.2;
-    car.heading -= Math.sign(steerInput) * powerOversteer * 0.45 * dt;
-    car.lateralSlip = Math.min(1, car.lateralSlip + powerOversteer * 0.35);
+  car.speed = Math.min(effectiveMaxSpeed * 1.05, Math.max(0, moveSign * vFwd));
+  car.understeerFactor = understeerAccum;
+  if (car.understeerFactor > 0.08 && car.speed > 12) {
+    car.speed = Math.max(10.0, car.speed - car.understeerFactor * 9.5 * dt);
   }
 
-  const turnEffectiveness = 1 - Math.min(0.55, understeer * 0.45);
-  const lowSpeedScale = Math.min(1, car.speed / 6.0);
-  // Lateral banking centripetal gravity assist (+sinBank pulls toward -R_car = left = +heading)
-  const bankingTurnAssist = car.speed > 4.0 ? (9.81 * roadTilt.sinBank) / Math.max(10.0, car.speed) * 0.35 : 0;
-  const turnDelta = steerInput * moveSign * maxTurnRate * turnEffectiveness * lowSpeedScale - bankingTurnAssist;
-  car.heading -= turnDelta * dt;
-  car.yawRate = -turnDelta;
+  car.heading -= rYaw * dt;
+  car.yawRate = -rYaw;
 
-  // Lateral velocity blend & lateral slip calculation for tire scrub audio
-  const desiredVx = Math.sin(car.heading) * car.speed * moveSign;
-  const desiredVz = Math.cos(car.heading) * car.speed * moveSign;
-  const lateralBlend = Math.min(1, dt * (6.5 + availableGrip * 3.5) * (1 - Math.min(0.45, understeer * 0.4)));
-  car.vx += (desiredVx - car.vx) * lateralBlend;
-  car.vz += (desiredVz - car.vz) * lateralBlend;
+  const newFwdX = Math.sin(car.heading);
+  const newFwdZ = Math.cos(car.heading);
+  const newRightX = -Math.cos(car.heading);
+  const newRightZ = Math.sin(car.heading);
+  car.vx = newFwdX * (car.speed * moveSign) + newRightX * vLat;
+  car.vz = newFwdZ * (car.speed * moveSign) + newRightZ * vLat;
 
-  const fwdX = Math.sin(car.heading);
-  const fwdZ = Math.cos(car.heading);
-  const rightVel = car.vx * fwdZ - car.vz * fwdX;
   car.lateralSlip = Math.min(
     1,
-    (Math.abs(rightVel) / 7.5 + car.understeerFactor * 0.72) * (car.speed > 5 ? 1 : 0),
+    (Math.abs(vLat) / 5.5 + car.understeerFactor * 0.70) * (car.speed > 5 ? 1 : 0),
   );
 
   car.x += car.vx * dt;
@@ -1289,11 +1380,35 @@ export function stepCarPhysics(
     }
   }
 
-  // Lap & progress tracking
+  // Sector splits (S1 @ 0.333, S2 @ 0.667, S3 @ S/F) & Lap progress tracking
   car.prevTrackT = car.trackT;
   car.trackT = proj.sample.t;
   car.currentLapTime += dt;
   car.totalTime += dt;
+
+  if (!car.sectorTimes) car.sectorTimes = [null, null, null];
+  if (!car.bestSectorTimes) car.bestSectorTimes = [null, null, null];
+  if (!car.lastLapSectorTimes) car.lastLapSectorTimes = [null, null, null];
+
+  if (!isReversing && car.totalDistance >= 0) {
+    if (car.prevTrackT < 0.333 && car.trackT >= 0.333 && (car.currentSector ?? 1) === 1) {
+      const s1 = car.currentLapTime;
+      car.sectorTimes[0] = s1;
+      if (car.bestSectorTimes[0] === null || s1 < car.bestSectorTimes[0]) {
+        car.bestSectorTimes[0] = s1;
+      }
+      car.sectorStartTime = car.currentLapTime;
+      car.currentSector = 2;
+    } else if (car.prevTrackT < 0.667 && car.trackT >= 0.667 && car.currentSector === 2) {
+      const s2 = Math.max(0.1, car.currentLapTime - (car.sectorStartTime ?? 0));
+      car.sectorTimes[1] = s2;
+      if (car.bestSectorTimes[1] === null || s2 < car.bestSectorTimes[1]) {
+        car.bestSectorTimes[1] = s2;
+      }
+      car.sectorStartTime = car.currentLapTime;
+      car.currentSector = 3;
+    }
+  }
 
   // Detect start/finish crossing forward (prevTrackT > 0.85 && trackT < 0.15)
   if (!isReversing && car.prevTrackT > 0.85 && car.trackT < 0.15) {
@@ -1301,18 +1416,30 @@ export function stepCarPhysics(
       // Initial start/finish crossing from pre-start grid
       car.lap = 1;
       car.currentLapTime = 0;
+      car.currentSector = 1;
+      car.sectorStartTime = 0;
+      car.sectorTimes = [null, null, null];
     } else {
       const completedTime = car.currentLapTime;
       if (completedTime > 5) {
+        const s3 = Math.max(0.1, completedTime - (car.sectorStartTime ?? 0));
+        car.sectorTimes[2] = s3;
+        if (car.bestSectorTimes[2] === null || s3 < car.bestSectorTimes[2]) {
+          car.bestSectorTimes[2] = s3;
+        }
+        car.lastLapSectorTimes = [car.sectorTimes[0], car.sectorTimes[1], s3];
         car.lastLapTime = completedTime;
         if (car.bestLapTime === null || completedTime < car.bestLapTime) {
           car.bestLapTime = completedTime;
         }
       }
       car.currentLapTime = 0;
+      car.currentSector = 1;
+      car.sectorStartTime = 0;
+      car.sectorTimes = [null, null, null];
       if (opts.isQualifying) {
         car.finished = true;
-      } else if (car.lap >= opts.totalLaps) {
+      } else if (!(opts.isPractice && opts.totalLaps <= 0) && car.lap >= opts.totalLaps) {
         car.finished = true;
       } else {
         car.lap += 1;
@@ -1773,9 +1900,9 @@ export function computeAIControl(
     const bankBonus = 1.0 + Math.sin(Math.abs(sample.banking || 0)) * 0.35;
     const { classGripMult, classDownforceBonus } = computeClassGripProfile(car.carSpec.classId, car.speed, tuning, bop.downforceMult);
     const sampleGrip = effectiveLatGripBase * classGripMult * bankBonus * classDownforceBonus;
-    // Calibrated centripetal safe cornering speed with boosted exit aggression
-    const minCornerSpeed = absK > 0.10 ? 7.6 : 9.5;
-    const curvScale = absK > 0.10 ? 11.2 : 23.4;
+    // Calibrated centripetal safe cornering speed matching bicycle tire friction limit (availableGrip * 11.5)
+    const minCornerSpeed = absK > 0.10 ? 7.2 : 9.0;
+    const curvScale = absK > 0.10 ? 9.8 : 11.2;
     const vSafe = Math.max(minCornerSpeed, Math.sqrt((sampleGrip * curvScale) / absK) * skillFactor);
 
     if (dMeters < 20) {

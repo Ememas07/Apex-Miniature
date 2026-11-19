@@ -10,6 +10,8 @@ export class MotorsportAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private masterLimiter: DynamicsCompressorNode | null = null;
+  private engineBus: GainNode | null = null;
+  private sfxBus: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
   private engineGain: GainNode | null = null;
 
@@ -134,13 +136,13 @@ export class MotorsportAudioEngine {
       const ctx = new AudioCtx();
       this.ctx = ctx;
 
-      // Brickwall Dynamics Limiter (-6 dB threshold, ratio 12, knee 3, -3 dBFS ceiling)
+      // Gentle safety ceiling limiter so transient spikes never clip without pumping engine volume
       const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.setValueAtTime(-6, ctx.currentTime);
-      limiter.knee.setValueAtTime(3, ctx.currentTime);
-      limiter.ratio.setValueAtTime(12, ctx.currentTime);
-      limiter.attack.setValueAtTime(0.003, ctx.currentTime);
-      limiter.release.setValueAtTime(0.12, ctx.currentTime);
+      limiter.threshold.setValueAtTime(-1.5, ctx.currentTime);
+      limiter.knee.setValueAtTime(6, ctx.currentTime);
+      limiter.ratio.setValueAtTime(3.5, ctx.currentTime);
+      limiter.attack.setValueAtTime(0.008, ctx.currentTime);
+      limiter.release.setValueAtTime(0.16, ctx.currentTime);
       limiter.connect(ctx.destination);
       this.masterLimiter = limiter;
 
@@ -149,10 +151,30 @@ export class MotorsportAudioEngine {
       master.connect(limiter);
       this.masterGain = master;
 
+      // Dedicated isolated sub-buses so SFX (tire scrub, kerbs, exhaust pops) never modulate engine gain/RMS
+      const engineBus = ctx.createGain();
+      engineBus.gain.value = 1.0;
+      engineBus.connect(master);
+      this.engineBus = engineBus;
+
+      const sfxCompressor = ctx.createDynamicsCompressor();
+      sfxCompressor.threshold.setValueAtTime(-6, ctx.currentTime);
+      sfxCompressor.knee.setValueAtTime(6, ctx.currentTime);
+      sfxCompressor.ratio.setValueAtTime(3.0, ctx.currentTime);
+      sfxCompressor.attack.setValueAtTime(0.01, ctx.currentTime);
+      sfxCompressor.release.setValueAtTime(0.12, ctx.currentTime);
+      sfxCompressor.connect(master);
+
+      const sfxBus = ctx.createGain();
+      sfxBus.gain.value = 1.0;
+      sfxBus.connect(sfxCompressor);
+      this.sfxBus = sfxBus;
+
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.75;
-      master.connect(analyser);
+      // Measure strictly engineBus so tire scrub/SFX never destabilizes auto-leveler RMS
+      engineBus.connect(analyser);
       this.analyser = analyser;
 
       // Equal-Loudness Compensation Filter:
@@ -181,7 +203,7 @@ export class MotorsportAudioEngine {
       mainEngine.connect(eqCut);
       eqCut.connect(highShelf);
       highShelf.connect(normGain);
-      normGain.connect(master);
+      normGain.connect(engineBus);
       this.engineGain = mainEngine;
 
       // 1. Multi-harmonic Combustion Engine Synthesizer with Dual Formants & Saturation
@@ -427,7 +449,7 @@ export class MotorsportAudioEngine {
 
       sSrc.connect(sFilter);
       sFilter.connect(sGain);
-      sGain.connect(master);
+      sGain.connect(sfxBus);
       sSrc.start();
 
       this.scrubSource = sSrc;
@@ -448,7 +470,7 @@ export class MotorsportAudioEngine {
 
       kOsc.connect(kFilter);
       kFilter.connect(kGain);
-      kGain.connect(master);
+      kGain.connect(sfxBus);
       kOsc.start();
 
       this.kerbOsc = kOsc;
@@ -736,15 +758,8 @@ export class MotorsportAudioEngine {
       );
       if (customWave) {
         this.oscCombustion.setPeriodicWave(customWave);
-      } else {
+      } else if (profile.oscCombustionType !== 'custom') {
         this.oscCombustion.type = profile.oscCombustionType;
-      }
-    }
-    if (this.oscCombustion && this.oscCombustion.type !== profile.oscCombustionType && profile.oscCombustionType !== 'custom') {
-      try {
-        this.oscCombustion.type = profile.oscCombustionType;
-      } catch {
-        // Active custom PeriodicWave takes precedence
       }
     }
     if (this.oscHarmonic && this.oscHarmonic.type !== profile.oscHarmonicType) {
@@ -976,12 +991,12 @@ export class MotorsportAudioEngine {
     this.intakeGain?.gain.setTargetAtTime(intakeGainLevel, now, 0.015);
     this.turboSpoolGain?.gain.setTargetAtTime(turboGainLevel, now, 0.015);
 
-    // Master / Engine Output Gain Calibration
+    // Master / Engine Output Gain Calibration (strictly isolated on engineBus)
     const masterOutputGain = profile.engineOutputGain ?? profile.profileGain ?? 0.90;
     const overallEngineGain = (0.24 + clampedThrottle * 0.28) * masterOutputGain;
-    this.engineGain.gain.setTargetAtTime(overallEngineGain, now, 0.015);
+    this.engineGain.gain.setTargetAtTime(overallEngineGain, now, 0.03);
 
-    // Live RMS Measurement & Auto-Leveling toward -16 dBFS
+    // Live RMS Measurement & Auto-Leveling toward -16 dBFS (measured on engineBus only)
     let liveRms = 0.05;
     if (this.analyser) {
       if (!this.rmsBuffer || this.rmsBuffer.length !== 512) {
@@ -1007,21 +1022,21 @@ export class MotorsportAudioEngine {
     } else {
       this.currentNormGain = this.currentNormGain * 0.95 + staticTrim * 0.05;
     }
-    this.normalizeGainNode?.gain.setTargetAtTime(this.currentNormGain, now, 0.06);
+    this.normalizeGainNode?.gain.setTargetAtTime(this.currentNormGain, now, 0.08);
 
-    // Live Tire Scrub Audio
+    // Live Tire Scrub Audio (strictly routed to isolated sfxBus)
     if (this.scrubGain && this.scrubFilter) {
       const slipIntensity =
         speedKmh > 22 && lateralSlip > 0.14 ? Math.min(1, (lateralSlip - 0.14) * 1.45) : 0;
-      this.scrubFilter.frequency.setTargetAtTime(1050 + slipIntensity * 850, now, 0.04);
-      this.scrubGain.gain.setTargetAtTime(slipIntensity * 0.14, now, 0.04);
+      this.scrubFilter.frequency.setTargetAtTime(1050 + slipIntensity * 850, now, 0.045);
+      this.scrubGain.gain.setTargetAtTime(slipIntensity * 0.13, now, 0.045);
     }
 
-    // Live Kerb Rumble Audio
+    // Live Kerb Rumble Audio (strictly routed to isolated sfxBus)
     if (this.kerbGain && this.kerbOsc) {
       const kerbActive = onKerb && speedKmh > 18;
-      this.kerbOsc.frequency.setTargetAtTime(52 + Math.min(48, speedKmh * 0.24), now, 0.03);
-      this.kerbGain.gain.setTargetAtTime(kerbActive ? 0.18 : 0, now, 0.03);
+      this.kerbOsc.frequency.setTargetAtTime(52 + Math.min(48, speedKmh * 0.24), now, 0.035);
+      this.kerbGain.gain.setTargetAtTime(kerbActive ? 0.16 : 0, now, 0.035);
     }
 
     // Throttle Lift-Off & Downshift Detection: Exhaust Crackles & Wastegate Flutter
@@ -1043,7 +1058,8 @@ export class MotorsportAudioEngine {
    * Rapid-fire flat-shift sequential gearbox ignition-cut BAP transient.
    */
   private triggerFlatShiftBap(centerHz = 600) {
-    if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const outBus = this.sfxBus ?? this.masterGain;
+    if (!this.ctx || !outBus || !this.noiseBuffer || this.muted) return;
     const now = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuffer;
@@ -1059,7 +1075,7 @@ export class MotorsportAudioEngine {
 
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(outBus);
     src.start(now);
     src.stop(now + 0.06);
   }
@@ -1068,7 +1084,8 @@ export class MotorsportAudioEngine {
    * Multi-pulse turbo wastegate flutter chirp on throttle lift ("stu-tu-tu").
    */
   private triggerWastegateFlutter(intensity = 1.0) {
-    if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const outBus = this.sfxBus ?? this.masterGain;
+    if (!this.ctx || !outBus || !this.noiseBuffer || this.muted) return;
     const now = this.ctx.currentTime;
     const pulses = 4;
     for (let i = 0; i < pulses; i++) {
@@ -1088,7 +1105,7 @@ export class MotorsportAudioEngine {
 
       src.connect(filter);
       filter.connect(gain);
-      gain.connect(this.masterGain);
+      gain.connect(outBus);
       src.start(t);
       src.stop(t + 0.042);
     }
@@ -1098,7 +1115,8 @@ export class MotorsportAudioEngine {
    * Exhaust pop/crackle sequence on throttle overrun, downshift, or rev-limiter bounce.
    */
   private triggerExhaustCrackles(intensity = 1.0) {
-    if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const outBus = this.sfxBus ?? this.masterGain;
+    if (!this.ctx || !outBus || !this.noiseBuffer || this.muted) return;
     const now = this.ctx.currentTime;
     const popCount = 2 + Math.floor(Math.random() * 3);
 
@@ -1118,7 +1136,7 @@ export class MotorsportAudioEngine {
 
       src.connect(filter);
       filter.connect(gain);
-      gain.connect(this.masterGain);
+      gain.connect(outBus);
 
       src.start(popTime);
       src.stop(popTime + 0.05);
@@ -1126,7 +1144,8 @@ export class MotorsportAudioEngine {
   }
 
   playBeep(freq = 660, duration = 0.12) {
-    if (!this.initialized || !this.ctx || !this.masterGain || this.muted) return;
+    const outBus = this.sfxBus ?? this.masterGain;
+    if (!this.initialized || !this.ctx || !outBus || this.muted) return;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -1135,7 +1154,7 @@ export class MotorsportAudioEngine {
     gain.gain.setValueAtTime(0.22, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
     osc.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(outBus);
     osc.start(now);
     osc.stop(now + duration);
   }

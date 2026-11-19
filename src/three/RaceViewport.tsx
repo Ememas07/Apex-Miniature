@@ -286,6 +286,7 @@ export function RaceViewport(props: RaceViewportProps) {
       sim.cars = [];
 
       const isQuali = currentPhase === 'qualifying';
+      const isPractice = currentPhase === 'playing' && cfg.sessionMode === 'practice';
       const activeClasses = cfg.activeClasses.length > 0 ? cfg.activeClasses : [getCarById(cfg.playerCarId).classId];
       const allowedCars = CARS.filter((c) => activeClasses.includes(c.classId));
       const poolCars = allowedCars.length > 0 ? allowedCars : CARS;
@@ -298,21 +299,31 @@ export function RaceViewport(props: RaceViewportProps) {
       const newCars: CarSimState[] = [];
       const playerSpec = getCarById(cfg.playerCarId);
 
-      // Determine grid slot for player and peers
-      const peers = propsRef.current.roomPeers.filter((p) => p.peerId !== propsRef.current.mpClient.peerId);
-      const aiCount = isQuali
-        ? 0
-        : cfg.noAi
-        ? 0
-        : cfg.aiBotCount !== undefined
-        ? Math.max(0, Math.min(23, cfg.aiBotCount))
-        : Math.max(0, cfg.gridSize - 1 - peers.length);
-      const totalGrid = isQuali ? 1 : currentPhase === 'title' ? 10 : Math.max(1, 1 + peers.length + aiCount);
-      const playerSlot = isQuali
-        ? 0
-        : sim.qualiGridPos !== null
-        ? Math.min(totalGrid - 1, sim.qualiGridPos - 1)
-        : Math.min(totalGrid - 1, Math.floor(totalGrid * 0.45));
+      // Determine grid slot for player and peers (Practice & Qualifying are strictly solo local sessions)
+      const peers =
+        isQuali || isPractice
+          ? []
+          : propsRef.current.roomPeers.filter((p) => p.peerId !== propsRef.current.mpClient.peerId);
+      const aiCount =
+        isQuali || isPractice
+          ? 0
+          : cfg.noAi
+          ? 0
+          : cfg.aiBotCount !== undefined
+          ? Math.max(0, Math.min(23, cfg.aiBotCount))
+          : Math.max(0, cfg.gridSize - 1 - peers.length);
+      const totalGrid =
+        isQuali || isPractice
+          ? 1
+          : currentPhase === 'title'
+          ? 10
+          : Math.max(1, 1 + peers.length + aiCount);
+      const playerSlot =
+        isQuali || isPractice
+          ? 0
+          : sim.qualiGridPos !== null
+          ? Math.min(totalGrid - 1, sim.qualiGridPos - 1)
+          : Math.min(totalGrid - 1, Math.floor(totalGrid * 0.45));
 
       const aiPaceMult = (1.0 * (cfg.aiDifficulty === 'Rookie' ? 0.84 : cfg.aiDifficulty === 'Amateur' ? 0.92 : cfg.aiDifficulty === 'Pro' ? 1.0 : 1.07)) + cfg.aiAdaptiveBoost;
 
@@ -326,12 +337,12 @@ export function RaceViewport(props: RaceViewportProps) {
             isPlayer: true,
             carId: playerSpec.id,
             livery: cfg.playerLivery,
-            gridSlot: isQuali ? 0 : slot,
+            gridSlot: isQuali || isPractice ? 0 : slot,
             compiledTrack: compiled,
             compound: cfg.startingCompound,
           });
-          if (isQuali) {
-            // Flying hotlap start: place just before final corner at speed!
+          if (isQuali || isPractice) {
+            // Flying hotlap start: place just before final corner at clean rolling speed
             const sp = sampleTrackAtT(compiled, 0.88);
             pCar.trackT = 0.88;
             pCar.prevTrackT = 0.88;
@@ -339,11 +350,11 @@ export function RaceViewport(props: RaceViewportProps) {
             pCar.y = sp.y;
             pCar.z = sp.z;
             pCar.heading = Math.atan2(sp.tx, sp.tz);
-            pCar.speed = 38;
+            pCar.speed = isQuali ? 38 : 34;
             pCar.totalDistance = -0.12;
           }
           newCars.push(pCar);
-        } else if (peerCursor < peers.length && currentPhase !== 'title' && !isQuali) {
+        } else if (peerCursor < peers.length && currentPhase !== 'title' && !isQuali && !isPractice) {
           const peer = peers[peerCursor++];
           newCars.push(
             createCarSimState({
@@ -421,7 +432,7 @@ export function RaceViewport(props: RaceViewportProps) {
       }
 
       const isAutostart = typeof window !== 'undefined' && window.location.search.includes('autostart=1');
-      sim.countdown = currentPhase === 'playing' && !isAutostart ? 2.0 : 0;
+      sim.countdown = currentPhase === 'playing' && !isPractice && !isAutostart ? 2.0 : 0;
       sim.trackWetness = cfg.weather === 'dynamic-rain' ? 0.35 : 0;
       sim.rainTimer = 0;
       sim.trauma = 0;
@@ -646,6 +657,7 @@ export function RaceViewport(props: RaceViewportProps) {
         sim.audio.updateEngine(0, 0, 'v8-hybrid', false);
       } else if (activePhase === 'playing' || activePhase === 'qualifying') {
         const isQuali = activePhase === 'qualifying';
+        const isPractice = activePhase === 'playing' && p.raceConfig.sessionMode === 'practice';
         if (sim.countdown > 0) {
           const prevCeil = Math.ceil(sim.countdown);
           const countdownStep = Math.min(Math.max(rawDt, 0.001), 0.35);
@@ -734,6 +746,7 @@ export function RaceViewport(props: RaceViewportProps) {
                   trackWetness: sim.trackWetness,
                   totalLaps: p.raceConfig.totalLaps,
                   isQualifying: isQuali,
+                  isPractice,
                   allCars: sim.cars,
                 },
               );
@@ -760,6 +773,7 @@ export function RaceViewport(props: RaceViewportProps) {
                 trackWetness: sim.trackWetness,
                 totalLaps: p.raceConfig.totalLaps,
                 isQualifying: isQuali,
+                isPractice,
                 allCars: sim.cars,
               });
             }
@@ -1086,6 +1100,11 @@ export function RaceViewport(props: RaceViewportProps) {
           })),
           qualiResultTime: sim.qualiTime,
           qualiGridPos: sim.qualiGridPos,
+          sessionMode: p.raceConfig.sessionMode ?? 'race',
+          currentSector: playerCar.currentSector ?? 1,
+          sectorTimes: playerCar.sectorTimes ? [...playerCar.sectorTimes] : [null, null, null],
+          bestSectorTimes: playerCar.bestSectorTimes ? [...playerCar.bestSectorTimes] : [null, null, null],
+          lastLapSectorTimes: playerCar.lastLapSectorTimes ? [...playerCar.lastLapSectorTimes] : [null, null, null],
         };
 
         p.onHudUpdate(snapshot);
@@ -1154,11 +1173,12 @@ export function RaceViewport(props: RaceViewportProps) {
     const sessionPhase = props.phase === 'title' ? 'title' : props.phase === 'qualifying' ? 'qualifying' : 'race';
     const ct = props.raceConfig.customTrack;
     const ctSig = ct ? `${ct.waypoints.length}:${ct.createdAt ?? 0}` : '';
-    const key = `${sessionPhase}:${props.raceConfig.trackId}:${ctSig}:${props.runNonce}`;
+    const modeSig = props.raceConfig.sessionMode ?? 'race';
+    const key = `${sessionPhase}:${modeSig}:${props.raceConfig.trackId}:${ctSig}:${props.runNonce}`;
     if (key === lastRebuildKeyRef.current) return;
     lastRebuildKeyRef.current = key;
     simRef.current.rebuildWorld();
-  }, [props.raceConfig.trackId, props.raceConfig.customTrack, props.runNonce, props.phase]);
+  }, [props.raceConfig.trackId, props.raceConfig.customTrack, props.raceConfig.sessionMode, props.runNonce, props.phase]);
 
   return (
     <div

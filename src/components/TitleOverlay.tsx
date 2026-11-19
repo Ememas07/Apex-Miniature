@@ -6,6 +6,7 @@ interface TitleOverlayProps {
   raceConfig: RaceConfig;
   roomCode: string | null;
   onStartRace: () => void;
+  onOpenSinglePlayer?: () => void;
   onOpenGarage: () => void;
   onOpenSetup: () => void;
   onOpenStudio?: () => void;
@@ -17,6 +18,7 @@ export function TitleOverlay({
   raceConfig,
   roomCode,
   onStartRace,
+  onOpenSinglePlayer,
   onOpenGarage,
   onOpenSetup,
   onOpenStudio,
@@ -108,11 +110,27 @@ export function TitleOverlay({
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
             <span>{track.name}</span>
             <span aria-hidden="true">·</span>
-            <span className="tabular-nums">{raceConfig.totalLaps} Laps</span>
+            <span className="tabular-nums">
+              {raceConfig.sessionMode === 'practice'
+                ? raceConfig.totalLaps <= 0
+                  ? 'Practice · Continuous'
+                  : `Practice · ${raceConfig.totalLaps} Laps`
+                : `${raceConfig.totalLaps} Laps`}
+            </span>
             <span aria-hidden="true">·</span>
-            <span>{raceConfig.activeClasses.length > 1 ? `${raceConfig.activeClasses.length}-Class Grid` : 'Single Class'}</span>
-            <span aria-hidden="true">·</span>
-            <span>{raceConfig.qualifyingEnabled ? '1-Lap Quali' : 'Grid Start'}</span>
+            <span>
+              {raceConfig.sessionMode === 'practice'
+                ? 'Solo Hotlap'
+                : raceConfig.activeClasses.length > 1
+                ? `${raceConfig.activeClasses.length}-Class Grid`
+                : 'Single Class'}
+            </span>
+            {raceConfig.sessionMode !== 'practice' && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{raceConfig.qualifyingEnabled ? '1-Lap Quali' : 'Grid Start'}</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -124,8 +142,23 @@ export function TitleOverlay({
             onClick={onStartRace}
             className="px-7 py-3.5 rounded-md bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-base tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 shadow-lg shadow-red-950/50"
           >
-            {raceConfig.qualifyingEnabled ? 'Start Qualifying' : 'Hit the Track'}
+            {raceConfig.sessionMode === 'practice'
+              ? 'Start Practice'
+              : raceConfig.qualifyingEnabled
+              ? 'Start Qualifying'
+              : 'Hit the Track'}
           </button>
+
+          {onOpenSinglePlayer && (
+            <button
+              type="button"
+              data-testid="btn-open-single-player"
+              onClick={onOpenSinglePlayer}
+              className="px-5 py-3.5 rounded-md bg-[#161b24] hover:bg-[#1e2532] border border-emerald-500/35 hover:border-emerald-400 text-emerald-300 hover:text-white font-semibold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              Single Player
+            </button>
+          )}
 
           <button
             type="button"

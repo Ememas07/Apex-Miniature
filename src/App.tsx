@@ -5,6 +5,7 @@ import { PauseModal } from './components/PauseModal';
 import { RaceHUD } from './components/RaceHUD';
 import { RaceSetupModal } from './components/RaceSetupModal';
 import { ResultsModal } from './components/ResultsModal';
+import { SinglePlayerModal } from './components/SinglePlayerModal';
 import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
 import { TrackStudioModal } from './components/TrackStudioModal';
@@ -44,6 +45,7 @@ const INITIAL_CONFIG: RaceConfig = {
   aiAdaptiveBoost: 0,
   aiBotCount: 11,
   noAi: false,
+  sessionMode: 'race',
 };
 
 export default function App() {
@@ -64,6 +66,7 @@ export default function App() {
 
   const [garageOpen, setGarageOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [singlePlayerOpen, setSinglePlayerOpen] = useState(false);
   const [trackStudioOpen, setTrackStudioOpen] = useState(false);
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
   const [soundStudioOpen, setSoundStudioOpen] = useState(false);
@@ -147,19 +150,59 @@ export default function App() {
     setFinalSnapshot(null);
     setQualiBanner(null);
 
-    if (room && room.hostId === mpClientRef.current?.peerId) {
+    if (room && room.hostId === mpClientRef.current?.peerId && raceConfig.sessionMode !== 'practice') {
       mpClientRef.current.startRace();
     }
-    const targetPhase = raceConfig.qualifyingEnabled ? 'qualifying' : 'playing';
+    const targetPhase =
+      raceConfig.sessionMode !== 'practice' && raceConfig.qualifyingEnabled ? 'qualifying' : 'playing';
     setActivePrePausePhase(targetPhase);
     setRunNonce((n) => n + 1);
     setPhase(targetPhase);
-  }, [raceConfig.qualifyingEnabled, room]);
+  }, [raceConfig.qualifyingEnabled, raceConfig.sessionMode, room]);
+
+  const handleStartSinglePlayer = useCallback(
+    (patch: Partial<RaceConfig>) => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      if (room) {
+        try {
+          mpClientRef.current?.leaveRoom();
+        } catch {
+          // Ignore disconnect errors when switching to offline Single Player
+        }
+        setRoom(null);
+      }
+      setRaceConfig((prev) => ({ ...prev, ...patch }));
+      setSinglePlayerOpen(false);
+      setGarageOpen(false);
+      setSetupOpen(false);
+      setTrackStudioOpen(false);
+      setFinalSnapshot(null);
+      setQualiBanner(null);
+      const targetPhase =
+        patch.sessionMode !== 'practice' && patch.qualifyingEnabled ? 'qualifying' : 'playing';
+      setActivePrePausePhase(targetPhase);
+      setRunNonce((n) => n + 1);
+      setPhase(targetPhase);
+    },
+    [room],
+  );
 
   // Enter / Space shortcut on Title screen
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (phase !== 'title' || garageOpen || setupOpen || trackStudioOpen) return;
+      if (
+        phase !== 'title' ||
+        garageOpen ||
+        setupOpen ||
+        singlePlayerOpen ||
+        trackStudioOpen ||
+        liveryStudioOpen ||
+        soundStudioOpen
+      ) {
+        return;
+      }
       if (e.code === 'Enter' || e.code === 'Space') {
         e.preventDefault();
         handleStartSession();
@@ -167,7 +210,16 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [phase, garageOpen, setupOpen, trackStudioOpen, handleStartSession]);
+  }, [
+    phase,
+    garageOpen,
+    setupOpen,
+    singlePlayerOpen,
+    trackStudioOpen,
+    liveryStudioOpen,
+    soundStudioOpen,
+    handleStartSession,
+  ]);
 
   const handleTogglePause = useCallback(() => {
     setPhase((cur) => {
@@ -313,16 +365,34 @@ export default function App() {
       />
 
       {/* Title Screen */}
-      {phase === 'title' && !garageOpen && !setupOpen && !trackStudioOpen && !liveryStudioOpen && !soundStudioOpen && (
-        <TitleOverlay
-          raceConfig={raceConfig}
-          roomCode={room?.code ?? null}
-          onStartRace={handleStartSession}
-          onOpenGarage={() => setGarageOpen(true)}
-          onOpenSetup={() => setSetupOpen(true)}
-          onOpenStudio={() => handleOpenStudio()}
-          onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
-          onOpenSoundStudio={() => setSoundStudioOpen(true)}
+      {phase === 'title' &&
+        !garageOpen &&
+        !setupOpen &&
+        !singlePlayerOpen &&
+        !trackStudioOpen &&
+        !liveryStudioOpen &&
+        !soundStudioOpen && (
+          <TitleOverlay
+            raceConfig={raceConfig}
+            roomCode={room?.code ?? null}
+            onStartRace={handleStartSession}
+            onOpenSinglePlayer={() => setSinglePlayerOpen(true)}
+            onOpenGarage={() => setGarageOpen(true)}
+            onOpenSetup={() => setSetupOpen(true)}
+            onOpenStudio={() => handleOpenStudio()}
+            onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
+            onOpenSoundStudio={() => setSoundStudioOpen(true)}
+          />
+        )}
+
+      {/* Single Player Mode (Practice / Hotlap & Quick Race vs AI) */}
+      {singlePlayerOpen && (
+        <SinglePlayerModal
+          config={raceConfig}
+          customTracksNonce={customTracksNonce}
+          onStartPractice={handleStartSinglePlayer}
+          onStartQuickRace={handleStartSinglePlayer}
+          onClose={() => setSinglePlayerOpen(false)}
         />
       )}
 

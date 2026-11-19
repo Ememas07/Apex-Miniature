@@ -200,6 +200,8 @@ export interface PitStrategy {
   nextCompound: TireCompound;
 }
 
+export type SinglePlayerSessionMode = 'race' | 'practice';
+
 export interface RaceConfig {
   trackId: string;
   customTrack?: TrackSpec;
@@ -209,13 +211,14 @@ export interface RaceConfig {
   gridSize: number; // 1 to 24
   aiBotCount: number; // 0 to 23
   noAi: boolean; // quick toggle for No AI (Humans Only / Solo)
-  totalLaps: number; // 5 to 20
+  totalLaps: number; // 0 = continuous practice, 1..20 race laps
   weather: WeatherMode;
   startingCompound: TireCompound;
   qualifyingEnabled: boolean;
   aiDifficulty: AIDifficulty;
   aiAdaptiveBoost: number; // -0.06 to +0.08 learned from player lap times
   roomCode?: string;
+  sessionMode?: SinglePlayerSessionMode;
 }
 
 export interface DriverStandingsEntry {
@@ -295,6 +298,11 @@ export interface HudSnapshot {
   }>;
   qualiResultTime: number | null;
   qualiGridPos: number | null;
+  sessionMode?: SinglePlayerSessionMode;
+  currentSector?: 1 | 2 | 3;
+  sectorTimes?: [number | null, number | null, number | null];
+  bestSectorTimes?: [number | null, number | null, number | null];
+  lastLapSectorTimes?: [number | null, number | null, number | null];
 }
 
 export interface RoomPeer {
