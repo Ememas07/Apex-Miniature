@@ -1880,6 +1880,170 @@ test('Oreca 07 is selectable in LMP2 and resolves to Oreca 07 (never Ferrari 499
   assert.equal(getCarById('oreca-07-united-autosports').defaultLivery.primaryColor, '#FF6B00');
 });
 
+test('Realistic off-throttle engine braking deceleration (~0.10g–0.45g coasting)', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const gt3 = getCarById('porsche-911-gt3-r');
+  const car = createCarSimState({
+    id: 'coast-test',
+    name: 'Coaster',
+    isPlayer: true,
+    carId: gt3.id,
+    livery: gt3.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monza,
+    compound: 'medium',
+  });
+
+  // Set rolling speed of 36 m/s (~130 km/h) on straight
+  const sp = sampleTrackAtT(monza, 0.02);
+  car.trackT = 0.02;
+  car.prevTrackT = 0.02;
+  car.x = sp.x;
+  car.y = sp.y;
+  car.z = sp.z;
+  car.heading = Math.atan2(sp.tx, sp.tz);
+  car.speed = 36;
+  car.vx = Math.sin(car.heading) * car.speed;
+  car.vz = Math.cos(car.heading) * car.speed;
+  car.gear = 3;
+  car.rpmNormalized = 0.72;
+
+  const startSpeed = car.speed;
+  for (let i = 0; i < 60; i++) {
+    stepCarPhysics(
+      car,
+      { throttle: 0, brake: 0, steer: 0, specialPressed: false },
+      monza,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
+    );
+  }
+  const speedDrop = startSpeed - car.speed;
+  const decelG = speedDrop / 9.81; // over 1.0s
+  assert.ok(
+    decelG >= 0.08 && decelG <= 0.45,
+    `Expected realistic coasting engine braking (0.08g-0.45g), got ${decelG.toFixed(3)}g`,
+  );
+});
+
+test('Low-speed turning obeys physical wheelbase & tire friction (no kinematic snap-spin)', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const gtp = getCarById('ferrari-499p');
+  const car = createCarSimState({
+    id: 'steer-test',
+    name: 'Steer Tester',
+    isPlayer: true,
+    carId: gtp.id,
+    livery: gtp.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+
+  const sp = sampleTrackAtT(monza, 0.02);
+  car.trackT = 0.02;
+  car.prevTrackT = 0.02;
+  car.x = sp.x;
+  car.y = sp.y;
+  car.z = sp.z;
+  car.heading = Math.atan2(sp.tx, sp.tz);
+  car.speed = 8.0; // ~29 km/h low-speed cornering
+  car.vx = Math.sin(car.heading) * car.speed;
+  car.vz = Math.cos(car.heading) * car.speed;
+
+  const h0 = car.heading;
+  for (let i = 0; i < 30; i++) {
+    stepCarPhysics(
+      car,
+      { throttle: 0.25, brake: 0, steer: 1, specialPressed: false },
+      monza,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
+    );
+  }
+  let deltaH = Math.abs(car.heading - h0);
+  while (deltaH > Math.PI) deltaH = Math.abs(deltaH - Math.PI * 2);
+  const avgYawRate = deltaH / 0.5;
+  // Physical GTP turning at 8-10 m/s has yaw rate ~1.1-1.5 rad/s (maxTurnRate arcade was >= 2.15 rad/s)
+  assert.ok(
+    avgYawRate > 0.4 && avgYawRate <= 1.75,
+    `Expected physical tire-limited low-speed yaw rate (0.4..1.75 rad/s), got ${avgYawRate.toFixed(3)} rad/s`,
+  );
+});
+
+test('Acoustic profile parity: Porsche 911 GT3 R resolves to gt3_flat6 harmonics in-game & studio', () => {
+  const porsche = getCarById('porsche-911-gt3-r');
+  const profile = resolveAcousticProfile(porsche.id, porsche.engineType, porsche.classId, porsche.soundProfile);
+  assert.equal(profile.soundProfile, 'gt3_flat6');
+  assert.ok(profile.harmonicWeights && profile.harmonicWeights.length >= 6);
+  assert.ok(profile.maxRedlineHz >= 240 && profile.baseIdleHz >= 40);
+});
+
+test('Single Player Practice mode tracks S1/S2/S3 sectors and supports continuous unlimited laps', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const gt3 = getCarById('porsche-911-gt3-r');
+  const car = createCarSimState({
+    id: 'practice-car',
+    name: 'You',
+    isPlayer: true,
+    carId: gt3.id,
+    livery: gt3.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+
+  // Start at t=0.05 moving along track and step across S1 (0.333), S2 (0.667), and S3/Finish (1.0)
+  car.lap = 1;
+  car.trackT = 0.05;
+  car.prevTrackT = 0.05;
+  const spStart = sampleTrackAtT(monza, 0.05);
+  car.x = spStart.x;
+  car.y = spStart.y;
+  car.z = spStart.z;
+  car.heading = Math.atan2(spStart.tx, spStart.tz);
+  car.speed = 55;
+  car.vx = Math.sin(car.heading) * car.speed;
+  car.vz = Math.cos(car.heading) * car.speed;
+
+  // Step using AI control in continuous practice mode (totalLaps: 0, isPractice: true)
+  const dt = 1 / 60;
+  let lapCompleted = false;
+  for (let i = 0; i < 9000; i++) {
+    const ai = computeAIControl(car, monza, [car], dt, 0);
+    stepCarPhysics(car, ai, monza, dt, {
+      trackWetness: 0,
+      totalLaps: 0,
+      isQualifying: false,
+      isPractice: true,
+      allCars: [car],
+    });
+    if (car.lap >= 2) {
+      lapCompleted = true;
+      break;
+    }
+  }
+
+  assert.ok(lapCompleted, 'Practice car should cross start/finish to start Lap 2');
+  assert.equal(car.finished, false, 'Continuous practice (totalLaps=0) must never set car.finished = true');
+  assert.ok(car.lastLapTime !== null && car.lastLapTime > 20, 'Last lap time should be recorded after Lap 1');
+  assert.ok(
+    car.lastLapSectorTimes &&
+      car.lastLapSectorTimes[0] !== null &&
+      car.lastLapSectorTimes[1] !== null &&
+      car.lastLapSectorTimes[2] !== null,
+    'All three S1/S2/S3 sector splits should be populated after completing a lap',
+  );
+  assert.ok(
+    car.bestSectorTimes &&
+      car.bestSectorTimes[0] !== null &&
+      car.bestSectorTimes[1] !== null &&
+      car.bestSectorTimes[2] !== null,
+    'Best sector times should be tracked',
+  );
+});
+
+
 
 
 
