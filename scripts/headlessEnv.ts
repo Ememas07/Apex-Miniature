@@ -12,12 +12,12 @@ import { buildObservationVector } from '../src/game/aiNeuralPolicy';
 import { CompiledTrack, compileTrack, sampleTrackAtT, TRACKS } from '../src/game/tracks';
 
 interface MlpWeights {
+  w0: number[][];
+  b0: number[];
   w1: number[][];
   b1: number[];
   w2: number[][];
   b2: number[];
-  w3: number[][];
-  b3: number[];
 }
 
 interface TrafficBot {
@@ -51,9 +51,6 @@ const DEFAULT_CARS = [
   'porsche-911-gt3-rs',
 ];
 
-// const WEIGHTS_PATH = path.resolve(__dirname, '../src/game/aiPolicyWeights.json');
-// const POOL_DIR = path.resolve(__dirname, '../audit/selfplay_pool');
-
 const WEIGHTS_PATH = path.resolve(process.cwd(), 'src/game/aiPolicyWeights.json');
 const POOL_DIR = path.resolve(process.cwd(), 'audit/selfplay_pool');
 
@@ -62,18 +59,23 @@ let resetCounter = 0;
 
 function parsePolicyWeights(raw: any): MlpWeights | null {
   if (!raw || typeof raw !== 'object') return null;
+  // Standard trainPPO.py v2 export format (w0/b0, w1/b1, w2/b2)
+  if (raw.w0 && raw.b0 && raw.w1 && raw.b1 && raw.w2 && raw.b2) {
+    return { w0: raw.w0, b0: raw.b0, w1: raw.w1, b1: raw.b1, w2: raw.w2, b2: raw.b2 };
+  }
+  // Fallback for 1-indexed keys
   if (raw.w1 && raw.b1 && raw.w2 && raw.b2 && raw.w3 && raw.b3) {
-    return { w1: raw.w1, b1: raw.b1, w2: raw.w2, b2: raw.b2, w3: raw.w3, b3: raw.b3 };
+    return { w0: raw.w1, b0: raw.b1, w1: raw.w2, b1: raw.b2, w2: raw.w3, b2: raw.b3 };
   }
   if (Array.isArray(raw.layers) && raw.layers.length >= 3) {
     const [l1, l2, l3] = raw.layers;
     return {
-      w1: l1.w ?? l1.weights,
-      b1: l1.b ?? l1.biases,
-      w2: l2.w ?? l2.weights,
-      b2: l2.b ?? l2.biases,
-      w3: l3.w ?? l3.weights,
-      b3: l3.b ?? l3.biases,
+      w0: l1.w ?? l1.weights,
+      b0: l1.b ?? l1.biases,
+      w1: l2.w ?? l2.weights,
+      b1: l2.b ?? l2.biases,
+      w2: l3.w ?? l3.weights,
+      b2: l3.b ?? l3.biases,
     };
   }
   return null;
@@ -92,7 +94,7 @@ function refreshPolicyPool(): void {
     // Ignore transient read errors if trainPPO.py is mid-write
   }
 
-  // 2. Also load up to 6 recent historical snapshots from audit/selfplay_pool/ if present
+  // 2. Also load up to 6 recent historical snapshots from audit/selfplay_pool/
   try {
     if (fs.existsSync(POOL_DIR)) {
       const files = fs
@@ -132,9 +134,9 @@ function denseLayer(input: number[], w: number[][], b: number[], applyTanh: bool
 }
 
 function runNeuralPolicy(obs: number[], policy: MlpWeights): ControlInput {
-  const h1 = denseLayer(obs, policy.w1, policy.b1, true);
-  const h2 = denseLayer(h1, policy.w2, policy.b2, true);
-  const act = denseLayer(h2, policy.w3, policy.b3, false);
+  const h1 = denseLayer(obs, policy.w0, policy.b0, true);
+  const h2 = denseLayer(h1, policy.w1, policy.b1, true);
+  const act = denseLayer(h2, policy.w2, policy.b2, false);
 
   const steer = Math.max(-1, Math.min(1, act[0]));
   const rawThrottle = Math.max(-1, Math.min(1, act[1]));
@@ -342,7 +344,7 @@ rl.on('line', (line) => {
     cfgTracks = msg.tracks;
     cfgCars = msg.cars;
     slots = Array.from({ length: n }, () => resetSlot(cfgTracks, cfgCars, true));
-    process.stdout.write(JSON.stringify({ obs: slots.map(getObs) }) + '\n');
+    process.stdout.write(JSON.stringify({ obs: slots.map(getObs), poolSize: policyPool.length }) + '\n');
     return;
   }
 
@@ -359,6 +361,8 @@ rl.on('line', (line) => {
       lapTime: number | null;
       offTrack: boolean;
       crashed: boolean;
+      carCrash: boolean;
+      wallCrash: boolean;
     }[] = [];
 
     const POLICY_DT = 1 / 30;
@@ -471,6 +475,8 @@ rl.on('line', (line) => {
 
       let done = false;
       let crashed = false;
+      let carCrash = false;
+      let wallCrash = false;
       let completedLapTime: number | null = null;
 
       if (prevT > 0.85 && slot.car.trackT < 0.15 && slot.stepsInEpisode > 150) {
@@ -485,9 +491,15 @@ rl.on('line', (line) => {
       // Scale episode cap by track length (~2.2x a 90 km/h lap, min 6000 steps) so long tracks like Le Mans can finish 2 crossings
       const maxSteps = Math.max(6000, Math.ceil((slot.track.totalLength / 25) * 30 * 2.2));
 
-      if (carContact || wallOrContactDmg || absLat > halfW + 5.5 || (slot.stepsInEpisode > 90 && slot.car.speed < 4.0)) {
-        reward -= carContact ? 4.5 : 5.0;
+      if (carContact) {
+        reward -= 4.5;
         crashed = true;
+        carCrash = true;
+        done = true;
+      } else if (wallOrContactDmg || absLat > halfW + 5.5 || (slot.stepsInEpisode > 90 && slot.car.speed < 4.0)) {
+        reward -= 5.0;
+        crashed = true;
+        wallCrash = true;
         done = true;
       } else if (slot.stepsInEpisode > maxSteps) {
         done = true;
@@ -502,6 +514,8 @@ rl.on('line', (line) => {
         lapTime: completedLapTime,
         offTrack,
         crashed,
+        carCrash,
+        wallCrash,
       });
 
       if (done) {

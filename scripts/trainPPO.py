@@ -102,210 +102,33 @@ def export_actor_to_json(model: ActorCritic, path: str, metadata: dict):
     shutil.copy2(path, BACKUP_WEIGHTS_PATH)
 
 
-def write_dashboard_html(
+def write_dashboard_data(
     history: list[dict],
     best_laps_track_class: dict[tuple[str, str], float],
     best_laps_class: dict[str, tuple[float, str]],
 ):
-    os.makedirs(os.path.dirname(DASHBOARD_PATH), exist_ok=True)
-    latest = history[-1]
+    os.makedirs(os.path.dirname(DATA_JS_PATH), exist_ok=True)
 
-    present_classes = [c for c in CLASS_ORDER if c in latest["classes"]] + [
-        c for c in sorted(latest["classes"].keys()) if c not in CLASS_ORDER
-    ]
-    class_rows = ""
-    for cid in present_classes:
-        c = latest["classes"][cid]
-        best_info = best_laps_class.get(cid)
-        best_str = f"{best_info[0]:.2f}s ({best_info[1]})" if best_info is not None else "—"
-        off_pct = c["offTrackPct"]
-        crash_rate = c["crashesPer1k"]
-        status_cls = "good" if off_pct < 8 and crash_rate < 2 else ("warn" if off_pct < 20 else "bad")
-        class_rows += f"""
-        <tr>
-          <td><span class="badge badge-{cid.lower()}">{cid}</span></td>
-          <td><strong>{c['avgSpeed']:.1f} km/h</strong></td>
-          <td>{c['maxSpeed']:.1f} km/h</td>
-          <td class="best">{best_str}</td>
-          <td class="{status_cls}">{off_pct:.1f}%</td>
-          <td class="{status_cls}">{crash_rate:.2f}</td>
-          <td>{c['samples']:,}</td>
-        </tr>"""
+    best_laps_track: dict[str, dict] = {}
+    for (tid, cid), lt in best_laps_track_class.items():
+        if tid not in best_laps_track or lt < best_laps_track[tid]["time"]:
+            best_laps_track[tid] = {"time": round(lt, 2), "carClass": cid}
 
-    tracks = sorted(latest["tracks"].keys())
-    track_rows = ""
-    for tid in tracks:
-        t = latest["tracks"][tid]
-        track_bests = [
-            (lt, cls) for (tr, cls), lt in best_laps_track_class.items() if tr == tid
-        ]
-        if track_bests:
-            fastest_lt, fastest_cls = min(track_bests, key=lambda x: x[0])
-            best_str = f"{fastest_lt:.2f}s <span class='muted'>({fastest_cls})</span>"
-        else:
-            best_str = "—"
-        cur_best = f"{t['bestLap']:.2f}s" if t["bestLap"] is not None else "—"
-        off_pct = t["offTrackPct"]
-        crash_rate = t["crashesPer1k"]
-        status_cls = "good" if off_pct < 8 and crash_rate < 2 else ("warn" if off_pct < 20 else "bad")
-        track_rows += f"""
-        <tr>
-          <td><strong>{tid}</strong></td>
-          <td>{t['avgSpeed']:.1f} km/h</td>
-          <td>{cur_best}</td>
-          <td class="best">{best_str}</td>
-          <td class="{status_cls}">{off_pct:.1f}%</td>
-          <td class="{status_cls}">{crash_rate:.2f}</td>
-          <td>{t['samples']:,}</td>
-        </tr>"""
+    payload = {
+        "history": history[-250:],
+        "bestLapsClass": {
+            cid: {"time": round(lt, 2), "track": tid}
+            for cid, (lt, tid) in best_laps_class.items()
+        },
+        "bestLapsTrack": best_laps_track,
+    }
 
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="5">
-<title>Apex-Miniature PPO Progress</title>
-<style>
-  body {{ font-family: system-ui, -apple-system, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 24px; }}
-  h1, h2 {{ margin: 0 0 12px; font-weight: 600; }}
-  h2 {{ margin-top: 22px; }}
-  .sub {{ color: #8b949e; margin-bottom: 20px; font-size: 14px; }}
-  .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }}
-  .card {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }}
-  .card .label {{ color: #8b949e; font-size: 12px; text-transform: uppercase; }}
-  .card .val {{ font-size: 24px; font-weight: 700; margin-top: 4px; color: #58a6ff; }}
-  .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }}
-  .panel {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }}
-  .panel h2 {{ margin-top: 0; }}
-  canvas {{ width: 100%; height: 230px; display: block; }}
-  table {{ width: 100%; border-collapse: collapse; background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; margin-bottom: 16px; }}
-  th, td {{ padding: 10px 14px; text-align: left; border-bottom: 1px solid #21262d; font-size: 14px; }}
-  th {{ background: #1f242c; color: #8b949e; font-weight: 600; }}
-  .good {{ color: #3fb950; }} .warn {{ color: #d29922; }} .bad {{ color: #f85149; }} .best {{ color: #79c0ff; font-weight: 600; }}
-  .muted {{ color: #8b949e; font-weight: 400; font-size: 12px; }}
-  .badge {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #21262d; }}
-  .badge-f1 {{ background: rgba(248,81,73,0.18); color: #ff7b72; }}
-  .badge-hypercar {{ background: rgba(88,166,255,0.18); color: #79c0ff; }}
-  .badge-lmp2 {{ background: rgba(210,168,255,0.18); color: #d2a8ff; }}
-  .badge-gt3 {{ background: rgba(63,185,80,0.18); color: #56d364; }}
-  .badge-gt4 {{ background: rgba(255,166,87,0.18); color: #ffa657; }}
-</style>
-</head>
-<body>
-  <h1>Apex-Miniature — PPO Training Monitor</h1>
-  <div class="sub">Auto-refreshes every 5s &bull; Update {latest['update']} / {latest['totalUpdates']} &bull; {latest['sps']:,} steps/s</div>
-
-  <div class="cards">
-    <div class="card"><div class="label">Mean Reward / Step</div><div class="val">{latest['meanRew']:+.3f}</div></div>
-    <div class="card"><div class="label">Global Avg Speed</div><div class="val">{latest['meanSpeed']:.1f} km/h</div></div>
-    <div class="card"><div class="label">Off-Track Rate</div><div class="val">{latest['offTrackPct']:.1f}%</div></div>
-    <div class="card"><div class="label">Policy Noise (Std)</div><div class="val">{latest['std']:.2f}</div></div>
-    <div class="card"><div class="label">Learning Rate</div><div class="val">{latest['lr']:.1e}</div></div>
-  </div>
-
-  <div class="charts">
-    <div class="panel"><h2>Step Reward &amp; Global Avg Speed</h2><canvas id="c1"></canvas></div>
-    <div class="panel"><h2>Avg Speed by Car Class (km/h)</h2><canvas id="c2"></canvas></div>
-  </div>
-
-  <h2>Per-Class Performance Breakdown</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Class</th><th>Avg Speed</th><th>Peak Speed</th><th>All-Time Best Lap</th><th>Off-Track %</th><th>Crashes / 1k steps</th><th>Steps</th>
-      </tr>
-    </thead>
-    <tbody>{class_rows}</tbody>
-  </table>
-
-  <h2>Per-Track Breakdown (Latest Rollout + All-Time Best Lap)</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Track</th><th>Avg Speed</th><th>Rollout Best Lap</th><th>All-Time Best Lap</th><th>Off-Track %</th><th>Crashes / 1k steps</th><th>Steps</th>
-      </tr>
-    </thead>
-    <tbody>{track_rows}</tbody>
-  </table>
-
-<script>
-const HISTORY = {json.dumps(history[-250:])};
-const CLASS_COLORS = {{
-  'F1': '#ff7b72',
-  'Hypercar': '#58a6ff',
-  'LMP2': '#d2a8ff',
-  'GT3': '#3fb950',
-  'GT4': '#ffa657',
-  'Other': '#8b949e'
-}};
-
-function drawSeries(canvasId, seriesList) {{
-  const c = document.getElementById(canvasId);
-  const dpr = window.devicePixelRatio || 1;
-  c.width = c.clientWidth * dpr;
-  c.height = c.clientHeight * dpr;
-  const ctx = c.getContext('2d');
-  ctx.scale(dpr, dpr);
-  const w = c.clientWidth, h = c.clientHeight, pad = 28;
-  ctx.clearRect(0, 0, w, h);
-  if (!HISTORY.length) return;
-
-  let allVals = [];
-  seriesList.forEach(s => allVals.push(...s.data.filter(v => v !== null && v !== undefined)));
-  if (!allVals.length) return;
-  let minV = Math.min(...allVals), maxV = Math.max(...allVals);
-  if (maxV - minV < 1e-4) {{ maxV += 1; minV -= 1; }}
-
-  ctx.strokeStyle = '#21262d';
-  ctx.lineWidth = 1;
-  for (let g = 0; g <= 4; g++) {{
-    const y = pad + (h - 2 * pad) * (g / 4);
-    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - pad, y); ctx.stroke();
-  }}
-
-  seriesList.forEach((s) => {{
-    ctx.strokeStyle = s.color || '#58a6ff';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    let started = false;
-    s.data.forEach((v, i) => {{
-      if (v === null || v === undefined) return;
-      const x = pad + (w - 2 * pad) * (i / Math.max(1, s.data.length - 1));
-      const y = h - pad - (h - 2 * pad) * ((v - minV) / (maxV - minV));
-      if (!started) {{ ctx.moveTo(x, y); started = true; }} else ctx.lineTo(x, y);
-    }});
-    ctx.stroke();
-  }});
-
-  let lx = pad;
-  ctx.font = '12px system-ui';
-  seriesList.forEach((s) => {{
-    ctx.fillStyle = s.color || '#58a6ff';
-    ctx.fillRect(lx, 8, 10, 10);
-    ctx.fillStyle = '#c9d1d9';
-    ctx.fillText(s.name, lx + 14, 17);
-    lx += ctx.measureText(s.name).width + 28;
-  }});
-}}
-
-drawSeries('c1', [
-  {{ name: 'Global Avg Speed (km/h)', data: HISTORY.map(r => r.meanSpeed), color: '#58a6ff' }},
-  {{ name: 'Reward x100', data: HISTORY.map(r => r.meanRew * 100), color: '#3fb950' }},
-]);
-
-const classOrder = ['F1', 'Hypercar', 'LMP2', 'GT3', 'GT4', 'Other'];
-const activeClasses = classOrder.filter(cid => HISTORY.some(r => r.classes && r.classes[cid]));
-drawSeries('c2', activeClasses.map(cid => ({{
-  name: cid,
-  data: HISTORY.map(r => (r.classes && r.classes[cid]) ? r.classes[cid].avgSpeed : null),
-  color: CLASS_COLORS[cid] || '#8b949e'
-}})));
-</script>
-</body>
-</html>"""
-    with open(DASHBOARD_PATH, "w", encoding="utf-8") as f:
-        f.write(html)
-
+    tmp_path = DATA_JS_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write("window.PPO_DATA = ")
+        json.dump(payload, f)
+        f.write(";\n")
+    os.replace(tmp_path, DATA_JS_PATH)
 
 def spawn_env_worker():
     npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
@@ -555,7 +378,7 @@ def main():
                 mf.write(json.dumps(record) + "\n")
 
             if update == 1 or update % 2 == 0:
-                write_dashboard_html(history, best_laps_track_class, best_laps_class)
+                write_dashboard_data(history, best_laps_track_class, best_laps_class)
 
             saved_tag = ""
             min_save_update = max(15, critic_warmup_updates + 1)
