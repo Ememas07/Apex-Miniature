@@ -1,15 +1,20 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
-import {
-  CarSimState,
-  ControlInput,
-  createCarSimState,
-  resolveWallContact,
-  stepCarPhysics,
-} from '../src/game/physics';
-import { buildObservationVector } from '../src/game/aiNeuralPolicy';
-import { CompiledTrack, compileTrack, sampleTrackAtT, TRACKS } from '../src/game/tracks';
+import type { CarSimState, ControlInput } from '../src/game/physics';
+import type { CompiledTrack } from '../src/game/tracks';
+
+// Ensure no imported module logs (e.g. console.info('[AI Policy]', ...)) pollute JSON-RPC stdout
+const redirectToStderr = (...args: unknown[]) => {
+  console.error(...args);
+};
+console.log = redirectToStderr;
+console.info = redirectToStderr;
+console.debug = redirectToStderr;
+
+const { createCarSimState, resolveWallContact, stepCarPhysics } = await import('../src/game/physics');
+const { buildObservationVector } = await import('../src/game/aiNeuralPolicy');
+const { compileTrack, sampleTrackAtT, TRACKS } = await import('../src/game/tracks');
 
 interface MlpWeights {
   w0: number[][];
@@ -19,6 +24,54 @@ interface MlpWeights {
   w2: number[][];
   b2: number[];
 }
+
+export interface RewardWeights {
+  forwardProgress: number;
+  closeProximity: number;
+  minSpeedThreshold: number;
+  minSpeedPenalty: number;
+  floorSpeedThreshold: number;
+  floorSpeedPenalty: number;
+  offTrackBase: number;
+  offTrackSlope: number;
+  steerJerk: number;
+  throttleBrakeOverlap: number;
+  carCrash: number;
+  wallCrash: number;
+  decelThreshold: number;
+  decelPenalty: number;
+  stallStopSpeed: number;
+}
+
+export interface TrafficMix {
+  soloRatio: number;
+  scriptedRatio: number;
+  selfplayRatio: number;
+}
+
+const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
+  forwardProgress: 0.45,
+  closeProximity: 0.06,
+  minSpeedThreshold: 15.0,
+  minSpeedPenalty: 0.08,
+  floorSpeedThreshold: 25.0 / 3.6,
+  floorSpeedPenalty: 0.0,
+  offTrackBase: 1.2,
+  offTrackSlope: 0.35,
+  steerJerk: 0.06,
+  throttleBrakeOverlap: 0.15,
+  carCrash: 4.5,
+  wallCrash: 5.0,
+  decelThreshold: 0.45,
+  decelPenalty: 0.0,
+  stallStopSpeed: 4.0,
+};
+
+const DEFAULT_TRAFFIC_MIX: TrafficMix = {
+  soloRatio: 0.3,
+  scriptedRatio: 0.3,
+  selfplayRatio: 0.4,
+};
 
 interface TrafficBot {
   car: CarSimState;
@@ -38,6 +91,7 @@ interface EnvSlot {
   prevTrackT: number;
   prevAeroDamage: number;
   prevSteer: number;
+  prevSpeed: number;
   stepsInEpisode: number;
   lapsCompleted: number;
 }
@@ -53,6 +107,11 @@ const DEFAULT_CARS = [
 
 const WEIGHTS_PATH = path.resolve(process.cwd(), 'src/game/aiPolicyWeights.json');
 const POOL_DIR = path.resolve(process.cwd(), 'audit/selfplay_pool');
+
+let rewardWeights: RewardWeights = { ...DEFAULT_REWARD_WEIGHTS };
+let trafficMix: TrafficMix = { ...DEFAULT_TRAFFIC_MIX };
+let activeWeightsPath = WEIGHTS_PATH;
+let activePoolDir = POOL_DIR;
 
 let policyPool: MlpWeights[] = [];
 let resetCounter = 0;
@@ -86,25 +145,25 @@ function refreshPolicyPool(): void {
 
   // 1. Always try to load the latest active weights
   try {
-    if (fs.existsSync(WEIGHTS_PATH)) {
-      const parsed = parsePolicyWeights(JSON.parse(fs.readFileSync(WEIGHTS_PATH, 'utf8')));
+    if (fs.existsSync(activeWeightsPath)) {
+      const parsed = parsePolicyWeights(JSON.parse(fs.readFileSync(activeWeightsPath, 'utf8')));
       if (parsed) loaded.push(parsed);
     }
   } catch {
     // Ignore transient read errors if trainPPO.py is mid-write
   }
 
-  // 2. Also load up to 6 recent historical snapshots from audit/selfplay_pool/
+  // 2. Also load up to 6 recent historical snapshots from the active selfplay pool directory
   try {
-    if (fs.existsSync(POOL_DIR)) {
+    if (fs.existsSync(activePoolDir)) {
       const files = fs
-        .readdirSync(POOL_DIR)
+        .readdirSync(activePoolDir)
         .filter((f) => f.endsWith('.json'))
         .sort()
         .slice(-6);
       for (const file of files) {
         try {
-          const parsed = parsePolicyWeights(JSON.parse(fs.readFileSync(path.join(POOL_DIR, file), 'utf8')));
+          const parsed = parsePolicyWeights(JSON.parse(fs.readFileSync(path.join(activePoolDir, file), 'utf8')));
           if (parsed) loaded.push(parsed);
         } catch {
           // Skip unreadable snapshot
@@ -117,6 +176,51 @@ function refreshPolicyPool(): void {
 
   if (loaded.length > 0) {
     policyPool = loaded;
+  }
+}
+
+function applyConfigPatch(msg: Record<string, any>, resetDefaults: boolean): void {
+  if (resetDefaults) {
+    rewardWeights = { ...DEFAULT_REWARD_WEIGHTS };
+    trafficMix = { ...DEFAULT_TRAFFIC_MIX };
+    activeWeightsPath = WEIGHTS_PATH;
+    activePoolDir = POOL_DIR;
+  }
+
+  if (msg.rewardWeights && typeof msg.rewardWeights === 'object') {
+    for (const key of Object.keys(DEFAULT_REWARD_WEIGHTS) as (keyof RewardWeights)[]) {
+      const val = msg.rewardWeights[key];
+      if (typeof val === 'number' && Number.isFinite(val)) {
+        rewardWeights[key] = val;
+      }
+    }
+  }
+
+  if (msg.trafficMix && typeof msg.trafficMix === 'object') {
+    const nextSolo =
+      typeof msg.trafficMix.soloRatio === 'number' && Number.isFinite(msg.trafficMix.soloRatio)
+        ? Math.max(0, Math.min(1, msg.trafficMix.soloRatio))
+        : trafficMix.soloRatio;
+    const nextScripted =
+      typeof msg.trafficMix.scriptedRatio === 'number' && Number.isFinite(msg.trafficMix.scriptedRatio)
+        ? Math.max(0, Math.min(1, msg.trafficMix.scriptedRatio))
+        : trafficMix.scriptedRatio;
+    const nextSelfplay =
+      typeof msg.trafficMix.selfplayRatio === 'number' && Number.isFinite(msg.trafficMix.selfplayRatio)
+        ? Math.max(0, Math.min(1, msg.trafficMix.selfplayRatio))
+        : trafficMix.selfplayRatio;
+    trafficMix = {
+      soloRatio: nextSolo,
+      scriptedRatio: nextScripted,
+      selfplayRatio: nextSelfplay,
+    };
+  }
+
+  if (typeof msg.weightsPath === 'string' && msg.weightsPath.trim()) {
+    activeWeightsPath = path.resolve(process.cwd(), msg.weightsPath.trim());
+  }
+  if (typeof msg.poolDir === 'string' && msg.poolDir.trim()) {
+    activePoolDir = path.resolve(process.cwd(), msg.poolDir.trim());
   }
 }
 
@@ -256,7 +360,7 @@ function computeTrafficControl(bot: TrafficBot, track: CompiledTrack, allCars: C
 
 function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): EnvSlot {
   resetCounter++;
-  if (resetCounter % 500 === 0) {
+  if (resetCounter % 500 === 0 || (policyPool.length === 0 && trafficMix.selfplayRatio > 0 && resetCounter % 50 === 0)) {
     refreshPolicyPool();
   }
 
@@ -270,11 +374,12 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
   const initSpeed = randomStart ? 16 + Math.random() * 18 : 0;
   const car = spawnCarAt(track, cId, 'rl_agent', startT, latRatio, initSpeed);
 
-  // Mixed diet: 30% solo hotlap, 30% slower scripted traffic, 40% neural self-play (if weights loaded)
+  // Configurable traffic diet (default: 30% solo hotlap, 30% scripted traffic, 40% neural self-play)
   const traffic: TrafficBot[] = [];
   const roll = Math.random();
+  const scriptedCutoff = trafficMix.soloRatio + trafficMix.scriptedRatio;
 
-  if (roll >= 0.3 && roll < 0.6) {
+  if (roll >= trafficMix.soloRatio && roll < scriptedCutoff) {
     // Scripted slower multiclass traffic
     const numTraffic = 4;
     for (let k = 0; k < numTraffic; k++) {
@@ -287,7 +392,7 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
       const botCar = spawnCarAt(track, botCarId, `traffic_${k}`, startT + tOffset, laneRatio, botInitSpeed);
       traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale });
     }
-  } else if (roll >= 0.6 && policyPool.length > 0) {
+  } else if (roll >= scriptedCutoff && roll < scriptedCutoff + trafficMix.selfplayRatio && policyPool.length > 0) {
     // Neural self-play: 3 same-class rivals (1 slightly behind, 2 ahead)
     const offsets = [-18 - Math.random() * 10, 16 + Math.random() * 12, 42 + Math.random() * 18];
     for (let k = 0; k < offsets.length; k++) {
@@ -312,6 +417,7 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
     prevTrackT: car.trackT,
     prevAeroDamage: car.aeroDamage,
     prevSteer: 0,
+    prevSpeed: car.speed,
     stepsInEpisode: 0,
     lapsCompleted: 0,
   };
@@ -339,6 +445,8 @@ rl.on('line', (line) => {
   const msg = JSON.parse(line);
 
   if (msg.cmd === 'init') {
+    policyPool = [];
+    applyConfigPatch(msg, true);
     refreshPolicyPool();
     const n: number = msg.numEnvs ?? 32;
     cfgTracks = msg.tracks;
@@ -348,7 +456,17 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (msg.cmd === 'config') {
+    applyConfigPatch(msg, false);
+    refreshPolicyPool();
+    process.stdout.write(JSON.stringify({ ok: true, poolSize: policyPool.length }) + '\n');
+    return;
+  }
+
   if (msg.cmd === 'step') {
+    if (msg.trafficMix || msg.rewardWeights) {
+      applyConfigPatch(msg, false);
+    }
     const actions: number[][] = msg.actions;
     const obsOut: number[][] = [];
     const rewardsOut: number[] = [];
@@ -458,20 +576,29 @@ rl.on('line', (line) => {
         } else if (distSq < 36.0) {
           // Soft warning zone (2.5m..6.0m) encourages clean lateral pass instead of tailgating
           const dist = Math.sqrt(distSq);
-          closeProximityPenalty += (6.0 - dist) * 0.06;
+          closeProximityPenalty += (6.0 - dist) * rewardWeights.closeProximity;
         }
       }
 
-      let reward = forwardMeters * 0.45 - closeProximityPenalty;
-      if (slot.car.speed < 15.0) {
-        reward -= (15.0 - slot.car.speed) * 0.08;
+      let reward = forwardMeters * rewardWeights.forwardProgress - closeProximityPenalty;
+      if (slot.car.speed < rewardWeights.minSpeedThreshold) {
+        reward -= (rewardWeights.minSpeedThreshold - slot.car.speed) * rewardWeights.minSpeedPenalty;
+      }
+      if (rewardWeights.floorSpeedPenalty > 0 && slot.car.speed < rewardWeights.floorSpeedThreshold) {
+        reward -= (rewardWeights.floorSpeedThreshold - slot.car.speed) * rewardWeights.floorSpeedPenalty;
+      }
+      if (rewardWeights.decelPenalty > 0 && slot.stepsInEpisode > 1) {
+        const speedDrop = slot.prevSpeed - slot.car.speed;
+        if (speedDrop > rewardWeights.decelThreshold) {
+          reward -= (speedDrop - rewardWeights.decelThreshold) * rewardWeights.decelPenalty;
+        }
       }
       if (offTrack) {
-        reward -= 1.2 + (absLat - halfW) * 0.35;
+        reward -= rewardWeights.offTrackBase + (absLat - halfW) * rewardWeights.offTrackSlope;
       }
       const steerJerk = Math.abs(steer - slot.prevSteer);
-      reward -= 0.06 * steerJerk * steerJerk;
-      reward -= 0.15 * (throttle * brake);
+      reward -= rewardWeights.steerJerk * steerJerk * steerJerk;
+      reward -= rewardWeights.throttleBrakeOverlap * (throttle * brake);
 
       let done = false;
       let crashed = false;
@@ -492,12 +619,16 @@ rl.on('line', (line) => {
       const maxSteps = Math.max(6000, Math.ceil((slot.track.totalLength / 25) * 30 * 2.2));
 
       if (carContact) {
-        reward -= 4.5;
+        reward -= rewardWeights.carCrash;
         crashed = true;
         carCrash = true;
         done = true;
-      } else if (wallOrContactDmg || absLat > halfW + 5.5 || (slot.stepsInEpisode > 90 && slot.car.speed < 4.0)) {
-        reward -= 5.0;
+      } else if (
+        wallOrContactDmg ||
+        absLat > halfW + 5.5 ||
+        (slot.stepsInEpisode > 90 && slot.car.speed < rewardWeights.stallStopSpeed)
+      ) {
+        reward -= rewardWeights.wallCrash;
         crashed = true;
         wallCrash = true;
         done = true;
@@ -506,6 +637,7 @@ rl.on('line', (line) => {
       }
 
       slot.prevSteer = steer;
+      slot.prevSpeed = slot.car.speed;
       infoOut.push({
         trackId: slot.track.spec.id,
         carId: slot.carId,
