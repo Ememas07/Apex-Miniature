@@ -156,11 +156,12 @@ export function RaceViewport(props: RaceViewportProps) {
     renderer.toneMappingExposure = 1.12;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = !isSoftwareGl;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    renderer.setSize(w, h);
+    const rect = container.getBoundingClientRect();
+    const w = Math.max(1, Math.floor(rect.width || container.clientWidth || window.innerWidth));
+    const h = Math.max(1, Math.floor(rect.height || container.clientHeight || window.innerHeight));
+    renderer.setSize(w, h, false);
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
@@ -350,7 +351,7 @@ export function RaceViewport(props: RaceViewportProps) {
           ? Math.min(totalGrid - 1, sim.qualiGridPos - 1)
           : Math.min(totalGrid - 1, Math.floor(totalGrid * 0.45));
 
-      const aiPaceMult = (1.0 * (cfg.aiDifficulty === 'Rookie' ? 0.84 : cfg.aiDifficulty === 'Amateur' ? 0.92 : cfg.aiDifficulty === 'Pro' ? 1.0 : 1.07)) + cfg.aiAdaptiveBoost;
+      const aiPaceMult = 1.0 * (cfg.aiDifficulty === 'Rookie' ? 0.84 : cfg.aiDifficulty === 'Amateur' ? 0.92 : cfg.aiDifficulty === 'Pro' ? 1.0 : 1.07);
 
       let peerCursor = 0;
       let aiCursor = 0;
@@ -637,12 +638,16 @@ export function RaceViewport(props: RaceViewportProps) {
     window.addEventListener('apex-audio-mute', onAudioMute);
 
     const onResize = () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
+      const rw = Math.max(1, Math.floor(container.clientWidth || window.innerWidth));
+      const rh = Math.max(1, Math.floor(container.clientHeight || window.innerHeight));
+      camera.aspect = rw / rh;
       camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setSize(rw, rh, false);
       renderer.render(scene, camera);
     };
     window.addEventListener('resize', onResize);
+    const ro = new ResizeObserver(onResize);
+    ro.observe(container);
 
     // Continuous Game Loop with Software-WebGL afterDraw pacing
     let frameId = 0;
@@ -821,7 +826,6 @@ export function RaceViewport(props: RaceViewportProps) {
                 c.trackT = pkt.trackT;
                 c.totalDistance = pkt.totalDistance;
                 c.specialActive = pkt.specialActive;
-                c.flashingHeadlights = pkt.flashingHeadlights;
               }
             } else {
               const aiIn = computeNeuralAIControl(c, sim.compiledTrack, sim.cars, dt, sim.trackWetness, p.raceConfig.aiDifficulty);
@@ -868,7 +872,6 @@ export function RaceViewport(props: RaceViewportProps) {
             trackT: playerCar.trackT,
             totalDistance: playerCar.totalDistance,
             specialActive: playerCar.specialActive,
-            flashingHeadlights: playerCar.flashingHeadlights,
           });
         }
 
@@ -1124,12 +1127,6 @@ export function RaceViewport(props: RaceViewportProps) {
             rig.frontWingFlap.rotation.x += (targetFront - rig.frontWingFlap.rotation.x) * Math.min(1, dt * 14);
           }
         }
-
-        // Prototype Headlight Flashing
-        const flashIntensity = c.flashingHeadlights ? 4.5 : 1.4;
-        for (const hm of rig.headlightMats) {
-          hm.emissiveIntensity = flashIntensity;
-        }
       }
 
       // Sync Floating Billboarded Nametags (position, distance scaling & opacity fade — zero per-frame texture creation)
@@ -1304,6 +1301,7 @@ export function RaceViewport(props: RaceViewportProps) {
       window.removeEventListener('blur', clearKeys);
       document.removeEventListener('visibilitychange', clearKeys);
       gamepadController.detach(window);
+      ro.disconnect();
       window.removeEventListener('resize', onResize);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
@@ -1351,7 +1349,7 @@ export function RaceViewport(props: RaceViewportProps) {
     <div
       ref={containerRef}
       data-testid="race-viewport"
-      className="fixed inset-0 w-full h-full"
+      className="fixed inset-0 w-full h-full min-h-0 overflow-hidden"
       aria-label="3D Miniature Motorsport Race Viewport"
     />
   );

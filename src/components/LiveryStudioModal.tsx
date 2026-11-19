@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
@@ -91,7 +91,12 @@ export function LiveryStudioModal({
   const [showUvOverlay, setShowUvOverlay] = useState(true);
   const [hasCustomTexture, setHasCustomTexture] = useState<boolean>(Boolean(initialLivery.customTexture));
 
-  const carSpec = getCarById(selectedCarId) ?? CARS[0];
+  const carSpec = useMemo(() => getCarById(selectedCarId) ?? CARS[0], [selectedCarId]);
+  const autoRotateRef = useRef(autoRotate);
+  autoRotateRef.current = autoRotate;
+  const wireframeModeRef = useRef(wireframeMode);
+  wireframeModeRef.current = wireframeMode;
+  const skipNextPaintRebuildRef = useRef(false);
 
   // 3D Viewport refs
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -167,12 +172,12 @@ export function LiveryStudioModal({
     renderer.toneMappingExposure = 1.2;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const rect = container.getBoundingClientRect();
-    const w = Math.max(300, rect.width);
-    const h = Math.max(240, rect.height);
-    renderer.setSize(w, h);
+    const w = Math.max(1, Math.floor(rect.width || container.clientWidth || 1));
+    const h = Math.max(1, Math.floor(rect.height || container.clientHeight || 1));
+    renderer.setSize(w, h, false);
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
@@ -234,12 +239,12 @@ export function LiveryStudioModal({
     // Resize observer
     const ro = new ResizeObserver(() => {
       if (!container || !rendererRef.current || !cameraRef.current) return;
-      const nw = container.clientWidth;
-      const nh = container.clientHeight;
-      if (nw === 0 || nh === 0) return;
+      const nw = Math.floor(container.clientWidth);
+      const nh = Math.floor(container.clientHeight);
+      if (nw <= 0 || nh <= 0) return;
       cameraRef.current.aspect = nw / nh;
       cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(nw, nh);
+      rendererRef.current.setSize(nw, nh, false);
     });
     ro.observe(container);
 
@@ -249,7 +254,7 @@ export function LiveryStudioModal({
       animId = requestAnimationFrame(renderLoop);
       const o = orbitRef.current;
 
-      if (autoRotate) {
+      if (autoRotateRef.current) {
         o.targetYaw += 0.006;
       }
 
@@ -279,10 +284,15 @@ export function LiveryStudioModal({
       }
       renderer.dispose();
     };
-  }, [autoRotate]);
+  }, []);
 
-  // Load / rebuild car rig when selected car or core livery changes
+  // Load / rebuild car rig when selected car or livery changes
   useEffect(() => {
+    if (skipNextPaintRebuildRef.current) {
+      skipNextPaintRebuildRef.current = false;
+      return;
+    }
+
     let active = true;
     const anchor = carAnchorRef.current;
     if (!anchor) return;
@@ -303,7 +313,7 @@ export function LiveryStudioModal({
       anchor.add(rig.root);
 
       // Apply wireframe mode if active
-      if (wireframeMode) {
+      if (wireframeModeRef.current) {
         rig.root.traverse((obj) => {
           const mesh = obj as THREE.Mesh;
           if (mesh.isMesh && mesh.material) {
@@ -326,7 +336,22 @@ export function LiveryStudioModal({
     return () => {
       active = false;
     };
-  }, [carSpec, livery.primaryColor, livery.rimFinish, livery.headlightTint, wireframeMode]);
+  }, [
+    carSpec,
+    livery.primaryColor,
+    livery.secondaryColor,
+    livery.tertiaryColor,
+    livery.rimFinish,
+    livery.template,
+    livery.carbonHood,
+    livery.carbonWing,
+    livery.carbonSplitter,
+    livery.driverNumber,
+    livery.numberPlateStyle,
+    livery.headlightTint,
+    livery.windshieldBanner,
+    livery.customTexture,
+  ]);
 
   // Toggle wireframe on active rig
   useEffect(() => {
@@ -437,6 +462,7 @@ export function LiveryStudioModal({
     const canvas = paintCanvasRef.current;
     if (canvas) {
       const dataUrl = canvas.toDataURL('image/png');
+      if (carRigRef.current) skipNextPaintRebuildRef.current = true;
       setLivery((prev) => ({ ...prev, customTexture: dataUrl }));
       syncCanvasToCarRig();
     }
@@ -525,6 +551,7 @@ export function LiveryStudioModal({
     }
 
     const dataUrl = canvas.toDataURL('image/png');
+    if (carRigRef.current) skipNextPaintRebuildRef.current = true;
     setLivery((prev) => ({ ...prev, customTexture: dataUrl }));
     syncCanvasToCarRig();
   };
@@ -548,6 +575,7 @@ export function LiveryStudioModal({
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
+        if (carRigRef.current) skipNextPaintRebuildRef.current = true;
         setLivery((prev) => ({ ...prev, customTexture: dataUrl }));
         setHasCustomTexture(true);
         syncCanvasToCarRig();
@@ -595,23 +623,13 @@ export function LiveryStudioModal({
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    skipNextPaintRebuildRef.current = false;
     setLivery((prev) => {
       const copy = { ...prev };
       delete copy.customTexture;
       return copy;
     });
     setHasCustomTexture(false);
-
-    const rig = carRigRef.current;
-    if (rig) {
-      buildCarRigAsync(carSpec, { ...livery, customTexture: undefined }, 4).then((newRig) => {
-        if (!carAnchorRef.current) return;
-        carAnchorRef.current.remove(rig.root);
-        rig.dispose();
-        carRigRef.current = newRig;
-        carAnchorRef.current.add(newRig.root);
-      });
-    }
   };
 
   // Save & Apply
@@ -683,9 +701,9 @@ export function LiveryStudioModal({
         </div>
 
         {/* Main Content Layout */}
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
           {/* 3D Viewport Column */}
-          <div className="flex-1 flex flex-col relative bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden min-h-[380px]">
+          <div className="flex-1 min-h-0 flex flex-col relative bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden">
             {/* Viewport Overlay Controls */}
             <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2 pointer-events-auto">
               <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl p-1.5 flex items-center gap-1 shadow-xl">
@@ -751,12 +769,12 @@ export function LiveryStudioModal({
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
               onWheel={handleWheel}
-              className="w-full h-full cursor-grab active:cursor-grabbing select-none"
+              className="w-full h-full min-h-0 overflow-hidden cursor-grab active:cursor-grabbing select-none"
             />
           </div>
 
           {/* Right Control & Painting Panel */}
-          <div className="w-full lg:w-[460px] border-t lg:border-t-0 lg:border-l border-slate-800 bg-slate-950 flex flex-col overflow-hidden">
+          <div className="w-full lg:w-[460px] min-h-0 border-t lg:border-t-0 lg:border-l border-slate-800 bg-slate-950 flex flex-col overflow-hidden">
             {/* Studio Navigation Tabs */}
             <div className="flex border-b border-slate-800 bg-slate-900/60 p-2 gap-2">
               <button

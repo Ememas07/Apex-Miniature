@@ -61,12 +61,12 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
     renderer.toneMappingExposure = 1.15;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = !isSoftwareGl;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const rect = container.getBoundingClientRect();
-    const w = Math.max(300, rect.width || 640);
-    const h = Math.max(240, rect.height || 480);
-    renderer.setSize(w, h);
+    const w = Math.max(1, Math.floor(rect.width || container.clientWidth || 1));
+    const h = Math.max(1, Math.floor(rect.height || container.clientHeight || 1));
+    renderer.setSize(w, h, false);
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
@@ -262,11 +262,12 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry || !stateRef.current) return;
-      const nw = Math.max(200, entry.contentRect.width);
-      const nh = Math.max(200, entry.contentRect.height);
+      const nw = Math.floor(entry.contentRect.width);
+      const nh = Math.floor(entry.contentRect.height);
+      if (nw <= 0 || nh <= 0) return;
       camera.aspect = nw / nh;
       camera.updateProjectionMatrix();
-      renderer.setSize(nw, nh);
+      renderer.setSize(nw, nh, false);
       requestRender();
     });
     ro.observe(container);
@@ -344,7 +345,7 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
       ref={containerRef}
       data-testid="garage-viewport"
       data-car-id={carSpec.id}
-      className="w-full h-full cursor-grab active:cursor-grabbing"
+      className="w-full h-full min-h-0 overflow-hidden cursor-grab active:cursor-grabbing"
       aria-label="Interactive 3D car livery preview turntable"
     />
   );

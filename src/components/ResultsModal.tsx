@@ -5,7 +5,6 @@ import { HudSnapshot } from '../game/types';
 interface ResultsModalProps {
   snapshot: HudSnapshot;
   trackName: string;
-  adaptiveBoost: number;
   onRaceAgain: () => void;
   onReturnToTitle: () => void;
 }
@@ -13,7 +12,6 @@ interface ResultsModalProps {
 export function ResultsModal({
   snapshot,
   trackName,
-  adaptiveBoost,
   onRaceAgain,
   onReturnToTitle,
 }: ResultsModalProps) {
@@ -41,13 +39,6 @@ export function ResultsModal({
               <span className="text-[11px] text-slate-400 block">Best Lap</span>
               <span className="font-telemetry text-sm font-bold text-emerald-400">
                 {formatLapTime(playerRow.bestLapTime)}
-              </span>
-            </div>
-            <div>
-              <span className="text-[11px] text-slate-400 block">AI Evolution</span>
-              <span className="font-telemetry text-sm font-bold text-amber-300">
-                {adaptiveBoost >= 0 ? '+' : ''}
-                {Math.round(adaptiveBoost * 100)}%
               </span>
             </div>
           </div>

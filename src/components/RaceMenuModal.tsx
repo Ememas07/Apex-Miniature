@@ -148,7 +148,7 @@ export function RaceMenuModal({
   onOpenStudio,
   onClose,
 }: RaceMenuModalProps) {
-  const activeCar = getCarById(config.playerCarId);
+  const activeCar = useMemo(() => getCarById(config.playerCarId), [config.playerCarId]);
   const classMeta = CAR_CLASSES[activeCar.classId];
   const selectedTrack = config.customTrack || getTrackById(config.trackId);
 
@@ -261,15 +261,11 @@ export function RaceMenuModal({
       return;
     }
 
-    const normalizedClasses = config.activeClasses.includes(activeCar.classId)
-      ? config.activeClasses
-      : [activeCar.classId, ...config.activeClasses].slice(0, 3);
-
     onStartRace({
       sessionMode: 'race',
       trackId: config.trackId,
       customTrack: config.customTrack,
-      activeClasses: normalizedClasses,
+      activeClasses: config.activeClasses,
       totalLaps: config.totalLaps > 0 ? config.totalLaps : 5,
       aiBotCount: aiCount,
       gridSize: aiCount + 1,
@@ -352,11 +348,11 @@ export function RaceMenuModal({
       </div>
 
       {/* Main Content: 2-Column Unified Layout */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-12 overflow-y-auto lg:overflow-hidden">
         {/* LEFT COLUMN: 3D Preview + AI Opponents & Race Settings */}
-        <div className="lg:col-span-5 flex flex-col border-b lg:border-b-0 lg:border-r border-white/10 bg-[#0e121a] overflow-y-auto custom-scroll">
+        <div className="lg:col-span-5 flex flex-col min-h-0 shrink-0 lg:shrink border-b lg:border-b-0 lg:border-r border-white/10 bg-[#0e121a] lg:overflow-y-auto custom-scroll">
           {/* Live 3D Die-Cast Turntable */}
-          <div className="relative h-60 sm:h-68 lg:h-72 shrink-0 bg-[#101520] border-b border-white/10">
+          <div className="relative h-56 sm:h-64 lg:h-64 xl:h-72 min-h-0 shrink-0 overflow-hidden bg-[#101520] border-b border-white/10">
             <GarageViewport carSpec={activeCar} livery={config.playerLivery} angle={angle} />
 
             {/* Car Identity Overlay */}
@@ -536,13 +532,7 @@ export function RaceMenuModal({
                 <>
                   {/* AI Difficulty */}
                   <div>
-                    <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span className="font-semibold text-slate-300">AI Difficulty</span>
-                      <span className="text-[11px] text-slate-400 tabular-nums">
-                        Adaptive: {config.aiAdaptiveBoost >= 0 ? '+' : ''}
-                        {Math.round(config.aiAdaptiveBoost * 100)}%
-                      </span>
-                    </div>
+                    <div className="text-xs font-semibold text-slate-300 mb-1.5">AI Difficulty</div>
                     <div className="grid grid-cols-4 gap-1.5">
                       {(['Rookie', 'Amateur', 'Pro', 'Alien'] as AIDifficulty[]).map((diff) => (
                         <button
@@ -676,7 +666,7 @@ export function RaceMenuModal({
         </div>
 
         {/* RIGHT COLUMN: Unified Selector Tabs (Car, Livery, Track) */}
-        <div className="lg:col-span-7 flex flex-col min-h-0 bg-[#11151d]">
+        <div className="lg:col-span-7 flex flex-col min-h-0 shrink-0 lg:shrink bg-[#11151d]">
           {/* Section Switcher */}
           <div className="flex items-center justify-between gap-2 px-5 pt-3 bg-[#0d1118] border-b border-white/10 shrink-0">
             <div className="flex items-center gap-1">
@@ -715,7 +705,7 @@ export function RaceMenuModal({
           </div>
 
           {/* Active Selector Content */}
-          <div className="flex-1 overflow-y-auto custom-scroll p-5 space-y-5">
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-5 space-y-5">
             {tab === 'car' && (
               <>
                 {/* Car Search */}

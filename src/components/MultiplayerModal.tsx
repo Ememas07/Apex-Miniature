@@ -180,15 +180,10 @@ export function MultiplayerModal({
       ...car.defaultLivery,
       driverNumber: config.playerLivery.driverNumber || car.defaultLivery.driverNumber,
     };
-    const isHostOrOffline = !room || room.hostId === myPeerId;
-    const nextClasses = config.activeClasses.includes(car.classId)
-      ? config.activeClasses
-      : [car.classId, ...config.activeClasses].slice(0, 3);
 
     onUpdateConfig({
       playerCarId: car.id,
       playerLivery: nextLivery,
-      ...(isHostOrOffline ? { activeClasses: nextClasses } : {}),
     });
     onUpdatePeer?.({ carId: car.id, classId: car.classId, livery: nextLivery });
   };

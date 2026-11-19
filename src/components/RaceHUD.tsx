@@ -519,14 +519,6 @@ export function RaceHUD({
                   </strong>{' '}
                   <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
                 </span>
-              ) : carSpecial.specialType === 'high-beam-flash' ? (
-                <span>
-                  High Beams:{' '}
-                  <strong className={hud.specialActive ? 'text-amber-300' : 'text-slate-200'}>
-                    {hud.specialActive ? 'FLASHING TRAFFIC' : 'OFF (READY)'}
-                  </strong>{' '}
-                  <span className="text-[10px] text-slate-500">[Shift/E/X]</span>
-                </span>
               ) : (
                 <span>
                   {carSpecial.specialLabel}:{' '}

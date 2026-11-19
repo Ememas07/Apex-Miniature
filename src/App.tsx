@@ -8,7 +8,7 @@ import { ResultsModal } from './components/ResultsModal';
 import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
 import { TrackStudioModal } from './components/TrackStudioModal';
-import { CAR_CLASSES, CARS, getCarById } from './game/cars';
+import { CARS, getCarById } from './game/cars';
 import { registerCustomTrackInMemory } from './game/customTracks';
 import {
   ConnectionMode,
@@ -16,7 +16,7 @@ import {
   mergeSharedRoomConfig,
   MultiplayerClient,
 } from './game/multiplayer';
-import { computeUpdatedAdaptiveBoost, formatLapTime } from './game/physics';
+import { formatLapTime } from './game/physics';
 import { getTrackById } from './game/tracks';
 import {
   CameraMode,
@@ -43,10 +43,9 @@ const INITIAL_CONFIG: RaceConfig = {
   gridSize: 12,
   totalLaps: 5,
   weather: 'dry',
-  startingCompound: 'medium',
+  startingCompound: 'soft',
   qualifyingEnabled: false,
   aiDifficulty: 'Pro',
-  aiAdaptiveBoost: 0,
   aiBotCount: 11,
   noAi: false,
   sessionMode: 'race',
@@ -83,7 +82,7 @@ export default function App() {
   });
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
-    nextCompound: 'medium',
+    nextCompound: 'soft',
   });
   const pitHandlerRef = useRef<((action: PitServiceAction, nextCompound?: TireCompound) => boolean) | null>(null);
 
@@ -265,23 +264,10 @@ export default function App() {
     setMuted((m) => !m);
   }, []);
 
-  const handleRaceFinish = useCallback(
-    (snapshot: HudSnapshot) => {
-      setFinalSnapshot(snapshot);
-      const playerRow = snapshot.standings.find((s) => s.isPlayer);
-      const track = getTrackById(raceConfig.trackId);
-      const car = getCarById(raceConfig.playerCarId);
-      const nextBoost = computeUpdatedAdaptiveBoost(
-        raceConfig.aiAdaptiveBoost,
-        playerRow?.bestLapTime ?? null,
-        track.targetLapSeconds,
-        CAR_CLASSES[car.classId].basePaceIndex,
-      );
-      setRaceConfig((prev) => ({ ...prev, aiAdaptiveBoost: nextBoost }));
-      setPhase('gameover');
-    },
-    [raceConfig.aiAdaptiveBoost, raceConfig.playerCarId, raceConfig.trackId],
-  );
+  const handleRaceFinish = useCallback((snapshot: HudSnapshot) => {
+    setFinalSnapshot(snapshot);
+    setPhase('gameover');
+  }, []);
 
   const handleQualifyingFinish = useCallback((qualiTime: number, gridPos: number) => {
     setQualiBanner({ time: qualiTime, gridPos });
@@ -309,17 +295,11 @@ export default function App() {
 
   const handleSelectCar = (carId: string, resetLivery: LiveryConfig) => {
     const car = getCarById(carId);
-    setRaceConfig((prev) => {
-      const classes = prev.activeClasses.includes(car.classId)
-        ? prev.activeClasses
-        : [car.classId, ...prev.activeClasses].slice(0, 3);
-      return {
-        ...prev,
-        playerCarId: carId,
-        playerLivery: resetLivery,
-        activeClasses: classes,
-      };
-    });
+    setRaceConfig((prev) => ({
+      ...prev,
+      playerCarId: carId,
+      playerLivery: resetLivery,
+    }));
     mpClientRef.current?.updatePeer({ carId, classId: car.classId, livery: resetLivery });
   };
 
@@ -575,7 +555,6 @@ export default function App() {
         <ResultsModal
           snapshot={finalSnapshot}
           trackName={track.name}
-          adaptiveBoost={raceConfig.aiAdaptiveBoost}
           onRaceAgain={handleStartSession}
           onReturnToTitle={handleReturnToTitle}
         />

@@ -157,7 +157,6 @@ export interface CarSimState {
   pitStops: number;
   pitCooldown: number;
   pitStrategy: PitStrategy;
-  flashingHeadlights: boolean;
   finished: boolean;
   gear: number;
   rpmNormalized: number;
@@ -361,7 +360,6 @@ export function createCarSimState(params: {
     pitStrategy: {
       nextCompound: params.compound,
     },
-    flashingHeadlights: false,
     finished: false,
     gear: 1,
     rpmNormalized: 0.18,
@@ -419,7 +417,7 @@ export function getCompoundModifiers(compound: TireCompound, trackWetness: numbe
   }
 }
 
-export function getDifficultyMultiplier(difficulty: AIDifficulty, adaptiveBoost: number): number {
+export function getDifficultyMultiplier(difficulty: AIDifficulty, adaptiveBoost = 0): number {
   const base =
     difficulty === 'Rookie'
       ? 0.84
@@ -429,19 +427,6 @@ export function getDifficultyMultiplier(difficulty: AIDifficulty, adaptiveBoost:
       ? 1.0
       : 1.07;
   return Math.max(0.75, Math.min(1.16, base + adaptiveBoost));
-}
-
-export function computeUpdatedAdaptiveBoost(
-  currentBoost: number,
-  playerBestLap: number | null,
-  targetLapSeconds: number,
-  classPaceIndex: number,
-): number {
-  if (!playerBestLap || playerBestLap <= 5) return currentBoost;
-  const expectedLap = targetLapSeconds / classPaceIndex;
-  const ratio = expectedLap / playerBestLap; // > 1 if player is faster than expected
-  const delta = (ratio - 1) * 0.18;
-  return Math.max(-0.06, Math.min(0.08, Number((currentBoost * 0.6 + delta).toFixed(4))));
 }
 
 /**
@@ -701,38 +686,9 @@ export function stepCarPhysics(
       }
       break;
     }
-    case 'high-beam-flash': {
-      // Toggle ON/OFF to flash headlights and signal slower traffic ahead to yield
-      if (isSpecialTriggered) {
-        car.specialActive = !car.specialActive;
-      }
-      // Preserve Traffic-Smart AI proximity flashing while player toggling controls headlights directly
-      car.flashingHeadlights = car.isPlayer
-        ? car.specialActive
-        : car.specialActive || car.flashingHeadlights;
-      break;
-    }
     default: {
       car.specialActive = false;
       break;
-    }
-  }
-
-  // Prototype / GT High-Beam flash signals slower traffic ahead to yield cleanly toward its nearest open edge
-  if (car.flashingHeadlights) {
-    for (let i = 0; i < opts.allCars.length; i++) {
-      const other = opts.allCars[i];
-      if (other.id === car.id || other.pitStopRemaining > 0 || other.isPlayer) continue;
-      let dT = other.trackT - car.trackT;
-      while (dT > 0.5) dT -= 1;
-      while (dT < -0.5) dT += 1;
-      const distAhead = dT * compiledTrack.totalLength;
-      if (distAhead > 1.5 && distAhead < 28 && other.speed < car.speed + 2) {
-        const yieldSide = other.lateralOffset >= car.lateralOffset ? 1 : -1;
-        const maxYield = Math.max(2.0, halfW - 2.0);
-        other.aiTargetOffset = yieldSide * Math.min(maxYield, 4.2);
-        other.aiPassTimer = 1.6;
-      }
     }
   }
 
@@ -2116,7 +2072,6 @@ export function computeAIControl(
   let leadDs = Infinity;
   let passTargetCar: CarSimState | null = null;
   let passTargetDs = Infinity;
-  let slowerClassAhead = false;
 
   // Side-by-side door awareness bounds
   let sideCarLeftLat: number | null = null;
@@ -2161,19 +2116,8 @@ export function computeAIControl(
         passTargetDs = ds;
         passTargetCar = other;
       }
-
-      if (ds < 60.0) {
-        const otherClass = CAR_CLASSES[other.carSpec.classId];
-        if (classMeta.basePaceIndex > otherClass.basePaceIndex + 0.04) {
-          slowerClassAhead = true;
-        }
-      }
     }
   }
-
-  // Traffic-Smart prototypes flash headlights at slower GT traffic ahead
-  car.flashingHeadlights =
-    personality === 'Traffic-Smart' && slowerClassAhead && Math.floor(car.totalTime * 6) % 2 === 0;
 
   // ==================== 2. DYNAMIC OVERTAKING LANE & RACING LINE ====================
   // Lookahead & lookback samples to detect corner entry, apex, and track-out unwinding
@@ -2456,7 +2400,7 @@ export function computeAIControl(
     if (onStraight && !car.specialActive && car.attackModeUsesRemaining > 0 && car.speed > 25) {
       specialPressed = true;
     }
-  } else if (resolvedSpecial.specialType !== 'high-beam-flash') {
+  } else if (resolvedSpecial.specialType !== 'none') {
     if (onStraight && !car.specialActive && car.specialCharge > 50 && car.speed > 24 && !leadCar) {
       specialPressed = true;
     } else if ((!onStraight || brake > 0.25) && car.specialActive) {

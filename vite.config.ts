@@ -126,7 +126,9 @@ export default defineConfig(() => {
       },
     },
     server: {
+      host: '0.0.0.0',
       port: 3000,
+      allowedHosts: true as const,
       proxy: {
         '/ws': {
           target: 'ws://localhost:3000',
