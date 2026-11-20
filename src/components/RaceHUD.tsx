@@ -1,8 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Camera,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Eye,
   Fuel,
   Home,
@@ -32,6 +34,7 @@ interface RaceHUDProps {
   onToggleMute: () => void;
   onTogglePause: () => void;
   onReturnToTitle: () => void;
+  touchControlsActive?: boolean;
 }
 
 export function RaceHUD({
@@ -49,7 +52,9 @@ export function RaceHUD({
   onToggleMute,
   onTogglePause,
   onReturnToTitle,
+  touchControlsActive = false,
 }: RaceHUDProps) {
+  const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
   const track = customTrack || getTrackById(trackId);
   const isAiRace = hud.sessionMode === 'ai-race';
   const spectatorMode = hud.spectatorCameraMode ?? 'spectate';
@@ -99,20 +104,26 @@ export function RaceHUD({
   return (
     <div
       data-testid="race-hud"
-      className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-4 md:p-5"
+      className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-2.5 sm:p-4 md:p-5"
+      style={{
+        paddingTop: 'max(0.625rem, env(safe-area-inset-top, 0px))',
+        paddingLeft: 'max(0.625rem, env(safe-area-inset-left, 0px))',
+        paddingRight: 'max(0.625rem, env(safe-area-inset-right, 0px))',
+        paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom, 0px))',
+      }}
     >
       {/* TOP BAR CORNERS */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-2 sm:gap-4">
         {/* Top-Left Cluster: Broadcast AI Race / Practice / Race Standings */}
-        <div className="bg-[#0b0e13]/92 border border-white/12 rounded-md px-4 py-3 min-w-[260px] max-w-[330px] shadow-lg">
+        <div className="bg-[#0b0e13]/92 border border-white/12 rounded-md px-2.5 py-2 sm:px-4 sm:py-3 min-w-0 max-w-[205px] sm:max-w-[290px] md:min-w-[260px] md:max-w-[330px] shadow-lg">
           {isAiRace ? (
             <>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block">
+              <div className="flex items-center justify-between gap-2 sm:gap-3">
+                <div className="min-w-0">
+                  <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-amber-400 block">
                     AI Race Broadcast
                   </span>
-                  <span className="font-display font-extrabold text-base text-white truncate block max-w-[180px]">
+                  <span className="font-display font-extrabold text-sm sm:text-base text-white truncate block max-w-[130px] sm:max-w-[180px]">
                     {track.shortName}
                   </span>
                 </div>
@@ -200,13 +211,36 @@ export function RaceHUD({
                 </button>
               </div>
 
-              {/* Clickable Live Leaderboard */}
-              <div className="mt-2.5 pt-2 border-t border-white/10 pointer-events-auto">
-                <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+              {/* Clickable Live Leaderboard (always open on md+, collapsible on mobile) */}
+              {(() => {
+                const finishedCount = hud.standings.filter((r) => r.finished).length;
+                return finishedCount > 0 && finishedCount < hud.standings.length ? (
+                  <div className="mt-2 px-2 py-1 rounded bg-emerald-500/15 border border-emerald-400/35 text-[10px] font-bold text-emerald-300 flex items-center justify-between">
+                    <span>CHEQUERED FLAG</span>
+                    <span className="font-telemetry tabular-nums">
+                      {finishedCount} / {hud.standings.length} Finished
+                    </span>
+                  </div>
+                ) : null;
+              })()}
+              <div className="mt-2 pt-1.5 sm:mt-2.5 sm:pt-2 border-t border-white/10 pointer-events-auto">
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setLeaderboardExpanded((v) => !v)}
+                  className="w-full flex items-center justify-between text-[10px] text-slate-400 mb-1 md:pointer-events-none cursor-pointer"
+                >
                   <span>Live Classification ({hud.totalCars} AI)</span>
-                  <span>Click to Focus</span>
-                </div>
-                <div className="max-h-52 overflow-y-auto custom-scroll space-y-0.5 pr-1">
+                  <span className="hidden md:inline">Click to Focus</span>
+                  <span className="md:hidden inline-flex items-center gap-0.5 text-slate-300">
+                    {leaderboardExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </span>
+                </button>
+                <div
+                  className={`${
+                    leaderboardExpanded ? 'block' : 'hidden md:block'
+                  } max-h-36 sm:max-h-52 overflow-y-auto custom-scroll space-y-0.5 pr-1`}
+                >
                   {hud.standings.map((row) => {
                     const cls = CAR_CLASSES[row.classId];
                     const isFocused = row.id === hud.spectatedCarId;
@@ -307,47 +341,47 @@ export function RaceHUD({
             </>
           ) : (
             <>
-              <div className="flex items-baseline justify-between gap-4">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-display font-extrabold text-white tabular-nums leading-none">
+              <div className="flex items-baseline justify-between gap-2 sm:gap-4">
+                <div className="flex items-baseline gap-1.5 sm:gap-2">
+                  <span className="text-2xl sm:text-3xl font-display font-extrabold text-white tabular-nums leading-none">
                     P{hud.position}
                   </span>
-                  <span className="text-xs text-slate-400 tabular-nums">/{hud.totalCars}</span>
+                  <span className="text-[11px] sm:text-xs text-slate-400 tabular-nums">/{hud.totalCars}</span>
                   <span
-                    className="ml-1 px-1.5 py-0.5 text-[10px] font-display font-bold rounded-sm"
+                    className="ml-0.5 sm:ml-1 px-1.5 py-0.5 text-[9px] sm:text-[10px] font-display font-bold rounded-sm whitespace-nowrap"
                     style={{ backgroundColor: classMeta.plateColor, color: classMeta.badgeTextColor }}
                   >
                     {classMeta.shortName} P{hud.classPosition}
                   </span>
                 </div>
-                <div className="text-right">
-                  <span className="text-[11px] text-slate-400 block">
-                    {hud.phase === 'qualifying' ? 'QUALI HOTLAP' : 'LAP'}
+                <div className="text-right shrink-0">
+                  <span className="text-[10px] sm:text-[11px] text-slate-400 block">
+                    {hud.phase === 'qualifying' ? 'QUALI' : 'LAP'}
                   </span>
-                  <span className="font-display font-bold text-sm text-white tabular-nums">
+                  <span className="font-display font-bold text-xs sm:text-sm text-white tabular-nums">
                     {hud.lap} / {hud.totalLaps}
                   </span>
                 </div>
               </div>
 
-              <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                <div className="flex justify-between">
+              <div className="mt-1.5 sm:mt-2 pt-1.5 sm:pt-2 border-t border-white/10 grid grid-cols-2 gap-x-2.5 sm:gap-x-4 gap-y-0.5 sm:gap-y-1 text-[11px] sm:text-xs">
+                <div className="hidden sm:flex justify-between">
                   <span className="text-slate-400">Ahead</span>
                   <span className="font-telemetry text-amber-300">
                     {hud.intervalAhead !== null ? `+${hud.intervalAhead.toFixed(2)}s` : 'Leader'}
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="hidden sm:flex justify-between">
                   <span className="text-slate-400">Behind</span>
                   <span className="font-telemetry text-slate-200">
                     {hud.intervalBehind !== null ? `-${hud.intervalBehind.toFixed(2)}s` : '--'}
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between gap-1">
                   <span className="text-slate-400">Lap</span>
                   <span className="font-telemetry text-white">{formatLapTime(hud.currentLapTime)}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between gap-1">
                   <span className="text-slate-400">Best</span>
                   <span className="font-telemetry text-emerald-400">{formatLapTime(hud.bestLapTime)}</span>
                 </div>
@@ -392,8 +426,8 @@ export function RaceHUD({
         )}
 
         {/* Top-Right Cluster: Compact Minimap & Utility Icon Buttons */}
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-1.5 pointer-events-auto">
+        <div className="flex flex-col items-end gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-1.5 pointer-events-auto">
             <button
               type="button"
               tabIndex={-1}
@@ -404,7 +438,7 @@ export function RaceHUD({
               }}
               aria-label={isAiRace ? 'Toggle Spectate or Freecam' : 'Switch Camera Angle'}
               title={isAiRace ? 'Toggle Spectate / Freecam [F]' : 'Camera [C]'}
-              className="p-2 rounded bg-[#0b0e13]/90 border border-white/15 text-slate-200 hover:text-white cursor-pointer"
+              className="min-w-[38px] min-h-[38px] sm:min-w-0 sm:min-h-0 p-2 rounded bg-[#0b0e13]/90 border border-white/15 text-slate-200 hover:text-white cursor-pointer flex items-center justify-center"
             >
               <Camera className="w-4 h-4" />
             </button>
@@ -417,7 +451,7 @@ export function RaceHUD({
               }}
               aria-label={muted ? 'Unmute Audio' : 'Mute Audio'}
               title="Mute [M]"
-              className="p-2 rounded bg-[#0b0e13]/90 border border-white/15 text-slate-200 hover:text-white cursor-pointer"
+              className="min-w-[38px] min-h-[38px] sm:min-w-0 sm:min-h-0 p-2 rounded bg-[#0b0e13]/90 border border-white/15 text-slate-200 hover:text-white cursor-pointer flex items-center justify-center"
             >
               {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
             </button>
@@ -430,7 +464,7 @@ export function RaceHUD({
               }}
               aria-label="Pause Race"
               title="Pause [P]"
-              className="p-2 rounded bg-[#0b0e13]/90 border border-white/15 text-slate-200 hover:text-white cursor-pointer"
+              className="min-w-[38px] min-h-[38px] sm:min-w-0 sm:min-h-0 p-2 rounded bg-[#0b0e13]/90 border border-white/15 text-slate-200 hover:text-white cursor-pointer flex items-center justify-center"
             >
               <Pause className="w-4 h-4" />
             </button>
@@ -443,15 +477,15 @@ export function RaceHUD({
               }}
               aria-label="Return to Title Screen"
               title="Return to Title"
-              className="p-2 rounded bg-[#0b0e13]/90 border border-sky-500/30 hover:border-sky-400 text-sky-400 hover:text-sky-300 cursor-pointer flex items-center justify-center transition-colors"
+              className="min-w-[38px] min-h-[38px] sm:min-w-0 sm:min-h-0 p-2 rounded bg-[#0b0e13]/90 border border-sky-500/30 hover:border-sky-400 text-sky-400 hover:text-sky-300 cursor-pointer flex items-center justify-center transition-colors"
             >
               <Home className="w-4 h-4" />
             </button>
           </div>
 
           {/* Track Minimap */}
-          <div className="bg-[#0b0e13]/88 border border-white/12 rounded-md p-2">
-            <svg viewBox="0 0 140 110" className="w-36 h-28" aria-label="Track Minimap">
+          <div className="bg-[#0b0e13]/88 border border-white/12 rounded-md p-1.5 sm:p-2">
+            <svg viewBox="0 0 140 110" className="w-24 h-[72px] sm:w-32 sm:h-24 md:w-36 md:h-28" aria-label="Track Minimap">
               <path
                 d={minimapGeometry.pathD}
                 fill="none"
@@ -484,19 +518,27 @@ export function RaceHUD({
       </div>
 
       {/* BOTTOM CORNERS */}
-      <div className="flex items-end justify-between gap-4">
+      <div
+        className={`flex items-end gap-3 sm:gap-4 ${
+          touchControlsActive && !isAiRace ? 'flex-col items-center justify-end' : 'justify-between'
+        }`}
+      >
         {/* Bottom-Left: Freecam Flight Hint or On-Track Pit Crew */}
-        <div>
+        <div className={touchControlsActive && !isAiRace ? 'w-full flex justify-center' : ''}>
           {isAiRace && spectatorMode === 'freecam' && (
             <div
               data-testid="freecam-controls-hint"
-              className="bg-[#0b0e13]/92 border border-sky-500/40 rounded-md px-3.5 py-2.5 shadow-xl space-y-1 max-w-sm"
+              className={`bg-[#0b0e13]/92 border border-sky-500/40 rounded-md px-3 py-2 sm:px-3.5 sm:py-2.5 shadow-xl space-y-1 max-w-xs sm:max-w-sm ${
+                touchControlsActive ? 'mb-36 sm:mb-40' : ''
+              }`}
             >
-              <div className="text-[11px] font-display font-bold text-sky-300 uppercase tracking-wider">
+              <div className="text-[10px] sm:text-[11px] font-display font-bold text-sky-300 uppercase tracking-wider">
                 Freecam Flight Mode
               </div>
-              <div className="text-[11px] text-slate-300 leading-relaxed">
-                WASD Move · Drag Mouse Look · Space / E Up · Shift / Q Down · Scroll Zoom · Shift+Scroll Speed · F Spectate
+              <div className="text-[10px] sm:text-[11px] text-slate-300 leading-relaxed">
+                {touchControlsActive
+                  ? 'Drag Look · Pinch Zoom · Left Stick Move · Up / Down Altitude'
+                  : 'WASD Move · Drag Mouse Look · Space / E Up · Q / Ctrl Down · Scroll Zoom · Shift+Scroll Speed · F Spectate'}
               </div>
             </div>
           )}
@@ -504,7 +546,9 @@ export function RaceHUD({
           {showOnTrackPitPrompt && (
             <div
               data-testid="on-track-pit-prompt"
-              className="bg-[#0b0e13]/95 border border-amber-500/50 rounded-md p-3 pointer-events-auto space-y-2.5 w-72 shadow-xl"
+              className={`bg-[#0b0e13]/95 border border-amber-500/50 rounded-md p-3 pointer-events-auto space-y-2.5 w-full max-w-[290px] sm:w-72 shadow-xl ${
+                touchControlsActive ? 'mb-2' : ''
+              }`}
             >
               <div className="flex items-center justify-between text-xs">
                 <span className="font-display font-bold text-amber-300 uppercase tracking-wide">
@@ -551,7 +595,7 @@ export function RaceHUD({
                       e.currentTarget.blur();
                       onChangePitStrategy({ nextCompound: cmp });
                     }}
-                    className={`py-1 rounded text-[10px] font-bold uppercase border cursor-pointer disabled:opacity-50 ${
+                    className={`min-h-[34px] py-1 rounded text-[10px] font-bold uppercase border cursor-pointer disabled:opacity-50 ${
                       hud.pitStrategy.nextCompound === cmp
                         ? 'bg-red-600 border-red-400 text-white'
                         : 'bg-[#151a23] border-white/10 text-slate-400 hover:text-white'
@@ -571,10 +615,10 @@ export function RaceHUD({
                     e.currentTarget.blur();
                     onRequestPitStop('tyres', hud.pitStrategy.nextCompound);
                   }}
-                  className="py-2 px-2 rounded text-[11px] font-bold border border-amber-400/60 bg-amber-600/25 hover:bg-amber-600/40 text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                  className="min-h-[38px] py-2 px-2 rounded text-[11px] font-bold border border-amber-400/60 bg-amber-600/25 hover:bg-amber-600/40 text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
                 >
                   <Wrench className="w-3.5 h-3.5" />
-                  <span>Change Tyres (2.0s)</span>
+                  <span>Tyres (2.0s)</span>
                 </button>
                 <button
                   type="button"
@@ -584,7 +628,7 @@ export function RaceHUD({
                     e.currentTarget.blur();
                     onRequestPitStop('fuel');
                   }}
-                  className="py-2 px-2 rounded text-[11px] font-bold border border-sky-400/60 bg-sky-600/25 hover:bg-sky-600/40 text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                  className="min-h-[38px] py-2 px-2 rounded text-[11px] font-bold border border-sky-400/60 bg-sky-600/25 hover:bg-sky-600/40 text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
                 >
                   <Fuel className="w-3.5 h-3.5" />
                   <span>Refuel (4.0s)</span>
@@ -596,7 +640,7 @@ export function RaceHUD({
 
         {/* Bottom-Right Cluster: Telemetry (Player or Spectated AI Car) or Freecam Badge */}
         {isAiRace && spectatorMode === 'freecam' ? (
-          <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 shadow-lg text-right">
+          <div className="hidden sm:block bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 shadow-lg text-right">
             <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold">
               Free-Flying Camera
             </div>
@@ -604,8 +648,51 @@ export function RaceHUD({
               Click any driver in the leaderboard or press [F] to spectate
             </div>
           </div>
+        ) : touchControlsActive && !isAiRace ? (
+          /* Compact Centered Telemetry Bar nestled safely clear of Touchpad & Pedals */
+          <div className="bg-[#0b0e13]/88 border border-white/12 rounded-md px-3 py-2 shadow-lg w-auto min-w-[196px] max-w-[260px] mb-36 sm:mb-2">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <span className="text-[9px] text-slate-400 uppercase tracking-wider block leading-none">
+                  KM/H
+                </span>
+                <span
+                  data-testid="hud-speed"
+                  className="text-2xl sm:text-3xl font-display font-extrabold text-white tabular-nums leading-none"
+                >
+                  {hud.speedKmh}
+                </span>
+              </div>
+              <div className="text-center">
+                <span className="text-[9px] text-slate-400 uppercase block leading-none">Gear</span>
+                <span className="text-xl font-display font-bold text-amber-400 tabular-nums leading-none">
+                  {hud.gear === -1 ? 'R' : hud.gear}
+                </span>
+              </div>
+              <div className="text-right text-[10px] leading-tight space-y-0.5">
+                <div className="font-telemetry">
+                  <span className="text-slate-400">{hud.compound.slice(0, 1).toUpperCase()} </span>
+                  <span className={hud.tireWear < 30 ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
+                    {hud.tireWear}%
+                  </span>
+                </div>
+                <div className="font-telemetry text-slate-200">
+                  F <span className="text-amber-300 font-semibold">{hud.fuel}%</span>
+                </div>
+              </div>
+            </div>
+            <div className="mt-1.5 h-1.5 rounded bg-[#1a202c] overflow-hidden">
+              <div
+                className="h-full transition-all duration-75"
+                style={{
+                  width: `${Math.round(hud.rpmNormalized * 100)}%`,
+                  backgroundColor: hud.rpmNormalized > 0.85 ? '#ef4444' : '#38bdf8',
+                }}
+              />
+            </div>
+          </div>
         ) : (
-          <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 min-w-[310px] shadow-lg">
+          <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md px-3 py-2.5 sm:px-4 sm:py-3 min-w-0 w-full max-w-[310px] sm:w-auto sm:min-w-[310px] shadow-lg">
             {isAiRace && (
               <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-white/10 text-[11px]">
                 <span className="font-semibold text-white truncate">
@@ -741,15 +828,7 @@ export function RaceHUD({
                 <span data-testid="hud-camera-label">Orbit · Drag / [F] Freecam</span>
               ) : (
                 <span data-testid="hud-camera-label">
-                  Cam:{' '}
-                  {hud.cameraMode === 'chase'
-                    ? 'Chase'
-                    : hud.cameraMode === 'orbit'
-                    ? 'Orbit · Drag'
-                    : hud.cameraMode === 'hood'
-                    ? 'Hood'
-                    : 'Isometric'}{' '}
-                  · [C]
+                  Cam: {hud.cameraMode === 'hood' ? 'Hood' : 'Orbit · Drag'} · [C]
                 </span>
               )}
             </div>

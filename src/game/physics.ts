@@ -1,5 +1,5 @@
 import { CAR_CLASSES, getCarById, resolveCarSpecial, getCarBoP, BoPMultipliers, getRealWorldCarDimensions } from './cars';
-import { CompiledTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
+import { CompiledTrack, computeTrackWallHalfWidth, projectOntoTrack, sampleTrackAtT } from './tracks';
 import tuningConfigRaw from './tuningConfig.json';
 import {
   AIDifficulty,
@@ -144,6 +144,7 @@ export interface CarSimState {
   attackModeUsesRemaining: number;
   attackModeTimer: number;
   inSlipstream: boolean;
+  slipstreamStrength?: number; // 0..1 continuous exponential aerodynamic tow intensity
   understeerFactor: number; // 0..1
   lateralSlip: number; // 0..1 tire lateral scrub intensity
   onKerb: boolean; // currently riding corner kerb rumble strips
@@ -168,6 +169,8 @@ export interface CarSimState {
   aiStuckTimer: number;
   aiPrevHeadingErr: number;
   wallCollisionCooldown?: number;
+  lastCollisionImpact?: number; // latest car-to-car closing speed impact on THIS car (m/s)
+  lastWallImpact?: number; // latest wall closing speed impact on THIS car (m/s)
   spawnGhostTimer?: number; // seconds remaining where car-to-car collisions are bypassed after spawn/respawn
   pitch?: number; // radians (+ = nose up)
   roll?: number; // radians (+ = right side raised)
@@ -485,7 +488,113 @@ export function resolveWallContact(
     const heavyDmg = (impactSpeed - DAMAGE_THRESHOLD_SPEED) * 0.25;
     car.aeroDamage = Math.min(100, car.aeroDamage + Math.min(5.0, heavyDmg));
     car.wallCollisionCooldown = 0.5;
+    car.lastWallImpact = Math.max(car.lastWallImpact ?? 0, impactSpeed);
   }
+}
+
+/**
+ * Computes realistic continuous aerodynamic slipstream wake strength (0..1) for BOTH player and AI.
+ * Begins subtly from ~48m behind a leading car and ramps up exponentially as the gap closes.
+ */
+export function computeSlipstreamStrength(
+  car: Pick<CarSimState, 'id' | 'trackT' | 'lateralOffset' | 'speed' | 'pitStopRemaining'>,
+  allCars: ReadonlyArray<Pick<CarSimState, 'id' | 'trackT' | 'lateralOffset' | 'speed' | 'pitStopRemaining'>>,
+  trackLength: number,
+): number {
+  if (car.pitStopRemaining > 0 || car.speed < 14) return 0;
+  const speedRamp = Math.max(0, Math.min(1, (car.speed - 14) / 20));
+  const MAX_WAKE_M = 48.0;
+  const MIN_WAKE_M = 1.8;
+  const DECAY_LEN_M = 13.5;
+  const tailFloor = Math.exp(-(MAX_WAKE_M - MIN_WAKE_M) / DECAY_LEN_M);
+
+  let bestStrength = 0;
+  for (let i = 0; i < allCars.length; i++) {
+    const other = allCars[i];
+    if (other.id === car.id || other.pitStopRemaining > 0) continue;
+    let dT = other.trackT - car.trackT;
+    if (dT < 0) dT += 1;
+    const distAhead = dT * trackLength;
+    if (distAhead <= MIN_WAKE_M || distAhead >= MAX_WAKE_M) continue;
+
+    const latDiff = Math.abs(other.lateralOffset - car.lateralOffset);
+    const latLimit = 2.65 + Math.min(1.1, distAhead * 0.022);
+    if (latDiff >= latLimit) continue;
+
+    // Exponential longitudinal wake: subtle from 35-48m, ramps sharply inside 15m
+    const rawExp = Math.exp(-(distAhead - MIN_WAKE_M) / DECAY_LEN_M);
+    const longFactor = Math.max(0, (rawExp - tailFloor) / (1 - tailFloor));
+
+    // Smooth Gaussian lateral wake core
+    const latSigma = 1.85 + distAhead * 0.015;
+    const latFactor = Math.exp(-((latDiff / latSigma) * (latDiff / latSigma)));
+
+    const strength = longFactor * latFactor * speedRamp;
+    if (strength > bestStrength) bestStrength = strength;
+  }
+  return Math.max(0, Math.min(1, bestStrength));
+}
+
+/**
+ * Computes dynamic pack-fighting pace multiplier for AI cars to promote close racing:
+ * - The further ahead an AI pulls (of the player or trailing pack), the slightly slower it runs.
+ * - If behind a same-class human player, the AI pushes harder to reel the player back in and fight.
+ */
+export function computeDynamicAiPackPace(
+  car: Pick<CarSimState, 'id' | 'isPlayer' | 'carSpec' | 'totalDistance' | 'finished'>,
+  allCars: ReadonlyArray<Pick<CarSimState, 'id' | 'isPlayer' | 'carSpec' | 'totalDistance' | 'finished'>>,
+  trackLength: number,
+): number {
+  if (car.isPlayer || car.finished || allCars.length <= 1) return 1.0;
+
+  const sameClassCars = allCars.filter(
+    (other) => other.carSpec.classId === car.carSpec.classId && !other.finished,
+  );
+  if (sameClassCars.length <= 1) return 1.0;
+
+  const sameClassPlayer = sameClassCars.find((other) => other.isPlayer);
+  if (sameClassPlayer) {
+    const gapToPlayerM = (car.totalDistance - sameClassPlayer.totalDistance) * trackLength;
+    if (gapToPlayerM > 10) {
+      // Ahead of player: progressively ease off the further ahead (up to -5.5%) to encourage battles
+      const excess = gapToPlayerM - 10;
+      const slowDelta = 0.055 * (1 - Math.exp(-excess / 95));
+      return 1.0 - slowDelta;
+    }
+    if (gapToPlayerM < -8) {
+      // Behind player: push harder (up to +6.5%) to close in and fight if possible
+      const deficit = -gapToPlayerM - 8;
+      const boostDelta = 0.065 * (1 - Math.exp(-deficit / 80));
+      return 1.0 + boostDelta;
+    }
+    return 1.0;
+  }
+
+  // Pure AI race (or class without human player): gently compress runaway leaders & aid chasers
+  let sumOtherDist = 0;
+  let maxOtherDist = -Infinity;
+  let count = 0;
+  for (let i = 0; i < sameClassCars.length; i++) {
+    const o = sameClassCars[i];
+    if (o.id === car.id) continue;
+    sumOtherDist += o.totalDistance;
+    if (o.totalDistance > maxOtherDist) maxOtherDist = o.totalDistance;
+    count++;
+  }
+  if (count === 0) return 1.0;
+  const avgOtherDist = sumOtherDist / count;
+  const gapAheadOfPackM = (car.totalDistance - avgOtherDist) * trackLength;
+  const gapBehindLeaderM = (maxOtherDist - car.totalDistance) * trackLength;
+
+  if (gapAheadOfPackM > 14) {
+    const slowDelta = 0.048 * (1 - Math.exp(-(gapAheadOfPackM - 14) / 105));
+    return 1.0 - slowDelta;
+  }
+  if (gapBehindLeaderM > 16) {
+    const boostDelta = 0.036 * (1 - Math.exp(-(gapBehindLeaderM - 16) / 100));
+    return 1.0 + boostDelta;
+  }
+  return 1.0;
 }
 
 /**
@@ -694,20 +803,11 @@ export function stepCarPhysics(
     }
   }
 
-  // Slipstream detection (within 1.5..14m ahead and +/-2.8m laterally)
-  let inSlipstream = false;
-  for (let i = 0; i < opts.allCars.length; i++) {
-    const other = opts.allCars[i];
-    if (other.id === car.id) continue;
-    let dT = other.trackT - car.trackT;
-    if (dT < 0) dT += 1;
-    const distAhead = dT * compiledTrack.totalLength;
-    if (distAhead > 1.8 && distAhead < 14.5 && Math.abs(other.lateralOffset - car.lateralOffset) < 2.9) {
-      inSlipstream = true;
-      break;
-    }
-  }
-  car.inSlipstream = inSlipstream;
+  // Realistic exponential aerodynamic slipstream wake (begins ~48m back, ramps sharply closer in) — applies equally to Player & AI
+  const slipstreamStrength = computeSlipstreamStrength(car, opts.allCars, compiledTrack.totalLength);
+  car.slipstreamStrength = slipstreamStrength;
+  car.inSlipstream = slipstreamStrength >= 0.14;
+  car.lastWallImpact = 0;
 
   // Compute physical performance scalars & Balance of Performance
   if (opts.bopEnabled !== undefined) {
@@ -867,7 +967,7 @@ export function stepCarPhysics(
     }
   }
 
-  const slipstreamMult = inSlipstream ? 1.045 : 1.0;
+  const slipstreamMult = 1.0 + 0.052 * slipstreamStrength;
 
   let penaltyCap = 1.0;
   if (car.penaltyTimeRemaining > 0) {
@@ -887,8 +987,15 @@ export function stepCarPhysics(
   const offTrackDrag = onAsphalt ? 1.0 : 0.72;
   const offTrackGrip = onAsphalt ? 1.0 : 0.65;
 
-  // Speed ceiling (AI gains pace via cornering commitment/skill rather than unrealistic +7% straight-line Vmax)
-  const aiStraightScale = car.isPlayer ? 1.0 : 1.0 + (car.aiPaceMultiplier - 1.0) * 0.25;
+  // Dynamic pack pace variance for AI (leaders subtly slow, chasers behind player push harder to promote fights)
+  const aiPackPace = car.isPlayer
+    ? 1.0
+    : computeDynamicAiPackPace(car, opts.allCars, compiledTrack.totalLength);
+  const effectiveAiPace = car.aiPaceMultiplier * aiPackPace;
+  // Speed ceiling (AI gains pace via cornering commitment/skill + realistic straight-line pack modulation)
+  const aiStraightScale = car.isPlayer
+    ? 1.0
+    : Math.max(0.86, Math.min(1.075, 1.0 + (effectiveAiPace - 1.0) * 0.40));
   const dragVmaxFactor = Math.pow(tuning.dragScale, -0.22);
   let effectiveMaxSpeed =
     maxSpeedBase *
@@ -995,10 +1102,12 @@ export function stepCarPhysics(
     const speedRatio = Math.min(1, car.speed / Math.max(1, effectiveMaxSpeed));
     const powerAtVmaxW = powerWatts * specialAccelMult * fuelFactor * (1 - highSpeedPowerTaper);
     // kDrag = 0.5 * rho * Cd * A derived cleanly so aero + rolling resistance balances wheel power at effectiveMaxSpeed
-    const kAeroDrag = Math.max(
+    const kAeroDragBase = Math.max(
       0.05,
       (powerAtVmaxW / Math.max(20, effectiveMaxSpeed) - fRollN) / (effectiveMaxSpeed * effectiveMaxSpeed),
     );
+    // Real aerodynamic slipstream directly cuts drag coefficient in the wake for genuine mid/high-speed tow pull
+    const kAeroDrag = kAeroDragBase * (1 - 0.22 * slipstreamStrength);
     const fAeroDragN = kAeroDrag * car.speed * car.speed;
 
     if (throttle > 0 && brake < 0.1) {
@@ -1386,10 +1495,20 @@ export function stepCarPhysics(
     car.spawnGhostTimer = Math.max(0, car.spawnGhostTimer - dt);
   }
 
-  // Outer track guardrails / barriers
-  const outerRunoff = 6.2;
-  const maxRight = sampleHalfW + outerRunoff;
-  const maxLeft = -sampleHalfW - outerRunoff;
+  // Solid continuous track barriers — exact match to 3D trackBuilder wall inner face minus car's oriented lateral half-extent
+  // so no part of a car's bodywork or nose can ever clip outside the barrier.
+  const wallDims = car.carSpec.dimensions ?? getRealWorldCarDimensions(car.carSpec.id, car.carSpec.classId);
+  const carHalfW = (wallDims.width ?? 2.0) * 0.5;
+  const carHalfL = (wallDims.length ?? 4.6) * 0.5;
+  const trackHeading = Math.atan2(proj.sample.tx, proj.sample.tz);
+  const relYaw = car.heading - trackHeading;
+  const orientedHalfLat =
+    Math.abs(Math.cos(relYaw)) * carHalfW + Math.abs(Math.sin(relYaw)) * carHalfL;
+  const wallClearance = Math.max(carHalfW + 0.12, orientedHalfLat + 0.08);
+  const rightWallInner = computeTrackWallHalfWidth(sampleHalfW, proj.sample.curvature || 0, 1);
+  const leftWallInner = computeTrackWallHalfWidth(sampleHalfW, proj.sample.curvature || 0, -1);
+  const maxRight = Math.max(sampleHalfW * 0.5, rightWallInner - wallClearance);
+  const maxLeft = -Math.max(sampleHalfW * 0.5, leftWallInner - wallClearance);
   if (car.lateralOffset > maxRight) {
     resolveWallContact(car, proj.sample, maxRight, 1, dt);
   } else if (car.lateralOffset < maxLeft) {
@@ -1426,14 +1545,16 @@ export function stepCarPhysics(
   // Sector splits (S1 @ 0.333, S2 @ 0.667, S3 @ S/F) & Lap progress tracking
   car.prevTrackT = car.trackT;
   car.trackT = proj.sample.t;
-  car.currentLapTime += dt;
-  car.totalTime += dt;
+  if (!car.finished) {
+    car.currentLapTime += dt;
+    car.totalTime += dt;
+  }
 
   if (!car.sectorTimes) car.sectorTimes = [null, null, null];
   if (!car.bestSectorTimes) car.bestSectorTimes = [null, null, null];
   if (!car.lastLapSectorTimes) car.lastLapSectorTimes = [null, null, null];
 
-  if (!isReversing && car.totalDistance >= 0) {
+  if (!car.finished && !isReversing && car.totalDistance >= 0) {
     if (car.prevTrackT < 0.333 && car.trackT >= 0.333 && (car.currentSector ?? 1) === 1) {
       const s1 = car.currentLapTime;
       car.sectorTimes[0] = s1;
@@ -1454,7 +1575,7 @@ export function stepCarPhysics(
   }
 
   // Detect start/finish crossing forward (prevTrackT > 0.85 && trackT < 0.15)
-  if (!isReversing && car.prevTrackT > 0.85 && car.trackT < 0.15) {
+  if (!car.finished && !isReversing && car.prevTrackT > 0.85 && car.trackT < 0.15) {
     if (car.totalDistance < 0) {
       // Initial start/finish crossing from pre-start grid
       car.lap = 1;
@@ -1463,7 +1584,11 @@ export function stepCarPhysics(
       car.sectorStartTime = 0;
       car.sectorTimes = [null, null, null];
     } else {
-      const completedTime = car.currentLapTime;
+      // Sub-frame crossing interpolation so finish times & lap times are exact to milliseconds
+      const totalStepT = Math.max(1e-5, (1 - car.prevTrackT) + car.trackT);
+      const overshootFrac = Math.max(0, Math.min(1, car.trackT / totalStepT));
+      const overshootSec = dt * overshootFrac;
+      const completedTime = Math.max(0.1, car.currentLapTime - overshootSec);
       if (completedTime > 5) {
         const s3 = Math.max(0.1, completedTime - (car.sectorStartTime ?? 0));
         car.sectorTimes[2] = s3;
@@ -1476,19 +1601,21 @@ export function stepCarPhysics(
           car.bestLapTime = completedTime;
         }
       }
-      car.currentLapTime = 0;
+      car.currentLapTime = overshootSec;
       car.currentSector = 1;
       car.sectorStartTime = 0;
       car.sectorTimes = [null, null, null];
       if (opts.isQualifying) {
+        car.totalTime = Math.max(0, car.totalTime - overshootSec);
         car.finished = true;
       } else if (!(opts.isPractice && opts.totalLaps <= 0) && car.lap >= opts.totalLaps) {
+        car.totalTime = Math.max(0, car.totalTime - overshootSec);
         car.finished = true;
       } else {
         car.lap += 1;
       }
     }
-  } else if (car.prevTrackT < 0.15 && car.trackT > 0.85 && car.totalDistance > 0.2) {
+  } else if (!car.finished && car.prevTrackT < 0.15 && car.trackT > 0.85 && car.totalDistance > 0.2) {
     // Backwards crossing guard
     car.lap = Math.max(1, car.lap - 1);
   }
@@ -1821,6 +1948,9 @@ function computeObbCollision(a: CarCollisionBody, b: CarCollisionBody): ObbConta
 export function resolveCarCollisions(cars: CarSimState[]): number {
   let maxImpact = 0;
   const C = CAR_COLLISION_CONSTANTS;
+  for (let i = 0; i < cars.length; i++) {
+    cars[i].lastCollisionImpact = 0;
+  }
 
   for (let i = 0; i < cars.length; i++) {
     for (let j = i + 1; j < cars.length; j++) {
@@ -1992,6 +2122,8 @@ export function resolveCarCollisions(cars: CarSimState[]): number {
       // 5. Damage only above 25 km/h closing speed, capped at 3.5% per contact
       if (closingSpeed >= C.DAMAGE_THRESHOLD_SPEED) {
         maxImpact = Math.max(maxImpact, closingSpeed);
+        a.lastCollisionImpact = Math.max(a.lastCollisionImpact ?? 0, closingSpeed);
+        b.lastCollisionImpact = Math.max(b.lastCollisionImpact ?? 0, closingSpeed);
         const dmg = Math.min(3.5, (closingSpeed - C.DAMAGE_THRESHOLD_SPEED) * 0.25);
         a.aeroDamage = Math.min(100, a.aeroDamage + dmg);
         b.aeroDamage = Math.min(100, b.aeroDamage + dmg);
@@ -2060,10 +2192,13 @@ export function computeAIControl(
   const personalityBrakeFactor =
     personality === 'Late-Braker' ? 0.94 : personality === 'Tire-Saver' ? 0.82 : 0.88;
   const brakeDecel = Math.max(12, brakeBase * compoundMod.grip * personalityBrakeFactor);
+  // Dynamic pack pace variance: runaway leaders ease slightly, trailing cars behind player push harder
+  const aiPackPace = computeDynamicAiPackPace(car, allCars, compiledTrack.totalLength);
+  const effectiveAiPace = car.aiPaceMultiplier * aiPackPace;
   // Cornering speed utilization capped strictly <= 1.00 (100% of physical tire grip)
   const skillFactor = Math.max(
     0.75,
-    Math.min(1.0, 0.96 * (0.45 + 0.55 * car.aiPaceMultiplier) * tuning.aiCornerSpeedScale),
+    Math.min(1.0, 0.96 * (0.45 + 0.55 * effectiveAiPace) * tuning.aiCornerSpeedScale),
   );
 
   const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
@@ -2439,11 +2574,36 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
     classCounters.set(c.carSpec.classId, classPos);
 
     const ahead = idx > 0 ? sorted[idx - 1] : null;
-    const distDiffLeader = Math.max(0, (leader.totalDistance - c.totalDistance) * compiledTrack.totalLength);
-    const distDiffAhead = ahead
-      ? Math.max(0, (ahead.totalDistance - c.totalDistance) * compiledTrack.totalLength)
-      : 0;
     const refSpeed = Math.max(24, c.speed);
+
+    let intervalToLeaderSec = 0;
+    if (idx > 0) {
+      if (leader.finished && c.finished) {
+        intervalToLeaderSec = Math.max(0, c.totalTime - leader.totalTime);
+      } else if (leader.finished && !c.finished) {
+        // Elapsed gap since leader crossed plus estimated remaining time to the finish line
+        const remainingLaps = Math.max(0, leader.lap - c.totalDistance);
+        const elapsedSinceLeader = Math.max(0, c.totalTime - leader.totalTime);
+        intervalToLeaderSec = elapsedSinceLeader + (remainingLaps * compiledTrack.totalLength) / refSpeed;
+      } else {
+        const distDiffLeader = Math.max(0, (leader.totalDistance - c.totalDistance) * compiledTrack.totalLength);
+        intervalToLeaderSec = distDiffLeader / refSpeed;
+      }
+    }
+
+    let intervalToAheadSec = 0;
+    if (ahead) {
+      if (ahead.finished && c.finished) {
+        intervalToAheadSec = Math.max(0, c.totalTime - ahead.totalTime);
+      } else if (ahead.finished && !c.finished) {
+        const remainingLaps = Math.max(0, ahead.lap - c.totalDistance);
+        const elapsedSinceAhead = Math.max(0, c.totalTime - ahead.totalTime);
+        intervalToAheadSec = elapsedSinceAhead + (remainingLaps * compiledTrack.totalLength) / refSpeed;
+      } else {
+        const distDiffAhead = Math.max(0, (ahead.totalDistance - c.totalDistance) * compiledTrack.totalLength);
+        intervalToAheadSec = distDiffAhead / refSpeed;
+      }
+    }
 
     return {
       id: c.id,
@@ -2459,8 +2619,8 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
       lap: c.lap,
       progress: c.trackT,
       totalDistance: c.totalDistance,
-      intervalToAhead: Number((distDiffAhead / refSpeed).toFixed(2)),
-      intervalToLeader: Number((distDiffLeader / refSpeed).toFixed(2)),
+      intervalToAhead: Number(intervalToAheadSec.toFixed(2)),
+      intervalToLeader: Number(intervalToLeaderSec.toFixed(2)),
       bestLapTime: c.bestLapTime,
       lastLapTime: c.lastLapTime,
       totalTime: c.totalTime,

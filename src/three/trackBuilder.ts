@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import { CompiledTrack, SampledSplinePoint, sampleTrackAtT } from '../game/tracks';
+import {
+  CompiledTrack,
+  SampledSplinePoint,
+  computeTrackApronHalfWidth,
+  computeTrackWallHalfWidth,
+  sampleTrackAtT,
+} from '../game/tracks';
 import { SceneryTheme } from '../game/types';
 import {
   createAsphaltTexture,
@@ -363,7 +369,7 @@ export function buildTrackEnvironment(
       const isOverpass =
         inAnyCorridor && lowestCorridorY < Infinity && roadY - lowestCorridorY > 3.5;
 
-      const minClearance = isSkirt ? 0.22 : 0.36;
+      const minClearance = isSkirt ? 0.22 : 0.72;
       const dClamp = roadHalfW + (isSkirt ? 5.0 : 6.6);
       const dOuter = roadHalfW + 44.0;
       const corridorFloorY =
@@ -383,7 +389,7 @@ export function buildTrackEnvironment(
         // Smoothstep outer embankment transition from apron outer edge to surrounding DEM terrain
         const edgeBaseY =
           (lowestCorridorY < Infinity ? Math.min(roadEdgeY, lowestCorridorY) : roadEdgeY) -
-          (isSkirt ? 0.14 : 0.28);
+          (isSkirt ? 0.14 : 0.34);
         const u = (bestDist - dClamp) / (dOuter - dClamp);
         const s = u * u * (3 - 2 * u);
         vy = Math.min(vy, edgeBaseY * (1 - s) + rawY * s);
@@ -398,48 +404,16 @@ export function buildTrackEnvironment(
   };
 
   const posAttr = groundGeo.attributes.position;
-  const insideRoadFlags = new Uint8Array(posAttr.count);
   for (let k = 0; k < posAttr.count; k++) {
     const vx = posAttr.getX(k);
     const vz = posAttr.getZ(k);
     const bgY = sampleBaseGroundY(vx, vz);
     const res = clampTerrainHeight(vx, vz, bgY, false);
     posAttr.setY(k, res.y);
-    insideRoadFlags[k] = res.insideRoad ? 1 : 0;
   }
 
-  // Cut out terrain triangles touching or bridging across the road + apron footprint (vertices, edge midpoints, and centroid);
-  // outer turf skirts seamlessly bridge from apron outer edge out to terrain.
-  const origIndex = groundGeo.getIndex();
-  if (origIndex) {
-    const srcIdx = origIndex.array;
-    const filteredIdx: number[] = [];
-    const crossesRoad = (x: number, z: number): boolean => {
-      const q = getNearestRoadSegment(x, z);
-      return Boolean(q.bestSeg && (q.inApronCorridor || q.bestDist <= q.bestSegHalfW + 4.6));
-    };
-    for (let t = 0; t < srcIdx.length; t += 3) {
-      const a = srcIdx[t];
-      const b = srcIdx[t + 1];
-      const c = srcIdx[t + 2];
-      if (insideRoadFlags[a] || insideRoadFlags[b] || insideRoadFlags[c]) {
-        continue;
-      }
-      const ax = posAttr.getX(a), az = posAttr.getZ(a);
-      const bx = posAttr.getX(b), bz = posAttr.getZ(b);
-      const cx = posAttr.getX(c), cz = posAttr.getZ(c);
-      if (
-        crossesRoad((ax + bx + cx) / 3, (az + bz + cz) / 3) ||
-        crossesRoad((ax + bx) * 0.5, (az + bz) * 0.5) ||
-        crossesRoad((bx + cx) * 0.5, (bz + cz) * 0.5) ||
-        crossesRoad((cx + ax) * 0.5, (cz + az) * 0.5)
-      ) {
-        continue;
-      }
-      filteredIdx.push(a, b, c);
-    }
-    groundGeo.setIndex(filteredIdx);
-  }
+  // Keep the full terrain mesh intact underneath the track (depressed safely below road/apron)
+  // so no empty void gaps ever appear beneath embankments, hairpins, or hillsides.
   groundGeo.computeVertexNormals();
 
   const groundMat = track(
@@ -533,13 +507,14 @@ export function buildTrackEnvironment(
         if (hitOther) break;
       }
 
-      const innerEdge = hw + 4.70;
-      const midEdge = Math.min(hw + 13.0, hw + 4.70 + Math.max(0.3, (maxSafeOuter - 4.70) * 0.4));
-      const outerEdge = hw + Math.max(5.0, maxSafeOuter);
+      const apronSideHW = computeTrackApronHalfWidth(hw, s.curvature || 0, side);
+      const innerEdge = Math.max(hw + 0.4, apronSideHW - 0.35);
+      const midEdge = Math.min(hw + 13.0, innerEdge + Math.max(0.6, (hw + maxSafeOuter - innerEdge) * 0.4));
+      const outerEdge = Math.max(innerEdge + 0.9, hw + Math.max(5.0, maxSafeOuter));
 
       const ix = s.x + s.nx * side * innerEdge * cosB;
       const iz = s.z + s.nz * side * innerEdge * cosB;
-      const iyRaw = isOverpass ? s.y - 1.2 : s.y - 0.18 + side * innerEdge * sinB;
+      const iyRaw = isOverpass ? s.y - 1.2 : s.y - 0.16 + side * innerEdge * sinB;
       const iy = clampTerrainHeight(ix, iz, iyRaw, true).y;
 
       const mx = s.x + s.nx * side * midEdge * cosB;
@@ -670,12 +645,9 @@ export function buildTrackEnvironment(
       }
       const vCoord = accLen / 24;
       const roadHW = p.width ? p.width * 0.5 : halfW;
-      const targetHW = roadHW + 4.8;
       const curv = p.curvature || 0;
-      // On inside of tight hairpins (radius < targetHW), clamp inner apron width to avoid self-intersection fold-over
-      const safeRadius = Math.abs(curv) > 0.005 ? 0.88 / Math.abs(curv) : targetHW;
-      const leftHW = curv < -0.005 ? Math.max(roadHW + 0.15, Math.min(targetHW, safeRadius)) : targetHW;
-      const rightHW = curv > 0.005 ? Math.max(roadHW + 0.15, Math.min(targetHW, safeRadius)) : targetHW;
+      const leftHW = computeTrackApronHalfWidth(roadHW, curv, -1);
+      const rightHW = computeTrackApronHalfWidth(roadHW, curv, 1);
 
       const bank = p.banking || 0;
       const cosB = Math.cos(bank);
@@ -754,6 +726,98 @@ export function buildTrackEnvironment(
   apronMesh.renderOrder = 1;
   group.add(apronMesh);
 
+  // 4b. Solid Roadbed Under-Deck & Foundation Walls (seals every underside edge on hills, banking, and overpasses)
+  const buildRoadbedUnderDeckGeometry = (): THREE.BufferGeometry => {
+    const pts = compiled.samples;
+    const n = pts.length;
+    // 4 vertices per sample: leftTop, leftBot, rightBot, rightTop
+    const positions = new Float32Array((n + 1) * 4 * 3);
+    const indices: number[] = [];
+
+    for (let i = 0; i <= n; i++) {
+      const p = pts[i % n];
+      const roadHW = p.width ? p.width * 0.5 : halfW;
+      const curv = p.curvature || 0;
+      const leftHW = computeTrackApronHalfWidth(roadHW, curv, -1);
+      const rightHW = computeTrackApronHalfWidth(roadHW, curv, 1);
+
+      const bank = p.banking || 0;
+      const cosB = Math.cos(bank);
+      const sinB = Math.sin(bank);
+
+      const lx = p.x - p.nx * leftHW * cosB;
+      const lyTop = p.y - 0.04 - leftHW * sinB;
+      const lz = p.z - p.nz * leftHW * cosB;
+
+      const rx = p.x + p.nx * rightHW * cosB;
+      const ryTop = p.y - 0.04 + rightHW * sinB;
+      const rz = p.z + p.nz * rightHW * cosB;
+
+      // Detect elevated bridge/overpass so bridge underside stays a clean 1.15m slab above the lower road
+      let isBridge = false;
+      if (p.y > 4.0) {
+        for (let k = 0; k < n; k += 4) {
+          const stepD = Math.min(Math.abs(k - (i % n)), n - Math.abs(k - (i % n)));
+          if (stepD < 24) continue;
+          const o = pts[k];
+          if ((o.x - p.x) * (o.x - p.x) + (o.z - p.z) * (o.z - p.z) < 38 * 38 && p.y - o.y > 3.5) {
+            isBridge = true;
+            break;
+          }
+        }
+      }
+
+      const bgL = sampleBaseGroundY(lx, lz);
+      const bgR = sampleBaseGroundY(rx, rz);
+      const lyBot = isBridge ? lyTop - 1.15 : Math.min(lyTop - 1.45, bgL - 0.9);
+      const ryBot = isBridge ? ryTop - 1.15 : Math.min(ryTop - 1.45, bgR - 0.9);
+
+      const base = i * 4;
+      // 0: leftTop, 1: leftBot, 2: rightBot, 3: rightTop
+      positions[base * 3] = lx;
+      positions[base * 3 + 1] = lyTop;
+      positions[base * 3 + 2] = lz;
+      positions[(base + 1) * 3] = lx;
+      positions[(base + 1) * 3 + 1] = lyBot;
+      positions[(base + 1) * 3 + 2] = lz;
+      positions[(base + 2) * 3] = rx;
+      positions[(base + 2) * 3 + 1] = ryBot;
+      positions[(base + 2) * 3 + 2] = rz;
+      positions[(base + 3) * 3] = rx;
+      positions[(base + 3) * 3 + 1] = ryTop;
+      positions[(base + 3) * 3 + 2] = rz;
+
+      if (i > 0) {
+        const p0 = (i - 1) * 4;
+        const c0 = base;
+        // Left vertical foundation wall (outward normal)
+        indices.push(p0, c0, p0 + 1, c0, c0 + 1, p0 + 1);
+        // Bottom soffit (downward normal)
+        indices.push(p0 + 1, c0 + 1, p0 + 2, c0 + 1, c0 + 2, p0 + 2);
+        // Right vertical foundation wall (outward normal)
+        indices.push(p0 + 2, c0 + 2, p0 + 3, c0 + 2, c0 + 3, p0 + 3);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const underDeckGeo = track(buildRoadbedUnderDeckGeometry());
+  const underDeckMat = track(
+    new THREE.MeshStandardMaterial({
+      color: compiled.spec.scenery === 'desert' ? 0x6b5b4a : 0x334155,
+      roughness: 0.92,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    }),
+  );
+  const underDeckMesh = new THREE.Mesh(underDeckGeo, underDeckMat);
+  underDeckMesh.receiveShadow = true;
+  group.add(underDeckMesh);
+
   // 5. Stylized Oversized Die-Cast Apex Kerbs (y + 0.020m, strictly proud of asphalt)
   const kerbTex = track(createKerbTexture(compiled.spec.kerbPrimary, compiled.spec.kerbSecondary, maxAniso));
   const kerbMat = track(
@@ -824,54 +888,158 @@ export function buildTrackEnvironment(
     group.add(kerbInst);
   }
 
-  // 6. Outer & Inner Continuous Guardrail Posts / Barriers (InstancedMesh)
-  const barrierGeo = track(new THREE.BoxGeometry(0.45, 0.85, 4.4));
+  // 6. Solid Continuous Extruded 3D FIA Safety Barriers (concrete base + striped upper rail, zero gaps)
+  const createSolidBarrierTexture = (): THREE.CanvasTexture => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      // Lower concrete jersey wall
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(0, 62, 256, 66);
+      // Subtle concrete seam & grime band near base
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(0, 104, 256, 24);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(0, 60, 256, 5);
+      // Upper steel rail with crisp alternating safety panels
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, 128, 60);
+      ctx.fillStyle = compiled.spec.kerbPrimary || '#dc2626';
+      ctx.fillRect(128, 0, 128, 60);
+      // Dark steel shadow groove & top highlight
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.25)';
+      ctx.fillRect(0, 28, 256, 5);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.fillRect(0, 0, 256, 4);
+      // Concrete vertical expansion joints
+      ctx.fillStyle = 'rgba(51, 65, 85, 0.32)';
+      ctx.fillRect(0, 62, 3, 66);
+      ctx.fillRect(128, 62, 3, 66);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = Math.min(8, maxAniso);
+    return tex;
+  };
+
+  const barrierTex = track(createSolidBarrierTexture());
   const barrierMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0xdbe2ea,
-      roughness: 0.45,
-      metalness: 0.45,
+      color: 0xffffff,
+      map: barrierTex,
+      roughness: 0.58,
+      metalness: 0.18,
     }),
   );
-  const barrierMatrices: THREE.Matrix4[] = [];
-  const nSamples = compiled.samples.length;
-  const adjSkip = Math.max(12, Math.floor(nSamples * 0.04));
-  for (let i = 0; i < nSamples; i += 2) {
-    const s = compiled.samples[i];
-    for (const side of [-1, 1]) {
+
+  const buildContinuousSolidBarrier = (side: -1 | 1): THREE.BufferGeometry => {
+    const pts = compiled.samples;
+    const n = pts.length;
+    const adjSkip = Math.max(12, Math.floor(n * 0.04));
+
+    // 4-point closed cross-section profile per sample:
+    // 0: inner bottom (buried -0.65m into apron), 1: inner top (+1.08m),
+    // 2: outer top (+1.08m, +0.58m thick), 3: outer bottom (-0.65m, +0.66m thick)
+    const profileOffsets: Array<{ dOff: number; yOff: number; v: number }> = [
+      { dOff: 0.0, yOff: -0.65, v: 0.0 },
+      { dOff: 0.04, yOff: 1.08, v: 1.0 },
+      { dOff: 0.58, yOff: 1.08, v: 1.0 },
+      { dOff: 0.66, yOff: -0.65, v: 0.0 },
+    ];
+    const P = profileOffsets.length;
+    const positions = new Float32Array((n + 1) * P * 3);
+    const uvs = new Float32Array((n + 1) * P * 2);
+    const validSample = new Uint8Array(n + 1);
+    const indices: number[] = [];
+
+    let accDist = 0;
+    for (let i = 0; i <= n; i++) {
+      const idx = i % n;
+      const s = pts[idx];
+      if (i > 0) {
+        const prev = pts[(i - 1) % n];
+        accDist += Math.hypot(s.x - prev.x, s.z - prev.z);
+      }
+      const uCoord = accDist / 12.0;
       const bank = s.banking || 0;
       const cosB = Math.cos(bank);
       const sinB = Math.sin(bank);
       const curHalfW = s.width ? s.width * 0.5 : halfW;
-      const offset = curHalfW + 5.6;
-      const bx = s.x + s.nx * side * offset * cosB;
-      const by = s.y + 0.35 + side * offset * sinB;
-      const bz = s.z + s.nz * side * offset * cosB;
-      let overlapsOtherLeg = false;
-      for (let j = 0; j < nSamples; j += 2) {
-        const dIdx = Math.min(Math.abs(j - i), nSamples - Math.abs(j - i));
+      const wallInner = computeTrackWallHalfWidth(curHalfW, s.curvature || 0, side);
+
+      const testX = s.x + s.nx * side * (wallInner + 0.3) * cosB;
+      const testY = s.y + side * (wallInner + 0.3) * sinB;
+      const testZ = s.z + s.nz * side * (wallInner + 0.3) * cosB;
+
+      // Skip barrier segment only if it physically collides with a non-adjacent road deck at the same elevation
+      let overlapsOtherRoad = false;
+      for (let j = 0; j < n; j += 2) {
+        const dIdx = Math.min(Math.abs(j - idx), n - Math.abs(j - idx));
         if (dIdx < adjSkip) continue;
-        const o = compiled.samples[j];
-        if (Math.abs(o.y - by) >= 4.5) continue;
-        const clearR = (o.width ? o.width * 0.5 : halfW) + 2.4;
-        const dx = bx - o.x;
-        const dz = bz - o.z;
+        const o = pts[j];
+        if (Math.abs(o.y - testY) >= 4.0) continue;
+        const clearR = (o.width ? o.width * 0.5 : halfW) + 1.4;
+        const dx = testX - o.x;
+        const dz = testZ - o.z;
         if (dx * dx + dz * dz < clearR * clearR) {
-          overlapsOtherLeg = true;
+          overlapsOtherRoad = true;
           break;
         }
       }
-      if (overlapsOtherLeg) continue;
-      setBankedTrackTransform(bx, by, bz, s, bank);
-      barrierMatrices.push(dummy.matrix.clone());
+      validSample[i] = overlapsOtherRoad ? 0 : 1;
+
+      for (let pIdx = 0; pIdx < P; pIdx++) {
+        const prof = profileOffsets[pIdx];
+        const lat = wallInner + prof.dOff;
+        const vx = s.x + s.nx * side * lat * cosB;
+        const vy = s.y + side * lat * sinB + prof.yOff;
+        const vz = s.z + s.nz * side * lat * cosB;
+
+        const outIdx = i * P + pIdx;
+        positions[outIdx * 3] = vx;
+        positions[outIdx * 3 + 1] = vy;
+        positions[outIdx * 3 + 2] = vz;
+        uvs[outIdx * 2] = uCoord;
+        uvs[outIdx * 2 + 1] = prof.v;
+      }
+
+      if (i > 0 && validSample[i] && validSample[i - 1]) {
+        const a0 = (i - 1) * P;
+        const b0 = i * P;
+        // Connect inner face (0->1), top cap (1->2), outer face (2->3) with outward winding
+        for (let seg = 0; seg < P - 1; seg++) {
+          const pA = a0 + seg;
+          const pB = a0 + seg + 1;
+          const cA = b0 + seg;
+          const cB = b0 + seg + 1;
+          if (side === 1) {
+            indices.push(pA, pB, cA, pB, cB, cA);
+          } else {
+            indices.push(pA, cA, pB, pB, cA, cB);
+          }
+        }
+      }
     }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  };
+
+  for (const side of [-1, 1] as const) {
+    const solidBarrierGeo = track(buildContinuousSolidBarrier(side));
+    const solidBarrierMesh = new THREE.Mesh(solidBarrierGeo, barrierMat);
+    solidBarrierMesh.castShadow = true;
+    solidBarrierMesh.receiveShadow = true;
+    group.add(solidBarrierMesh);
   }
-  const barrierInst = new THREE.InstancedMesh(barrierGeo, barrierMat, barrierMatrices.length);
-  barrierMatrices.forEach((m, idx) => barrierInst.setMatrixAt(idx, m));
-  barrierInst.instanceMatrix.needsUpdate = true;
-  barrierInst.computeBoundingSphere();
-  barrierInst.castShadow = true;
-  group.add(barrierInst);
 
   // 6b. Concrete Overpass Support Piers on Elevated Sections (e.g., Suzuka Figure-8 Bridge)
   const pierGeo = track(new THREE.BoxGeometry(1.4, 1.0, 1.4));

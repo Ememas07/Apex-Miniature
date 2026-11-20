@@ -135,7 +135,7 @@ export interface CarSpec {
   silhouette: BodySilhouette;
   attributes: BoPAttributes;
   tradeoffNote: string;
-  engineType: 'v6-hybrid' | 'v8-hybrid' | 'v10' | 'v12' | 'flat6' | 'electric' | 'turbo-i6' | 'turbo-i4';
+  engineType: 'v6-hybrid' | 'v8-hybrid' | 'v6' | 'v8' | 'v10' | 'v12' | 'flat6' | 'electric' | 'turbo-i6' | 'turbo-i4';
   soundProfile?: SoundProfileId;
   gears?: number; // per-car transmission gear override (e.g. Cadillac GTP = 6 gears)
   specialTypeOverride?: ClassSpecialType;
@@ -194,7 +194,7 @@ export type AIDifficulty = 'Rookie' | 'Amateur' | 'Pro' | 'Alien';
 
 export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffic-Smart';
 
-export type CameraMode = 'chase' | 'orbit' | 'hood' | 'isometric';
+export type CameraMode = 'orbit' | 'hood';
 
 export type PitServiceAction = 'tyres' | 'fuel';
 

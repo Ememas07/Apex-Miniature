@@ -36,7 +36,7 @@ function ApexLogo() {
   return (
     <svg
       viewBox="0 0 380 86"
-      className="w-48 md:w-56 h-auto"
+      className="w-36 sm:w-48 md:w-56 h-auto"
       role="img"
       aria-label="Apex Miniature"
     >
@@ -152,7 +152,7 @@ export function TitleOverlay({
       data-testid="title-overlay"
       data-menu-style="modern"
       aria-hidden={!visible}
-      className={`fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-5 md:p-8 transition-all duration-300 ease-in-out ${
+      className={`fixed inset-0 z-10 pointer-events-none flex flex-col justify-between gap-3 p-3 sm:p-5 md:p-8 safe-area-inset overflow-y-auto transition-all duration-300 ease-in-out ${
         visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1 [&_*]:pointer-events-none'
       }`}
     >
@@ -369,7 +369,7 @@ export function TitleOverlay({
         </div>
 
         <div className="text-[11px] text-slate-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
-          WASD / Arrows / Gamepad Drive · Space / Shift / E Special · C Camera · R Reset Cam · P Pause
+          WASD / Arrows / Touchpad / Gamepad · Space / Shift / E Special · C Camera · R Reset Cam · P Pause
         </div>
       </div>
     </div>

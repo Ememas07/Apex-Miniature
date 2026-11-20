@@ -287,6 +287,8 @@ export function inferSoundProfileId(
   if (engineType === 'flat6') return 'gt3_flat6';
   if (engineType === 'turbo-i6') return 'gt3_turbo_i6';
   if (engineType === 'turbo-i4') return 'gt4_turbo_i4';
+  if (engineType === 'v6') return 'gt3_turbo_v6';
+  if (engineType === 'v8') return 'gt3_crossplane_v8';
   if (engineType === 'v6-hybrid') return 'gtp_turbo_v6';
   return 'gtp_turbo_v8';
 }

@@ -2782,24 +2782,271 @@ test('Settings & Controller Input Toggle: disabling controller returns neutral s
   unsub();
 });
 
-test('Chase & Orbit Camera Defaults: distinct straight-ahead chase vs car-centered orbit', async () => {
+test('Orbit & Hood Camera Defaults: car-centered orbit and rigid 3D hood view', async () => {
   const { computeCameraFrame, DEFAULT_CHASE_CAMERA } = await import('./camera');
-  assert.ok(DEFAULT_CHASE_CAMERA.pitch >= 0.4, 'Default chase pitch should sit high enough for clear forward track sightline');
-  assert.ok(DEFAULT_CHASE_CAMERA.distance >= 11, 'Default chase distance should frame car cleanly');
+  assert.ok(DEFAULT_CHASE_CAMERA.pitch >= 0.4, 'Default orbit pitch should sit high enough for clear forward track sightline');
+  assert.ok(DEFAULT_CHASE_CAMERA.distance >= 11, 'Default orbit distance should frame car cleanly');
 
-  const sampleCar = { x: 10, y: 2, z: -5, heading: 0.4, speed: 45 };
-  const chaseFrame = computeCameraFrame('chase', sampleCar, 0, 0);
-  assert.equal(chaseFrame.isLocked, false);
-  assert.ok(chaseFrame.lookAt.x > sampleCar.x, 'Chase camera should look straight ahead along heading');
-  assert.ok(chaseFrame.lookAt.z > sampleCar.z, 'Chase camera should look straight ahead along heading');
-  assert.ok(chaseFrame.position.y > 2 + 4.5, `Expected elevated chase camera y, got ${chaseFrame.position.y}`);
-
+  const sampleCar = { x: 10, y: 2, z: -5, heading: 0.4, speed: 45, pitch: 0.08, roll: 0.03 };
   const orbitFrame = computeCameraFrame('orbit', sampleCar, 0, 0);
   assert.equal(orbitFrame.isLocked, true);
   assert.equal(orbitFrame.lookAt.x, 10);
   assert.equal(orbitFrame.lookAt.z, -5);
-  assert.ok(orbitFrame.lookAt.y > 2, 'Pivot should sit above car origin');
+  assert.ok(orbitFrame.lookAt.y > 2, 'Orbit pivot should sit above car origin');
   assert.ok(orbitFrame.position.y > 2 + 4.5, `Expected elevated orbit camera y, got ${orbitFrame.position.y}`);
+
+  const hoodFrame = computeCameraFrame('hood', sampleCar, 0, 0);
+  assert.equal(hoodFrame.isLocked, true);
+  assert.ok(hoodFrame.lookAt.x > sampleCar.x, 'Hood camera should look ahead along car heading');
+  assert.ok(hoodFrame.lookAt.z > sampleCar.z, 'Hood camera should look ahead along car heading');
+  assert.ok(hoodFrame.position.y > sampleCar.y && hoodFrame.position.y < sampleCar.y + 3, 'Hood camera should mount closely above bodywork');
 });
+
+test('Touch controls math, visibility, and multi-input blending', async () => {
+  const { computeTouchPadSteer, shouldShowTouchControls, blendAllDrivingInputs } = await import('./touchControls');
+  assert.equal(computeTouchPadSteer(0, 100), 0);
+  assert.equal(computeTouchPadSteer(5, 100), 0, 'Small jitter inside deadzone should yield 0');
+  assert.ok(computeTouchPadSteer(50, 100) > 0 && computeTouchPadSteer(50, 100) < 0.6);
+  assert.equal(computeTouchPadSteer(100, 100), 1);
+  assert.equal(computeTouchPadSteer(-100, 100), -1);
+
+  assert.equal(shouldShowTouchControls('always', false), true);
+  assert.equal(shouldShowTouchControls('off', true), false);
+  assert.equal(shouldShowTouchControls('auto', true), true);
+  assert.equal(shouldShowTouchControls('auto', false), false);
+
+  const blended = blendAllDrivingInputs(
+    { throttle: 0, brake: 0, steer: 0 },
+    { connected: false, throttle: 0, brake: 0, steer: 0 },
+    { active: true, throttle: 0.9, brake: 0, steer: -0.65 },
+  );
+  assert.equal(blended.throttle, 0.9);
+  assert.equal(blended.steer, -0.65);
+});
+
+test('LMP2 Oreca 07 and non-hybrid GT4/GT3 cars do not use hybrid engine types', () => {
+  const oreca = getCarById('oreca-07');
+  assert.equal(oreca.engineType, 'v8', 'LMP2 Oreca 07 Gibson must be pure naturally aspirated V8, not hybrid');
+  const glickenhaus = getCarById('glickenhaus-scg-007');
+  assert.equal(glickenhaus.engineType, 'v8', 'Glickenhaus SCG 007 LMH is a non-hybrid twin-turbo V8');
+
+  const arturaGt4 = getCarById('mclaren-artura-gt4');
+  assert.equal(arturaGt4.engineType, 'v6', 'McLaren Artura GT4 races without the road hybrid system');
+  const supraGt4 = getCarById('toyota-supra-gt4');
+  assert.equal(supraGt4.engineType, 'turbo-i6');
+  const bmwM4Gt4 = getCarById('bmw-m4-gt4');
+  assert.equal(bmwM4Gt4.engineType, 'turbo-i6');
+
+  for (const cls of [CarClassId.LMP2, CarClassId.GT4, CarClassId.GT3]) {
+    for (const car of getCarsByClass(cls)) {
+      assert.ok(
+        !car.engineType.includes('hybrid'),
+        `Expected ${car.id} (${cls}) to be non-hybrid, got ${car.engineType}`,
+      );
+    }
+  }
+});
+
+const testLivery: LiveryConfig = getCarById('ferrari-499p').defaultLivery;
+
+test('Exponential slipstream tow reaches ~45m back, ramps up closely, and works for AI and Player alike', async () => {
+  const { computeSlipstreamStrength } = await import('./physics');
+  const track = compileTrack(getTrackById('monza-mini'));
+  const leader = createCarSimState({
+    id: 'leader',
+    name: 'Leader',
+    isPlayer: false,
+    carId: 'ferrari-499p',
+    livery: testLivery,
+    gridSlot: 0,
+    compiledTrack: track,
+    compound: 'medium',
+  });
+  const followerAi = createCarSimState({
+    id: 'ai-1',
+    name: 'Chaser',
+    isPlayer: false,
+    carId: 'ferrari-499p',
+    livery: testLivery,
+    gridSlot: 1,
+    compiledTrack: track,
+    compound: 'medium',
+  });
+  leader.speed = 65;
+  followerAi.speed = 65;
+  leader.lateralOffset = 0;
+  followerAi.lateralOffset = 0;
+
+  leader.trackT = 0.5;
+  // 42m back: subtle wake already present
+  followerAi.trackT = 0.5 - 42 / track.totalLength;
+  const farWake = computeSlipstreamStrength(followerAi, [leader, followerAi], track.totalLength);
+  assert.ok(farWake > 0.01 && farWake < 0.15, `Expected subtle wake at 42m, got ${farWake}`);
+
+  // 20m back: moderate wake
+  followerAi.trackT = 0.5 - 20 / track.totalLength;
+  const midWake = computeSlipstreamStrength(followerAi, [leader, followerAi], track.totalLength);
+
+  // 6m back: strong exponential wake
+  followerAi.trackT = 0.5 - 6 / track.totalLength;
+  const closeWake = computeSlipstreamStrength(followerAi, [leader, followerAi], track.totalLength);
+
+  assert.ok(midWake > farWake * 2.5, `Expected wake to build strongly from 42m (${farWake}) to 20m (${midWake})`);
+  assert.ok(closeWake > midWake * 2.0, `Expected exponential spike from 20m (${midWake}) to 6m (${closeWake})`);
+
+  // Lateral offset outside wake core drops tow to ~0
+  followerAi.lateralOffset = 4.5;
+  const outOfWake = computeSlipstreamStrength(followerAi, [leader, followerAi], track.totalLength);
+  assert.equal(outOfWake, 0);
+});
+
+test('Dynamic AI pack pace slows runaway leaders and boosts AI trailing behind the player', async () => {
+  const { computeDynamicAiPackPace } = await import('./physics');
+  const track = compileTrack(getTrackById('monza-mini'));
+  const makeCar = (id: string, name: string, isPlayer: boolean, slot: number) =>
+    createCarSimState({
+      id,
+      name,
+      isPlayer,
+      carId: 'porsche-963',
+      livery: testLivery,
+      gridSlot: slot,
+      compiledTrack: track,
+      compound: 'medium',
+    });
+
+  const player = makeCar('player', 'Player', true, 0);
+  const aiAhead = makeCar('ai-ahead', 'Marco Rossi', false, 1);
+  const aiFarAhead = makeCar('ai-far', 'Liam Vance', false, 2);
+  const aiBehind = makeCar('ai-behind', 'Sora Sato', false, 3);
+
+  player.totalDistance = 1.0;
+  aiAhead.totalDistance = 1.0 + 40 / track.totalLength;
+  aiFarAhead.totalDistance = 1.0 + 180 / track.totalLength;
+  aiBehind.totalDistance = 1.0 - 90 / track.totalLength;
+
+  const pack = [player, aiAhead, aiFarAhead, aiBehind];
+  const pacePlayer = computeDynamicAiPackPace(player, pack, track.totalLength);
+  const paceAhead = computeDynamicAiPackPace(aiAhead, pack, track.totalLength);
+  const paceFarAhead = computeDynamicAiPackPace(aiFarAhead, pack, track.totalLength);
+  const paceBehind = computeDynamicAiPackPace(aiBehind, pack, track.totalLength);
+
+  assert.equal(pacePlayer, 1.0, 'Player pace multiplier is untouched');
+  assert.ok(paceAhead < 1.0, `AI ahead of player should slightly ease off, got ${paceAhead}`);
+  assert.ok(paceFarAhead < paceAhead, `Further-ahead AI (${paceFarAhead}) should ease off more than closer AI (${paceAhead})`);
+  assert.ok(paceBehind > 1.02, `AI behind player should push harder to fight, got ${paceBehind}`);
+});
+
+test('Solid track barriers clamp car bodywork strictly inside the barrier face', async () => {
+  const { computeTrackWallHalfWidth } = await import('./tracks');
+  const track = compileTrack(getTrackById('monza-mini'));
+  const car = createCarSimState({
+    id: 'p1',
+    name: 'Player',
+    isPlayer: true,
+    carId: 'porsche-911-gt3-r',
+    livery: testLivery,
+    gridSlot: 0,
+    compiledTrack: track,
+    compound: 'medium',
+  });
+  const sample = sampleTrackAtT(track, car.trackT);
+  const halfW = track.spec.trackWidth * 0.5;
+  const wallHalfWidth = computeTrackWallHalfWidth(halfW, sample.curvature || 0, 1);
+
+  // Push car beyond the outer barrier and step physics so wall containment triggers
+  const farOutside = wallHalfWidth + 4.0;
+  car.x = sample.x + sample.nx * farOutside;
+  car.z = sample.z + sample.nz * farOutside;
+  car.lateralOffset = farOutside;
+  car.speed = 35;
+  car.vx = sample.nx * 20;
+  car.vz = sample.nz * 20;
+
+  stepCarPhysics(
+    car,
+    { throttle: 0.5, brake: 0, steer: 0, specialPressed: false },
+    track,
+    1 / 60,
+    {
+      trackWetness: 0,
+      totalLaps: 3,
+      isQualifying: false,
+      allCars: [car],
+    },
+  );
+  assert.ok(
+    Math.abs(car.lateralOffset) < wallHalfWidth,
+    `Car center (${car.lateralOffset}) must stay strictly inside barrier face (${wallHalfWidth}) so body cannot clip outside`,
+  );
+  assert.ok((car.lastWallImpact ?? 0) > 0, 'Wall contact must record impact magnitude for player-only shake');
+});
+
+test('computeStandings computes accurate non-zero finish time gaps once cars cross the line', () => {
+  const track = compileTrack(getTrackById('monza-mini'));
+  const makeCar = (id: string, name: string, slot: number) =>
+    createCarSimState({
+      id,
+      name,
+      isPlayer: false,
+      carId: 'ferrari-499p',
+      livery: testLivery,
+      gridSlot: slot,
+      compiledTrack: track,
+      compound: 'medium',
+    });
+
+  const c1 = makeCar('c1', 'Marco Rossi', 0);
+  const c2 = makeCar('c2', 'Liam Vance', 1);
+  const c3 = makeCar('c3', 'Sora Sato', 2);
+
+  c1.finished = true;
+  c1.lap = 3;
+  c1.totalTime = 120.42;
+  c1.totalDistance = 3.01;
+  c2.finished = true;
+  c2.lap = 3;
+  c2.totalTime = 122.17;
+  c2.totalDistance = 3.005;
+  c3.finished = false;
+  c3.lap = 2;
+  c3.totalTime = 124.0;
+  c3.totalDistance = 2.85;
+
+  const standings = computeStandings([c2, c3, c1], track);
+  assert.equal(standings[0].id, 'c1');
+  assert.equal(standings[0].intervalToLeader, 0);
+  assert.equal(standings[1].id, 'c2');
+  assert.ok(
+    Math.abs(standings[1].intervalToLeader - 1.75) < 0.01,
+    `Expected +1.75s finish gap, got ${standings[1].intervalToLeader}`,
+  );
+  assert.equal(standings[2].id, 'c3');
+  assert.ok(standings[2].intervalToLeader > 0, 'Unfinished car behind finished leader should have positive gap');
+});
+
+test('AI nametag plates use F. Lastname while full names remain intact for results/classification and human peers', async () => {
+  const { formatShortDriverPlateName, formatNametagLabel } = await import('../three/nametagSprite');
+  assert.equal(formatShortDriverPlateName('Marco Rossi'), 'M. Rossi');
+  assert.equal(formatShortDriverPlateName('Carlos De La Rosa'), 'C. De La Rosa');
+  assert.equal(formatShortDriverPlateName('Vance'), 'Vance');
+
+  const aiPlate = formatNametagLabel({
+    id: 'ai-1',
+    driverName: 'Marco Rossi',
+    classId: CarClassId.HYPERCAR_GTP,
+    isHumanPeer: false,
+  });
+  assert.equal(aiPlate.nameText, 'M. Rossi');
+
+  const humanPlate = formatNametagLabel({
+    id: 'peer-1',
+    driverName: 'Alex Vance',
+    classId: CarClassId.HYPERCAR_GTP,
+    isHumanPeer: true,
+  });
+  assert.equal(humanPlate.nameText, 'Alex Vance');
+});
+
 
 

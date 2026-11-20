@@ -1469,3 +1469,36 @@ export function filterTracks(
   });
 }
 
+export const TRACK_APRON_RUNOFF = 4.8;
+export const TRACK_BARRIER_INNER_INSET = 0.55;
+
+/**
+ * Shared apron outer half-width for a given track sample and side (-1 left, +1 right),
+ * clamped safely on the inside of tight hairpins to prevent fold-over.
+ */
+export function computeTrackApronHalfWidth(
+  roadHalfW: number,
+  curvature: number,
+  side: -1 | 1,
+): number {
+  const targetHW = roadHalfW + TRACK_APRON_RUNOFF;
+  const curv = curvature || 0;
+  if (side * curv > 0.005) {
+    const safeRadius = 0.88 / Math.abs(curv);
+    return Math.max(roadHalfW + 0.85, Math.min(targetHW, safeRadius));
+  }
+  return targetHW;
+}
+
+/**
+ * Exact inner collision face offset of the continuous solid track barrier from track centerline.
+ * Shared identically between 3D trackBuilder solid walls and physics wall clamping so cars never clip outside.
+ */
+export function computeTrackWallHalfWidth(
+  roadHalfW: number,
+  curvature: number,
+  side: -1 | 1,
+): number {
+  const apronHW = computeTrackApronHalfWidth(roadHalfW, curvature, side);
+  return Math.max(roadHalfW + 0.65, apronHW - TRACK_BARRIER_INNER_INSET);
+}

@@ -1199,8 +1199,8 @@ export function TrackStudioModal({
       className="fixed inset-0 z-50 bg-[#070a0f]/95 flex flex-col overflow-hidden text-slate-100 select-none font-sans"
     >
       {/* Top Header Bar */}
-      <header className="h-14 px-4 sm:px-6 bg-[#0d121b] border-b border-white/10 flex items-center justify-between shrink-0 gap-4">
-        <div className="flex items-center gap-3">
+      <header className="min-h-14 py-2 px-3 sm:px-6 bg-[#0d121b] border-b border-white/10 flex flex-wrap items-center justify-between shrink-0 gap-2 sm:gap-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
             <span className="font-display font-extrabold text-sm md:text-base tracking-wider text-white">
@@ -1216,13 +1216,13 @@ export function TrackStudioModal({
             value={trackSpec.name}
             onChange={(e) => setTrackSpec((prev) => ({ ...prev, name: e.target.value.slice(0, 36) }))}
             aria-label="Circuit Name"
-            className="px-2.5 py-1 text-sm bg-black/40 border border-white/15 focus:border-sky-400 rounded text-white font-medium outline-none w-44 md:w-64"
+            className="px-2.5 py-1 text-sm bg-black/40 border border-white/15 focus:border-sky-400 rounded text-white font-medium outline-none w-40 sm:w-48 md:w-64"
             placeholder="Circuit Name..."
           />
         </div>
 
         {/* Template Quick Select & Actions */}
-        <div className="flex items-center gap-2 md:gap-3">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 md:gap-3">
           <select
             value=""
             onChange={(e) => {
@@ -1299,12 +1299,12 @@ export function TrackStudioModal({
       </header>
 
       {/* Main Studio Body: Left 2D CAD + Right 3D Viewport & Inspector */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden relative">
         {/* Left: 2D Interactive CAD Canvas */}
         <div
           ref={canvas2dContainerRef}
           onContextMenu={(e) => e.preventDefault()}
-          className="flex-1 relative flex flex-col bg-[#0b0f16] border-r border-white/10 min-h-[300px]"
+          className="h-[46vh] min-h-[300px] lg:h-auto lg:flex-1 shrink-0 lg:shrink relative flex flex-col bg-[#0b0f16] border-b lg:border-b-0 lg:border-r border-white/10"
         >
           {/* Canvas Floating Toolbar */}
           <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-none">

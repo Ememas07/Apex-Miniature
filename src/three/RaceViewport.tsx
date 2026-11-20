@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { computeCameraFrame, DEFAULT_CHASE_CAMERA } from '../game/camera';
 import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from '../game/cars';
-import { blendDrivingInputs, GamepadController } from '../game/gamepad';
+import { GamepadController } from '../game/gamepad';
 import { getGameSettings, subscribeGameSettings } from '../game/settings';
+import { blendAllDrivingInputs, touchInputStore } from '../game/touchControls';
 import { MultiplayerClient } from '../game/multiplayer';
 import { computeNeuralAIControl } from '../game/aiNeuralPolicy';
 import {
@@ -92,10 +93,10 @@ const PERSONALITIES: AIPersonality[] = [
 ];
 
 const AI_NAMES = [
-  'M. Rossi', 'L. Vance', 'K. Tanaka', 'S. Lindqvist', 'A. Moreau', 'J. Alboni',
-  'D. Kruger', 'R. Navarro', 'T. Sato', 'C. Bennett', 'F. Bellini', 'N. Becker',
-  'E. Laurent', 'P. Silva', 'H. Weber', 'G. Conti', 'B. Vance', 'O. Lind',
-  'V. Novak', 'Y. Takahashi', 'R. Mercer', 'I. Volkov', 'J. Mercier', 'K. Rossi',
+  'Marco Rossi', 'Liam Vance', 'Kenji Tanaka', 'Soren Lindqvist', 'Antoine Moreau', 'Julian Alboni',
+  'Dieter Kruger', 'Rafael Navarro', 'Takuma Sato', 'Callum Bennett', 'Fabio Bellini', 'Niklas Becker',
+  'Etienne Laurent', 'Pedro Silva', 'Henrik Weber', 'Gianni Conti', 'Bruno Vance', 'Oskar Lind',
+  'Viktor Novak', 'Yuki Takahashi', 'Ryan Mercer', 'Ivan Volkov', 'Jules Mercier', 'Lorenzo Conti',
 ];
 
 // Zero-GC scratch objects
@@ -568,18 +569,22 @@ export function RaceViewport(props: RaceViewportProps) {
           // Fill remaining grid slots with AI Bots across active classes
           const pick = sortedPool[(aiCursor * 3 + slot) % sortedPool.length];
           const personality = PERSONALITIES[aiCursor % PERSONALITIES.length];
-          const jitter = 0.985 + ((aiCursor * 17) % 7) * 0.006;
+          // Genuine per-driver pace variance (wider spread on Alien so the field isn't an identical pace train)
+          const spreadSlot = ((aiCursor * 17 + slot * 5) % 9) / 8; // 0..1 deterministic distribution
+          const jitter =
+            cfg.aiDifficulty === 'Alien'
+              ? 0.925 + spreadSlot * 0.115
+              : 0.965 + spreadSlot * 0.065;
           let aiLivery = {
             ...pick.defaultLivery,
             driverNumber: String(((aiCursor + 2) * 7) % 98 + 1),
           };
-          let botName = AI_NAMES[aiCursor % AI_NAMES.length];
+          const botName = AI_NAMES[aiCursor % AI_NAMES.length];
 
           // If car has multiple team liveries (F1 2026, F1 2021, LMP2), cycle through them across the AI grid
           if (pick.liveries && pick.liveries.length > 0) {
             const preset = pick.liveries[aiCursor % pick.liveries.length];
             aiLivery = { ...preset.livery };
-            botName = `${preset.name}`;
           }
 
           const bot = createCarSimState({
@@ -805,6 +810,7 @@ export function RaceViewport(props: RaceViewportProps) {
       keysPressed.clear();
       sim.specialJustPressed = false;
       gamepadController.resetEdgeState();
+      touchInputStore.reset();
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -814,6 +820,14 @@ export function RaceViewport(props: RaceViewportProps) {
 
     let lastMouseX = 0;
     let lastMouseY = 0;
+    const activeCanvasPointers = new Map<number, { x: number; y: number }>();
+    let lastPinchDist: number | null = null;
+
+    const getPinchDistance = (): number | null => {
+      if (activeCanvasPointers.size < 2) return null;
+      const pts = Array.from(activeCanvasPointers.values());
+      return Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+    };
 
     const isFreecamMode = () =>
       propsRef.current.phase === 'playing' &&
@@ -826,6 +840,14 @@ export function RaceViewport(props: RaceViewportProps) {
         (propsRef.current.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'spectate'));
 
     const onPointerDown = (e: PointerEvent) => {
+      sim.audio.init();
+      activeCanvasPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activeCanvasPointers.size >= 2) {
+        lastPinchDist = getPinchDistance();
+        sim.isDraggingFreecam = false;
+        sim.isDraggingOrbit = false;
+        return;
+      }
       if (isFreecamMode()) {
         sim.isDraggingFreecam = true;
         lastMouseX = e.clientX;
@@ -839,6 +861,25 @@ export function RaceViewport(props: RaceViewportProps) {
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      if (activeCanvasPointers.has(e.pointerId)) {
+        activeCanvasPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (activeCanvasPointers.size >= 2) {
+        const dist = getPinchDistance();
+        if (dist !== null && lastPinchDist !== null) {
+          const delta = dist - lastPinchDist;
+          if (isFreecamMode()) {
+            sim.freecamFov = Math.max(18, Math.min(95, sim.freecamFov - delta * 0.14));
+          } else if (isInteractiveOrbitMode()) {
+            sim.targetOrbitDist = Math.max(
+              DEFAULT_CHASE_CAMERA.minDistance,
+              Math.min(DEFAULT_CHASE_CAMERA.maxDistance, sim.targetOrbitDist - delta * 0.045),
+            );
+          }
+        }
+        lastPinchDist = dist;
+        return;
+      }
       if (sim.isDraggingFreecam && isFreecamMode()) {
         const dx = e.clientX - lastMouseX;
         const dy = e.clientY - lastMouseY;
@@ -864,7 +905,17 @@ export function RaceViewport(props: RaceViewportProps) {
       }
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (e: PointerEvent) => {
+      activeCanvasPointers.delete(e.pointerId);
+      if (activeCanvasPointers.size < 2) {
+        lastPinchDist = null;
+      }
+      if (activeCanvasPointers.size === 1) {
+        const remaining = Array.from(activeCanvasPointers.values())[0];
+        lastMouseX = remaining.x;
+        lastMouseY = remaining.y;
+        return;
+      }
       if (sim.isDraggingOrbit) {
         sim.isDraggingOrbit = false;
         const nowInteract = performance.now();
@@ -926,6 +977,7 @@ export function RaceViewport(props: RaceViewportProps) {
     renderer.domElement.addEventListener('dblclick', onDoubleClick);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('apex-audio-volume', onAudioVol);
     window.addEventListener('apex-audio-mute', onAudioMute);
@@ -977,9 +1029,17 @@ export function RaceViewport(props: RaceViewportProps) {
 
       const playerCar = sim.cars.find((c) => c.isPlayer) ?? null;
 
-      if (activePhase !== 'playing' && activePhase !== 'qualifying') {
+      if (activePhase === 'paused') {
+        sim.specialJustPressed = false;
+        touchInputStore.reset();
+        const gpPaused = gamepadController.poll();
+        if (gpPaused.pauseJustPressed) {
+          p.onTogglePause();
+        }
+      } else if (activePhase !== 'playing' && activePhase !== 'qualifying') {
         sim.specialJustPressed = false;
         gamepadController.resetEdgeState();
+        touchInputStore.reset();
       }
 
       if (activePhase !== 'title' && sim.attractTransitionState !== 'idle') {
@@ -1085,7 +1145,7 @@ export function RaceViewport(props: RaceViewportProps) {
           rainMesh.visible = false;
         }
 
-        // Read keyboard + gamepad (PS4/DualShock & standard Gamepad API) controls
+        // Read keyboard + gamepad (PS4/DualShock/Xbox/Mobile) + mobile touchpad controls
         const kbThrottle = keysPressed.has('KeyW') || keysPressed.has('ArrowUp') ? 1 : 0;
         const kbBrake = keysPressed.has('KeyS') || keysPressed.has('ArrowDown') ? 1 : 0;
         const kbSteer =
@@ -1093,24 +1153,62 @@ export function RaceViewport(props: RaceViewportProps) {
           (keysPressed.has('KeyA') || keysPressed.has('ArrowLeft') ? 1 : 0);
 
         const gp = gamepadController.poll();
-        if (gp.hasAnyInput) {
+        const touchIn = touchInputStore.consumeFrame();
+        if (gp.hasAnyInput || touchIn.active) {
           sim.audio.init();
         }
 
-        const { throttle, brake, steer } = blendDrivingInputs(
+        // Controller utility buttons (Start/Options Pause, Y/Triangle Camera, Share/R3 Reset, L1/R1 Spectate)
+        if (gp.pauseJustPressed) {
+          p.onTogglePause();
+        }
+        if (gp.cameraJustPressed) {
+          if (p.raceConfig.sessionMode === 'ai-race') {
+            setSpectatorCameraMode(sim.spectatorCameraMode === 'spectate' ? 'freecam' : 'spectate');
+          } else {
+            p.onCycleCamera();
+          }
+        }
+        if (gp.resetCameraJustPressed) {
+          if (!(p.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'freecam')) {
+            const targetCar =
+              sim.cars.find((c) => c.isPlayer) ??
+              sim.cars.find((c) => c.id === sim.spectatedCarId) ??
+              sim.cars[0];
+            resetGameplayCamera(targetCar);
+          }
+        }
+        if (
+          (gp.lbJustPressed || gp.rbJustPressed) &&
+          p.raceConfig.sessionMode === 'ai-race' &&
+          sim.spectatorCameraMode === 'spectate' &&
+          sim.cars.length > 0
+        ) {
+          const dir = gp.rbJustPressed ? 1 : -1;
+          const idx = sim.cars.findIndex((c) => c.id === sim.spectatedCarId);
+          const nextIdx = idx < 0 ? 0 : (idx + dir + sim.cars.length) % sim.cars.length;
+          const nextCar = sim.cars[nextIdx];
+          sim.spectatedCarId = nextCar.id;
+          resetGameplayCamera(nextCar, true);
+        }
+
+        const { throttle, brake, steer } = blendAllDrivingInputs(
           { throttle: kbThrottle, brake: kbBrake, steer: kbSteer },
           gp,
+          touchIn,
         );
 
-        // Edge-triggered special toggle from keyboard (Space/Shift/E) or PS4 Cross/X (buttons[0])
-        const specialJustPressed = sim.specialJustPressed || gp.specialJustPressed;
+        // Edge-triggered special toggle from keyboard (Space/Shift/E), Gamepad Cross/A, or Touch Special button
+        const specialJustPressed =
+          sim.specialJustPressed || gp.specialJustPressed || touchIn.specialJustPressed;
         const specialPressed =
           specialJustPressed ||
           keysPressed.has('ShiftLeft') ||
           keysPressed.has('ShiftRight') ||
           keysPressed.has('KeyE') ||
           keysPressed.has('Space') ||
-          gp.specialPressed;
+          gp.specialPressed ||
+          touchIn.specialPressed;
 
         if (sim.countdown <= 0) {
           for (let i = 0; i < sim.cars.length; i++) {
@@ -1165,9 +1263,16 @@ export function RaceViewport(props: RaceViewportProps) {
             }
           }
 
-          const impact = resolveCarCollisions(sim.cars);
-          if (impact > 5) {
-            sim.trauma = Math.min(1, sim.trauma + impact * 0.045);
+          resolveCarCollisions(sim.cars);
+          // Only apply crash camera shake when the PLAYER's own car collides with another car or wall
+          if (playerCar) {
+            const playerImpact = Math.max(
+              playerCar.lastCollisionImpact ?? 0,
+              playerCar.lastWallImpact ?? 0,
+            );
+            if (playerImpact > 5) {
+              sim.trauma = Math.min(1, sim.trauma + playerImpact * 0.045);
+            }
           }
         } else {
           // Discard buffered toggle triggers during starting-lights countdown
@@ -1238,14 +1343,15 @@ export function RaceViewport(props: RaceViewportProps) {
           _freecamFwd.set(0, 0, -1).applyQuaternion(_freecamQuat);
           _freecamRight.set(1, 0, 0).applyQuaternion(_freecamQuat);
 
-          const moveFwd = (keysPressed.has('KeyW') ? 1 : 0) - (keysPressed.has('KeyS') ? 1 : 0);
-          const moveRight = (keysPressed.has('KeyD') ? 1 : 0) - (keysPressed.has('KeyA') ? 1 : 0);
-          const suppressShiftDown = now - sim.freecamShiftScrollAt < 400;
-          const shiftDown =
-            !suppressShiftDown && (keysPressed.has('ShiftLeft') || keysPressed.has('ShiftRight'));
-          const moveUp =
+          const kbFwd = (keysPressed.has('KeyW') ? 1 : 0) - (keysPressed.has('KeyS') ? 1 : 0);
+          const kbRight = (keysPressed.has('KeyD') ? 1 : 0) - (keysPressed.has('KeyA') ? 1 : 0);
+          const moveFwd = Math.max(-1, Math.min(1, kbFwd - gp.leftStickY + touchIn.moveForward));
+          const moveRight = Math.max(-1, Math.min(1, kbRight + gp.steer + touchIn.moveRight));
+          const kbUp =
             (keysPressed.has('Space') || keysPressed.has('KeyE') ? 1 : 0) -
-            (shiftDown || keysPressed.has('KeyQ') || keysPressed.has('ControlLeft') ? 1 : 0);
+            (keysPressed.has('KeyQ') || keysPressed.has('ControlLeft') ? 1 : 0);
+          const gpUp = (gp.rbPressed ? 1 : 0) - (gp.lbPressed ? 1 : 0) + (gp.throttle - gp.brake);
+          const moveUp = Math.max(-1, Math.min(1, kbUp + gpUp + touchIn.moveUp));
 
           const speed = sim.freecamSpeed;
           sim.freecamPos.addScaledVector(_freecamFwd, moveFwd * speed * dt);
@@ -1260,7 +1366,7 @@ export function RaceViewport(props: RaceViewportProps) {
           camera.position.copy(sim.freecamPos);
           camera.quaternion.copy(_freecamQuat);
 
-          // Subtle ambient audio for nearest car to freecam
+          // Subtle ambient audio for nearest car to freecam (quiet idle during countdown)
           let nearestCar: CarSimState | null = null;
           let nearestDistSq = 85 * 85;
           for (const c of sim.cars) {
@@ -1273,10 +1379,11 @@ export function RaceViewport(props: RaceViewportProps) {
               nearestCar = c;
             }
           }
-          if (nearestCar) {
+          if (nearestCar && sim.countdown <= 0) {
+            const aiLoad = nearestCar.speed < 2.0 ? 0.04 : Math.min(0.65, 0.18 + nearestCar.rpmNormalized * 0.45);
             sim.audio.updateEngine(
               nearestCar.rpmNormalized,
-              0.45,
+              aiLoad,
               nearestCar.carSpec.engineType,
               true,
               nearestCar.carSpec.classId,
@@ -1310,45 +1417,7 @@ export function RaceViewport(props: RaceViewportProps) {
             resetGameplayCamera(focusCar);
           }
 
-          if (mode === 'chase') {
-            // Chase Cam: sticks straight behind the car facing forward down the track (no mouse orbit)
-            const headingDiff = normalizeAngleRad(focusCar.heading - sim.chaseHeading);
-            sim.chaseHeading += headingDiff * (1 - Math.exp(-12 * dt));
-
-            // Optional brief gamepad right-stick glance that smoothly returns straight ahead when released
-            const targetChaseLookYaw = gp.cameraX * 0.65;
-            sim.chaseLookYaw += (targetChaseLookYaw - sim.chaseLookYaw) * (1 - Math.exp(-12 * dt));
-            if (Math.abs(sim.chaseLookYaw) < 0.001 && targetChaseLookYaw === 0) {
-              sim.chaseLookYaw = 0;
-            }
-
-            const chaseYaw = sim.chaseHeading + sim.chaseLookYaw;
-            const cosP = Math.cos(DEFAULT_CHASE_CAMERA.pitch);
-            const sinP = Math.sin(DEFAULT_CHASE_CAMERA.pitch);
-            const horizDist = DEFAULT_CHASE_CAMERA.distance * cosP;
-            const heightOffset = DEFAULT_CHASE_CAMERA.pivotHeight + DEFAULT_CHASE_CAMERA.distance * sinP;
-
-            const camX = focusCar.x - Math.sin(chaseYaw) * horizDist;
-            const camY = Math.max(focusCar.y + DEFAULT_CHASE_CAMERA.minHeightAboveCar, focusCar.y + heightOffset);
-            const camZ = focusCar.z - Math.cos(chaseYaw) * horizDist;
-
-            const lookAhead = 5.5;
-            const lookX = focusCar.x + Math.sin(chaseYaw) * lookAhead;
-            const lookY = focusCar.y + DEFAULT_CHASE_CAMERA.pivotHeight;
-            const lookZ = focusCar.z + Math.cos(chaseYaw) * lookAhead;
-
-            _camCurrPos.set(camX, camY, camZ);
-            _camCurrLook.set(lookX, lookY, lookZ);
-            camera.up.set(0, 1, 0);
-            camera.position.copy(_camCurrPos);
-            camera.lookAt(_camCurrLook);
-
-            const targetFov = 52 + Math.min(10, (focusCar.speed / 60) * 8);
-            if (Math.abs(camera.fov - targetFov) > 0.1) {
-              camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
-              camera.updateProjectionMatrix();
-            }
-          } else if (mode === 'orbit') {
+          if (mode === 'orbit') {
             // Gamepad Right Stick (axes[2], axes[3]) camera orbit control
             const isRightStickOrbiting = gp.cameraX !== 0 || gp.cameraY !== 0;
             if (isRightStickOrbiting) {
@@ -1446,16 +1515,6 @@ export function RaceViewport(props: RaceViewportProps) {
               if (sim.hoodLookYaw !== 0 || sim.hoodLookPitch !== 0) {
                 lookOffset = { yaw: sim.hoodLookYaw, pitch: sim.hoodLookPitch };
               }
-            } else if (mode === 'isometric') {
-              const isStickActive = gp.cameraX !== 0 || gp.cameraY !== 0;
-              if (isStickActive) {
-                sim.isoYawOffset -= gp.cameraX * 2.0 * dt;
-                sim.isoPitchOffset = Math.max(-0.8, Math.min(0.8, sim.isoPitchOffset + gp.cameraY * 1.4 * dt));
-                sim.isoLastInteractTime = now;
-              }
-              if (sim.isoYawOffset !== 0 || sim.isoPitchOffset !== 0) {
-                lookOffset = { yaw: sim.isoYawOffset, pitch: sim.isoPitchOffset };
-              }
             }
             const focusRig = sim.carRigs.get(focusCar.id);
             const camFrame = computeCameraFrame(
@@ -1524,26 +1583,33 @@ export function RaceViewport(props: RaceViewportProps) {
 
           // Engine audio synthesis (follows player or spectated AI car)
           const liveSpeedKmh = Math.round(focusCar.speed * SPEED_KMH_FACTOR);
-          const engineLoad = focusCar.isPlayer
-            ? focusCar.gear === -1 && focusCar.transmissionMode !== 'manual'
-              ? brake
-              : throttle
-            : 0.72;
-          sim.audio.updateEngine(
-            focusCar.rpmNormalized,
-            engineLoad,
-            focusCar.carSpec.engineType,
-            true,
-            focusCar.carSpec.classId,
-            focusCar.isPlayer ? brake > 0 : false,
-            liveSpeedKmh,
-            focusCar.carSpec.id,
-            focusCar.lateralSlip,
-            focusCar.onKerb,
-            focusCar.gear,
-            focusCar.carSpec.soundProfile,
-            focusCar.revLimiterActive,
-          );
+          if (!focusCar.isPlayer && sim.countdown > 0) {
+            // Silent/quiet grid before lights out in AI Race mode (prevents constant rev drone at start)
+            sim.audio.updateEngine(0, 0, focusCar.carSpec.engineType, false);
+          } else {
+            const engineLoad = focusCar.isPlayer
+              ? focusCar.gear === -1 && focusCar.transmissionMode !== 'manual'
+                ? brake
+                : throttle
+              : focusCar.speed < 2.0
+              ? 0.04
+              : Math.min(0.82, 0.24 + focusCar.rpmNormalized * 0.56);
+            sim.audio.updateEngine(
+              focusCar.rpmNormalized,
+              engineLoad,
+              focusCar.carSpec.engineType,
+              true,
+              focusCar.carSpec.classId,
+              focusCar.isPlayer ? brake > 0 : false,
+              liveSpeedKmh,
+              focusCar.carSpec.id,
+              focusCar.lateralSlip,
+              focusCar.onKerb,
+              focusCar.gear,
+              focusCar.carSpec.soundProfile,
+              focusCar.revLimiterActive,
+            );
+          }
         }
       } else {
         // Paused or Gameover: silence engine
@@ -1741,8 +1807,10 @@ export function RaceViewport(props: RaceViewportProps) {
         p.onHudUpdate(snapshot);
 
         // Check Qualifying, Player Race, or Host AI Race Completion
-        const leaderCar = standings[0] ? sim.cars.find((c) => c.id === standings[0].id) : null;
-        const shouldFinish = isAiRaceHud ? Boolean(leaderCar?.finished) : Boolean(playerCar?.finished);
+        // In AI Race mode, wait until EVERY car on track has crossed the finish line so all final gaps are real.
+        const shouldFinish = isAiRaceHud
+          ? sim.cars.length > 0 && sim.cars.every((c) => c.finished)
+          : Boolean(playerCar?.finished);
         if (shouldFinish && !sim.finishEmitted) {
           sim.finishEmitted = true;
           if (activePhase === 'qualifying' && playerCar) {
@@ -1783,6 +1851,7 @@ export function RaceViewport(props: RaceViewportProps) {
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
       renderer.domElement.removeEventListener('wheel', onWheel);
       window.removeEventListener('apex-audio-volume', onAudioVol);
       window.removeEventListener('apex-audio-mute', onAudioMute);
@@ -1838,7 +1907,7 @@ export function RaceViewport(props: RaceViewportProps) {
       <div
         ref={containerRef}
         data-testid="race-viewport"
-        className="fixed inset-0 w-full h-full min-h-0 overflow-hidden"
+        className="fixed inset-0 w-full h-full min-h-0 overflow-hidden touch-none"
         aria-label="3D Miniature Motorsport Race Viewport"
       />
       <div

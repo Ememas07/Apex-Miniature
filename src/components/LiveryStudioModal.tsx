@@ -627,28 +627,28 @@ export function LiveryStudioModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 sm:p-6 overflow-hidden">
-      <div className="relative w-full max-w-7xl h-[94vh] bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-0 sm:p-4 md:p-6 overflow-hidden">
+      <div className="relative w-full max-w-7xl h-[100dvh] sm:h-[94dvh] bg-slate-900 border-0 sm:border border-slate-700/80 rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100">
         {/* Top Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/70">
-          <div className="flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
-              <Paintbrush className="w-5 h-5" />
+        <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 px-3 sm:px-6 py-2.5 sm:py-4 border-b border-slate-800 bg-slate-950/70 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 shrink-0">
+              <Paintbrush className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-3">
-                LIVERY STUDIO & MODEL VISUALIZER
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-medium">
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-xl font-bold tracking-tight text-white flex flex-wrap items-center gap-2">
+                <span>LIVERY STUDIO</span>
+                <span className="text-[11px] sm:text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-medium">
                   3D UV Studio
                 </span>
               </h2>
-              <p className="text-xs text-slate-400">
+              <p className="hidden sm:block text-xs text-slate-400">
                 Paint custom liveries, inspect 3D models with orbit controls, and export/import UV textures.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={() => {
@@ -684,9 +684,9 @@ export function LiveryStudioModal({
         </div>
 
         {/* Main Content Layout */}
-        <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
           {/* 3D Viewport Column */}
-          <div className="flex-1 min-h-0 flex flex-col relative bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden">
+          <div className="h-[38vh] min-h-[240px] lg:h-auto lg:flex-1 lg:min-h-0 shrink-0 lg:shrink flex flex-col relative bg-gradient-to-b from-slate-950 to-slate-900 overflow-hidden">
             {/* Viewport Overlay Controls */}
             <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2 pointer-events-auto">
               <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl p-1.5 flex items-center gap-1 shadow-xl">

@@ -26,23 +26,23 @@ export function ResultsModal({
       data-testid="results-modal"
       role="dialog"
       aria-label="Race Classification"
-      className="fixed inset-0 z-30 bg-black/80 flex items-center justify-center p-4"
+      className="fixed inset-0 z-30 bg-black/80 flex items-center justify-center p-2 sm:p-4 safe-area-inset"
     >
-      <div className="w-full max-w-3xl max-h-[88vh] bg-[#11151d] border border-white/15 rounded-lg flex flex-col overflow-hidden shadow-2xl">
+      <div className="w-full max-w-3xl max-h-[92dvh] bg-[#11151d] border border-white/15 rounded-lg flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
-        <div className="px-6 py-5 border-b border-white/10 flex flex-wrap items-center justify-between gap-4">
-          <div>
+        <div className="px-4 py-3.5 sm:px-6 sm:py-5 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+          <div className="min-w-0">
             <div className="text-xs text-slate-400">
               {trackName} · {isAiRace ? 'AI Race Classification' : 'Final Classification'}
             </div>
-            <h2 className="text-2xl font-display font-extrabold text-white mt-0.5">
+            <h2 className="text-lg sm:text-2xl font-display font-extrabold text-white mt-0.5 leading-tight">
               {isAiRace && focusRow
                 ? `Winner: ${focusRow.name} · ${winnerCar?.name ?? ''}`
                 : `Finished P${focusRow.position} Overall · P${focusRow.classPosition} in Class`}
             </h2>
           </div>
 
-          <div className="flex items-center gap-6 text-right">
+          <div className="flex items-center gap-6 text-right shrink-0">
             <div>
               <span className="text-[11px] text-slate-400 block">
                 {isAiRace ? 'Winner Best Lap' : 'Best Lap'}
@@ -55,8 +55,8 @@ export function ResultsModal({
         </div>
 
         {/* Classification Table */}
-        <div className="flex-1 overflow-y-auto custom-scroll p-6">
-          <table className="w-full text-left text-xs border-collapse">
+        <div className="flex-1 overflow-auto custom-scroll p-3 sm:p-6">
+          <table className="w-full min-w-[540px] text-left text-xs border-collapse">
             <thead>
               <tr className="border-b border-white/10 text-slate-400">
                 <th className="py-2 pr-3 font-semibold">Pos</th>
@@ -115,7 +115,7 @@ export function ResultsModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="px-6 py-4 border-t border-white/10 flex items-center justify-end gap-3 bg-[#0d1118]">
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-t border-white/10 flex flex-wrap items-center justify-end gap-2 sm:gap-3 bg-[#0d1118]">
           <a
             href="/"
             className="px-4 py-2.5 rounded bg-transparent hover:bg-sky-500/10 border border-sky-500/30 hover:border-sky-400 text-xs font-semibold text-sky-400 cursor-pointer flex items-center gap-1.5 transition-colors"

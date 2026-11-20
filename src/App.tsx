@@ -9,9 +9,10 @@ import { ResultsModal } from './components/ResultsModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
+import { TouchControlsOverlay } from './components/TouchControlsOverlay';
 import { TracksShowcaseModal } from './components/TracksShowcaseModal';
 import { TrackStudioModal } from './components/TrackStudioModal';
-import { CARS, getCarById } from './game/cars';
+import { CARS, getCarById, resolveCarSpecial } from './game/cars';
 import { registerCustomTrackInMemory } from './game/customTracks';
 import {
   ConnectionMode,
@@ -20,6 +21,8 @@ import {
   MultiplayerClient,
 } from './game/multiplayer';
 import { formatLapTime } from './game/physics';
+import { GameSettings, getGameSettings, subscribeGameSettings } from './game/settings';
+import { isTouchCapableDevice, shouldShowTouchControls } from './game/touchControls';
 import { getTrackById } from './game/tracks';
 import {
   CameraMode,
@@ -83,10 +86,10 @@ export default function App() {
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
     const cam = params.get('camera');
-    return cam === 'chase' || cam === 'orbit' || cam === 'hood' || cam === 'isometric'
-      ? cam
-      : 'chase';
+    return cam === 'orbit' || cam === 'hood' ? cam : 'orbit';
   });
+  const [gameSettings, setGameSettings] = useState<GameSettings>(() => getGameSettings());
+  const [touchCapable, setTouchCapable] = useState<boolean>(() => isTouchCapableDevice());
   const [spectatorCameraMode, setSpectatorCameraMode] = useState<SpectatorCameraMode>('spectate');
   const spectateControlsRef = useRef<SpectateControls | null>(null);
   const [muted, setMuted] = useState(false);
@@ -141,10 +144,20 @@ export default function App() {
     }, 280);
   }, []);
 
-  // Sync document.body.dataset.state
+  // Sync document.body.dataset.state & subscribe to persisted settings (touch controls, etc.)
   useEffect(() => {
     document.body.dataset.state = phase === 'qualifying' ? 'playing' : phase;
   }, [phase]);
+
+  useEffect(() => {
+    const unsub = subscribeGameSettings((next) => setGameSettings(next));
+    const onResize = () => setTouchCapable(isTouchCapableDevice());
+    window.addEventListener('resize', onResize);
+    return () => {
+      unsub();
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
 
   // Subscribe to Multiplayer events
   useEffect(() => {
@@ -327,13 +340,7 @@ export default function App() {
 
   const handleCycleCamera = useCallback(() => {
     setCameraMode((prev) =>
-      prev === 'chase'
-        ? 'orbit'
-        : prev === 'orbit'
-        ? 'hood'
-        : prev === 'hood'
-        ? 'isometric'
-        : 'chase',
+      prev === 'orbit' ? 'hood' : 'orbit',
     );
   }, []);
 
@@ -428,6 +435,10 @@ export default function App() {
     !settingsOpen;
 
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
+  const touchControlsActive = shouldShowTouchControls(gameSettings.touchControlsMode, touchCapable);
+  const playerCarSpec = getCarById(raceConfig.playerCarId);
+  const playerSpecial = resolveCarSpecial(playerCarSpec);
+  const isAiRaceSession = raceConfig.sessionMode === 'ai-race';
 
   return (
     <main className="relative w-full h-full overflow-hidden bg-[#0b0e13]">
@@ -624,24 +635,36 @@ export default function App() {
 
       {/* Active Race / Qualifying HUD */}
       {(phase === 'playing' || phase === 'qualifying') && hud && (
-        <RaceHUD
-          hud={hud}
-          trackId={raceConfig.trackId}
-          customTrack={raceConfig.customTrack}
-          playerCarId={raceConfig.playerCarId}
-          muted={muted}
-          onChangePitStrategy={setPitStrategy}
-          onRequestPitStop={(action, nextCompound) =>
-            pitHandlerRef.current ? pitHandlerRef.current(action, nextCompound) : false
-          }
-          onCycleCamera={handleCycleCamera}
-          onToggleSpectatorCameraMode={() => spectateControlsRef.current?.toggleCameraMode()}
-          onCycleSpectatedCar={(dir) => spectateControlsRef.current?.cycleCar(dir)}
-          onSelectSpectatedCar={(carId) => spectateControlsRef.current?.selectCar(carId)}
-          onToggleMute={handleToggleMute}
-          onTogglePause={handleTogglePause}
-          onReturnToTitle={handleReturnToTitle}
-        />
+        <>
+          <RaceHUD
+            hud={hud}
+            trackId={raceConfig.trackId}
+            customTrack={raceConfig.customTrack}
+            playerCarId={raceConfig.playerCarId}
+            muted={muted}
+            touchControlsActive={touchControlsActive}
+            onChangePitStrategy={setPitStrategy}
+            onRequestPitStop={(action, nextCompound) =>
+              pitHandlerRef.current ? pitHandlerRef.current(action, nextCompound) : false
+            }
+            onCycleCamera={handleCycleCamera}
+            onToggleSpectatorCameraMode={() => spectateControlsRef.current?.toggleCameraMode()}
+            onCycleSpectatedCar={(dir) => spectateControlsRef.current?.cycleCar(dir)}
+            onSelectSpectatedCar={(carId) => spectateControlsRef.current?.selectCar(carId)}
+            onToggleMute={handleToggleMute}
+            onTogglePause={handleTogglePause}
+            onReturnToTitle={handleReturnToTitle}
+          />
+          <TouchControlsOverlay
+            visible={touchControlsActive}
+            steerStyle={gameSettings.touchSteerStyle}
+            isFreecam={isAiRaceSession && spectatorCameraMode === 'freecam'}
+            isAiRace={isAiRaceSession}
+            specialLabel={playerSpecial.specialType !== 'none' ? playerSpecial.specialLabel : undefined}
+            specialActive={hud.specialActive}
+            specialCharge={hud.specialCharge}
+          />
+        </>
       )}
 
       {/* Qualifying Hotlap Complete Modal */}

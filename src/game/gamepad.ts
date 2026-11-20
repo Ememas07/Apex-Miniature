@@ -1,13 +1,21 @@
 export interface GamepadInputState {
   connected: boolean;
   gamepadId: string | null;
-  throttle: number; // 0..1 analog (R2 / buttons[7])
-  brake: number; // 0..1 analog (L2 / buttons[6])
-  steer: number; // -1..1 (Left Stick X / axes[0]) with deadzone + smooth response curve
+  throttle: number; // 0..1 analog (R2 / RT / buttons[7])
+  brake: number; // 0..1 analog (L2 / LT / buttons[6] or Square/X fallback)
+  steer: number; // -1..1 (Left Stick X / axes[0] or D-Pad Left/Right) with deadzone + smooth curve
+  leftStickY: number; // -1..1 (Left Stick Y / axes[1]) for freecam flight
   cameraX: number; // -1..1 (Right Stick X / axes[2]) with deadzone
   cameraY: number; // -1..1 (Right Stick Y / axes[3]) with deadzone
-  specialPressed: boolean; // Cross / X (buttons[0]) currently held
-  specialJustPressed: boolean; // Rising edge of Cross / X (buttons[0]) — true for 1 poll only
+  specialPressed: boolean; // Cross / A (buttons[0]) currently held
+  specialJustPressed: boolean; // Rising edge of Cross / A (buttons[0]) — true for 1 poll only
+  cameraJustPressed: boolean; // Rising edge of Triangle / Y (buttons[3]) — cycle camera / freecam
+  pauseJustPressed: boolean; // Rising edge of Options / Start (buttons[9]) — toggle pause
+  resetCameraJustPressed: boolean; // Rising edge of Share / View (buttons[8]) or R3 (buttons[11])
+  lbPressed: boolean; // L1 / LB (buttons[4]) held
+  rbPressed: boolean; // R1 / RB (buttons[5]) held
+  lbJustPressed: boolean; // Rising edge of L1 / LB (buttons[4])
+  rbJustPressed: boolean; // Rising edge of R1 / RB (buttons[5])
   hasAnyInput: boolean; // True if any mapped trigger/stick/button is active
 }
 
@@ -40,10 +48,18 @@ const NEUTRAL_STATE: GamepadInputState = {
   throttle: 0,
   brake: 0,
   steer: 0,
+  leftStickY: 0,
   cameraX: 0,
   cameraY: 0,
   specialPressed: false,
   specialJustPressed: false,
+  cameraJustPressed: false,
+  pauseJustPressed: false,
+  resetCameraJustPressed: false,
+  lbPressed: false,
+  rbPressed: false,
+  lbJustPressed: false,
+  rbJustPressed: false,
   hasAnyInput: false,
 };
 
@@ -134,6 +150,11 @@ export class GamepadController {
   private readonly config: GamepadConfig;
   private activeIndex: number | null = null;
   private prevSpecialPressed = false;
+  private prevCameraPressed = false;
+  private prevPausePressed = false;
+  private prevResetCamPressed = false;
+  private prevLbPressed = false;
+  private prevRbPressed = false;
   private attached = false;
   private enabled = true;
 
@@ -142,7 +163,7 @@ export class GamepadController {
     if (!gp) return;
     if (this.activeIndex === null || gp.mapping === 'standard') {
       this.activeIndex = gp.index;
-      this.prevSpecialPressed = false;
+      this.resetEdgeState();
     }
   };
 
@@ -151,7 +172,7 @@ export class GamepadController {
     if (!gp) return;
     if (this.activeIndex === gp.index) {
       this.activeIndex = null;
-      this.prevSpecialPressed = false;
+      this.resetEdgeState();
     }
   };
 
@@ -177,7 +198,7 @@ export class GamepadController {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) {
-      this.prevSpecialPressed = false;
+      this.resetEdgeState();
     }
   }
 
@@ -187,6 +208,11 @@ export class GamepadController {
 
   resetEdgeState(): void {
     this.prevSpecialPressed = false;
+    this.prevCameraPressed = false;
+    this.prevPausePressed = false;
+    this.prevResetCamPressed = false;
+    this.prevLbPressed = false;
+    this.prevRbPressed = false;
   }
 
   /**
@@ -195,7 +221,7 @@ export class GamepadController {
    */
   poll(overrideGamepads?: ReadonlyArray<GamepadLike | null | undefined>): GamepadInputState {
     if (!this.enabled) {
-      this.prevSpecialPressed = false;
+      this.resetEdgeState();
       return { ...NEUTRAL_STATE };
     }
     let rawList: ReadonlyArray<GamepadLike | null | undefined>;
@@ -206,7 +232,7 @@ export class GamepadController {
         rawList = Array.from(navigator.getGamepads() ?? []);
       } catch {
         this.activeIndex = null;
-        this.prevSpecialPressed = false;
+        this.resetEdgeState();
         return { ...NEUTRAL_STATE };
       }
     } else {
@@ -216,44 +242,85 @@ export class GamepadController {
     const gp = selectActiveGamepad(rawList, this.activeIndex);
     if (!gp) {
       this.activeIndex = null;
-      this.prevSpecialPressed = false;
+      this.resetEdgeState();
       return { ...NEUTRAL_STATE };
     }
 
     if (this.activeIndex !== gp.index) {
       this.activeIndex = gp.index;
-      this.prevSpecialPressed = false;
+      this.resetEdgeState();
     }
 
     const axes = gp.axes ?? [];
     const buttons = gp.buttons ?? [];
 
-    // PS4 / Standard Gamepad layout:
-    // R2 = buttons[7] (analog 0..1), L2 = buttons[6] (analog 0..1)
-    // Left Stick X = axes[0], Right Stick X/Y = axes[2], axes[3]
-    // Cross / X = buttons[0] (edge-triggered toggle)
-    const throttle = readTriggerValue(buttons[7], this.config.triggerDeadzone);
-    const brake = readTriggerValue(buttons[6], this.config.triggerDeadzone);
-    const steer = applySteeringCurve(axes[0] ?? 0, this.config.steerDeadzone);
+    const isBtnDown = (idx: number): boolean => {
+      const btn = buttons[idx];
+      return Boolean(
+        btn &&
+          (btn.pressed ||
+            (typeof btn.value === 'number' && btn.value >= this.config.specialButtonThreshold)),
+      );
+    };
+
+    // Standard Gamepad layout (DualShock / DualSense / Xbox / Switch Pro / Mobile Backbone & Kishi):
+    // R2/RT = buttons[7] (analog 0..1), L2/LT = buttons[6] (analog 0..1)
+    // Left Stick X/Y = axes[0]/axes[1], Right Stick X/Y = axes[2]/axes[3]
+    // D-pad Left/Right = buttons[14]/buttons[15] (fallback steering when stick is neutral)
+    // Cross/A = buttons[0] (Special), Square/X = buttons[2] (brake fallback), Triangle/Y = buttons[3] (Camera)
+    // L1/LB = buttons[4], R1/RB = buttons[5], Select/Share = buttons[8], Start/Options = buttons[9], R3 = buttons[11]
+    const triggerThrottle = readTriggerValue(buttons[7], this.config.triggerDeadzone);
+    const triggerBrake = readTriggerValue(buttons[6], this.config.triggerDeadzone);
+    const squareBrake = isBtnDown(2) ? 1 : 0;
+
+    const throttle = triggerThrottle;
+    const brake = Math.max(triggerBrake, squareBrake);
+
+    const stickSteer = applySteeringCurve(axes[0] ?? 0, this.config.steerDeadzone);
+    const dpadSteer = (isBtnDown(15) ? 1 : 0) - (isBtnDown(14) ? 1 : 0);
+    const steer = stickSteer !== 0 ? stickSteer : dpadSteer;
+
+    const leftStickY = applyCameraStickAxis(axes[1] ?? 0, this.config.cameraDeadzone);
     const cameraX = applyCameraStickAxis(axes[2] ?? 0, this.config.cameraDeadzone);
     const cameraY = applyCameraStickAxis(axes[3] ?? 0, this.config.cameraDeadzone);
 
-    const crossBtn = buttons[0];
-    const specialPressed = Boolean(
-      crossBtn &&
-        (crossBtn.pressed ||
-          (typeof crossBtn.value === 'number' && crossBtn.value >= this.config.specialButtonThreshold)),
-    );
+    const specialPressed = isBtnDown(0);
     const specialJustPressed = specialPressed && !this.prevSpecialPressed;
     this.prevSpecialPressed = specialPressed;
+
+    const cameraPressed = isBtnDown(3);
+    const cameraJustPressed = cameraPressed && !this.prevCameraPressed;
+    this.prevCameraPressed = cameraPressed;
+
+    const pausePressed = isBtnDown(9);
+    const pauseJustPressed = pausePressed && !this.prevPausePressed;
+    this.prevPausePressed = pausePressed;
+
+    const resetCamPressed = isBtnDown(8) || isBtnDown(11);
+    const resetCameraJustPressed = resetCamPressed && !this.prevResetCamPressed;
+    this.prevResetCamPressed = resetCamPressed;
+
+    const lbPressed = isBtnDown(4);
+    const lbJustPressed = lbPressed && !this.prevLbPressed;
+    this.prevLbPressed = lbPressed;
+
+    const rbPressed = isBtnDown(5);
+    const rbJustPressed = rbPressed && !this.prevRbPressed;
+    this.prevRbPressed = rbPressed;
 
     const hasAnyInput =
       throttle > 0 ||
       brake > 0 ||
       steer !== 0 ||
+      leftStickY !== 0 ||
       cameraX !== 0 ||
       cameraY !== 0 ||
-      specialPressed;
+      specialPressed ||
+      cameraPressed ||
+      pausePressed ||
+      resetCamPressed ||
+      lbPressed ||
+      rbPressed;
 
     return {
       connected: true,
@@ -261,10 +328,18 @@ export class GamepadController {
       throttle,
       brake,
       steer,
+      leftStickY,
       cameraX,
       cameraY,
       specialPressed,
       specialJustPressed,
+      cameraJustPressed,
+      pauseJustPressed,
+      resetCameraJustPressed,
+      lbPressed,
+      rbPressed,
+      lbJustPressed,
+      rbJustPressed,
       hasAnyInput,
     };
   }

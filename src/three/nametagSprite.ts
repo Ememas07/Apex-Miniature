@@ -64,11 +64,23 @@ export function getShortNametagClassLabel(classId: CarClassId): string {
   }
 }
 
+export function formatShortDriverPlateName(fullName: string): string {
+  const trimmed = fullName.trim();
+  if (!trimmed) return 'AI Driver';
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) return trimmed;
+  if (parts[0].toUpperCase() === 'AI') return trimmed;
+  const initial = parts[0].replace(/\.$/, '').charAt(0).toUpperCase();
+  const lastName = parts.slice(1).join(' ');
+  return `${initial}. ${lastName}`;
+}
+
 export function formatNametagLabel(spec: NametagSpec): NametagLabelData {
   const clsMeta = CAR_CLASSES[spec.classId] ?? CAR_CLASSES[CarClassId.HYPERCAR_GTP];
   const classShortText = getShortNametagClassLabel(spec.classId);
-  const trimmedName = (spec.driverName || (spec.isHumanPeer ? 'Player' : 'AI Driver')).trim();
-  const nameText = trimmedName.length > 16 ? `${trimmedName.slice(0, 15)}…` : trimmedName;
+  const rawName = (spec.driverName || (spec.isHumanPeer ? 'Player' : 'AI Driver')).trim();
+  const displayName = spec.isHumanPeer ? rawName : formatShortDriverPlateName(rawName);
+  const nameText = displayName.length > 16 ? `${displayName.slice(0, 15)}…` : displayName;
 
   if (spec.isHumanPeer) {
     return {
