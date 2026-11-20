@@ -6,6 +6,7 @@ import {
   applySixZoneCarUVs,
   buildDiecastCar,
   BuiltCarRig,
+  computeRigHoodMount,
   createCarGlassMaterial,
   getRealWorldCarLength,
 } from './carBuilder';
@@ -871,6 +872,8 @@ function instantiateObjRig(
       }),
     );
 
+  const hoodMount = computeRigHoodMount(root, bodyGroup, carSpec.classId, carSpec.dimensions);
+
   return {
     root,
     bodyGroup,
@@ -880,6 +883,7 @@ function instantiateObjRig(
     rearWingFlap: null,
     headlightMats,
     brakeLightMat: fallbackBrakeMat,
+    hoodMount,
     dispose: () => {
       disposables.forEach((d) => d.dispose());
     },

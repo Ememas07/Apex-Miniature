@@ -14,6 +14,7 @@ import {
   getRealWorldCarDimensions,
   getRealWorldCarLength,
 } from '../game/cars';
+import { computeDefaultHoodMount, HoodMountOffset } from '../game/camera';
 
 export {
   REAL_WORLD_CAR_DIMENSIONS,
@@ -240,7 +241,105 @@ export interface BuiltCarRig {
   rearWingFlap: THREE.Mesh | null;
   headlightMats: THREE.MeshStandardMaterial[];
   brakeLightMat: THREE.MeshStandardMaterial;
+  /** Geometry-measured unobstructed hood camera mount in car-local space. */
+  hoodMount: HoodMountOffset;
   dispose: () => void;
+}
+
+const _hoodRaycaster = new THREE.Raycaster();
+const _hoodRayOrigin = new THREE.Vector3();
+const _hoodRayDir = new THREE.Vector3(0, -1, 0);
+const _hoodBox = new THREE.Box3();
+const _hoodSize = new THREE.Vector3();
+
+/**
+ * Measures the actual 3D body surface along the hood, cowl/halo, and forward fenders
+ * to compute a guaranteed-unobstructed, horizon-clear Hood Camera mount for any car
+ * (both external OBJ models and procedural die-cast meshes).
+ */
+export function computeRigHoodMount(
+  root: THREE.Group,
+  bodyGroup: THREE.Group,
+  classId?: CarClassId,
+  dimensions?: { length?: number; height?: number },
+): HoodMountOffset {
+  const fallback = computeDefaultHoodMount(classId, dimensions);
+  root.updateMatrixWorld(true);
+  _hoodBox.setFromObject(bodyGroup);
+  if (_hoodBox.isEmpty()) return fallback;
+
+  _hoodBox.getSize(_hoodSize);
+  const L = _hoodSize.z;
+  const minZ = _hoodBox.min.z;
+  const maxY = _hoodBox.max.y;
+  if (!Number.isFinite(L) || L < 1.5 || !Number.isFinite(maxY)) return fallback;
+
+  const isOpenWheel =
+    classId === CarClassId.F1_2026 ||
+    classId === CarClassId.F1_2021 ||
+    classId === CarClassId.F1_2005 ||
+    classId === CarClassId.FORMULA_E;
+  const isProto =
+    classId === CarClassId.HYPERCAR_GTP || classId === CarClassId.LMP2;
+
+  // Longitudinal mount: forward of A-pillars/windshield on closed cars, right over front halo/nose ridge on open-wheelers
+  const zf = isOpenWheel ? 0.64 : 0.71;
+  const mountZ = minZ + zf * L;
+  const rayStartY = maxY + 2.0;
+
+  const probeMaxY = (x: number, z: number): number | null => {
+    _hoodRayOrigin.set(x, rayStartY, z);
+    _hoodRaycaster.set(_hoodRayOrigin, _hoodRayDir);
+    const hits = _hoodRaycaster.intersectObject(bodyGroup, true);
+    if (hits.length === 0) return null;
+    // Ignore stray thin roof/wing antennas well above plausible hood/cowl elevation
+    const capY = Math.min(maxY, (dimensions?.height ?? 1.35) + 0.35);
+    for (let i = 0; i < hits.length; i++) {
+      const hy = hits[i].point.y;
+      if (Number.isFinite(hy) && hy <= capY) return hy;
+    }
+    return hits[0].point.y;
+  };
+
+  let localSurfaceY = 0;
+  let hasHit = false;
+  for (const dz of [-0.14, 0.0, 0.12]) {
+    for (const tx of [-0.34, 0.0, 0.34]) {
+      const y = probeMaxY(tx, mountZ + dz);
+      if (y !== null) {
+        hasHit = true;
+        if (y > localSurfaceY) localSurfaceY = y;
+      }
+    }
+  }
+
+  // Clearance above local hood/halo + every forward hood/fender point along the forward sightline
+  let requiredY = localSurfaceY + 0.30;
+  for (const ffrac of [0.76, 0.82, 0.88, 0.93]) {
+    const fz = minZ + ffrac * L;
+    if (fz <= mountZ + 0.05) continue;
+    for (const tx of [-0.48, -0.22, 0.0, 0.22, 0.48]) {
+      const y = probeMaxY(tx, fz);
+      if (y !== null) {
+        hasHit = true;
+        // 0.26m vertical margin (accounts for suspension roll + visual margin) + sightline slope clearance
+        const need = y + 0.26 + (fz - mountZ) * 0.05;
+        if (need > requiredY) requiredY = need;
+      }
+    }
+  }
+
+  if (!hasHit) return fallback;
+
+  const minEyeY = isOpenWheel || isProto ? 1.16 : 1.22;
+  const maxEyeY = Math.max(1.56, (dimensions?.height ?? 1.25) + 0.36);
+  // +0.02m compensates for RaceViewport's rig.root.position.y = c.y + 0.02
+  const mountY = Math.min(maxEyeY, Math.max(minEyeY, requiredY)) + 0.02;
+
+  return {
+    forward: Number(mountZ.toFixed(3)),
+    up: Number(mountY.toFixed(3)),
+  };
 }
 
 export type CabinStyle =
@@ -3435,6 +3534,9 @@ export function buildDiecastCar(
     }
   }
 
+  const realDims = carId ? getRealWorldCarDimensions(carId, classId) : undefined;
+  const hoodMount = computeRigHoodMount(root, bodyGroup, classId, realDims);
+
   return {
     root,
     bodyGroup,
@@ -3444,6 +3546,7 @@ export function buildDiecastCar(
     rearWingFlap,
     headlightMats,
     brakeLightMat,
+    hoodMount,
     dispose: () => {
       disposables.forEach((d) => d.dispose());
     },

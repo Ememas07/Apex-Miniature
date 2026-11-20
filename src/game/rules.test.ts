@@ -1490,7 +1490,8 @@ test('Functional Reverse Gear (R): Automatic and Manual shifting with ~35 km/h b
   assert.equal(manCar.gear, 1, 'Shifting up from Reverse must return to 1st gear');
 });
 
-test('Hood Cam Rig & Orbit Cam: rigid 3D pitch/roll tracking and zero-lag pivot lock', () => {
+test('Hood Cam Rig & Orbit Cam: rigid 3D pitch/roll tracking, per-car elevated sightline, and zero-lag pivot lock', async () => {
+  const { CAR_HOOD_SPECS, computeDefaultHoodMount } = await import('./camera');
   const dummyCar0 = { x: 100, y: 10, z: 200, heading: 0.5, speed: 0 };
   const dummyCarFast = { x: 100, y: 10, z: 200, heading: 0.5, speed: 350 / 3.6 };
 
@@ -1500,14 +1501,14 @@ test('Hood Cam Rig & Orbit Cam: rigid 3D pitch/roll tracking and zero-lag pivot 
   // When locked, positions at 0 km/h and 350 km/h for the same transform are identical (zero velocity lag)
   assert.ok(frame0.isLocked, 'Hood camera must be rigidly locked');
   assert.ok(frameFast.isLocked, 'Hood camera must be rigidly locked at high speed');
-  assert.equal(frame0.fov, frameFast.fov, 'FOV must remain constant at 65 with zero backward speed kick');
+  assert.equal(frame0.fov, frameFast.fov, 'FOV must remain constant with zero backward speed kick');
   assert.equal(frame0.position.x, frameFast.position.x, 'Position must not lag backward with velocity');
   assert.equal(frame0.position.y, frameFast.position.y);
   assert.equal(frame0.position.z, frameFast.position.z);
 
-  // Verify hood mount offset matches carPos + forward * (carLength * 0.24) + up * (carHeight * 0.68)
-  const expectedForward = 4.4 * 0.24;
-  const expectedUp = 1.18 * 0.68;
+  // Verify default hood mount matches CAR_HOOD_SPECS and provides elevated, horizon-clear sightline
+  const expectedForward = CAR_HOOD_SPECS.carLength * CAR_HOOD_SPECS.hoodForwardFraction;
+  const expectedUp = CAR_HOOD_SPECS.carHeight * CAR_HOOD_SPECS.hoodUpFraction;
   const expX = dummyCar0.x + Math.sin(0.5) * expectedForward;
   const expY = dummyCar0.y + expectedUp;
   const expZ = dummyCar0.z + Math.cos(0.5) * expectedForward;
@@ -1515,6 +1516,31 @@ test('Hood Cam Rig & Orbit Cam: rigid 3D pitch/roll tracking and zero-lag pivot 
   assert.ok(Math.abs(frame0.position.x - expX) < 0.01);
   assert.ok(Math.abs(frame0.position.y - expY) < 0.01);
   assert.ok(Math.abs(frame0.position.z - expZ) < 0.01);
+  assert.ok(expectedUp >= 1.15, `Expected elevated hood mount >= 1.15m, got ${expectedUp}`);
+
+  // Gentle downward pitch should project ground intersection well down the track (>40m ahead)
+  const drop = frame0.position.y - frame0.lookAt.y;
+  const groundSightDist = (expectedUp * CAR_HOOD_SPECS.lookDist) / Math.max(1e-4, drop);
+  assert.ok(
+    groundSightDist >= 45,
+    `Expected clear forward track sightline >= 45m, got ${groundSightDist.toFixed(1)}m`,
+  );
+
+  // Verify class-aware carSpec mount clears tall GT4/Coupe hoods and F1 halos, and respects rig hoodMount override
+  const gt4Car = getCarById('bmw-m4-gt4');
+  const f1Car = getCarById('f1-26-mercedes');
+  const gt4Mount = computeDefaultHoodMount(gt4Car.classId, gt4Car.dimensions);
+  const f1Mount = computeDefaultHoodMount(f1Car.classId, f1Car.dimensions);
+  assert.ok(gt4Mount.up >= 1.30, `Expected tall GT4 hood mount >= 1.30m, got ${gt4Mount.up}`);
+  assert.ok(f1Mount.up >= 1.18, `Expected F1 T-cam/halo-clearing mount >= 1.18m, got ${f1Mount.up}`);
+
+  const customFrame = computeCameraFrame(
+    'hood',
+    { ...dummyCar0, hoodMount: { forward: 0.99, up: 1.34 } },
+    0,
+    0,
+  );
+  assert.ok(Math.abs(customFrame.position.y - (dummyCar0.y + 1.34)) < 1e-4);
 
   // Verify full 3D pitch orientation: climbing uphill (+0.18 rad) pitches lookAt UP relative to mount
   const frameUphill = computeCameraFrame('hood', dummyCarFast, 0.18, 0);

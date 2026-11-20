@@ -1294,7 +1294,7 @@ export function RaceViewport(props: RaceViewportProps) {
           }
         } else if (focusCar) {
           const mode: CameraMode = isAiRace ? 'orbit' : p.cameraMode;
-          const targetNear = mode === 'hood' ? 0.06 : 0.4;
+          const targetNear = mode === 'hood' ? 0.14 : 0.4;
           if (Math.abs(camera.near - targetNear) > 0.01) {
             camera.near = targetNear;
             camera.updateProjectionMatrix();
@@ -1457,7 +1457,24 @@ export function RaceViewport(props: RaceViewportProps) {
                 lookOffset = { yaw: sim.isoYawOffset, pitch: sim.isoPitchOffset };
               }
             }
-            const camFrame = computeCameraFrame(mode, focusCar, pPitch, pRoll, lookOffset);
+            const focusRig = sim.carRigs.get(focusCar.id);
+            const camFrame = computeCameraFrame(
+              mode,
+              {
+                x: focusCar.x,
+                y: focusCar.y,
+                z: focusCar.z,
+                heading: focusCar.heading,
+                pitch: focusCar.pitch,
+                roll: focusCar.roll,
+                speed: focusCar.speed,
+                hoodMount: focusRig?.hoodMount,
+                carSpec: focusCar.carSpec,
+              },
+              pPitch,
+              pRoll,
+              lookOffset,
+            );
 
             if (camFrame.isLocked) {
               // Hood Cam: locked rigidly to car's full 3D orientation (pitch & roll), zero velocity lag
@@ -1495,9 +1512,13 @@ export function RaceViewport(props: RaceViewportProps) {
           }
 
           if (sim.trauma > 0.005) {
-            const shake = sim.trauma * sim.trauma * 0.45;
-            camera.position.x += (Math.random() - 0.5) * shake;
-            camera.position.y += (Math.random() - 0.5) * shake;
+            const isHoodShake = mode === 'hood';
+            const shake = sim.trauma * sim.trauma * (isHoodShake ? 0.10 : 0.45);
+            const dx = (Math.random() - 0.5) * shake;
+            const rawDy = (Math.random() - 0.5) * shake;
+            camera.position.x += dx;
+            // Prevent collision shake from shoving hood camera downward through the hood surface
+            camera.position.y += isHoodShake ? Math.max(-0.04, rawDy) : rawDy;
             sim.trauma = Math.max(0, sim.trauma - dt * 2.4);
           }
 

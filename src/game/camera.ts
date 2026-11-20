@@ -1,4 +1,9 @@
-import { CameraMode } from './types';
+import { CameraMode, CarClassId } from './types';
+
+export interface HoodMountOffset {
+  forward: number; // local +Z meters ahead of car origin
+  up: number;      // local +Y meters above car origin
+}
 
 export interface CarCameraState {
   x: number;
@@ -8,6 +13,13 @@ export interface CarCameraState {
   pitch?: number;
   roll?: number;
   speed: number;
+  /** Optional geometry-measured hood camera mount computed from the loaded 3D car rig. */
+  hoodMount?: HoodMountOffset;
+  /** Optional car class & real-world dimensions for class-aware hood mount fallback. */
+  carSpec?: {
+    classId?: CarClassId;
+    dimensions?: { length?: number; width?: number; height?: number };
+  };
 }
 
 export interface CameraRigResult {
@@ -19,11 +31,13 @@ export interface CameraRigResult {
 }
 
 export const CAR_HOOD_SPECS = {
-  carLength: 4.4,
-  carHeight: 1.18,
-  hoodForwardFraction: 0.24,
-  hoodUpFraction: 0.68,
-  hoodFov: 65,
+  carLength: 4.6,
+  carHeight: 1.24,
+  hoodForwardFraction: 0.21, // rear-hood / ahead-of-windshield ridge
+  hoodUpFraction: 0.98,      // ~1.215m fallback eye height cleanly above hood & fenders
+  hoodFov: 68,               // wide sim-racing hood FOV for early apex & wheel-to-wheel vision
+  lookDist: 25.0,
+  lookDrop: 0.50,            // gentle -1.15° pitch for ~60m+ forward track sightline (vs -3.2° nose-dive)
 };
 
 export const DEFAULT_CHASE_CAMERA = {
@@ -44,6 +58,50 @@ export interface CameraLookOffset {
   pitch: number;
 }
 
+const OPEN_WHEEL_CLASSES = new Set<CarClassId>([
+  CarClassId.F1_2026,
+  CarClassId.F1_2021,
+  CarClassId.F1_2005,
+  CarClassId.FORMULA_E,
+]);
+
+const PROTOTYPE_CLASSES = new Set<CarClassId>([
+  CarClassId.HYPERCAR_GTP,
+  CarClassId.LMP2,
+]);
+
+/**
+ * Class- and dimension-aware hood camera mount fallback used before a 3D rig's exact
+ * geometry-raycasted mount is available (or in headless tests).
+ */
+export function computeDefaultHoodMount(
+  classId?: CarClassId,
+  dimensions?: { length?: number; height?: number },
+): HoodMountOffset {
+  const length = dimensions?.length && dimensions.length > 1.5 ? dimensions.length : CAR_HOOD_SPECS.carLength;
+  const height = dimensions?.height && dimensions.height > 0.5 ? dimensions.height : CAR_HOOD_SPECS.carHeight;
+
+  if (classId && OPEN_WHEEL_CLASSES.has(classId)) {
+    // High-nose / T-cam style mount clearing the F1/FE halo and front wheels cleanly
+    return {
+      forward: length * 0.14,
+      up: Math.max(1.18, height + 0.28),
+    };
+  }
+  if (classId && PROTOTYPE_CLASSES.has(classId)) {
+    // Elevated over sculpted LMP/Hypercar wheel-arch pontoons for unobstructed apex sightlines
+    return {
+      forward: length * 0.21,
+      up: Math.max(1.18, height + 0.15),
+    };
+  }
+  // GT3 / GT4 / Track Coupe / Supercar: cleanly above tall hoods & fenders while showing the nose
+  return {
+    forward: length * CAR_HOOD_SPECS.hoodForwardFraction,
+    up: Math.max(1.24, height * CAR_HOOD_SPECS.hoodUpFraction),
+  };
+}
+
 /**
  * Calculates camera target position, look-at orientation, and FOV.
  * When cameraMode === "hood", all velocity lag, trailing spring-damper,
@@ -57,8 +115,6 @@ export function computeCameraFrame(
   dampedRoll: number,
   lookOffset?: CameraLookOffset,
 ): CameraRigResult {
-  const carLen = CAR_HOOD_SPECS.carLength;
-  const carHgt = CAR_HOOD_SPECS.carHeight;
   const lookYaw = lookOffset?.yaw ?? 0;
   const lookPitch = lookOffset?.pitch ?? 0;
 
@@ -85,15 +141,24 @@ export function computeCameraFrame(
     const upY = cosR * cosP;
     const upZ = -sinR * sinH - cosR * sinP * cosH;
 
-    const fwdDist = carLen * CAR_HOOD_SPECS.hoodForwardFraction; // ~1.056m forward
-    const upDist = carHgt * CAR_HOOD_SPECS.hoodUpFraction; // ~0.802m up
+    const mount: HoodMountOffset = car.hoodMount
+      ? car.hoodMount
+      : car.carSpec
+      ? computeDefaultHoodMount(car.carSpec.classId, car.carSpec.dimensions)
+      : {
+          forward: CAR_HOOD_SPECS.carLength * CAR_HOOD_SPECS.hoodForwardFraction,
+          up: CAR_HOOD_SPECS.carHeight * CAR_HOOD_SPECS.hoodUpFraction,
+        };
+
+    const fwdDist = mount.forward;
+    const upDist = mount.up;
 
     const posX = car.x + fwdX * fwdDist + upX * upDist;
     const posY = car.y + fwdY * fwdDist + upY * upDist;
     const posZ = car.z + fwdZ * fwdDist + upZ * upDist;
 
     // Look forward along car's pitched/rolled forward vector, with optional right-stick glance offset
-    const lookDist = 25.0;
+    const lookDist = CAR_HOOD_SPECS.lookDist;
     let dirX = fwdX;
     let dirY = fwdY;
     let dirZ = fwdZ;
@@ -111,9 +176,10 @@ export function computeCameraFrame(
       dirZ = (fwdZ * cosLY + rightZ * sinLY) * cosLP + upZ * sinLP;
     }
 
-    const lookX = posX + dirX * lookDist - upX * 1.4;
-    const lookY = posY + dirY * lookDist - upY * 1.4;
-    const lookZ = posZ + dirZ * lookDist - upZ * 1.4;
+    const lookDrop = CAR_HOOD_SPECS.lookDrop;
+    const lookX = posX + dirX * lookDist - upX * lookDrop;
+    const lookY = posY + dirY * lookDist - upY * lookDrop;
+    const lookZ = posZ + dirZ * lookDist - upZ * lookDrop;
 
     return {
       position: { x: posX, y: posY, z: posZ },
