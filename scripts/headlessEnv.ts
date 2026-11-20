@@ -594,8 +594,13 @@ rl.on('line', (line) => {
       const car = spawnCarAt(track, cId, 'eval_agent', 0.02, 0, 18.0);
       const carClass = getCarClass(cId);
 
-      // Long tracks like Le Mans scale up to 10000 steps
-      const maxSteps = track.totalLength > 10000 ? Math.max(defaultMaxSteps, 10000) : defaultMaxSteps;
+      // Dynamic maxSteps scaled by track length, preserving >=10000 on tracks >10km
+      const dynamicCap = Math.ceil((track.totalLength / 22.0) * 30 * 1.5);
+      const maxSteps = Math.max(
+        defaultMaxSteps,
+        dynamicCap,
+        track.totalLength > 10000 ? 10000 : 0
+      );
 
       let totalSpeedMps = 0;
       let offTrackSteps = 0;
@@ -606,6 +611,7 @@ rl.on('line', (line) => {
       let completedLap = false;
       let completedLapTime: number | null = null;
       let crashed = false;
+      let consecutiveStallSteps = 0;
       let step = 0;
 
       for (; step < maxSteps; step++) {
@@ -622,10 +628,15 @@ rl.on('line', (line) => {
         if (wallOrContactDmg || absLat > halfW + 5.5) {
           wallCrashCount++;
         }
-        // Disable early stall termination for the first 300 steps so slower cars aren't prematurely killed
+        // Stall detection: require 90 consecutive steps (3.0s at 30 Hz) after initial launch
         if (step > 300 && car.speed < 1.0) {
-          crashed = true;
-          break;
+          consecutiveStallSteps++;
+          if (consecutiveStallSteps >= 90) {
+            crashed = true;
+            break;
+          }
+        } else {
+          consecutiveStallSteps = 0;
         }
 
         if (wallCrashCount > 0) {

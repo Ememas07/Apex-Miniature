@@ -5,7 +5,6 @@ Evaluates trained AI policy weights across every track and car independently.
 """
 
 import argparse
-import csv
 from datetime import datetime, timezone
 import json
 import os
@@ -201,7 +200,6 @@ def print_summary_table(summary: dict, per_class: dict, per_track: dict, worst_p
 def save_reports(out_base: str, all_evaluations: list[dict]):
     os.makedirs(os.path.dirname(os.path.abspath(out_base)), exist_ok=True)
     json_path = out_base if out_base.endswith(".json") else f"{out_base}.json"
-    csv_path = out_base.replace(".json", ".csv") if out_base.endswith(".json") else f"{out_base}.csv"
 
     # Save JSON report
     report_json = {
@@ -211,38 +209,6 @@ def save_reports(out_base: str, all_evaluations: list[dict]):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report_json, f, indent=2)
     print(f"Saved evaluation JSON -> {json_path}")
-
-    # Save CSV matrix
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "weights_path",
-            "track_id",
-            "car_id",
-            "car_class",
-            "completed",
-            "best_lap_time",
-            "avg_speed_kmh",
-            "off_track_pct",
-            "wall_crash",
-            "steps",
-        ])
-        for ev in all_evaluations:
-            w_path = ev["summary"].get("weightPath", "")
-            for r in ev.get("results", []):
-                writer.writerow([
-                    w_path,
-                    r["trackId"],
-                    r["carId"],
-                    r["carClass"],
-                    "TRUE" if r["completed"] else "FALSE",
-                    r["bestLapTime"] if r["bestLapTime"] is not None else "",
-                    r["avgSpeedKmh"],
-                    r["offTrackPct"],
-                    r["wallCrash"],
-                    r["steps"],
-                ])
-    print(f"Saved evaluation CSV  -> {csv_path}")
 
 
 def main():
