@@ -132,7 +132,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       data-testid="settings-modal"
       role="dialog"
       aria-label="Game Settings"
-      className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-3 sm:p-4"
+      className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center safe-pad-modal"
     >
       <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto custom-scroll bg-[#11151d] border border-white/15 rounded-lg p-5 sm:p-6 shadow-2xl space-y-4">
         <div className="flex items-start justify-between gap-4">

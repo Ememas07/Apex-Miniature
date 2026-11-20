@@ -68,7 +68,7 @@ export function PauseModal({
       data-testid="pause-modal"
       role="dialog"
       aria-label="Race Paused"
-      className="fixed inset-0 z-30 bg-black/70 flex items-center justify-center p-3 sm:p-4 safe-area-inset"
+      className="fixed inset-0 z-30 bg-black/70 flex items-center justify-center safe-pad-modal"
     >
       <div className="w-full max-w-sm max-h-[92dvh] overflow-y-auto custom-scroll bg-[#11151d] border border-white/15 rounded-lg p-4 sm:p-6 shadow-2xl space-y-4 sm:space-y-5">
         <div>
