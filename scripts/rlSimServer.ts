@@ -1,16 +1,19 @@
 import { CARS } from '../src/game/cars';
-import { TRACKS, compileTrack } from '../src/game/tracks';
+import { TRACKS, compileTrack, sampleTrackAtT } from '../src/game/tracks';
 import {
   createCarSimState,
   stepCarPhysics,
+  resolveWallContact,
   SPEED_KMH_FACTOR,
 } from '../src/game/physics';
+import {
+  buildObservationVector,
+  PolicyObsConfig,
+} from '../src/game/aiNeuralPolicy';
 
 type SimCar = ReturnType<typeof createCarSimState>;
 
 const compiledTracks = TRACKS.map((t) => compileTrack(t));
-const LOOKAHEAD_METERS = [8, 18, 32, 50, 75, 110, 155, 210];
-const TRAFFIC_SLOTS = 4; // 4 * 4 = 16 traffic floats + 26 solo floats + 1 skillTarget = 43 total
 
 let activeTrack = compiledTracks[0];
 let activeCarSpec = CARS[0];
@@ -28,11 +31,13 @@ let activeBop: {
   downforceMult?: number;
   brakingMult?: number;
 } = {};
+let activeObsConfig: PolicyObsConfig | undefined;
 
 let prevTrackT = 0;
 let prevSteer = 0;
 let prevDamage = 0;
 let stepCount = 0;
+let consecutiveStallSteps = 0;
 const MAX_EPISODE_STEPS = 60 * 150;
 
 function getCarClass(c: any): string {
@@ -42,121 +47,29 @@ function getCarClass(c: any): string {
 function sampleTrackAtDistance(baseT: number, distMeters: number) {
   const dt = distMeters / Math.max(1, activeTrack.totalLength);
   const t = (((baseT + dt) % 1) + 1) % 1;
-  const idx = Math.min(
-    activeTrack.samples.length - 1,
-    Math.floor(t * activeTrack.samples.length),
-  );
-  return activeTrack.samples[idx];
+  return sampleTrackAtT(activeTrack, t);
 }
 
 function applyBopOverrides(targetCar: SimCar, bop = activeBop) {
   const anyCar = targetCar as any;
-  if (anyCar.spec) {
-    anyCar.spec = {
-      ...anyCar.spec,
-      topSpeedKmh: (anyCar.spec.topSpeedKmh ?? 300) * (bop.topSpeedMult ?? 1.0),
-      grip: (anyCar.spec.grip ?? 1.2) * (bop.gripMult ?? 1.0),
-      downforce: (anyCar.spec.downforce ?? 1.0) * (bop.downforceMult ?? 1.0),
-      braking: (anyCar.spec.braking ?? 1.2) * (bop.brakingMult ?? 1.0),
-    };
-  }
+  anyCar.bopMultipliers = {
+    topSpeedMult: bop.topSpeedMult ?? 1.0,
+    gripMult: bop.gripMult ?? 1.0,
+    downforceMult: bop.downforceMult ?? 1.0,
+    brakingMult: bop.brakingMult ?? 1.0,
+  };
 }
 
 function getObservation(): number[] {
-  const sp = sampleTrackAtDistance(car.trackT, 0);
-  const halfW = Math.max(1, (sp.width ?? activeTrack.spec.trackWidth) * 0.5);
-  const trackHeading = Math.atan2(sp.tx, sp.tz);
-
-  let headingErr = car.heading - trackHeading;
-  while (headingErr > Math.PI) headingErr -= Math.PI * 2;
-  while (headingErr < -Math.PI) headingErr += Math.PI * 2;
-
-  const sinH = Math.sin(car.heading);
-  const cosH = Math.cos(car.heading);
-  const forwardVel = car.vx * sinH + car.vz * cosH;
-  const lateralVel = car.vx * cosH - car.vz * sinH;
-
-  const anySpec = activeCarSpec as any;
-  const stats = anySpec.stats ?? anySpec;
-  const normTopSpeed =
-    ((stats.topSpeedKmh ?? stats.topSpeed ?? 300) * (activeBop.topSpeedMult ?? 1.0)) / 360;
-  const normGrip = ((stats.grip ?? 1.2) * (activeBop.gripMult ?? 1.0)) / 2.2;
-  const normDownforce = ((stats.downforce ?? 1.0) * (activeBop.downforceMult ?? 1.0)) / 3.0;
-  const normBraking = ((stats.braking ?? 1.2) * (activeBop.brakingMult ?? 1.0)) / 2.2;
-
-  const obs: number[] = [
-    forwardVel / 100,
-    lateralVel / 30,
-    car.lateralOffset / halfW,
-    headingErr / Math.PI,
-    ((car as any).yawRate ?? 0) / 3.0,
+  return buildObservationVector(
+    car,
+    activeTrack,
+    allCars,
     prevSteer,
-    normTopSpeed,
-    normGrip,
-    normDownforce,
-    normBraking,
-  ];
-
-  // 16 lookahead track curvature & heading delta features
-  for (const dist of LOOKAHEAD_METERS) {
-    const ahead = sampleTrackAtDistance(car.trackT, dist);
-    const aheadHeading = Math.atan2(ahead.tx, ahead.tz);
-    let dHeading = aheadHeading - trackHeading;
-    while (dHeading > Math.PI) dHeading -= Math.PI * 2;
-    while (dHeading < -Math.PI) dHeading += Math.PI * 2;
-
-    const curv = (ahead as any).curvature ?? 0;
-    obs.push(Math.tanh(curv * 20));
-    obs.push(dHeading / Math.PI);
-  }
-
-  // 16 traffic radar features
-  const nearby: {
-    absDist: number;
-    relLong: number;
-    relLat: number;
-    relSpeed: number;
-    sameClass: number;
-  }[] = [];
-
-  const activeClass = getCarClass(activeCarSpec);
-
-  for (const other of trafficCars) {
-    let dt = other.trackT - car.trackT;
-    if (dt > 0.5) dt -= 1;
-    if (dt < -0.5) dt += 1;
-    const relLong = dt * activeTrack.totalLength;
-    if (relLong < -25 || relLong > 85) continue;
-
-    const otherClass = trafficClasses.get(other.id);
-    const sameClass =
-      otherClass !== undefined && otherClass !== 'UNKNOWN' && otherClass === activeClass
-        ? 1.0
-        : 0.0;
-
-    nearby.push({
-      absDist: Math.abs(relLong),
-      relLong: Math.max(-1, Math.min(1, relLong / 80)),
-      relLat: Math.max(-2, Math.min(2, (other.lateralOffset - car.lateralOffset) / halfW)),
-      relSpeed: Math.max(-1, Math.min(1, (car.speed - other.speed) / 50)),
-      sameClass,
-    });
-  }
-
-  nearby.sort((a, b) => a.absDist - b.absDist);
-
-  for (let i = 0; i < TRAFFIC_SLOTS; i++) {
-    if (i < nearby.length) {
-      obs.push(nearby[i].relLong, nearby[i].relLat, nearby[i].relSpeed, nearby[i].sameClass);
-    } else {
-      obs.push(1.0, 0.0, 0.0, 0.0);
-    }
-  }
-
-  // Input #43: Target Skill / Pace Scalar [0.65 .. 1.05]
-  obs.push(skillTarget);
-
-  return obs; // 43 floats total
+    skillTarget,
+    car.bopMultipliers,
+    activeObsConfig,
+  );
 }
 
 function resetEpisode(opts: {
@@ -167,7 +80,9 @@ function resetEpisode(opts: {
   solo?: boolean;
   startAtLine?: boolean;
   bop?: typeof activeBop;
+  obsConfig?: PolicyObsConfig;
 } = {}) {
+  activeObsConfig = opts.obsConfig;
   activeTrack =
     opts.trackIndex !== undefined
       ? compiledTracks[opts.trackIndex % compiledTracks.length]
@@ -265,14 +180,26 @@ function resetEpisode(opts: {
   prevSteer = 0;
   prevDamage = car.aeroDamage;
   stepCount = 0;
+  consecutiveStallSteps = 0;
 
   return getObservation();
 }
 
 function stepEpisode(action: [number, number, number]) {
-  const steer = Math.max(-1, Math.min(1, action[0]));
-  const throttle = Math.max(0, Math.min(1, (action[1] + 1) * 0.5));
-  const brake = Math.max(0, Math.min(1, (action[2] + 1) * 0.5));
+  let steer = Math.max(-1, Math.min(1, action[0]));
+  let throttle = Math.max(0, Math.min(1, (action[1] + 1) * 0.5));
+  let brake = Math.max(0, Math.min(1, (action[2] + 1) * 0.5));
+
+  const spNow = sampleTrackAtDistance(car.trackT, 0);
+  const halfWNow = Math.max(1, (spNow.width ?? activeTrack.spec.trackWidth) * 0.5);
+  if (car.speed < 2.5 && stepCount > 60) {
+    throttle = Math.max(0.75, throttle);
+    brake = 0.0;
+    if (Math.abs(car.lateralOffset) > halfWNow * 0.3) {
+      const toCenterSteer = car.lateralOffset > 0 ? -0.75 : 0.75;
+      steer = steer * 0.25 + toCenterSteer * 0.75;
+    }
+  }
 
   const ctx = {
     trackWetness: 0,
@@ -319,13 +246,23 @@ function stepEpisode(action: [number, number, number]) {
     );
   }
 
-  stepCarPhysics(
-    car,
-    { throttle, brake, steer, specialPressed: false },
-    activeTrack,
-    1 / 60,
-    ctx,
-  );
+  const SUBSTEPS = 2;
+  const SUB_DT = (1 / 60) / SUBSTEPS;
+  for (let s = 0; s < SUBSTEPS; s++) {
+    stepCarPhysics(
+      car,
+      { throttle, brake, steer, specialPressed: false },
+      activeTrack,
+      SUB_DT,
+      ctx,
+    );
+    const bSp = sampleTrackAtDistance(car.trackT, 0);
+    const bWall = (bSp.width ?? activeTrack.spec.trackWidth) * 0.5 + 3.0;
+    if (Math.abs(car.lateralOffset) > bWall) {
+      const bSide: 1 | -1 = car.lateralOffset > 0 ? 1 : -1;
+      resolveWallContact(car, bSp, bSide * bWall, bSide, SUB_DT);
+    }
+  }
 
   stepCount++;
 
@@ -348,21 +285,20 @@ function stepEpisode(action: [number, number, number]) {
   let reward = progressMeters * 0.6 * skillTarget - overspeed * 0.045;
   let terminated = false;
 
-  if (absLat > halfW + 0.6) {
-    reward -= 0.4 * (absLat - (halfW + 0.6));
-  }
-  if (absLat > halfW + 4.5) {
-    reward -= 15.0;
-    terminated = true;
+  if (absLat > halfW + 1.2) {
+    reward -= 0.4 * (absLat - (halfW + 1.2));
   }
 
   const damageDelta = car.aeroDamage - prevDamage;
-  if (damageDelta > 0.005) {
+  if (damageDelta > 0.01) {
     reward -= Math.min(20.0, damageDelta * 220.0);
     prevDamage = car.aeroDamage;
-    if (damageDelta > 0.06) {
-      terminated = true;
-    }
+  }
+
+  const hardWallCrash = damageDelta > 2.5 || absLat > halfW + 7.5;
+  if (hardWallCrash) {
+    reward -= 15.0;
+    terminated = true;
   }
 
   for (const tCar of trafficCars) {
@@ -390,7 +326,12 @@ function stepEpisode(action: [number, number, number]) {
     prevTrafficSignedDists.set(tCar.id, signedDist);
   }
 
-  if (car.speed * SPEED_KMH_FACTOR < 15 && stepCount > 60) {
+  if (car.speed < 2.0 && stepCount > 120) {
+    consecutiveStallSteps++;
+  } else {
+    consecutiveStallSteps = 0;
+  }
+  if (consecutiveStallSteps >= 90) {
     reward -= 5.0;
     terminated = true;
   }
