@@ -26,7 +26,7 @@ export function ResultsModal({
       data-testid="results-modal"
       role="dialog"
       aria-label="Race Classification"
-      className="fixed inset-0 z-30 bg-black/80 flex items-center justify-center p-2 sm:p-4 safe-area-inset"
+      className="fixed inset-0 z-30 bg-black/80 flex items-center justify-center safe-pad-modal"
     >
       <div className="w-full max-w-3xl max-h-[92dvh] bg-[#11151d] border border-white/15 rounded-lg flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}

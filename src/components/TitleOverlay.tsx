@@ -152,7 +152,7 @@ export function TitleOverlay({
       data-testid="title-overlay"
       data-menu-style="modern"
       aria-hidden={!visible}
-      className={`fixed inset-0 z-10 pointer-events-none flex flex-col justify-between gap-3 p-3 sm:p-5 md:p-8 safe-area-inset overflow-y-auto transition-all duration-300 ease-in-out ${
+      className={`fixed inset-0 z-10 pointer-events-none flex flex-col justify-between gap-4 md:gap-6 short:gap-2 safe-pad-menu overflow-y-auto transition-all duration-300 ease-in-out ${
         visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1 [&_*]:pointer-events-none'
       }`}
     >
@@ -185,10 +185,10 @@ export function TitleOverlay({
       </div>
 
       {/* Left Paddock Command Column */}
-      <div className="max-w-[430px] w-full pointer-events-auto my-auto space-y-3.5">
+      <div className="max-w-[430px] w-full pointer-events-auto my-auto space-y-3.5 short:max-w-[760px] short:grid short:grid-cols-2 short:gap-2.5 short:space-y-0 short:items-start">
         {/* Primary Launch Stack */}
-        <div className="bg-[#0b0e13]/52 border border-white/15 rounded-lg p-4 space-y-3 shadow-lg">
-          <div className="flex items-center justify-between text-[11px] text-slate-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+        <div className="bg-[#0b0e13]/52 border border-white/15 rounded-lg p-4 short:p-2.5 space-y-3 short:space-y-2 shadow-lg">
+          <div className="flex items-center justify-between text-[11px] short:text-[10px] text-slate-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
             <span className="font-display font-bold uppercase tracking-widest text-white">
               Paddock Control
             </span>
@@ -197,13 +197,13 @@ export function TitleOverlay({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 gap-2">
+          <div className="grid grid-cols-1 gap-2 short:gap-1.5">
             <button
               type="button"
               data-testid="btn-open-race"
               data-start="true"
               onClick={onOpenRace}
-              className="w-full px-5 py-3.5 rounded-md bg-red-600/92 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-base tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-between shadow-lg shadow-red-950/40"
+              className="w-full px-5 py-3.5 short:px-3.5 short:py-2 rounded-md bg-red-600/92 hover:bg-red-500 active:bg-red-700 text-white font-display font-bold text-base short:text-sm tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-between shadow-lg shadow-red-950/40"
             >
               <span className="flex items-center gap-2.5">
                 <Flag className="w-4 h-4" />
@@ -243,12 +243,12 @@ export function TitleOverlay({
         </div>
 
         {/* Compact Selected Car & Selected Track Previews */}
-        <div className="grid grid-cols-1 gap-2.5">
+        <div className="grid grid-cols-1 gap-2.5 short:gap-1.5">
           {/* Compact Selected Car Preview */}
           <button
             type="button"
             onClick={onOpenCarsShowcase}
-            className="w-full text-left bg-[#0b0e13]/46 hover:bg-[#111620]/66 border border-white/15 hover:border-white/30 rounded-lg p-3.5 transition-colors cursor-pointer group shadow-lg"
+            className="w-full text-left bg-[#0b0e13]/46 hover:bg-[#111620]/66 border border-white/15 hover:border-white/30 rounded-lg p-3.5 short:p-2.5 transition-colors cursor-pointer group shadow-lg"
           >
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -284,7 +284,7 @@ export function TitleOverlay({
           <button
             type="button"
             onClick={onOpenTracksShowcase}
-            className="w-full text-left bg-[#0b0e13]/46 hover:bg-[#111620]/66 border border-white/15 hover:border-white/30 rounded-lg p-3.5 transition-colors cursor-pointer group shadow-lg flex items-center gap-3.5"
+            className="w-full text-left bg-[#0b0e13]/46 hover:bg-[#111620]/66 border border-white/15 hover:border-white/30 rounded-lg p-3.5 short:p-2.5 transition-colors cursor-pointer group shadow-lg flex items-center gap-3.5 short:gap-2.5"
           >
             <div className="bg-[#0b0e13]/40 border border-white/12 rounded p-1.5 shrink-0">
               <MiniTrackPreviewSvg track={track} />
@@ -368,7 +368,7 @@ export function TitleOverlay({
           </button>
         </div>
 
-        <div className="text-[11px] text-slate-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
+        <div className="short:hidden text-[11px] text-slate-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
           WASD / Arrows / Touchpad / Gamepad · Space / Shift / E Special · C Camera · R Reset Cam · P Pause
         </div>
       </div>

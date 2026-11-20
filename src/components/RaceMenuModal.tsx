@@ -324,7 +324,7 @@ export function RaceMenuModal({
       data-testid="race-menu-modal"
       role="dialog"
       aria-label="Race Setup"
-      className="fixed inset-0 z-30 bg-[#0b0e13]/95 flex flex-col overflow-hidden safe-area-inset"
+      className="fixed inset-0 z-30 bg-[#0b0e13]/95 flex flex-col overflow-hidden safe-pad-edge"
     >
       {/* Top Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 px-3 sm:px-5 md:px-7 py-2.5 sm:py-3.5 bg-[#0d1118] border-b border-white/10 shrink-0">

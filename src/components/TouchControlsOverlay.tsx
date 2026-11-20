@@ -505,7 +505,7 @@ export function TouchControlsOverlay({
       </div>
 
       {/* BOTTOM-RIGHT: Special Trigger + Brake & Gas Pedals */}
-      <div className="pointer-events-auto flex flex-col items-end gap-2">
+      <div className="pointer-events-auto flex flex-col items-end gap-2 short:gap-1.5">
         {/* Class Special / Boost / Active Aero / Attack Mode trigger */}
         <button
           type="button"
@@ -515,16 +515,16 @@ export function TouchControlsOverlay({
           onPointerDown={handleSpecialDown}
           onPointerUp={handleSpecialUp}
           onPointerCancel={handleSpecialUp}
-          className={`touch-none select-none min-h-[44px] px-3.5 py-2 rounded-xl border backdrop-blur-sm flex items-center gap-1.5 text-xs font-display font-bold tracking-wider uppercase transition-colors shadow-lg ${
+          className={`touch-none select-none min-h-[44px] short:min-h-[34px] px-3.5 py-2 short:px-2.5 short:py-1 rounded-xl short:rounded-lg border backdrop-blur-sm flex items-center gap-1.5 text-xs short:text-[10px] font-display font-bold tracking-wider uppercase transition-colors shadow-lg ${
             specialActive || specialHeld
               ? 'bg-emerald-500/90 border-emerald-200 text-white shadow-emerald-950/60'
               : 'bg-[#0b0e13]/78 border-amber-400/45 text-amber-200'
           }`}
         >
-          <Zap className="w-3.5 h-3.5 shrink-0" />
+          <Zap className="w-3.5 h-3.5 short:w-3 short:h-3 shrink-0" />
           <span className="whitespace-nowrap">{specialLabel}</span>
           {typeof specialCharge === 'number' && (
-            <span className="font-telemetry text-[11px] opacity-90">{Math.round(specialCharge)}%</span>
+            <span className="font-telemetry text-[11px] short:text-[10px] opacity-90">{Math.round(specialCharge)}%</span>
           )}
         </button>
 
