@@ -3,6 +3,7 @@ param(
     [string]$AuditDir = "audit",
     [string]$EvalScript = "scripts/evalAllTracksAndCars.py",
     [string]$MinifyScript = "scripts/minify_audit.py",
+    [string[]]$Variants = @(),
     [switch]$CleanStale = $true
 )
 
@@ -32,7 +33,7 @@ if (-not (Test-Path $AuditDir)) {
     New-Item -ItemType Directory -Force -Path $AuditDir | Out-Null
 }
 
-$variants = @(
+$allVariants = @(
     @{ Tag = "v1"; Weights = "src/game/aiPolicyWeights_v1.json" },
     @{ Tag = "v2"; Weights = "src/game/aiPolicyWeights_v2.json" },
     @{ Tag = "v3"; Weights = "src/game/aiPolicyWeights_v3.json" },
@@ -43,9 +44,21 @@ $variants = @(
     @{ Tag = "v8"; Weights = "src/game/aiPolicyWeights_v8.json" }
 )
 
+if ($Variants -and $Variants.Count -gt 0) {
+    $normFilter = $Variants | ForEach-Object { "$_".Split(",") } | ForEach-Object {
+        $s = "$_".Trim().ToLower()
+        if ($s) {
+            if ($s -match "^v") { $s } else { "v$s" }
+        }
+    }
+    $selectedVariants = $allVariants | Where-Object { $normFilter -contains $_.Tag }
+} else {
+    $selectedVariants = $allVariants
+}
+
 $generatedFiles = @()
 
-foreach ($v in $variants) {
+foreach ($v in $selectedVariants) {
     if (-not (Test-Path $v.Weights)) {
         Write-Host "Skipping $($v.Tag) ($($v.Weights) not found yet)" -ForegroundColor DarkGray
         continue
