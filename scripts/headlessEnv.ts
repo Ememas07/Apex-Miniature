@@ -67,7 +67,7 @@ const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
   wallCrash: 5.0,
   decelThreshold: 0.45,
   decelPenalty: 0.0,
-  stallStopSpeed: 4.0,
+  stallStopSpeed: 2.0,
   ttcPenalty: 0.0,
 };
 
@@ -98,6 +98,11 @@ interface EnvSlot {
   prevSpeed: number;
   stepsInEpisode: number;
   lapsCompleted: number;
+  consecutiveWallSteps: number;
+  wallScrapes: number;
+  prevLat: number;
+  consecutiveOffTrackSteps: number;
+  consecutiveStallSteps: number;
 }
 
 const DEFAULT_CARS: string[] = CARS.map((c: any) => c.id);
@@ -515,6 +520,11 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
     prevSpeed: car.speed,
     stepsInEpisode: 0,
     lapsCompleted: 0,
+    consecutiveWallSteps: 0,
+    wallScrapes: 0,
+    prevLat: car.lateralOffset,
+    consecutiveOffTrackSteps: 0,
+    consecutiveStallSteps: 0,
   };
 }
 
@@ -584,6 +594,7 @@ rl.on('line', (line) => {
       avgSpeedKmh: number;
       offTrackPct: number;
       wallCrash: number;
+      stalls?: number;
       steps: number;
     }> = [];
 
@@ -611,7 +622,10 @@ rl.on('line', (line) => {
       let completedLap = false;
       let completedLapTime: number | null = null;
       let crashed = false;
+      let stalled = false;
       let consecutiveStallSteps = 0;
+      let consecutiveWallSteps = 0;
+      let wallScrapeCount = 0;
       let step = 0;
 
       for (; step < maxSteps; step++) {
@@ -619,29 +633,51 @@ rl.on('line', (line) => {
         const absLat = Math.abs(car.lateralOffset);
         const sp = sampleTrackAtT(track, car.trackT);
         const halfW = (sp.width ?? track.spec.trackWidth) * 0.5;
+        const KERB_EDGE = halfW + 1.8;
 
-        if (absLat > halfW + 1.0) {
+        if (absLat > KERB_EDGE) {
           offTrackSteps++;
         }
 
-        const wallOrContactDmg = car.aeroDamage > prevDmg + 0.02;
-        if (wallOrContactDmg || absLat > halfW + 5.5) {
-          wallCrashCount++;
+        const deltaAero = Math.max(0, car.aeroDamage - prevDmg);
+        const wallContact = absLat > halfW + 2.8 || deltaAero > 0.02;
+
+        if (wallContact) {
+          consecutiveWallSteps++;
+          if (consecutiveWallSteps === 1) {
+            wallScrapeCount++;
+          }
+        } else {
+          consecutiveWallSteps = 0;
         }
+
+        // Terminal crash condition during evaluation:
+        // 1. Violent wall impact: damage delta > 2.5
+        // 2. Sustained barrier grinding: >= 18 steps (~0.6s at 30Hz) without deflecting
+        // 3. Blown through barriers far into deep terrain: absLat > halfW + 7.0m
+        // 4. Repeated wall pinballing: >= 5 distinct scrape events
+        const terminalWallCrash =
+          deltaAero > 2.5 ||
+          consecutiveWallSteps >= 18 ||
+          absLat > halfW + 7.0 ||
+          wallScrapeCount >= 5;
+
+        if (terminalWallCrash) {
+          wallCrashCount++;
+          crashed = true;
+          break;
+        }
+
         // Stall detection: require 90 consecutive steps (3.0s at 30 Hz) after initial launch
         if (step > 300 && car.speed < 1.0) {
           consecutiveStallSteps++;
           if (consecutiveStallSteps >= 90) {
+            stalled = true;
             crashed = true;
             break;
           }
         } else {
           consecutiveStallSteps = 0;
-        }
-
-        if (wallCrashCount > 0) {
-          crashed = true;
-          break;
         }
 
         // Step physics with neural policy
@@ -692,15 +728,18 @@ rl.on('line', (line) => {
       }
 
       const totalSteps = Math.max(1, step);
+      // Clean lap: finished full distance, no terminal crash, no stall, no hard wall crashes, max 2 minor scrapes, offTrack <= 12%
+      const isClean = completedLap && !crashed && !stalled && wallCrashCount === 0 && wallScrapeCount <= 2 && (offTrackSteps / totalSteps) <= 0.12;
       results.push({
         trackId: pair.trackId,
         carId: cId,
         carClass,
-        completed: completedLap && !crashed && wallCrashCount === 0,
+        completed: isClean,
         bestLapTime: completedLapTime != null ? Number(completedLapTime.toFixed(2)) : null,
         avgSpeedKmh: Number(((totalSpeedMps / totalSteps) * 3.6).toFixed(1)),
         offTrackPct: Number(((offTrackSteps / totalSteps) * 100).toFixed(1)),
-        wallCrash: wallCrashCount,
+        wallCrash: wallCrashCount > 0 ? wallCrashCount : (wallScrapeCount > 2 ? 1 : 0),
+        stalls: stalled ? 1 : 0,
         steps: totalSteps,
       });
     }
@@ -750,6 +789,7 @@ rl.on('line', (line) => {
       crashed: boolean;
       carCrash: boolean;
       wallCrash: boolean;
+      stalled?: boolean;
     }[] = [];
 
     const POLICY_DT = 1 / 30;
@@ -826,9 +866,32 @@ rl.on('line', (line) => {
 
       const sp = sampleTrackAtT(slot.track, slot.car.trackT);
       const halfW = (sp.width ?? slot.track.spec.trackWidth) * 0.5;
+      const KERB_EDGE = halfW + 1.8;
       const absLat = Math.abs(slot.car.lateralOffset);
-      const offTrack = absLat > halfW + 1.0;
-      const wallOrContactDmg = slot.car.aeroDamage > prevDmg + 0.02;
+      const prevAbsLat = Math.abs(slot.prevLat ?? slot.car.lateralOffset);
+      const isPastKerb = absLat > KERB_EDGE;
+      const isDeepOffTrack = absLat > halfW + 2.7;
+
+      if (isPastKerb) {
+        slot.consecutiveOffTrackSteps++;
+      } else {
+        slot.consecutiveOffTrackSteps = 0;
+      }
+      const offTrack = isPastKerb;
+      const deltaAero = Math.max(0, slot.car.aeroDamage - prevDmg);
+      const wallContact = absLat > halfW + 2.8 || deltaAero > 0.02;
+      let wallScrapePenalty = 0;
+
+      if (wallContact) {
+        slot.consecutiveWallSteps++;
+        if (slot.consecutiveWallSteps === 1) {
+          slot.wallScrapes++;
+        }
+        // Proportional scrape penalty for minor damage/barrier friction without terminating episode
+        wallScrapePenalty = Math.min(2.0, deltaAero * 0.4 + 0.15);
+      } else {
+        slot.consecutiveWallSteps = 0;
+      }
 
       // Check car-to-car proximity, forward-cone TTC penalty, and physical contact
       let carContact = false;
@@ -868,7 +931,7 @@ rl.on('line', (line) => {
         }
       }
 
-      let reward = forwardMeters * rewardWeights.forwardProgress - closeProximityPenalty - ttcPenaltySum;
+      let reward = forwardMeters * rewardWeights.forwardProgress - closeProximityPenalty - ttcPenaltySum - wallScrapePenalty;
       if (slot.car.speed < rewardWeights.minSpeedThreshold) {
         reward -= (rewardWeights.minSpeedThreshold - slot.car.speed) * rewardWeights.minSpeedPenalty;
       }
@@ -881,9 +944,39 @@ rl.on('line', (line) => {
           reward -= (speedDrop - rewardWeights.decelThreshold) * rewardWeights.decelPenalty;
         }
       }
-      if (offTrack) {
-        reward -= rewardWeights.offTrackBase + (absLat - halfW) * rewardWeights.offTrackSlope;
+      if (isPastKerb) {
+        const excursionDist = absLat - KERB_EDGE;
+        const returningToTrack = absLat < prevAbsLat;
+        const hasTrackLimitStrike = (slot.car.warningCount ?? 0) > 0;
+        if (slot.consecutiveOffTrackSteps <= 8 && !isDeepOffTrack && !hasTrackLimitStrike) {
+          // Grace margin for brief kerb overshoot: proportional excursion penalty only
+          reward -= excursionDist * rewardWeights.offTrackSlope;
+        } else {
+          // Sustained or deep excursion or real track limit strike: apply base penalty (halved when actively returning to track)
+          const effectiveBase = returningToTrack ? rewardWeights.offTrackBase * 0.5 : rewardWeights.offTrackBase;
+          reward -= effectiveBase + excursionDist * rewardWeights.offTrackSlope;
+        }
       }
+
+      // Exit-kerb stall escape & heading recovery gradient at low speeds (< 8.0 m/s)
+      if (slot.car.speed < 8.0) {
+        const carHeadingX = Math.sin(slot.car.heading);
+        const carHeadingZ = Math.cos(slot.car.heading);
+        const headingAlign = carHeadingX * sp.tx + carHeadingZ * sp.tz;
+
+        if (headingAlign > 0) {
+          reward += headingAlign * 0.15;
+          reward += headingAlign * (slot.car.speed / 8.0) * 0.25;
+        } else {
+          reward += headingAlign * 0.10;
+        }
+
+        // Discourage coming to a standstill when outside the racing line
+        if (isPastKerb && slot.car.speed < 2.0) {
+          reward -= (2.0 - slot.car.speed) * 0.20;
+        }
+      }
+
       const steerJerk = Math.abs(steer - slot.prevSteer);
       reward -= rewardWeights.steerJerk * steerJerk * steerJerk;
       reward -= rewardWeights.throttleBrakeOverlap * (throttle * brake);
@@ -906,24 +999,46 @@ rl.on('line', (line) => {
       // Scale episode cap by track length (~2.2x a 90 km/h lap, min 6000 steps) so long tracks like Le Mans can finish 2 crossings
       const maxSteps = Math.max(6000, Math.ceil((slot.track.totalLength / 25) * 30 * 2.2));
 
+      // Terminal crash conditions:
+      // 1. Physical car-to-car collision
+      // 2. High-speed wall smash (deltaAero > 2.5)
+      // 3. Sustained wall pinning (consecutiveWallSteps >= 18, ~0.6s at 30Hz)
+      // 4. Extreme out-of-bounds excursion (absLat > halfW + 7.0)
+      // 5. Stalled / stopped on track (sustained consecutiveStallSteps >= 60 at speed < stallStopSpeed)
+      // 6. Excessive repeated scraping (wallScrapes >= 6)
+      const hardWallCrash =
+        deltaAero > 2.5 ||
+        slot.consecutiveWallSteps >= 18 ||
+        absLat > halfW + 7.0 ||
+        slot.wallScrapes >= 6;
+
+      const stallSpeedThreshold = rewardWeights.stallStopSpeed ?? 2.0;
+      if (slot.stepsInEpisode > 180 && slot.car.speed < stallSpeedThreshold) {
+        slot.consecutiveStallSteps++;
+      } else {
+        slot.consecutiveStallSteps = 0;
+      }
+      const isStalled = slot.consecutiveStallSteps >= 60;
+
       if (carContact) {
         reward -= rewardWeights.carCrash;
         crashed = true;
         carCrash = true;
         done = true;
-      } else if (
-        wallOrContactDmg ||
-        absLat > halfW + 5.5 ||
-        (slot.stepsInEpisode > 180 && slot.car.speed < rewardWeights.stallStopSpeed)
-      ) {
+      } else if (hardWallCrash) {
         reward -= rewardWeights.wallCrash;
         crashed = true;
         wallCrash = true;
+        done = true;
+      } else if (isStalled) {
+        reward -= Math.min(rewardWeights.wallCrash, 3.5);
+        crashed = true;
         done = true;
       } else if (slot.stepsInEpisode > maxSteps) {
         done = true;
       }
 
+      slot.prevLat = slot.car.lateralOffset;
       slot.prevSteer = steer;
       slot.prevSpeed = slot.car.speed;
       infoOut.push({
@@ -935,7 +1050,8 @@ rl.on('line', (line) => {
         offTrack,
         crashed,
         carCrash,
-        wallCrash,
+        wallCrash: wallCrash || (wallContact && slot.consecutiveWallSteps === 1),
+        stalled: isStalled,
       });
 
       if (done) {

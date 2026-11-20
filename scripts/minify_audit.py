@@ -17,6 +17,7 @@ STANDARD_SUMMARY_KEYS = {
     "avgSpeedKmh",
     "avgOffTrackPct",
     "totalWallCrashes",
+    "totalStalls",
 }
 
 
@@ -82,6 +83,7 @@ def format_eval(ev: dict, baseline_ev: dict | None = None, top_tracks: int = 8) 
     speed = summary.get("avgSpeedKmh", 0.0)
     off = summary.get("avgOffTrackPct", 0.0)
     walls = summary.get("totalWallCrashes", 0)
+    stalls = summary.get("totalStalls", 0)
 
     # Any extra summary fields beyond the standard set
     extra_summary_parts = []
@@ -95,7 +97,7 @@ def format_eval(ev: dict, baseline_ev: dict | None = None, top_tracks: int = 8) 
 
     lines = [
         f"## Policy: `{weight_path}`",
-        f"- **Overall:** {clean}/{total} clean ({rate:.2f}%) | {speed:.2f} km/h | {off:.2f}% off-track | {walls} wall crashes{extra_str}",
+        f"- **Overall:** {clean}/{total} clean ({rate:.2f}%) | {speed:.2f} km/h | {off:.2f}% off-track | {walls} wall crashes | {stalls} stalls{extra_str}",
     ]
 
     if baseline_ev:

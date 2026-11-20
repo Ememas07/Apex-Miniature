@@ -9,7 +9,7 @@ import {
 type SimCar = ReturnType<typeof createCarSimState>;
 
 const compiledTracks = TRACKS.map((t) => compileTrack(t));
-const LOOKAHEAD_METERS = [12, 25, 42, 65, 95, 135, 185, 250];
+const LOOKAHEAD_METERS = [8, 18, 32, 50, 75, 110, 155, 210];
 const TRAFFIC_SLOTS = 4; // 4 * 4 = 16 traffic floats + 26 solo floats + 1 skillTarget = 43 total
 
 let activeTrack = compiledTracks[0];
@@ -106,7 +106,7 @@ function getObservation(): number[] {
     while (dHeading < -Math.PI) dHeading += Math.PI * 2;
 
     const curv = (ahead as any).curvature ?? 0;
-    obs.push(Math.max(-1, Math.min(1, curv * 40)));
+    obs.push(Math.tanh(curv * 20));
     obs.push(dHeading / Math.PI);
   }
 

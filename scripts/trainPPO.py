@@ -46,13 +46,13 @@ VARIANTS = {
             "minSpeedPenalty": 0.12,
             "floorSpeedThreshold": 25.0 / 3.6,
             "floorSpeedPenalty": 0.45,
-            "offTrackBase": 2.2,
-            "offTrackSlope": 0.65,
+            "offTrackBase": 1.2,
+            "offTrackSlope": 0.40,
             "steerJerk": 0.06,
             "throttleBrakeOverlap": 0.15,
             "carCrash": 8.5,
             "wallCrash": 9.0,
-            "stallStopSpeed": 5.5,
+            "stallStopSpeed": 2.0,
             "ttcPenalty": 0.35,
         },
     },
@@ -75,13 +75,13 @@ VARIANTS = {
             "floorSpeedPenalty": 0.35,
             "decelThreshold": 0.40,
             "decelPenalty": 0.25,
-            "offTrackBase": 1.2,
-            "offTrackSlope": 0.35,
+            "offTrackBase": 1.0,
+            "offTrackSlope": 0.30,
             "steerJerk": 0.22,
             "throttleBrakeOverlap": 0.30,
             "carCrash": 4.5,
             "wallCrash": 7.5,
-            "stallStopSpeed": 4.5,
+            "stallStopSpeed": 2.0,
             "ttcPenalty": 0.20,
         },
     },
@@ -106,6 +106,7 @@ VARIANTS = {
             "throttleBrakeOverlap": 0.15,
             "carCrash": 4.5,
             "wallCrash": 5.0,
+            "stallStopSpeed": 2.0,
             "ttcPenalty": 0.12,
         },
     },
@@ -124,12 +125,13 @@ VARIANTS = {
             "closeProximity": 0.06,
             "minSpeedThreshold": 15.0,
             "minSpeedPenalty": 0.08,
-            "offTrackBase": 1.5,
-            "offTrackSlope": 0.45,
+            "offTrackBase": 1.0,
+            "offTrackSlope": 0.35,
             "steerJerk": 0.06,
             "throttleBrakeOverlap": 0.15,
             "carCrash": 4.5,
             "wallCrash": 5.0,
+            "stallStopSpeed": 2.0,
             "ttcPenalty": 0.18,
         },
     },
@@ -318,6 +320,39 @@ def spawn_env_worker():
     )
 
 
+def resolve_device(dev_str: str | None) -> torch.device:
+    dev = (dev_str or "auto").strip().lower()
+    cuda_available = torch.cuda.is_available() and torch.cuda.device_count() > 0
+
+    if dev == "auto":
+        return torch.device("cuda" if cuda_available else "cpu")
+
+    if dev == "cpu":
+        return torch.device("cpu")
+
+    if dev.startswith("cuda"):
+        if not cuda_available:
+            print(f"[Warning] Requested device '{dev_str}' but no CUDA devices are available. Falling back to CPU.")
+            return torch.device("cpu")
+        if ":" in dev:
+            try:
+                idx = int(dev.split(":")[1])
+                if idx >= torch.cuda.device_count() or idx < 0:
+                    print(f"[Warning] CUDA device index {idx} out of range (device_count={torch.cuda.device_count()}). Falling back to cuda:0.")
+                    return torch.device("cuda:0")
+                return torch.device(f"cuda:{idx}")
+            except ValueError:
+                print(f"[Warning] Invalid CUDA device specification '{dev_str}'. Falling back to cuda:0.")
+                return torch.device("cuda:0")
+        return torch.device("cuda")
+
+    try:
+        return torch.device(dev)
+    except Exception as e:
+        print(f"[Warning] Could not parse device '{dev_str}' ({e}). Falling back to CPU.")
+        return torch.device("cpu")
+
+
 def train_single_variant(var_key: str, args):
     cfg = VARIANTS[var_key]
     var_name = cfg["name"]
@@ -330,9 +365,15 @@ def train_single_variant(var_key: str, args):
     is_curriculum = args.curriculum if args.curriculum is not None else cfg["curriculum"]
     reward_weights = cfg["rewards"]
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_device(getattr(args, "device", "auto"))
+    dev_name_str = ""
+    if device.type == "cuda" and torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        dev_idx = device.index if device.index is not None else 0
+        if dev_idx < torch.cuda.device_count():
+            dev_name_str = f" ({torch.cuda.get_device_name(dev_idx)})"
+
     print(f"\n{'='*70}")
-    print(f"[{var_name}] Launching PPO training on device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
+    print(f"[{var_name}] Launching PPO training on device: {device}{dev_name_str}")
     print(f"[{var_name}] Envs: {args.envs} | Steps: {args.steps} | Updates: {args.updates} | HiddenDim: {hidden_dim}")
     print(f"[{var_name}] Target Weights: {weights_path}")
     print(f"{'='*70}")
@@ -442,10 +483,9 @@ def train_single_variant(var_key: str, args):
             off_track_count = 0
             car_crash_count = 0
             wall_crash_count = 0
-            total_samples = 0
 
             track_stats: dict[str, dict] = defaultdict(lambda: {"speeds": [], "laps": [], "off": 0, "crashes": 0, "carCrashes": 0, "wallCrashes": 0})
-            class_stats: dict[str, dict] = defaultdict(lambda: {"speeds": [], "off": 0, "crashes": 0, "carCrashes": 0, "wallCrashes": 0})
+            class_stats: dict[str, dict] = defaultdict(lambda: {"speeds": [], "laps": [], "off": 0, "crashes": 0, "carCrashes": 0, "wallCrashes": 0})
 
             for step in range(args.steps):
                 obs_buf[step] = obs
@@ -469,44 +509,44 @@ def train_single_variant(var_key: str, args):
                 obs = np.array(step_resp["obs"], dtype=np.float32)
                 rewards = np.array(step_resp["rewards"], dtype=np.float32)
                 dones = np.array(step_resp["dones"], dtype=np.float32)
-                infos = step_resp.get("infos", [])
+                infos = step_resp.get("info") or step_resp.get("infos") or []
 
                 rew_buf[step] = rewards
                 done_buf[step] = dones
 
                 for info in infos:
-                    total_samples += 1
-                    spd = info.get("speedKmh", 0)
-                    speed_samples.append(spd)
+                    spd = float(info.get("speedKmh", info.get("speed", 0.0) * 3.6))
                     tid = info.get("trackId", "unknown")
                     cid = info.get("carClass", "Other")
 
+                    speed_samples.append(spd)
                     track_stats[tid]["speeds"].append(spd)
                     class_stats[cid]["speeds"].append(spd)
 
-                    if info.get("carCrash"):
-                        car_crash_count += 1
-                        track_stats[tid]["crashes"] += 1
-                        track_stats[tid]["carCrashes"] += 1
-                        class_stats[cid]["crashes"] += 1
-                        class_stats[cid]["carCrashes"] += 1
-
-                    if info.get("wallCrash"):
-                        wall_crash_count += 1
-                        track_stats[tid]["crashes"] += 1
-                        track_stats[tid]["wallCrashes"] += 1
-                        class_stats[cid]["crashes"] += 1
-                        class_stats[cid]["wallCrashes"] += 1
-
-                    if info.get("offTrack"):
+                    if info.get("offTrack") or info.get("off_track"):
                         off_track_count += 1
                         track_stats[tid]["off"] += 1
                         class_stats[cid]["off"] += 1
 
-                    lt = info.get("lapTime")
-                    if lt is not None and lt > 0:
+                    if info.get("crashed"):
+                        track_stats[tid]["crashes"] += 1
+                        class_stats[cid]["crashes"] += 1
+
+                    if info.get("carCrash") or info.get("car_crash"):
+                        car_crash_count += 1
+                        track_stats[tid]["carCrashes"] += 1
+                        class_stats[cid]["carCrashes"] += 1
+
+                    if info.get("wallCrash") or info.get("wall_crash"):
+                        wall_crash_count += 1
+                        track_stats[tid]["wallCrashes"] += 1
+                        class_stats[cid]["wallCrashes"] += 1
+
+                    if info.get("lapTime") is not None:
+                        lt = info["lapTime"]
                         lap_times.append(lt)
                         track_stats[tid]["laps"].append(lt)
+                        class_stats[cid]["laps"].append(lt)
                         key = (tid, cid)
                         if key not in best_laps_track_class or lt < best_laps_track_class[key]:
                             best_laps_track_class[key] = lt
@@ -576,11 +616,13 @@ def train_single_variant(var_key: str, args):
                         nn.utils.clip_grad_norm_(model.critic.parameters(), 0.5)
                         optimizer.step()
 
+            total_steps = args.envs * args.steps
+            total_n = max(1, len(speed_samples) if speed_samples else total_steps)
             mean_rew = float(np.mean(rew_buf))
             mean_spd = float(np.mean(speed_samples)) if speed_samples else 0.0
-            off_pct = (100.0 * off_track_count / max(1, total_samples))
-            car_crashes_1k = (1000.0 * car_crash_count / max(1, total_samples))
-            wall_crashes_1k = (1000.0 * wall_crash_count / max(1, total_samples))
+            off_pct = (100.0 * off_track_count / total_n)
+            car_crashes_1k = (1000.0 * car_crash_count / total_n)
+            wall_crashes_1k = (1000.0 * wall_crash_count / total_n)
             cur_std_avg = float(torch.exp(torch.clamp(model.log_std, -2.5, 0.2)).mean().item())
             best_lap = f"{min(lap_times):.2f}s" if lap_times else "none"
             elapsed_total = time.time() - t0
@@ -637,7 +679,8 @@ def train_single_variant(var_key: str, args):
                 write_dashboard_data(data_js_path, var_name, history, best_laps_track_class, best_laps_class, peak_speed_class)
 
             saved_tag = ""
-            min_save_update = max(15, critic_warmup_updates + 1) if (not is_curriculum or cur_phase == 1) else phase1_end + 5
+            nominal_min = max(15, critic_warmup_updates + 1) if (not is_curriculum or cur_phase == 1) else phase1_end + 5
+            min_save_update = min(args.updates, max(1, critic_warmup_updates + 1)) if args.updates <= 15 else nominal_min
             if update >= min_save_update and mean_rew > best_reward:
                 best_reward = mean_rew
                 export_actor_to_json(
@@ -672,19 +715,42 @@ def train_single_variant(var_key: str, args):
                 )
                 saved_tag += " [POOL]"
 
+            cls_tags_map = {
+                "F1_2005": "F1", "F1_2021": "F1", "F1_2026": "F1", "F1": "F1",
+                "HYPERCAR_GTP": "HY", "Hypercar": "HY",
+                "LMP2": "P2",
+                "GT3": "GT3",
+                "GT4": "GT4",
+                "FORMULA_E": "FE",
+                "SUPERCAR": "SUP",
+                "TRACK_COUPE": "TC",
+            }
+            cls_tag_speeds = defaultdict(list)
+            for cid, cs in class_stats.items():
+                if cs["speeds"]:
+                    tag = cls_tags_map.get(cid, cid[:4])
+                    cls_tag_speeds[tag].extend(cs["speeds"])
+
             cls_str = " ".join(
-                f"{tag}:{per_class_summary[cid]['avgSpeed']:5.1f}"
-                for cid, tag in [("F1", "F1"), ("Hypercar", "HY"), ("LMP2", "P2"), ("GT3", "GT3"), ("GT4", "GT4")]
-                if cid in per_class_summary
+                f"{tag}:{float(np.mean(speeds)):5.1f}"
+                for tag, speeds in sorted(cls_tag_speeds.items())
             )
+            classes_display = cls_str if cls_str else f"all:{mean_spd:5.1f}"
             warmup_tag = " (critic warmup)" if update <= critic_warmup_updates else ""
-            mix_tag = f"P{cur_phase}(solo:{int(round(traffic_mix['soloRatio']*100))}%/scr:{int(round(traffic_mix['scriptedRatio']*100))}%/sp:{int(round(traffic_mix['selfplayRatio']*100))}%)" if is_curriculum else f"[{var_name}]"
-            print(
-                f"[{var_name}] Update {update:04d}/{args.updates} {mix_tag} | Rew: {mean_rew:+.3f} | "
-                f"Avg: {mean_spd:5.1f} [{cls_str}] | "
-                f"Off: {off_pct:4.1f}% | Cr(Car/Wall): {car_crashes_1k:.2f}/{wall_crashes_1k:.2f} | "
-                f"BestLap: {best_lap:>7} | {sps:,} steps/s{warmup_tag}{saved_tag}"
+            mix_tag = (
+                f" P{cur_phase}(solo:{int(round(traffic_mix['soloRatio']*100))}%/scr:{int(round(traffic_mix['scriptedRatio']*100))}%/sp:{int(round(traffic_mix['selfplayRatio']*100))}%)"
+                if is_curriculum
+                else ""
             )
+            line1 = (
+                f"[{var_name}] Update {update:04d}/{args.updates}{mix_tag} | Rew: {mean_rew:+.3f} | "
+                f"Off: {off_pct:4.1f}% | Cr(Car/Wall): {car_crashes_1k:.2f}/{wall_crashes_1k:.2f} | "
+                f"Spd: {mean_spd:5.1f} km/h | {sps:,} steps/s{warmup_tag}{saved_tag}"
+            )
+            line2 = (
+                f"  Total Avg: {mean_spd:5.1f} km/h | Classes: [{classes_display}] | BestLap: {best_lap:>7}"
+            )
+            print(f"{line1}\n{line2}")
     finally:
         worker.terminate()
 
@@ -713,6 +779,7 @@ def main():
     parser.add_argument("--pool-dir", default=None, help="Override selfplay snapshot directory")
     parser.add_argument("--curriculum", action="store_true", default=None, help="Enable 2-phase curriculum training")
     parser.add_argument("--no-curriculum", action="store_false", dest="curriculum", help="Disable curriculum training")
+    parser.add_argument("--device", default="auto", help="Compute device for PPO model: auto, cpu, cuda, or cuda:<idx> (default: auto)")
     args = parser.parse_args()
 
     if args.all or args.variant.lower() == "all":

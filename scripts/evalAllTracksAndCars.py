@@ -86,6 +86,7 @@ def summarize_results(weight_path: str, results: list[dict]):
     avg_speed = sum(r["avgSpeedKmh"] for r in results) / total
     avg_off_track = sum(r["offTrackPct"] for r in results) / total
     total_crashes = sum(r["wallCrash"] for r in results)
+    total_stalls = sum(r.get("stalls", 0) for r in results)
 
     summary = {
         "weightPath": weight_path,
@@ -95,6 +96,7 @@ def summarize_results(weight_path: str, results: list[dict]):
         "avgSpeedKmh": round(avg_speed, 2),
         "avgOffTrackPct": round(avg_off_track, 2),
         "totalWallCrashes": total_crashes,
+        "totalStalls": total_stalls,
     }
 
     # Per-class summary
@@ -114,6 +116,7 @@ def summarize_results(weight_path: str, results: list[dict]):
             "avgSpeedKmh": round(sum(r["avgSpeedKmh"] for r in c_list) / n, 1),
             "avgOffTrackPct": round(sum(r["offTrackPct"] for r in c_list) / n, 1),
             "wallCrashes": sum(r["wallCrash"] for r in c_list),
+            "stalls": sum(r.get("stalls", 0) for r in c_list),
         }
 
     # Per-track summary
@@ -133,6 +136,7 @@ def summarize_results(weight_path: str, results: list[dict]):
             "avgSpeedKmh": round(sum(r["avgSpeedKmh"] for r in t_list) / n, 1),
             "avgOffTrackPct": round(sum(r["offTrackPct"] for r in t_list) / n, 1),
             "wallCrashes": sum(r["wallCrash"] for r in t_list),
+            "stalls": sum(r.get("stalls", 0) for r in t_list),
         }
 
     # Top 10 worst pairs
@@ -140,7 +144,8 @@ def summarize_results(weight_path: str, results: list[dict]):
         results,
         key=lambda r: (
             0 if r["completed"] else 1,
-            r.get("wallCrash", 0),
+            r.get("wallCrash", 0) + r.get("stalls", 0),
+            r.get("stalls", 0),
             r.get("offTrackPct", 0.0),
             -r.get("avgSpeedKmh", 0.0),
         ),
@@ -160,39 +165,40 @@ def print_summary_table(summary: dict, per_class: dict, per_track: dict, worst_p
     print(f"Average Speed:       {summary.get('avgSpeedKmh')} km/h")
     print(f"Average Off-Track:   {summary.get('avgOffTrackPct')}%")
     print(f"Total Wall Crashes:  {summary.get('totalWallCrashes')}")
+    print(f"Total Stalls:        {summary.get('totalStalls')}")
 
     print("\n" + "-" * 88)
     print("                                TOP 10 WORST PAIRS")
     print("-" * 88)
-    print(f" {'#':<2} {'Track':<18} {'Car':<24} {'Class':<14} {'Clean':<6} {'Crashes':<8} {'Off-Track'}")
+    print(f" {'#':<2} {'Track':<18} {'Car':<24} {'Class':<14} {'Clean':<6} {'Crashes':<8} {'Stalls':<7} {'Off-Track'}")
     print("-" * 88)
     for idx, r in enumerate(worst_pairs, 1):
         clean_str = "YES" if r["completed"] else "NO"
         print(
             f" {idx:<2} {r['trackId']:<18} {r['carId']:<24} {r['carClass']:<14} "
-            f"{clean_str:<6} {r['wallCrash']:<8} {r['offTrackPct']:.1f}%"
+            f"{clean_str:<6} {r['wallCrash']:<8} {r.get('stalls', 0):<7} {r['offTrackPct']:.1f}%"
         )
 
     print("\n" + "-" * 88)
     print("                              PER-CLASS PERFORMANCE")
     print("-" * 88)
-    print(f" {'Class':<18} {'Pairs':<7} {'Clean Laps (%)':<16} {'Avg Speed (km/h)':<18} {'Off-Track (%)':<15} {'Crashes'}")
+    print(f" {'Class':<18} {'Pairs':<7} {'Clean Laps (%)':<16} {'Avg Speed (km/h)':<18} {'Off-Track (%)':<15} {'Crashes':<9} {'Stalls'}")
     print("-" * 88)
     for c_cls, stats in per_class.items():
         print(
             f" {c_cls:<18} {stats['pairs']:<7} {stats['completionRatePct']:<16.1f} "
-            f"{stats['avgSpeedKmh']:<18.1f} {stats['avgOffTrackPct']:<15.1f} {stats['wallCrashes']}"
+            f"{stats['avgSpeedKmh']:<18.1f} {stats['avgOffTrackPct']:<15.1f} {stats['wallCrashes']:<9} {stats.get('stalls', 0)}"
         )
 
     print("\n" + "-" * 88)
     print("                              PER-TRACK PERFORMANCE")
     print("-" * 88)
-    print(f" {'Track':<18} {'Pairs':<7} {'Clean Laps (%)':<16} {'Avg Speed (km/h)':<18} {'Off-Track (%)':<15} {'Crashes'}")
+    print(f" {'Track':<18} {'Pairs':<7} {'Clean Laps (%)':<16} {'Avg Speed (km/h)':<18} {'Off-Track (%)':<15} {'Crashes':<9} {'Stalls'}")
     print("-" * 88)
     for t_id, stats in per_track.items():
         print(
             f" {t_id:<18} {stats['pairs']:<7} {stats['completionRatePct']:<16.1f} "
-            f"{stats['avgSpeedKmh']:<18.1f} {stats['avgOffTrackPct']:<15.1f} {stats['wallCrashes']}"
+            f"{stats['avgSpeedKmh']:<18.1f} {stats['avgOffTrackPct']:<15.1f} {stats['wallCrashes']:<9} {stats.get('stalls', 0)}"
         )
     print("=" * 88 + "\n")
 
