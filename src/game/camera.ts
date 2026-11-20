@@ -26,6 +26,19 @@ export const CAR_HOOD_SPECS = {
   hoodFov: 65,
 };
 
+export const DEFAULT_CHASE_CAMERA = {
+  pitch: 0.42, // ~24 deg downward look angle for clear sightline down the track
+  distance: 12.2,
+  pivotHeight: 1.35, // slightly above car roofline
+  minHeightAboveCar: 0.65,
+  minPitch: 0.1,
+  maxPitch: 1.28,
+  minDistance: 5.5,
+  maxDistance: 28.0,
+  rollResetDelayMs: 2500, // 2.5s idle before smoothly damping camera roll back to 0
+  rollResetDampRate: 3.5,
+};
+
 export interface CameraLookOffset {
   yaw: number;
   pitch: number;
@@ -134,17 +147,41 @@ export function computeCameraFrame(
     };
   }
 
-  // Unified Chase-Orbit camera ('orbit' default)
-  const targetFov = 50 + Math.min(10, (car.speed / 60) * 8);
+  const cosP = Math.cos(DEFAULT_CHASE_CAMERA.pitch);
+  const sinP = Math.sin(DEFAULT_CHASE_CAMERA.pitch);
+  const horizDist = DEFAULT_CHASE_CAMERA.distance * cosP;
+  const heightOffset = DEFAULT_CHASE_CAMERA.pivotHeight + DEFAULT_CHASE_CAMERA.distance * sinP;
+  const targetFov = 52 + Math.min(10, (car.speed / 60) * 8);
+
+  if (mode === 'chase') {
+    const chaseYaw = car.heading + lookYaw;
+    const lookAhead = 5.5;
+    return {
+      position: {
+        x: car.x - Math.sin(chaseYaw) * horizDist,
+        y: Math.max(car.y + DEFAULT_CHASE_CAMERA.minHeightAboveCar, car.y + heightOffset),
+        z: car.z - Math.cos(chaseYaw) * horizDist,
+      },
+      lookAt: {
+        x: car.x + Math.sin(chaseYaw) * lookAhead,
+        y: car.y + DEFAULT_CHASE_CAMERA.pivotHeight,
+        z: car.z + Math.cos(chaseYaw) * lookAhead,
+      },
+      fov: targetFov,
+      isLocked: false,
+    };
+  }
+
+  // Interactive Orbit camera ('orbit') centered on the car pivot
   return {
     position: {
-      x: car.x - Math.sin(car.heading) * 11.5,
-      y: Math.max(car.y + 0.55, car.y + 3.9),
-      z: car.z - Math.cos(car.heading) * 11.5,
+      x: car.x - Math.sin(car.heading) * horizDist,
+      y: Math.max(car.y + DEFAULT_CHASE_CAMERA.minHeightAboveCar, car.y + heightOffset),
+      z: car.z - Math.cos(car.heading) * horizDist,
     },
     lookAt: {
       x: car.x,
-      y: car.y + 0.85,
+      y: car.y + DEFAULT_CHASE_CAMERA.pivotHeight,
       z: car.z,
     },
     fov: targetFov,

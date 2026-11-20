@@ -30,7 +30,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
   const loadedVariants = useMemo(() => variants.filter((v) => v.loaded), [variants]);
 
   const handleSliderChange = (id: AiPolicyVariantId, rawVal: number) => {
-    const val = Math.max(0, Math.min(100, Math.round(rawVal)));
+    const val = Number.isFinite(rawVal) ? Math.max(0, Math.min(100, Math.round(rawVal))) : 0;
     setActiveAiPolicyMix({ ...mix, [id]: val });
   };
 
@@ -131,6 +131,10 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
               const rawVal = mix[id] ?? 0;
               const normEntry = normalized.find((n) => n.id === id);
               const effPct = normEntry ? Math.round(normEntry.fraction * 100) : 0;
+              const meanSpeed =
+                typeof info.meta?.meanSpeedKmh === 'number' && Number.isFinite(info.meta.meanSpeedKmh)
+                  ? Math.round(info.meta.meanSpeedKmh)
+                  : null;
 
               return (
                 <div
@@ -148,6 +152,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
                         {info.loaded ? (
                           <span className="text-[10px] font-telemetry text-emerald-400 whitespace-nowrap">
                             Loaded{info.hiddenDim ? ` · ${info.hiddenDim}h` : ''}
+                            {meanSpeed !== null ? ` · ~${meanSpeed} km/h` : ''}
                           </span>
                         ) : (
                           <span className="text-[10px] font-telemetry text-amber-400/90 whitespace-nowrap">

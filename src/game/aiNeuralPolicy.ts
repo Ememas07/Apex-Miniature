@@ -48,6 +48,7 @@ export interface AiPolicyVariantInfo {
   loaded: boolean;
   hiddenDim: number | null;
   obsDim: number | null;
+  meta: Record<string, unknown> | null;
 }
 
 export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
@@ -59,6 +60,22 @@ export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
 };
 
 const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v1';
+
+function isFiniteNumberVector(arr: unknown, expectedLength: number): arr is number[] {
+  if (!Array.isArray(arr) || arr.length !== expectedLength) return false;
+  for (let i = 0; i < expectedLength; i++) {
+    if (typeof arr[i] !== 'number' || !Number.isFinite(arr[i])) return false;
+  }
+  return true;
+}
+
+function isFiniteNumberMatrix(arr: unknown, rows: number, cols: number): arr is number[][] {
+  if (!Array.isArray(arr) || arr.length !== rows) return false;
+  for (let i = 0; i < rows; i++) {
+    if (!isFiniteNumberVector(arr[i], cols)) return false;
+  }
+  return true;
+}
 
 export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -79,13 +96,14 @@ export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
   if (
     obsDim !== 43 ||
     actDim !== 3 ||
+    !Number.isInteger(hiddenDim) ||
     hiddenDim <= 0 ||
-    candidate.w0.length !== hiddenDim ||
-    candidate.b0.length !== hiddenDim ||
-    candidate.w1.length !== hiddenDim ||
-    candidate.b1.length !== hiddenDim ||
-    candidate.w2.length !== actDim ||
-    candidate.b2.length !== actDim
+    !isFiniteNumberMatrix(candidate.w0, hiddenDim, obsDim) ||
+    !isFiniteNumberVector(candidate.b0, hiddenDim) ||
+    !isFiniteNumberMatrix(candidate.w1, hiddenDim, hiddenDim) ||
+    !isFiniteNumberVector(candidate.b1, hiddenDim) ||
+    !isFiniteNumberMatrix(candidate.w2, actDim, hiddenDim) ||
+    !isFiniteNumberVector(candidate.b2, actDim)
   ) {
     return null;
   }
@@ -149,6 +167,7 @@ const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
       loaded: Boolean(w),
       hiddenDim: w ? w.hiddenDim ?? w.w0.length : null,
       obsDim: w ? w.obsDim : null,
+      meta: w?.meta ?? null,
     };
   }
   return out;
@@ -405,6 +424,20 @@ export function buildObservationVector(
   return obs;
 }
 
+const SCRATCH_BUFFERS = new Map<number, { h0: Float32Array; h1: Float32Array }>();
+
+function getScratchBuffers(hiddenDim: number): { h0: Float32Array; h1: Float32Array } {
+  let entry = SCRATCH_BUFFERS.get(hiddenDim);
+  if (!entry) {
+    entry = {
+      h0: new Float32Array(hiddenDim),
+      h1: new Float32Array(hiddenDim),
+    };
+    SCRATCH_BUFFERS.set(hiddenDim, entry);
+  }
+  return entry;
+}
+
 /**
  * Runs forward inference on a 43-input [H, H] tanh MLP neural driver policy (supports any hiddenDim e.g. 64 or 128).
  */
@@ -416,64 +449,85 @@ export function evaluateNeuralPolicy(
   if (
     !weights ||
     weights.obsDim !== 43 ||
-    !weights.w0 ||
-    !weights.w1 ||
-    !weights.w2 ||
+    !Number.isInteger(hiddenDim) ||
+    hiddenDim <= 0 ||
+    !Array.isArray(weights.w0) ||
+    !Array.isArray(weights.b0) ||
+    !Array.isArray(weights.w1) ||
+    !Array.isArray(weights.b1) ||
+    !Array.isArray(weights.w2) ||
+    !Array.isArray(weights.b2) ||
     weights.w0.length !== hiddenDim ||
+    weights.b0.length !== hiddenDim ||
     weights.w1.length !== hiddenDim ||
+    weights.b1.length !== hiddenDim ||
+    weights.w2.length !== 3 ||
+    weights.b2.length !== 3 ||
     obs.length !== 43
   ) {
     return null;
   }
 
+  for (let j = 0; j < 43; j++) {
+    if (!Number.isFinite(obs[j])) return null;
+  }
+
+  const { h0, h1 } = getScratchBuffers(hiddenDim);
+
   // Layer 0: 43 -> hiddenDim (tanh)
-  const h0 = new Float32Array(hiddenDim);
   const w0 = weights.w0;
   const b0 = weights.b0;
   for (let i = 0; i < hiddenDim; i++) {
-    let sum = b0[i] ?? 0;
+    let sum = b0[i];
     const row = w0[i];
-    if (!row) continue;
+    if (!Array.isArray(row) || row.length !== 43 || !Number.isFinite(sum)) return null;
     for (let j = 0; j < 43; j++) {
       sum += row[j] * obs[j];
     }
+    if (!Number.isFinite(sum)) return null;
     h0[i] = Math.tanh(sum);
   }
 
   // Layer 1: hiddenDim -> hiddenDim (tanh)
-  const h1 = new Float32Array(hiddenDim);
   const w1 = weights.w1;
   const b1 = weights.b1;
   for (let i = 0; i < hiddenDim; i++) {
-    let sum = b1[i] ?? 0;
+    let sum = b1[i];
     const row = w1[i];
-    if (!row) continue;
+    if (!Array.isArray(row) || row.length !== hiddenDim || !Number.isFinite(sum)) return null;
     for (let j = 0; j < hiddenDim; j++) {
       sum += row[j] * h0[j];
     }
+    if (!Number.isFinite(sum)) return null;
     h1[i] = Math.tanh(sum);
   }
 
   // Layer 2: hiddenDim -> 3 (linear clamped [-1, 1] for version >= 2; tanh fallback for version === 1)
   const useLinearOutput = (weights.version ?? 1) >= 2;
-  const out = new Float32Array(3);
   const w2 = weights.w2;
   const b2 = weights.b2;
+  let out0 = 0;
+  let out1 = 0;
+  let out2 = 0;
   for (let i = 0; i < 3; i++) {
-    let sum = b2[i] ?? 0;
+    let sum = b2[i];
     const row = w2[i];
-    if (!row) continue;
+    if (!Array.isArray(row) || row.length !== hiddenDim || !Number.isFinite(sum)) return null;
     for (let j = 0; j < hiddenDim; j++) {
       sum += row[j] * h1[j];
     }
+    if (!Number.isFinite(sum)) return null;
     const raw = useLinearOutput ? sum : Math.tanh(sum);
-    out[i] = Math.max(-1, Math.min(1, raw));
+    const clamped = Math.max(-1, Math.min(1, raw));
+    if (i === 0) out0 = clamped;
+    else if (i === 1) out1 = clamped;
+    else out2 = clamped;
   }
 
   return {
-    steer: Math.max(-1, Math.min(1, out[0])),
-    throttle: Math.max(0, Math.min(1, (out[1] + 1) * 0.5)),
-    brake: Math.max(0, Math.min(1, (out[2] + 1) * 0.5)),
+    steer: out0,
+    throttle: Math.max(0, Math.min(1, (out1 + 1) * 0.5)),
+    brake: Math.max(0, Math.min(1, (out2 + 1) * 0.5)),
   };
 }
 

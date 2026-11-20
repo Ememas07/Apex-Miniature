@@ -2519,13 +2519,69 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
   assert.equal(v10Car.specialActive, false);
 });
 
+test('AI Policy Variants & Validation Hardening: loads base+v1..v4 (64h/128h), blends outputs, and rejects jagged/NaN weights', async () => {
+  const {
+    getAiPolicyVariants,
+    evaluateNeuralPolicy,
+    evaluateBlendedNeuralPolicy,
+    validatePolicyWeights,
+  } = await import('./aiNeuralPolicy');
 
+  const variants = getAiPolicyVariants();
+  assert.equal(variants.length, 5);
+  for (const v of variants) {
+    assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
+    assert.equal(v.obsDim, 43);
+    assert.equal(v.hiddenDim, v.id === 'v3' ? 128 : 64);
+  }
 
+  const obs = new Array(43).fill(0);
+  obs[0] = 0.5;
+  const blended = evaluateBlendedNeuralPolicy(obs, { base: 50, v1: 20, v2: 10, v3: 10, v4: 10 });
+  assert.ok(blended !== null);
+  assert.ok(Number.isFinite(blended.steer) && blended.steer >= -1 && blended.steer <= 1);
+  assert.ok(Number.isFinite(blended.throttle) && blended.throttle >= 0 && blended.throttle <= 1);
+  assert.ok(Number.isFinite(blended.brake) && blended.brake >= 0 && blended.brake <= 1);
 
+  // Jagged inner row length must be rejected
+  const validBase = variants.find((v) => v.id === 'base')!.weights!;
+  const jagged = {
+    ...validBase,
+    w0: validBase.w0.map((row, idx) => (idx === 0 ? row.slice(0, 42) : row)),
+  };
+  assert.equal(validatePolicyWeights(jagged), null);
+  assert.equal(evaluateNeuralPolicy(obs, jagged as typeof validBase), null);
 
+  // NaN weights or NaN observations must fail safe to null rather than leaking NaN
+  const nanWeights = {
+    ...validBase,
+    b2: [Number.NaN, 0, 0],
+  };
+  assert.equal(validatePolicyWeights(nanWeights), null);
+  assert.equal(evaluateNeuralPolicy(obs, nanWeights), null);
 
+  const nanObs = [...obs];
+  nanObs[3] = Number.NaN;
+  assert.equal(evaluateNeuralPolicy(nanObs, validBase), null);
+});
 
+test('Chase & Orbit Camera Defaults: distinct straight-ahead chase vs car-centered orbit', async () => {
+  const { computeCameraFrame, DEFAULT_CHASE_CAMERA } = await import('./camera');
+  assert.ok(DEFAULT_CHASE_CAMERA.pitch >= 0.4, 'Default chase pitch should sit high enough for clear forward track sightline');
+  assert.ok(DEFAULT_CHASE_CAMERA.distance >= 11, 'Default chase distance should frame car cleanly');
 
+  const sampleCar = { x: 10, y: 2, z: -5, heading: 0.4, speed: 45 };
+  const chaseFrame = computeCameraFrame('chase', sampleCar, 0, 0);
+  assert.equal(chaseFrame.isLocked, false);
+  assert.ok(chaseFrame.lookAt.x > sampleCar.x, 'Chase camera should look straight ahead along heading');
+  assert.ok(chaseFrame.lookAt.z > sampleCar.z, 'Chase camera should look straight ahead along heading');
+  assert.ok(chaseFrame.position.y > 2 + 4.5, `Expected elevated chase camera y, got ${chaseFrame.position.y}`);
 
-
+  const orbitFrame = computeCameraFrame('orbit', sampleCar, 0, 0);
+  assert.equal(orbitFrame.isLocked, true);
+  assert.equal(orbitFrame.lookAt.x, 10);
+  assert.equal(orbitFrame.lookAt.z, -5);
+  assert.ok(orbitFrame.lookAt.y > 2, 'Pivot should sit above car origin');
+  assert.ok(orbitFrame.position.y > 2 + 4.5, `Expected elevated orbit camera y, got ${orbitFrame.position.y}`);
+});
 

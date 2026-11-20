@@ -194,7 +194,7 @@ export type AIDifficulty = 'Rookie' | 'Amateur' | 'Pro' | 'Alien';
 
 export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffic-Smart';
 
-export type CameraMode = 'orbit' | 'hood' | 'isometric';
+export type CameraMode = 'chase' | 'orbit' | 'hood' | 'isometric';
 
 export type PitServiceAction = 'tyres' | 'fuel';
 

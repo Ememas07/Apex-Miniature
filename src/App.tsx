@@ -81,9 +81,9 @@ export default function App() {
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
     const cam = params.get('camera');
-    return cam === 'isometric' || cam === 'hood' || cam === 'orbit'
+    return cam === 'chase' || cam === 'orbit' || cam === 'hood' || cam === 'isometric'
       ? cam
-      : 'orbit';
+      : 'chase';
   });
   const [spectatorCameraMode, setSpectatorCameraMode] = useState<SpectatorCameraMode>('spectate');
   const spectateControlsRef = useRef<SpectateControls | null>(null);
@@ -110,6 +110,34 @@ export default function App() {
   const qualifyingEnabledRef = useRef(raceConfig.qualifyingEnabled);
   qualifyingEnabledRef.current = raceConfig.qualifyingEnabled;
   const lastRaceStartTimeRef = useRef(0);
+
+  // Smooth fade-in / fade-out curtain for main menu & session transitions
+  const [screenFading, setScreenFading] = useState<boolean>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('autostart') !== '1';
+  });
+  const fadeTimersRef = useRef<{ mid?: number; end?: number }>({});
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setScreenFading(false), 120);
+    return () => {
+      window.clearTimeout(t);
+      if (fadeTimersRef.current.mid) window.clearTimeout(fadeTimersRef.current.mid);
+      if (fadeTimersRef.current.end) window.clearTimeout(fadeTimersRef.current.end);
+    };
+  }, []);
+
+  const runWithScreenFade = useCallback((applyTransition: () => void) => {
+    if (fadeTimersRef.current.mid) window.clearTimeout(fadeTimersRef.current.mid);
+    if (fadeTimersRef.current.end) window.clearTimeout(fadeTimersRef.current.end);
+    setScreenFading(true);
+    fadeTimersRef.current.mid = window.setTimeout(() => {
+      applyTransition();
+      fadeTimersRef.current.end = window.setTimeout(() => {
+        setScreenFading(false);
+      }, 140);
+    }, 280);
+  }, []);
 
   // Sync document.body.dataset.state
   useEffect(() => {
@@ -141,6 +169,45 @@ export default function App() {
       if (startedRoom?.config) {
         setRaceConfig((prev) => mergeSharedRoomConfig(prev, startedRoom.config));
       }
+      runWithScreenFade(() => {
+        setRaceMenuOpen(false);
+        setMultiplayerOpen(false);
+        setCarsShowcaseOpen(false);
+        setTracksShowcaseOpen(false);
+        setTrackStudioOpen(false);
+        setLiveryStudioOpen(false);
+        setSoundStudioOpen(false);
+        setFinalSnapshot(null);
+        setQualiBanner(null);
+        setSpectatorCameraMode('spectate');
+        setRunNonce((n) => n + 1);
+        const useQuali = startedRoom?.config?.qualifyingEnabled ?? qualifyingEnabledRef.current;
+        const targetPhase = useQuali ? 'qualifying' : 'playing';
+        setActivePrePausePhase(targetPhase);
+        setPhase(targetPhase);
+      });
+    };
+    mp.onError = (msg) => setMpError(msg);
+    mp.onConnectionModeChange = (mode) => setConnectionMode(mode);
+    setConnectionMode(mp.connectionMode);
+  }, [runWithScreenFade]);
+
+  const handleStartSession = useCallback(() => {
+    const now = Date.now();
+    if (now - lastRaceStartTimeRef.current < 1000) return;
+
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
+    if (room && room.hostId === mpClientRef.current?.peerId && raceConfig.sessionMode === 'race') {
+      mpClientRef.current.startRace();
+      return;
+    }
+    lastRaceStartTimeRef.current = now;
+    const useQuali = raceConfig.sessionMode === 'race' && raceConfig.qualifyingEnabled;
+    const targetPhase = useQuali ? 'qualifying' : 'playing';
+    runWithScreenFade(() => {
       setRaceMenuOpen(false);
       setMultiplayerOpen(false);
       setCarsShowcaseOpen(false);
@@ -151,46 +218,11 @@ export default function App() {
       setFinalSnapshot(null);
       setQualiBanner(null);
       setSpectatorCameraMode('spectate');
-      setRunNonce((n) => n + 1);
-      const useQuali = startedRoom?.config?.qualifyingEnabled ?? qualifyingEnabledRef.current;
-      const targetPhase = useQuali ? 'qualifying' : 'playing';
       setActivePrePausePhase(targetPhase);
+      setRunNonce((n) => n + 1);
       setPhase(targetPhase);
-    };
-    mp.onError = (msg) => setMpError(msg);
-    mp.onConnectionModeChange = (mode) => setConnectionMode(mode);
-    setConnectionMode(mp.connectionMode);
-  }, []);
-
-  const handleStartSession = useCallback(() => {
-    const now = Date.now();
-    if (now - lastRaceStartTimeRef.current < 1000) return;
-
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    setRaceMenuOpen(false);
-    setMultiplayerOpen(false);
-    setCarsShowcaseOpen(false);
-    setTracksShowcaseOpen(false);
-    setTrackStudioOpen(false);
-    setLiveryStudioOpen(false);
-    setSoundStudioOpen(false);
-    setFinalSnapshot(null);
-    setQualiBanner(null);
-    setSpectatorCameraMode('spectate');
-
-    if (room && room.hostId === mpClientRef.current?.peerId && raceConfig.sessionMode === 'race') {
-      mpClientRef.current.startRace();
-      return;
-    }
-    lastRaceStartTimeRef.current = now;
-    const useQuali = raceConfig.sessionMode === 'race' && raceConfig.qualifyingEnabled;
-    const targetPhase = useQuali ? 'qualifying' : 'playing';
-    setActivePrePausePhase(targetPhase);
-    setRunNonce((n) => n + 1);
-    setPhase(targetPhase);
-  }, [raceConfig.qualifyingEnabled, raceConfig.sessionMode, room]);
+    });
+  }, [raceConfig.qualifyingEnabled, raceConfig.sessionMode, room, runWithScreenFade]);
 
   const handleStartSinglePlayer = useCallback(
     (patch: Partial<RaceConfig>) => {
@@ -206,36 +238,40 @@ export default function App() {
         setRoom(null);
         setMpError(null);
       }
-      setRaceConfig((prev) => ({ ...prev, ...patch }));
+      const useQuali = patch.sessionMode === 'race' && Boolean(patch.qualifyingEnabled);
+      const targetPhase = useQuali ? 'qualifying' : 'playing';
+      runWithScreenFade(() => {
+        setRaceConfig((prev) => ({ ...prev, ...patch }));
+        setRaceMenuOpen(false);
+        setMultiplayerOpen(false);
+        setCarsShowcaseOpen(false);
+        setTracksShowcaseOpen(false);
+        setTrackStudioOpen(false);
+        setLiveryStudioOpen(false);
+        setSoundStudioOpen(false);
+        setFinalSnapshot(null);
+        setQualiBanner(null);
+        setSpectatorCameraMode('spectate');
+        setActivePrePausePhase(targetPhase);
+        setRunNonce((n) => n + 1);
+        setPhase(targetPhase);
+      });
+    },
+    [room, runWithScreenFade],
+  );
+
+  const handleReturnToTitle = useCallback(() => {
+    runWithScreenFade(() => {
       setRaceMenuOpen(false);
       setMultiplayerOpen(false);
       setCarsShowcaseOpen(false);
       setTracksShowcaseOpen(false);
-      setTrackStudioOpen(false);
-      setLiveryStudioOpen(false);
-      setSoundStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
       setSpectatorCameraMode('spectate');
-      const useQuali = patch.sessionMode === 'race' && Boolean(patch.qualifyingEnabled);
-      const targetPhase = useQuali ? 'qualifying' : 'playing';
-      setActivePrePausePhase(targetPhase);
-      setRunNonce((n) => n + 1);
-      setPhase(targetPhase);
-    },
-    [room],
-  );
-
-  const handleReturnToTitle = useCallback(() => {
-    setRaceMenuOpen(false);
-    setMultiplayerOpen(false);
-    setCarsShowcaseOpen(false);
-    setTracksShowcaseOpen(false);
-    setFinalSnapshot(null);
-    setQualiBanner(null);
-    setSpectatorCameraMode('spectate');
-    setPhase('title');
-  }, []);
+      setPhase('title');
+    });
+  }, [runWithScreenFade]);
 
   // Enter / Space shortcut on Title screen
   useEffect(() => {
@@ -286,11 +322,13 @@ export default function App() {
 
   const handleCycleCamera = useCallback(() => {
     setCameraMode((prev) =>
-      prev === 'orbit'
+      prev === 'chase'
+        ? 'orbit'
+        : prev === 'orbit'
         ? 'hood'
         : prev === 'hood'
         ? 'isometric'
-        : 'orbit',
+        : 'chase',
     );
   }, []);
 
@@ -308,11 +346,13 @@ export default function App() {
   }, []);
 
   const handleLaunchRaceAfterQuali = useCallback(() => {
-    setQualiBanner(null);
-    setActivePrePausePhase('playing');
-    setRunNonce((n) => n + 1);
-    setPhase('playing');
-  }, []);
+    runWithScreenFade(() => {
+      setQualiBanner(null);
+      setActivePrePausePhase('playing');
+      setRunNonce((n) => n + 1);
+      setPhase('playing');
+    });
+  }, [runWithScreenFade]);
 
   const handleUpdateConfig = (patch: Partial<RaceConfig>) => {
     setRaceConfig((prev) => {
@@ -359,15 +399,27 @@ export default function App() {
     registerCustomTrackInMemory(saved);
     setCustomTracksNonce((n) => n + 1);
     handleUpdateConfig({ trackId: saved.id, customTrack: saved });
-    setTrackStudioOpen(false);
-    setRaceMenuOpen(false);
-    setMultiplayerOpen(false);
-    setFinalSnapshot(null);
-    setQualiBanner(null);
-    setActivePrePausePhase('playing');
-    setRunNonce((n) => n + 1);
-    setPhase('playing');
+    runWithScreenFade(() => {
+      setTrackStudioOpen(false);
+      setRaceMenuOpen(false);
+      setMultiplayerOpen(false);
+      setFinalSnapshot(null);
+      setQualiBanner(null);
+      setActivePrePausePhase('playing');
+      setRunNonce((n) => n + 1);
+      setPhase('playing');
+    });
   };
+
+  const titleVisible =
+    phase === 'title' &&
+    !raceMenuOpen &&
+    !multiplayerOpen &&
+    !carsShowcaseOpen &&
+    !tracksShowcaseOpen &&
+    !trackStudioOpen &&
+    !liveryStudioOpen &&
+    !soundStudioOpen;
 
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
 
@@ -399,46 +451,40 @@ export default function App() {
         }}
       />
 
-      {/* Title Screen */}
-      {phase === 'title' &&
-        !raceMenuOpen &&
-        !multiplayerOpen &&
-        !carsShowcaseOpen &&
-        !tracksShowcaseOpen &&
-        !trackStudioOpen &&
-        !liveryStudioOpen &&
-        !soundStudioOpen && (
-          <TitleOverlay
-            raceConfig={raceConfig}
-            roomCode={room?.code ?? null}
-            onOpenRace={() => {
-              setMultiplayerOpen(false);
-              if (raceConfig.sessionMode === 'ai-race') {
-                handleUpdateConfig({ sessionMode: 'race' });
-              }
-              setRaceMenuOpen(true);
-            }}
-            onOpenHostAiRace={() => {
-              setMultiplayerOpen(false);
-              handleUpdateConfig({
-                sessionMode: 'ai-race',
-                noAi: false,
-                aiBotCount: Math.max(2, raceConfig.aiBotCount || 11),
-                totalLaps: raceConfig.totalLaps > 0 ? raceConfig.totalLaps : 5,
-              });
-              setRaceMenuOpen(true);
-            }}
-            onOpenMultiplayer={() => {
-              setRaceMenuOpen(false);
-              setMultiplayerOpen(true);
-            }}
-            onOpenCarsShowcase={() => setCarsShowcaseOpen(true)}
-            onOpenTracksShowcase={() => setTracksShowcaseOpen(true)}
-            onOpenStudio={() => handleOpenStudio()}
-            onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
-            onOpenSoundStudio={() => setSoundStudioOpen(true)}
-          />
-        )}
+      {/* Title Screen (kept mounted during title phase for smooth fade-in/fade-out with sub-menus) */}
+      {phase === 'title' && (
+        <TitleOverlay
+          visible={titleVisible}
+          raceConfig={raceConfig}
+          roomCode={room?.code ?? null}
+          onOpenRace={() => {
+            setMultiplayerOpen(false);
+            if (raceConfig.sessionMode === 'ai-race') {
+              handleUpdateConfig({ sessionMode: 'race' });
+            }
+            setRaceMenuOpen(true);
+          }}
+          onOpenHostAiRace={() => {
+            setMultiplayerOpen(false);
+            handleUpdateConfig({
+              sessionMode: 'ai-race',
+              noAi: false,
+              aiBotCount: Math.max(2, raceConfig.aiBotCount || 11),
+              totalLaps: raceConfig.totalLaps > 0 ? raceConfig.totalLaps : 5,
+            });
+            setRaceMenuOpen(true);
+          }}
+          onOpenMultiplayer={() => {
+            setRaceMenuOpen(false);
+            setMultiplayerOpen(true);
+          }}
+          onOpenCarsShowcase={() => setCarsShowcaseOpen(true)}
+          onOpenTracksShowcase={() => setTracksShowcaseOpen(true)}
+          onOpenStudio={() => handleOpenStudio()}
+          onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
+          onOpenSoundStudio={() => setSoundStudioOpen(true)}
+        />
+      )}
 
       {/* Unified Single-Player Race Setup */}
       {raceMenuOpen && (
@@ -640,6 +686,15 @@ export default function App() {
           onReturnToTitle={handleReturnToTitle}
         />
       )}
+
+      {/* Smooth Main Menu / Session Fade-In & Fade-Out Curtain */}
+      <div
+        aria-hidden="true"
+        data-testid="screen-fade-overlay"
+        className={`fixed inset-0 z-50 pointer-events-none bg-[#0b0e13] transition-opacity duration-300 ease-in-out ${
+          screenFading ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
     </main>
   );
 }

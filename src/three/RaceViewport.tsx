@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { computeCameraFrame } from '../game/camera';
+import { computeCameraFrame, DEFAULT_CHASE_CAMERA } from '../game/camera';
 import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from '../game/cars';
 import { blendDrivingInputs, GamepadController } from '../game/gamepad';
 import { MultiplayerClient } from '../game/multiplayer';
@@ -107,6 +107,8 @@ const _freecamEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const _freecamQuat = new THREE.Quaternion();
 const _freecamFwd = new THREE.Vector3();
 const _freecamRight = new THREE.Vector3();
+const _orbitLookFwd = new THREE.Vector3();
+const _orbitUp = new THREE.Vector3();
 
 const ATTRACT_SCENARIOS: Array<{ trackId: string; classes: CarClassId[] }> = [
   { trackId: 'suzuka', classes: [CarClassId.F1_2026] },
@@ -121,7 +123,9 @@ const ATTRACT_SCENARIOS: Array<{ trackId: string; classes: CarClassId[] }> = [
   { trackId: 'spa-francorchamps', classes: [CarClassId.HYPERCAR_GTP, CarClassId.GT3] },
 ];
 
-const ATTRACT_CYCLE_MS = 14000;
+const ATTRACT_FADE_OUT_MS = 700;
+const ATTRACT_HOLD_MS = 180;
+const ATTRACT_FADE_IN_MS = 750;
 
 function normalizeAngleRad(a: number): number {
   let out = a;
@@ -134,6 +138,9 @@ export function RaceViewport(props: RaceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
+  const [attractFaded, setAttractFaded] = useState(false);
+  const setAttractFadedRef = useRef(setAttractFaded);
+  setAttractFadedRef.current = setAttractFaded;
 
   const simRef = useRef<{
     scene: THREE.Scene;
@@ -161,12 +168,17 @@ export function RaceViewport(props: RaceViewportProps) {
     specialJustPressed: boolean;
     worldVersion: number;
     chaseHeading: number;
+    chaseLookYaw: number;
+    orbitYawOffset: number;
     orbitWorldYaw: number;
     targetOrbitWorldYaw: number;
     orbitPitch: number;
     orbitDist: number;
     targetOrbitPitch: number;
     targetOrbitDist: number;
+    orbitRoll: number;
+    targetOrbitRoll: number;
+    orbitRollLastInteractTime: number;
     isDraggingOrbit: boolean;
     orbitLastInteractTime: number;
     hoodLookYaw: number;
@@ -183,7 +195,9 @@ export function RaceViewport(props: RaceViewportProps) {
     freecamSpeed: number;
     isDraggingFreecam: boolean;
     attractIndex: number;
-    attractNextSwitchAt: number;
+    attractFocusPassedHalfway: boolean;
+    attractTransitionState: 'idle' | 'fading-out' | 'holding' | 'fading-in';
+    attractTransitionAt: number;
     rebuildWorld: () => void;
   } | null>(null);
 
@@ -300,12 +314,17 @@ export function RaceViewport(props: RaceViewportProps) {
       specialJustPressed: false,
       worldVersion: 0,
       chaseHeading: 0,
+      chaseLookYaw: 0,
+      orbitYawOffset: 0,
       orbitWorldYaw: Math.PI,
       targetOrbitWorldYaw: Math.PI,
-      orbitPitch: 0.28,
-      orbitDist: 11.5,
-      targetOrbitPitch: 0.28,
-      targetOrbitDist: 11.5,
+      orbitPitch: DEFAULT_CHASE_CAMERA.pitch,
+      orbitDist: DEFAULT_CHASE_CAMERA.distance,
+      targetOrbitPitch: DEFAULT_CHASE_CAMERA.pitch,
+      targetOrbitDist: DEFAULT_CHASE_CAMERA.distance,
+      orbitRoll: 0,
+      targetOrbitRoll: 0,
+      orbitRollLastInteractTime: 0,
       isDraggingOrbit: false,
       orbitLastInteractTime: 0,
       hoodLookYaw: 0,
@@ -322,8 +341,28 @@ export function RaceViewport(props: RaceViewportProps) {
       freecamSpeed: 42,
       isDraggingFreecam: false,
       attractIndex: Math.floor(Math.random() * ATTRACT_SCENARIOS.length),
-      attractNextSwitchAt: performance.now() + ATTRACT_CYCLE_MS,
+      attractFocusPassedHalfway: false,
+      attractTransitionState: 'idle' as 'idle' | 'fading-out' | 'holding' | 'fading-in',
+      attractTransitionAt: 0,
       rebuildWorld: () => {},
+    };
+
+    const resetGameplayCamera = (targetCar?: CarSimState | null, preservePitchAndDist = false) => {
+      const h = targetCar?.heading ?? sim.chaseHeading;
+      sim.chaseHeading = h;
+      sim.chaseLookYaw = 0;
+      sim.orbitYawOffset = 0;
+      sim.orbitWorldYaw = sim.targetOrbitWorldYaw = h + Math.PI;
+      if (!preservePitchAndDist) {
+        sim.orbitPitch = sim.targetOrbitPitch = DEFAULT_CHASE_CAMERA.pitch;
+        sim.orbitDist = sim.targetOrbitDist = DEFAULT_CHASE_CAMERA.distance;
+      }
+      sim.orbitRoll = sim.targetOrbitRoll = 0;
+      sim.orbitRollLastInteractTime = 0;
+      sim.orbitLastInteractTime = 0;
+      sim.isoYawOffset = 0;
+      sim.isoPitchOffset = 0;
+      sim.isoLastInteractTime = 0;
     };
 
     const initFreecamFromCurrentCamera = () => {
@@ -341,10 +380,7 @@ export function RaceViewport(props: RaceViewportProps) {
         const target =
           sim.cars.find((c) => c.id === sim.spectatedCarId) ?? sim.cars[0];
         if (target) {
-          sim.chaseHeading = target.heading;
-          sim.orbitWorldYaw = sim.targetOrbitWorldYaw = target.heading + Math.PI;
-          sim.orbitPitch = sim.targetOrbitPitch = 0.28;
-          sim.orbitLastInteractTime = 0;
+          resetGameplayCamera(target, true);
         }
       }
       sim.spectatorCameraMode = nextMode;
@@ -367,16 +403,18 @@ export function RaceViewport(props: RaceViewportProps) {
           idx < 0
             ? 0
             : (idx + dir + sim.cars.length) % sim.cars.length;
-        sim.spectatedCarId = sim.cars[nextIdx].id;
-        sim.orbitLastInteractTime = 0;
+        const nextCar = sim.cars[nextIdx];
+        sim.spectatedCarId = nextCar.id;
+        resetGameplayCamera(nextCar, true);
         if (sim.spectatorCameraMode === 'freecam') {
           setSpectatorCameraMode('spectate');
         }
       },
       selectCar: (carId: string) => {
-        if (sim.cars.some((c) => c.id === carId)) {
+        const nextCar = sim.cars.find((c) => c.id === carId);
+        if (nextCar) {
           sim.spectatedCarId = carId;
-          sim.orbitLastInteractTime = 0;
+          resetGameplayCamera(nextCar, true);
           if (sim.spectatorCameraMode === 'freecam') {
             setSpectatorCameraMode('spectate');
           }
@@ -552,7 +590,8 @@ export function RaceViewport(props: RaceViewportProps) {
           });
           if (currentPhase === 'title') {
             // Spread title cars gracefully around the track for a live world showcase!
-            const t = (slot / totalGrid) % 1;
+            // Start focus car (slot 0) cleanly past the S/F line so lap completion triggers after 1 full lap.
+            const t = (0.015 + slot / totalGrid) % 1;
             const sp = sampleTrackAtT(compiled, t);
             bot.trackT = t;
             bot.prevTrackT = t;
@@ -561,6 +600,7 @@ export function RaceViewport(props: RaceViewportProps) {
             bot.z = sp.z + sp.nz * ((slot % 2 === 0 ? -1 : 1) * 2.5);
             bot.heading = Math.atan2(sp.tx, sp.tz);
             bot.speed = 34;
+            bot.lap = 1;
             bot.totalDistance = t;
           }
           newCars.push(bot);
@@ -616,30 +656,45 @@ export function RaceViewport(props: RaceViewportProps) {
         telemetryRecorder.resetSession();
       }
 
+      sim.attractFocusPassedHalfway = false;
+
       // Position camera initially behind player or lead car
       const anchor = playerAnchor ?? newCars[0];
       if (anchor) {
-        sim.chaseHeading = anchor.heading;
-        sim.orbitWorldYaw = sim.targetOrbitWorldYaw = anchor.heading + Math.PI;
-        sim.orbitPitch = sim.targetOrbitPitch = 0.28;
-        sim.orbitLastInteractTime = 0;
-        const initSample = sampleTrackAtT(compiled, anchor.trackT);
-        const initTilt = computeRoadSurfaceTilt(initSample, anchor.heading);
-        const initFrame = computeCameraFrame(
-          isAiRace ? 'orbit' : propsRef.current.cameraMode,
-          anchor,
-          anchor.pitch ?? initTilt.pitchRad,
-          anchor.roll ?? initTilt.rollRad,
-        );
-        _camCurrPos.set(initFrame.position.x, initFrame.position.y, initFrame.position.z);
-        _camCurrLook.set(initFrame.lookAt.x, initFrame.lookAt.y, initFrame.lookAt.z);
-        if (initFrame.up) {
-          camera.up.set(initFrame.up.x, initFrame.up.y, initFrame.up.z);
-        } else {
+        resetGameplayCamera(anchor);
+        if (isTitle) {
+          const initNow = performance.now();
+          const orbitAngle = initNow * 0.00024;
+          const dist = 28 + Math.sin(initNow * 0.00017) * 7;
+          const elev = 14 + Math.cos(initNow * 0.00021) * 5;
+          _camCurrPos.set(
+            anchor.x + Math.cos(orbitAngle) * dist,
+            anchor.y + elev,
+            anchor.z + Math.sin(orbitAngle) * dist,
+          );
+          _camCurrLook.set(anchor.x, anchor.y + 0.6, anchor.z);
           camera.up.set(0, 1, 0);
+          camera.position.copy(_camCurrPos);
+          camera.lookAt(_camCurrLook);
+        } else {
+          const initSample = sampleTrackAtT(compiled, anchor.trackT);
+          const initTilt = computeRoadSurfaceTilt(initSample, anchor.heading);
+          const initFrame = computeCameraFrame(
+            isAiRace ? 'orbit' : propsRef.current.cameraMode,
+            anchor,
+            anchor.pitch ?? initTilt.pitchRad,
+            anchor.roll ?? initTilt.rollRad,
+          );
+          _camCurrPos.set(initFrame.position.x, initFrame.position.y, initFrame.position.z);
+          _camCurrLook.set(initFrame.lookAt.x, initFrame.lookAt.y, initFrame.lookAt.z);
+          if (initFrame.up) {
+            camera.up.set(initFrame.up.x, initFrame.up.y, initFrame.up.z);
+          } else {
+            camera.up.set(0, 1, 0);
+          }
+          camera.position.copy(_camCurrPos);
+          camera.lookAt(_camCurrLook);
         }
-        camera.position.copy(_camCurrPos);
-        camera.lookAt(_camCurrLook);
         initFreecamFromCurrentCamera();
         sim.freecamPos.y = Math.max(anchor.y + 12, sim.freecamPos.y + 8);
       }
@@ -686,8 +741,19 @@ export function RaceViewport(props: RaceViewportProps) {
         const dir = code === 'BracketRight' ? 1 : -1;
         const idx = sim.cars.findIndex((c) => c.id === sim.spectatedCarId);
         const nextIdx = idx < 0 ? 0 : (idx + dir + sim.cars.length) % sim.cars.length;
-        sim.spectatedCarId = sim.cars[nextIdx].id;
-        sim.orbitLastInteractTime = 0;
+        const nextCar = sim.cars[nextIdx];
+        sim.spectatedCarId = nextCar.id;
+        resetGameplayCamera(nextCar, true);
+        return;
+      }
+      if (code === 'KeyR' && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
+        if (!(propsRef.current.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'freecam')) {
+          const targetCar =
+            sim.cars.find((c) => c.isPlayer) ??
+            sim.cars.find((c) => c.id === sim.spectatedCarId) ??
+            sim.cars[0];
+          resetGameplayCamera(targetCar);
+        }
         return;
       }
       if (code === 'KeyM' && !e.repeat) {
@@ -737,15 +803,17 @@ export function RaceViewport(props: RaceViewportProps) {
       propsRef.current.raceConfig.sessionMode === 'ai-race' &&
       sim.spectatorCameraMode === 'freecam';
 
+    const isInteractiveOrbitMode = () =>
+      (propsRef.current.phase === 'playing' || propsRef.current.phase === 'qualifying') &&
+      (propsRef.current.cameraMode === 'orbit' ||
+        (propsRef.current.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'spectate'));
+
     const onPointerDown = (e: PointerEvent) => {
       if (isFreecamMode()) {
         sim.isDraggingFreecam = true;
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
-      } else if (
-        propsRef.current.cameraMode === 'orbit' ||
-        (propsRef.current.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'spectate')
-      ) {
+      } else if (isInteractiveOrbitMode()) {
         sim.isDraggingOrbit = true;
         sim.orbitLastInteractTime = performance.now();
         lastMouseX = e.clientX;
@@ -763,27 +831,40 @@ export function RaceViewport(props: RaceViewportProps) {
         sim.freecamPitch = Math.max(-1.45, Math.min(1.45, sim.freecamPitch - dy * 0.0055));
         return;
       }
-      if (
-        sim.isDraggingOrbit &&
-        (propsRef.current.cameraMode === 'orbit' ||
-          (propsRef.current.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'spectate'))
-      ) {
+      if (sim.isDraggingOrbit && isInteractiveOrbitMode()) {
         const dx = e.clientX - lastMouseX;
         const dy = e.clientY - lastMouseY;
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
         sim.targetOrbitWorldYaw -= dx * 0.008;
-        sim.targetOrbitPitch = Math.max(0.08, Math.min(1.18, sim.targetOrbitPitch + dy * 0.006));
-        sim.orbitLastInteractTime = performance.now();
+        sim.targetOrbitPitch = Math.max(
+          DEFAULT_CHASE_CAMERA.minPitch,
+          Math.min(DEFAULT_CHASE_CAMERA.maxPitch, sim.targetOrbitPitch + dy * 0.006),
+        );
+        const nowInteract = performance.now();
+        sim.orbitLastInteractTime = nowInteract;
+        sim.orbitRollLastInteractTime = nowInteract;
       }
     };
 
     const onPointerUp = () => {
       if (sim.isDraggingOrbit) {
         sim.isDraggingOrbit = false;
-        sim.orbitLastInteractTime = performance.now();
+        const nowInteract = performance.now();
+        sim.orbitLastInteractTime = nowInteract;
+        sim.orbitRollLastInteractTime = nowInteract;
       }
       sim.isDraggingFreecam = false;
+    };
+
+    const onDoubleClick = () => {
+      if (isFreecamMode()) return;
+      if (!isInteractiveOrbitMode()) return;
+      const targetCar =
+        sim.cars.find((c) => c.isPlayer) ??
+        sim.cars.find((c) => c.id === sim.spectatedCarId) ??
+        sim.cars[0];
+      resetGameplayCamera(targetCar);
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -792,12 +873,12 @@ export function RaceViewport(props: RaceViewportProps) {
         sim.freecamSpeed = Math.max(8, Math.min(140, sim.freecamSpeed - e.deltaY * 0.035));
         return;
       }
-      if (
-        propsRef.current.cameraMode === 'orbit' ||
-        (propsRef.current.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'spectate')
-      ) {
+      if (isInteractiveOrbitMode()) {
         e.preventDefault();
-        sim.targetOrbitDist = Math.max(5.0, Math.min(28.0, sim.targetOrbitDist + e.deltaY * 0.015));
+        sim.targetOrbitDist = Math.max(
+          DEFAULT_CHASE_CAMERA.minDistance,
+          Math.min(DEFAULT_CHASE_CAMERA.maxDistance, sim.targetOrbitDist + e.deltaY * 0.015),
+        );
       }
     };
 
@@ -816,6 +897,7 @@ export function RaceViewport(props: RaceViewportProps) {
     };
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('dblclick', onDoubleClick);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
@@ -874,13 +956,12 @@ export function RaceViewport(props: RaceViewportProps) {
         gamepadController.resetEdgeState();
       }
 
-      if (activePhase === 'title') {
-        if (now >= sim.attractNextSwitchAt) {
-          sim.attractIndex = (sim.attractIndex + 1) % ATTRACT_SCENARIOS.length;
-          sim.attractNextSwitchAt = now + ATTRACT_CYCLE_MS;
-          rebuildWorld();
-        }
+      if (activePhase !== 'title' && sim.attractTransitionState !== 'idle') {
+        sim.attractTransitionState = 'idle';
+        setAttractFadedRef.current(false);
+      }
 
+      if (activePhase === 'title') {
         // Live world tour: AI cars race smoothly around the circuit while camera glides!
         for (let i = 0; i < sim.cars.length; i++) {
           const c = sim.cars[i];
@@ -894,7 +975,32 @@ export function RaceViewport(props: RaceViewportProps) {
         }
         resolveCarCollisions(sim.cars);
 
-        // Smooth camera flyover following lead pack
+        // Cycle to the next attract track only after the focus car has completed a full lap,
+        // using a smooth fade-out -> track switch -> fade-in transition.
+        const focusLead = sim.cars[0];
+        if (sim.attractTransitionState === 'idle' && focusLead) {
+          if (focusLead.trackT >= 0.4 && focusLead.trackT <= 0.75) {
+            sim.attractFocusPassedHalfway = true;
+          }
+          if (sim.attractFocusPassedHalfway && focusLead.lap >= 2) {
+            sim.attractTransitionState = 'fading-out';
+            sim.attractTransitionAt = now + ATTRACT_FADE_OUT_MS;
+            setAttractFadedRef.current(true);
+          }
+        } else if (sim.attractTransitionState === 'fading-out' && now >= sim.attractTransitionAt) {
+          sim.attractIndex = (sim.attractIndex + 1) % ATTRACT_SCENARIOS.length;
+          rebuildWorld();
+          sim.attractTransitionState = 'holding';
+          sim.attractTransitionAt = now + ATTRACT_HOLD_MS;
+        } else if (sim.attractTransitionState === 'holding' && now >= sim.attractTransitionAt) {
+          sim.attractTransitionState = 'fading-in';
+          sim.attractTransitionAt = now + ATTRACT_FADE_IN_MS;
+          setAttractFadedRef.current(false);
+        } else if (sim.attractTransitionState === 'fading-in' && now >= sim.attractTransitionAt) {
+          sim.attractTransitionState = 'idle';
+        }
+
+        // Smooth camera flyover following focus car
         const lead = sim.cars[0];
         if (lead) {
           const orbitAngle = now * 0.00024;
@@ -1177,23 +1283,48 @@ export function RaceViewport(props: RaceViewportProps) {
 
           if (mode !== sim.lastCameraMode) {
             sim.lastCameraMode = mode;
-            sim.hoodLookYaw = 0;
-            sim.hoodLookPitch = 0;
-            sim.isoYawOffset = 0;
-            sim.isoPitchOffset = 0;
-            sim.isoLastInteractTime = 0;
-            if (mode === 'orbit') {
-              sim.chaseHeading = focusCar.heading;
-              sim.orbitWorldYaw = sim.targetOrbitWorldYaw = focusCar.heading + Math.PI;
-              sim.orbitPitch = sim.targetOrbitPitch = 0.28;
-              sim.orbitLastInteractTime = 0;
-            }
+            resetGameplayCamera(focusCar);
           }
 
-          if (mode === 'orbit') {
-            const DEFAULT_CHASE_PITCH = 0.28;
-            const SNAP_BACK_DELAY_MS = 2200;
+          if (mode === 'chase') {
+            // Chase Cam: sticks straight behind the car facing forward down the track (no mouse orbit)
+            const headingDiff = normalizeAngleRad(focusCar.heading - sim.chaseHeading);
+            sim.chaseHeading += headingDiff * (1 - Math.exp(-12 * dt));
 
+            // Optional brief gamepad right-stick glance that smoothly returns straight ahead when released
+            const targetChaseLookYaw = gp.cameraX * 0.65;
+            sim.chaseLookYaw += (targetChaseLookYaw - sim.chaseLookYaw) * (1 - Math.exp(-12 * dt));
+            if (Math.abs(sim.chaseLookYaw) < 0.001 && targetChaseLookYaw === 0) {
+              sim.chaseLookYaw = 0;
+            }
+
+            const chaseYaw = sim.chaseHeading + sim.chaseLookYaw;
+            const cosP = Math.cos(DEFAULT_CHASE_CAMERA.pitch);
+            const sinP = Math.sin(DEFAULT_CHASE_CAMERA.pitch);
+            const horizDist = DEFAULT_CHASE_CAMERA.distance * cosP;
+            const heightOffset = DEFAULT_CHASE_CAMERA.pivotHeight + DEFAULT_CHASE_CAMERA.distance * sinP;
+
+            const camX = focusCar.x - Math.sin(chaseYaw) * horizDist;
+            const camY = Math.max(focusCar.y + DEFAULT_CHASE_CAMERA.minHeightAboveCar, focusCar.y + heightOffset);
+            const camZ = focusCar.z - Math.cos(chaseYaw) * horizDist;
+
+            const lookAhead = 5.5;
+            const lookX = focusCar.x + Math.sin(chaseYaw) * lookAhead;
+            const lookY = focusCar.y + DEFAULT_CHASE_CAMERA.pivotHeight;
+            const lookZ = focusCar.z + Math.cos(chaseYaw) * lookAhead;
+
+            _camCurrPos.set(camX, camY, camZ);
+            _camCurrLook.set(lookX, lookY, lookZ);
+            camera.up.set(0, 1, 0);
+            camera.position.copy(_camCurrPos);
+            camera.lookAt(_camCurrLook);
+
+            const targetFov = 52 + Math.min(10, (focusCar.speed / 60) * 8);
+            if (Math.abs(camera.fov - targetFov) > 0.1) {
+              camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
+              camera.updateProjectionMatrix();
+            }
+          } else if (mode === 'orbit') {
             // Gamepad Right Stick (axes[2], axes[3]) camera orbit control
             const isRightStickOrbiting = gp.cameraX !== 0 || gp.cameraY !== 0;
             if (isRightStickOrbiting) {
@@ -1201,26 +1332,34 @@ export function RaceViewport(props: RaceViewportProps) {
               const STICK_PITCH_SPEED = 1.6;
               sim.targetOrbitWorldYaw -= gp.cameraX * STICK_YAW_SPEED * dt;
               sim.targetOrbitPitch = Math.max(
-                0.08,
-                Math.min(1.18, sim.targetOrbitPitch + gp.cameraY * STICK_PITCH_SPEED * dt),
+                DEFAULT_CHASE_CAMERA.minPitch,
+                Math.min(DEFAULT_CHASE_CAMERA.maxPitch, sim.targetOrbitPitch + gp.cameraY * STICK_PITCH_SPEED * dt),
               );
               sim.orbitLastInteractTime = now;
+              sim.orbitRollLastInteractTime = now;
             }
 
-            const isHoldingOrbit =
-              sim.isDraggingOrbit ||
-              isRightStickOrbiting ||
-              (sim.orbitLastInteractTime > 0 && now - sim.orbitLastInteractTime <= SNAP_BACK_DELAY_MS);
+            const isManuallyAdjustingOrbit = sim.isDraggingOrbit || isRightStickOrbiting;
+            if (isManuallyAdjustingOrbit) {
+              // Capture manual yaw offset relative to car's heading without fighting active drags
+              sim.orbitYawOffset = normalizeAngleRad(sim.targetOrbitWorldYaw - (focusCar.heading + Math.PI));
+            } else {
+              // Follow car heading at preserved manual yaw/pitch offsets (never snap pitch or yaw back)
+              const desiredWorldYaw = focusCar.heading + Math.PI + sim.orbitYawOffset;
+              const yawDiff = normalizeAngleRad(desiredWorldYaw - sim.targetOrbitWorldYaw);
+              sim.targetOrbitWorldYaw += yawDiff * (1 - Math.exp(-9.5 * dt));
+            }
 
-            if (!isHoldingOrbit) {
-              // Auto-chase behind car via shortest angular path without fighting manual drags
-              const behindYaw = focusCar.heading + Math.PI;
-              const yawDiff = normalizeAngleRad(behindYaw - sim.targetOrbitWorldYaw);
-              const followRate = sim.orbitLastInteractTime > 0 ? 4.8 : 9.5;
-              sim.targetOrbitWorldYaw += yawDiff * (1 - Math.exp(-followRate * dt));
-              sim.targetOrbitPitch += (DEFAULT_CHASE_PITCH - sim.targetOrbitPitch) * (1 - Math.exp(-4.2 * dt));
-              if (sim.orbitLastInteractTime > 0 && Math.abs(yawDiff) < 0.01) {
-                sim.orbitLastInteractTime = 0;
+            // Roll-only reset back to 0 after ~2.5s idle delay using smooth damping (leave pitch & yaw alone)
+            const isRollIdle =
+              !isManuallyAdjustingOrbit &&
+              (sim.orbitRollLastInteractTime === 0 ||
+                now - sim.orbitRollLastInteractTime > DEFAULT_CHASE_CAMERA.rollResetDelayMs);
+            if (isRollIdle && (Math.abs(sim.targetOrbitRoll) > 0.0001 || Math.abs(sim.orbitRoll) > 0.0001)) {
+              const rollResetDamp = 1 - Math.exp(-DEFAULT_CHASE_CAMERA.rollResetDampRate * dt);
+              sim.targetOrbitRoll += (0 - sim.targetOrbitRoll) * rollResetDamp;
+              if (Math.abs(sim.targetOrbitRoll) < 0.0005) {
+                sim.targetOrbitRoll = 0;
               }
             }
 
@@ -1229,15 +1368,19 @@ export function RaceViewport(props: RaceViewportProps) {
             sim.orbitWorldYaw += worldDiff * angDamp;
             sim.orbitPitch += (sim.targetOrbitPitch - sim.orbitPitch) * angDamp;
             sim.orbitDist += (sim.targetOrbitDist - sim.orbitDist) * (1 - Math.exp(-16 * dt));
+            sim.orbitRoll += (sim.targetOrbitRoll - sim.orbitRoll) * angDamp;
+            if (Math.abs(sim.orbitRoll) < 0.0002 && sim.targetOrbitRoll === 0) {
+              sim.orbitRoll = 0;
+            }
 
             const cosP = Math.cos(sim.orbitPitch);
             const sinP = Math.sin(sim.orbitPitch);
             const sinY = Math.sin(sim.orbitWorldYaw);
             const cosY = Math.cos(sim.orbitWorldYaw);
 
-            // Clean target-centered spherical orbit locked on the car's center
+            // Clean target-centered spherical orbit locked on the car's elevated center pivot
             const pivotX = focusCar.x;
-            const pivotY = focusCar.y + 0.88;
+            const pivotY = focusCar.y + DEFAULT_CHASE_CAMERA.pivotHeight;
             const pivotZ = focusCar.z;
 
             const rawCamX = pivotX + sinY * cosP * sim.orbitDist;
@@ -1245,16 +1388,22 @@ export function RaceViewport(props: RaceViewportProps) {
             const rawCamZ = pivotZ + cosY * cosP * sim.orbitDist;
 
             // Ground-plane clamping: prevent clipping through track/grass plane
-            const clampedCamY = Math.max(focusCar.y + 0.55, rawCamY);
+            const clampedCamY = Math.max(focusCar.y + DEFAULT_CHASE_CAMERA.minHeightAboveCar, rawCamY);
 
             _camCurrPos.set(rawCamX, clampedCamY, rawCamZ);
             _camCurrLook.set(pivotX, pivotY, pivotZ);
 
-            camera.up.set(0, 1, 0);
+            if (Math.abs(sim.orbitRoll) > 0.0001) {
+              _orbitLookFwd.subVectors(_camCurrLook, _camCurrPos).normalize();
+              _orbitUp.set(0, 1, 0).applyAxisAngle(_orbitLookFwd, sim.orbitRoll);
+              camera.up.copy(_orbitUp);
+            } else {
+              camera.up.set(0, 1, 0);
+            }
             camera.position.copy(_camCurrPos);
             camera.lookAt(_camCurrLook);
 
-            const targetFov = 50 + Math.min(10, (focusCar.speed / 60) * 8);
+            const targetFov = 52 + Math.min(10, (focusCar.speed / 60) * 8);
             if (Math.abs(camera.fov - targetFov) > 0.1) {
               camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
               camera.updateProjectionMatrix();
@@ -1279,14 +1428,6 @@ export function RaceViewport(props: RaceViewportProps) {
                 sim.isoYawOffset -= gp.cameraX * 2.0 * dt;
                 sim.isoPitchOffset = Math.max(-0.8, Math.min(0.8, sim.isoPitchOffset + gp.cameraY * 1.4 * dt));
                 sim.isoLastInteractTime = now;
-              } else if (now - sim.isoLastInteractTime > 2200) {
-                while (sim.isoYawOffset > Math.PI) sim.isoYawOffset -= Math.PI * 2;
-                while (sim.isoYawOffset < -Math.PI) sim.isoYawOffset += Math.PI * 2;
-                const snapDamp = 1 - Math.exp(-3.8 * dt);
-                sim.isoYawOffset += (0 - sim.isoYawOffset) * snapDamp;
-                sim.isoPitchOffset += (0 - sim.isoPitchOffset) * snapDamp;
-                if (Math.abs(sim.isoYawOffset) < 0.002) sim.isoYawOffset = 0;
-                if (Math.abs(sim.isoPitchOffset) < 0.002) sim.isoPitchOffset = 0;
               }
               if (sim.isoYawOffset !== 0 || sim.isoPitchOffset !== 0) {
                 lookOffset = { yaw: sim.isoYawOffset, pitch: sim.isoPitchOffset };
@@ -1593,6 +1734,7 @@ export function RaceViewport(props: RaceViewportProps) {
       ro.disconnect();
       window.removeEventListener('resize', onResize);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('wheel', onWheel);
@@ -1635,17 +1777,31 @@ export function RaceViewport(props: RaceViewportProps) {
     if (key === lastRebuildKeyRef.current) return;
     lastRebuildKeyRef.current = key;
     if (isTitle) {
-      simRef.current.attractNextSwitchAt = performance.now() + ATTRACT_CYCLE_MS;
+      simRef.current.attractFocusPassedHalfway = false;
+      simRef.current.attractTransitionState = 'idle';
+      setAttractFaded(false);
+    } else {
+      simRef.current.attractTransitionState = 'idle';
+      setAttractFaded(false);
     }
     simRef.current.rebuildWorld();
   }, [props.raceConfig.trackId, props.raceConfig.customTrack, props.raceConfig.sessionMode, props.runNonce, props.phase]);
 
   return (
-    <div
-      ref={containerRef}
-      data-testid="race-viewport"
-      className="fixed inset-0 w-full h-full min-h-0 overflow-hidden"
-      aria-label="3D Miniature Motorsport Race Viewport"
-    />
+    <>
+      <div
+        ref={containerRef}
+        data-testid="race-viewport"
+        className="fixed inset-0 w-full h-full min-h-0 overflow-hidden"
+        aria-label="3D Miniature Motorsport Race Viewport"
+      />
+      <div
+        aria-hidden="true"
+        data-testid="attract-fade-overlay"
+        className={`fixed inset-0 z-[5] pointer-events-none bg-[#0b0e13] transition-opacity duration-700 ease-in-out ${
+          attractFaded ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+    </>
   );
 }

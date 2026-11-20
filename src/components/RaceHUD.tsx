@@ -742,10 +742,12 @@ export function RaceHUD({
               ) : (
                 <span data-testid="hud-camera-label">
                   Cam:{' '}
-                  {hud.cameraMode === 'hood'
-                    ? 'Hood'
-                    : hud.cameraMode === 'orbit'
+                  {hud.cameraMode === 'chase'
                     ? 'Chase'
+                    : hud.cameraMode === 'orbit'
+                    ? 'Orbit · Drag'
+                    : hud.cameraMode === 'hood'
+                    ? 'Hood'
                     : 'Isometric'}{' '}
                   · [C]
                 </span>
