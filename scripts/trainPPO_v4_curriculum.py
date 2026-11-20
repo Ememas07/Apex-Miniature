@@ -27,7 +27,7 @@ SELFPLAY_POOL_MAX = 8
 # 2-phase curriculum:
 # - Phase 1 (first 45% of updates): 100% solo hotlapping to lock in clean racing lines & braking markers
 # - Phase 2 (remaining 55% of updates): linearly ramp in scripted multiclass & neural self-play traffic
-PHASE1_FRAC = 0.45
+PHASE1_FRAC = 0.60
 TARGET_SCRIPTED_RATIO = 0.35
 TARGET_SELFPLAY_RATIO = 0.45
 

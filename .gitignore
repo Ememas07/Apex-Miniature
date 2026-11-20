@@ -39,4 +39,4 @@ selfplay_pool*/
 
 # Metrics, telemetry and dashboard data (.jsonl & dashboard .js not needed by the game)
 *.jsonl
-audit/ppo_data*.js
+audit/ppo_data*

@@ -1,0 +1,10 @@
+{
+  "files.watcherExclude": {
+    "**/audit/**": true,
+    "**/checkpoints/**": true
+  },
+  "search.exclude": {
+    "**/audit/**": true,
+    "**/checkpoints/**": true
+  }
+}
