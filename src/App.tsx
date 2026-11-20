@@ -6,6 +6,7 @@ import { PauseModal } from './components/PauseModal';
 import { RaceHUD } from './components/RaceHUD';
 import { RaceMenuModal } from './components/RaceMenuModal';
 import { ResultsModal } from './components/ResultsModal';
+import { SettingsModal } from './components/SettingsModal';
 import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
 import { TracksShowcaseModal } from './components/TracksShowcaseModal';
@@ -77,6 +78,7 @@ export default function App() {
   const [trackStudioOpen, setTrackStudioOpen] = useState(false);
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
   const [soundStudioOpen, setSoundStudioOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -266,6 +268,7 @@ export default function App() {
       setMultiplayerOpen(false);
       setCarsShowcaseOpen(false);
       setTracksShowcaseOpen(false);
+      setSettingsOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
       setSpectatorCameraMode('spectate');
@@ -284,7 +287,8 @@ export default function App() {
         tracksShowcaseOpen ||
         trackStudioOpen ||
         liveryStudioOpen ||
-        soundStudioOpen
+        soundStudioOpen ||
+        settingsOpen
       ) {
         return;
       }
@@ -304,6 +308,7 @@ export default function App() {
     trackStudioOpen,
     liveryStudioOpen,
     soundStudioOpen,
+    settingsOpen,
     handleStartSession,
   ]);
 
@@ -419,7 +424,8 @@ export default function App() {
     !tracksShowcaseOpen &&
     !trackStudioOpen &&
     !liveryStudioOpen &&
-    !soundStudioOpen;
+    !soundStudioOpen &&
+    !settingsOpen;
 
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
 
@@ -483,6 +489,7 @@ export default function App() {
           onOpenStudio={() => handleOpenStudio()}
           onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
           onOpenSoundStudio={() => setSoundStudioOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
 
@@ -668,14 +675,22 @@ export default function App() {
       {/* Pause Modal */}
       {phase === 'paused' && (
         <PauseModal
-          onResume={handleTogglePause}
+          onResume={() => {
+            setSettingsOpen(false);
+            handleTogglePause();
+          }}
           onRestart={() => {
+            setSettingsOpen(false);
             setRunNonce((n) => n + 1);
             setPhase(activePrePausePhase);
           }}
+          onOpenSettings={() => setSettingsOpen(true)}
           onReturnToTitle={handleReturnToTitle}
         />
       )}
+
+      {/* Settings Modal (accessible from Title Paddock & Pause Menu) */}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
 
       {/* Post-Race Results Modal */}
       {phase === 'gameover' && finalSnapshot && (

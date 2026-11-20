@@ -12,20 +12,18 @@ console.log = redirectToStderr;
 console.info = redirectToStderr;
 console.debug = redirectToStderr;
 
-const { createCarSimState, resolveWallContact, stepCarPhysics } = await import('../src/game/physics');
-const { buildObservationVector } = await import('../src/game/aiNeuralPolicy');
+import type { PolicyObsConfig, PolicyWeights } from '../src/game/aiNeuralPolicy';
+
+const { createCarSimState, resolveCarCollisions, resolveWallContact, stepCarPhysics } = await import('../src/game/physics');
+const {
+  buildObservationVector,
+  evaluateNeuralPolicy,
+  validatePolicyWeights,
+} = await import('../src/game/aiNeuralPolicy');
 const { compileTrack, sampleTrackAtT, TRACKS } = await import('../src/game/tracks');
 const { CARS, getAllSelectableCars } = await import('../src/game/cars');
 
-interface MlpWeights {
-  version?: number;
-  w0: number[][];
-  b0: number[];
-  w1: number[][];
-  b1: number[];
-  w2: number[][];
-  b2: number[];
-}
+type MlpWeights = PolicyWeights;
 
 export interface RewardWeights {
   forwardProgress: number;
@@ -44,12 +42,29 @@ export interface RewardWeights {
   decelPenalty: number;
   stallStopSpeed: number;
   ttcPenalty?: number;
+  wallScrapeBase?: number;
+  wallScrapeDamageScale?: number;
+  wallScrapeCap?: number;
+  maxWallScrapes?: number;
+  lapCompletionBonus?: number;
+  cornerSurvivalBonus?: number;
+  cleanOvertakeBonus?: number;
+  ghostOverlapPenalty?: number;
 }
 
 export interface TrafficMix {
   soloRatio: number;
   scriptedRatio: number;
   selfplayRatio: number;
+}
+
+export interface EnvOptions {
+  brakingZoneSpawnRatio: number;
+  tightPackRatio: number;
+  technicalTrackBoost: number;
+  trackWeights: Record<string, number>;
+  spawnGhostSeconds: number;
+  enableCarPhysicsCollisions: boolean;
 }
 
 const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
@@ -69,6 +84,14 @@ const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
   decelPenalty: 0.0,
   stallStopSpeed: 2.0,
   ttcPenalty: 0.0,
+  wallScrapeBase: 0.15,
+  wallScrapeDamageScale: 0.4,
+  wallScrapeCap: 2.0,
+  maxWallScrapes: 6,
+  lapCompletionBonus: 0.0,
+  cornerSurvivalBonus: 0.0,
+  cleanOvertakeBonus: 0.0,
+  ghostOverlapPenalty: 0.0,
 };
 
 const DEFAULT_TRAFFIC_MIX: TrafficMix = {
@@ -77,12 +100,22 @@ const DEFAULT_TRAFFIC_MIX: TrafficMix = {
   selfplayRatio: 0.4,
 };
 
+const DEFAULT_ENV_OPTIONS: EnvOptions = {
+  brakingZoneSpawnRatio: 0.0,
+  tightPackRatio: 0.35,
+  technicalTrackBoost: 0.0,
+  trackWeights: {},
+  spawnGhostSeconds: 0.0,
+  enableCarPhysicsCollisions: false,
+};
+
 interface TrafficBot {
   car: CarSimState;
   mode: 'scripted' | 'neural';
   policy: MlpWeights | null;
   targetLaneRatio: number; // -0.55..0.55 of half-width
   paceScale: number; // 0.65..0.92 speed multiplier (scripted) or subtle throttle scale (neural)
+  prevSignedDist: number;
 }
 
 interface EnvSlot {
@@ -103,6 +136,7 @@ interface EnvSlot {
   prevLat: number;
   consecutiveOffTrackSteps: number;
   consecutiveStallSteps: number;
+  spawnGhostDuration: number;
 }
 
 const DEFAULT_CARS: string[] = CARS.map((c: any) => c.id);
@@ -112,6 +146,8 @@ const POOL_DIR = path.resolve(process.cwd(), 'audit/selfplay_pool');
 
 let rewardWeights: RewardWeights = { ...DEFAULT_REWARD_WEIGHTS };
 let trafficMix: TrafficMix = { ...DEFAULT_TRAFFIC_MIX };
+let envOptions: EnvOptions = { ...DEFAULT_ENV_OPTIONS, trackWeights: {} };
+let activeObsConfig: PolicyObsConfig | undefined = undefined;
 let activeWeightsPath = WEIGHTS_PATH;
 let activePoolDir = POOL_DIR;
 
@@ -120,26 +156,36 @@ let resetCounter = 0;
 
 function parsePolicyWeights(raw: any): MlpWeights | null {
   if (!raw || typeof raw !== 'object') return null;
+  const validated = validatePolicyWeights(raw);
+  if (validated) return validated;
   const version = typeof raw.version === 'number' ? raw.version : undefined;
-  // Standard trainPPO.py v2 export format (w0/b0, w1/b1, w2/b2)
-  if (raw.w0 && raw.b0 && raw.w1 && raw.b1 && raw.w2 && raw.b2) {
-    return { version, w0: raw.w0, b0: raw.b0, w1: raw.w1, b1: raw.b1, w2: raw.w2, b2: raw.b2 };
-  }
   // Fallback for 1-indexed keys
   if (raw.w1 && raw.b1 && raw.w2 && raw.b2 && raw.w3 && raw.b3) {
-    return { version, w0: raw.w1, b0: raw.b1, w1: raw.w2, b1: raw.b2, w2: raw.w3, b2: raw.b3 };
+    return validatePolicyWeights({
+      version,
+      obsDim: raw.obsDim ?? 43,
+      actDim: raw.actDim ?? 3,
+      w0: raw.w1,
+      b0: raw.b1,
+      w1: raw.w2,
+      b1: raw.b2,
+      w2: raw.w3,
+      b2: raw.b3,
+    });
   }
   if (Array.isArray(raw.layers) && raw.layers.length >= 3) {
     const [l1, l2, l3] = raw.layers;
-    return {
+    return validatePolicyWeights({
       version,
+      obsDim: raw.obsDim ?? 43,
+      actDim: raw.actDim ?? 3,
       w0: l1.w ?? l1.weights,
       b0: l1.b ?? l1.biases,
       w1: l2.w ?? l2.weights,
       b1: l2.b ?? l2.biases,
       w2: l3.w ?? l3.weights,
       b2: l3.b ?? l3.biases,
-    };
+    });
   }
   return null;
 }
@@ -187,6 +233,8 @@ function applyConfigPatch(msg: Record<string, any>, resetDefaults: boolean): voi
   if (resetDefaults) {
     rewardWeights = { ...DEFAULT_REWARD_WEIGHTS };
     trafficMix = { ...DEFAULT_TRAFFIC_MIX };
+    envOptions = { ...DEFAULT_ENV_OPTIONS, trackWeights: {} };
+    activeObsConfig = undefined;
     activeWeightsPath = WEIGHTS_PATH;
     activePoolDir = POOL_DIR;
   }
@@ -220,6 +268,49 @@ function applyConfigPatch(msg: Record<string, any>, resetDefaults: boolean): voi
     };
   }
 
+  if (msg.obsConfig && typeof msg.obsConfig === 'object') {
+    activeObsConfig = {
+      lookaheadMeters: Array.isArray(msg.obsConfig.lookaheadMeters)
+        ? msg.obsConfig.lookaheadMeters
+        : undefined,
+      curvatureMode:
+        msg.obsConfig.curvatureMode === 'window_tanh' ? 'window_tanh' : 'clamp40',
+      curvatureScale:
+        typeof msg.obsConfig.curvatureScale === 'number' &&
+        Number.isFinite(msg.obsConfig.curvatureScale)
+          ? msg.obsConfig.curvatureScale
+          : 14.0,
+    };
+  }
+
+  if (msg.envOptions && typeof msg.envOptions === 'object') {
+    const eo = msg.envOptions;
+    if (typeof eo.brakingZoneSpawnRatio === 'number' && Number.isFinite(eo.brakingZoneSpawnRatio)) {
+      envOptions.brakingZoneSpawnRatio = Math.max(0, Math.min(0.9, eo.brakingZoneSpawnRatio));
+    }
+    if (typeof eo.tightPackRatio === 'number' && Number.isFinite(eo.tightPackRatio)) {
+      envOptions.tightPackRatio = Math.max(0, Math.min(1, eo.tightPackRatio));
+    }
+    if (typeof eo.technicalTrackBoost === 'number' && Number.isFinite(eo.technicalTrackBoost)) {
+      envOptions.technicalTrackBoost = Math.max(0, Math.min(8, eo.technicalTrackBoost));
+    }
+    if (eo.trackWeights && typeof eo.trackWeights === 'object') {
+      const cleaned: Record<string, number> = {};
+      for (const [k, v] of Object.entries(eo.trackWeights)) {
+        if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
+          cleaned[k] = Math.max(0.25, Math.min(8.0, v));
+        }
+      }
+      envOptions.trackWeights = cleaned;
+    }
+    if (typeof eo.spawnGhostSeconds === 'number' && Number.isFinite(eo.spawnGhostSeconds)) {
+      envOptions.spawnGhostSeconds = Math.max(0, Math.min(6.0, eo.spawnGhostSeconds));
+    }
+    if (typeof eo.enableCarPhysicsCollisions === 'boolean') {
+      envOptions.enableCarPhysicsCollisions = eo.enableCarPhysicsCollisions;
+    }
+  }
+
   if (typeof msg.weightsPath === 'string' && msg.weightsPath.trim()) {
     activeWeightsPath = path.resolve(process.cwd(), msg.weightsPath.trim());
   }
@@ -228,33 +319,15 @@ function applyConfigPatch(msg: Record<string, any>, resetDefaults: boolean): voi
   }
 }
 
-function denseLayer(input: number[], w: number[][], b: number[], applyTanh: boolean): number[] {
-  const out = new Array<number>(b.length);
-  for (let i = 0; i < b.length; i++) {
-    const row = w[i];
-    let sum = b[i];
-    for (let j = 0; j < input.length; j++) {
-      sum += row[j] * input[j];
-    }
-    out[i] = applyTanh ? Math.tanh(sum) : sum;
-  }
-  return out;
-}
-
 function runNeuralPolicy(obs: number[], policy: MlpWeights): ControlInput {
-  const h1 = denseLayer(obs, policy.w0, policy.b0, true);
-  const h2 = denseLayer(h1, policy.w1, policy.b1, true);
-  const act = denseLayer(h2, policy.w2, policy.b2, false);
-
-  const isV2 = (policy.version ?? 1) >= 2;
-  const steer = isV2 ? Math.max(-1, Math.min(1, act[0])) : Math.tanh(act[0]);
-  const rawThrottle = isV2 ? Math.max(-1, Math.min(1, act[1])) : Math.tanh(act[1]);
-  const rawBrake = isV2 ? Math.max(-1, Math.min(1, act[2])) : Math.tanh(act[2]);
-
+  const out = evaluateNeuralPolicy(obs, policy);
+  if (!out) {
+    return { steer: 0, throttle: 0.5, brake: 0, specialPressed: false };
+  }
   return {
-    steer,
-    throttle: Math.max(0, Math.min(1, (rawThrottle + 1) * 0.5)),
-    brake: Math.max(0, Math.min(1, (rawBrake + 1) * 0.5)),
+    steer: out.steer,
+    throttle: out.throttle,
+    brake: out.brake,
     specialPressed: false,
   };
 }
@@ -282,6 +355,26 @@ const TIGHT_STREET_TRACK_IDS = new Set([
   'macau',
 ]);
 
+const TECHNICAL_HARD_TRACK_IDS = new Set([
+  'monaco',
+  'long-beach',
+  'detroit-street',
+  'baku',
+  'singapore',
+  'las-vegas',
+  'macau',
+  'shanghai',
+  'montreal',
+  'spa-francorchamps',
+  'laguna-seca',
+  'yas-marina',
+  'zandvoort',
+  'vir',
+  'sepang',
+  'miami',
+  'hungaroring',
+]);
+
 const compiledTracks = new Map<string, CompiledTrack>();
 
 function getCompiledTrack(trackId?: string): CompiledTrack {
@@ -290,15 +383,42 @@ function getCompiledTrack(trackId?: string): CompiledTrack {
   if (trackId) {
     spec = TRACKS.find((t: any) => t.id === trackId) ?? TRACKS[0];
   } else {
-    // 3x sampling weight for narrow/street circuits when trackIds is not explicitly constrained
-    const weighted: (typeof TRACKS)[number][] = [];
-    for (const t of TRACKS) {
-      const weight = TIGHT_STREET_TRACK_IDS.has(t.id) ? 3 : 1;
-      for (let w = 0; w < weight; w++) {
-        weighted.push(t);
+    const hasAdaptive = Object.keys(envOptions.trackWeights).length > 0;
+    const techBoost = envOptions.technicalTrackBoost;
+    if (hasAdaptive || techBoost > 0) {
+      let totalW = 0;
+      const weights = TRACKS.map((t) => {
+        let w = TIGHT_STREET_TRACK_IDS.has(t.id) ? 2.5 : 1.0;
+        if (techBoost > 0 && TECHNICAL_HARD_TRACK_IDS.has(t.id)) {
+          w = Math.max(w, techBoost);
+        }
+        if (hasAdaptive && envOptions.trackWeights[t.id] !== undefined) {
+          w *= envOptions.trackWeights[t.id];
+        }
+        totalW += w;
+        return w;
+      });
+      let r = Math.random() * totalW;
+      let chosen = TRACKS[0];
+      for (let i = 0; i < TRACKS.length; i++) {
+        r -= weights[i];
+        if (r <= 0) {
+          chosen = TRACKS[i];
+          break;
+        }
       }
+      spec = chosen;
+    } else {
+      // Legacy 3x sampling weight for narrow/street circuits
+      const weighted: (typeof TRACKS)[number][] = [];
+      for (const t of TRACKS) {
+        const weight = TIGHT_STREET_TRACK_IDS.has(t.id) ? 3 : 1;
+        for (let w = 0; w < weight; w++) {
+          weighted.push(t);
+        }
+      }
+      spec = weighted[Math.floor(Math.random() * weighted.length)];
     }
-    spec = weighted[Math.floor(Math.random() * weighted.length)];
   }
   if (!compiledTracks.has(spec.id)) {
     compiledTracks.set(spec.id, compileTrack(spec, 720));
@@ -306,15 +426,31 @@ function getCompiledTrack(trackId?: string): CompiledTrack {
   return compiledTracks.get(spec.id)!;
 }
 
-function getSharpCornerStartT(track: CompiledTrack): number {
+function getSharpCornerStartT(track: CompiledTrack, randomCorner = false): number {
+  const candidates: number[] = [];
+  let inCorner = false;
   for (let i = 0; i < track.samples.length; i++) {
     const sp = track.samples[i];
-    if (Math.abs(sp.curvature) > 0.015) {
-      const distBefore = 180 + Math.random() * 80; // 180..260m
-      let startDist = sp.s - distBefore;
-      while (startDist < 0) startDist += track.totalLength;
-      return (startDist % track.totalLength) / track.totalLength;
+    if (Math.abs(sp.curvature) > (randomCorner ? 0.022 : 0.015)) {
+      if (!inCorner) {
+        candidates.push(sp.s);
+        inCorner = true;
+      }
+      if (!randomCorner) break;
+    } else {
+      inCorner = false;
     }
+  }
+  if (candidates.length > 0) {
+    const cornerS = randomCorner
+      ? candidates[Math.floor(Math.random() * candidates.length)]
+      : candidates[0];
+    const distBefore = randomCorner
+      ? 180 + Math.random() * 140 // 180..320m for high-speed braking zone practice
+      : 180 + Math.random() * 80; // legacy 180..260m
+    let startDist = cornerS - distBefore;
+    while (startDist < 0) startDist += track.totalLength;
+    return (startDist % track.totalLength) / track.totalLength;
   }
   return 0.96; // fallback to standing-start grid
 }
@@ -365,6 +501,7 @@ function computeTrafficControl(bot: TrafficBot, track: CompiledTrack, allCars: C
       bot.car.steerAngle,
       1.0,
       bot.car.bopMultipliers,
+      bot.policy.obsConfig,
     );
     const ctrl = runNeuralPolicy(obs, bot.policy);
     // Slight pace variation (0.94..1.00) so self-play cars create natural overtakes instead of static trains
@@ -403,6 +540,11 @@ function computeTrafficControl(bot: TrafficBot, track: CompiledTrack, allCars: C
   return { steer, throttle, brake, specialPressed: false };
 }
 
+function getCarTopSpeedMs(carId: string): number {
+  const spec = CARS.find((c: any) => c.id === carId);
+  return spec?.attributes?.topSpeed ?? 75;
+}
+
 function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): EnvSlot {
   resetCounter++;
   if (resetCounter % 500 === 0 || (policyPool.length === 0 && trafficMix.selfplayRatio > 0 && resetCounter % 50 === 0)) {
@@ -417,7 +559,7 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
   // Determine traffic conditions
   const roll = Math.random();
   const isTraffic = randomStart && roll >= trafficMix.soloRatio;
-  const isTightPack = isTraffic && Math.random() < 0.35;
+  const isTightPack = isTraffic && Math.random() < envOptions.tightPackRatio;
 
   let startT: number;
   let latRatio: number;
@@ -428,13 +570,20 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
     latRatio = 0;
     initSpeed = 0;
   } else if (isTightPack) {
-    // 35% of traffic episodes: Tight Grid Pack / T1 Funnel scenario (~180-260m before first sharp corner)
-    startT = getSharpCornerStartT(track);
+    // Tight Grid Pack / T1 Funnel scenario (~180-260m before sharp corner)
+    startT = getSharpCornerStartT(track, false);
     latRatio = (Math.random() - 0.5) * 0.6;
     initSpeed = 18 + Math.random() * 14; // 18..32 m/s matched initial speed
+  } else if (envOptions.brakingZoneSpawnRatio > 0 && Math.random() < envOptions.brakingZoneSpawnRatio) {
+    // High-speed braking-zone approach spawn: 180..320m before a random sharp corner at class-realistic speed
+    startT = getSharpCornerStartT(track, true);
+    latRatio = (Math.random() - 0.5) * 0.65;
+    const carTopMs = getCarTopSpeedMs(cId);
+    initSpeed = Math.max(25, Math.min(carTopMs * 0.92, carTopMs * (0.60 + Math.random() * 0.30)));
   } else {
-    // 25% of training spawns: true standing start on grid (initSpeed = 0, startT at 0 or -0.02..0.0, latRatio -0.35..0.35)
-    const isStandingStart = Math.random() < 0.25;
+    // Standing start vs rolling random track position
+    const standingProb = envOptions.brakingZoneSpawnRatio > 0 ? 0.15 : 0.25;
+    const isStandingStart = Math.random() < standingProb;
     if (isStandingStart) {
       const gridOffset = -Math.random() * 0.02; // -0.02..0.0
       startT = gridOffset < 0 ? 1.0 + gridOffset : gridOffset;
@@ -466,10 +615,10 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
       if (useNeural) {
         const policy = policyPool[Math.floor(Math.random() * policyPool.length)];
         const paceScale = 0.92 + Math.random() * 0.08;
-        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale });
+        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale, prevSignedDist: longOffset });
       } else {
         const paceScale = 0.75 + Math.random() * 0.20;
-        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale });
+        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale, prevSignedDist: longOffset });
       }
     }
   } else if (isTraffic) {
@@ -487,7 +636,7 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
         let botT = (startT + tOffset) % 1;
         if (botT < 0) botT += 1;
         const botCar = spawnCarAt(track, botCarId, `traffic_${k}`, botT, laneRatio, botInitSpeed);
-        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale });
+        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale, prevSignedDist: offsetMeters });
       }
     } else if (policyPool.length > 0) {
       // Neural self-play: 3 same-class rivals (1 slightly behind, 2 ahead)
@@ -500,12 +649,28 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
         let botT = (startT + tOffset) % 1;
         if (botT < 0) botT += 1;
         const botCar = spawnCarAt(track, cId, `selfplay_${k}`, botT, laneRatio, initSpeed);
-        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale });
+        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale, prevSignedDist: offsets[k] });
       }
     }
   }
 
   const allCars = [car, ...traffic.map((t) => t.car)];
+
+  // Opt-in spawn ghosting: tight packs always get full ghost window to prevent launch gridlock;
+  // spaced traffic mixes ghosted and immediately-solid starts so policy never assumes permanent ghosting.
+  let spawnGhostDuration = 0;
+  if (traffic.length > 0 && envOptions.spawnGhostSeconds > 0) {
+    if (isTightPack) {
+      spawnGhostDuration = envOptions.spawnGhostSeconds;
+    } else if (Math.random() < 0.5) {
+      spawnGhostDuration = envOptions.spawnGhostSeconds * 0.5;
+    }
+    if (spawnGhostDuration > 0) {
+      for (const c of allCars) {
+        c.spawnGhostTimer = spawnGhostDuration;
+      }
+    }
+  }
 
   return {
     car,
@@ -525,6 +690,7 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
     prevLat: car.lateralOffset,
     consecutiveOffTrackSteps: 0,
     consecutiveStallSteps: 0,
+    spawnGhostDuration,
   };
 }
 
@@ -536,6 +702,7 @@ function getObs(slot: EnvSlot): number[] {
     slot.car.steerAngle,
     1.0,
     slot.car.bopMultipliers,
+    activeObsConfig,
   );
 }
 
@@ -680,10 +847,18 @@ rl.on('line', (line) => {
           consecutiveStallSteps = 0;
         }
 
-        // Step physics with neural policy
+        // Step physics with neural policy (respecting policy.obsConfig for full train/eval parity)
         let ctrl: ControlInput;
         if (policy) {
-          const obs = buildObservationVector(car, track, [car], car.steerAngle, 1.0, car.bopMultipliers);
+          const obs = buildObservationVector(
+            car,
+            track,
+            [car],
+            car.steerAngle,
+            1.0,
+            car.bopMultipliers,
+            policy.obsConfig,
+          );
           ctrl = runNeuralPolicy(obs, policy);
         } else {
           ctrl = { steer: 0, throttle: 0.5, brake: 0, specialPressed: false };
@@ -703,7 +878,8 @@ rl.on('line', (line) => {
           const bSp = sampleTrackAtT(track, car.trackT);
           const bWall = (bSp.width ?? track.spec.trackWidth) * 0.5 + 3.0;
           if (Math.abs(car.lateralOffset) > bWall) {
-            resolveWallContact(car, bSp, bWall, car.lateralOffset > 0 ? 1 : -1, SUB_DT);
+            const bSide: 1 | -1 = car.lateralOffset > 0 ? 1 : -1;
+            resolveWallContact(car, bSp, bSide * bWall, bSide, SUB_DT);
           }
         }
 
@@ -772,13 +948,15 @@ rl.on('line', (line) => {
   }
 
   if (msg.cmd === 'step') {
-    if (msg.trafficMix || msg.rewardWeights) {
+    if (msg.trafficMix || msg.rewardWeights || msg.envOptions || msg.obsConfig) {
       applyConfigPatch(msg, false);
     }
     const actions: number[][] = msg.actions;
     const obsOut: number[][] = [];
     const rewardsOut: number[] = [];
     const donesOut: boolean[] = [];
+    const truncatedOut: boolean[] = [];
+    const finalObsOut: (number[] | null)[] = [];
     const infoOut: {
       trackId: string;
       carId: string;
@@ -790,6 +968,7 @@ rl.on('line', (line) => {
       carCrash: boolean;
       wallCrash: boolean;
       stalled?: boolean;
+      ghostOverlap?: boolean;
     }[] = [];
 
     const POLICY_DT = 1 / 30;
@@ -830,7 +1009,8 @@ rl.on('line', (line) => {
           const bSp = sampleTrackAtT(slot.track, bot.car.trackT);
           const bWall = (bSp.width ?? slot.track.spec.trackWidth) * 0.5 + 3.0;
           if (Math.abs(bot.car.lateralOffset) > bWall) {
-            resolveWallContact(bot.car, bSp, bWall, bot.car.lateralOffset > 0 ? 1 : -1, SUB_DT);
+            const bSide: 1 | -1 = bot.car.lateralOffset > 0 ? 1 : -1;
+            resolveWallContact(bot.car, bSp, bSide * bWall, bSide, SUB_DT);
           }
         }
 
@@ -854,6 +1034,11 @@ rl.on('line', (line) => {
             wallSide,
             SUB_DT,
           );
+        }
+
+        // Authentic OBB car-to-car physics collisions (opt-in; automatically skips cars with spawnGhostTimer > 0)
+        if (envOptions.enableCarPhysicsCollisions && slot.allCars.length > 1) {
+          resolveCarCollisions(slot.allCars);
         }
       }
 
@@ -887,36 +1072,60 @@ rl.on('line', (line) => {
         if (slot.consecutiveWallSteps === 1) {
           slot.wallScrapes++;
         }
-        // Proportional scrape penalty for minor damage/barrier friction without terminating episode
-        wallScrapePenalty = Math.min(2.0, deltaAero * 0.4 + 0.15);
+        const scrapeBase = rewardWeights.wallScrapeBase ?? 0.15;
+        const scrapeDmgScale = rewardWeights.wallScrapeDamageScale ?? 0.4;
+        const scrapeCap = rewardWeights.wallScrapeCap ?? 2.0;
+        wallScrapePenalty = Math.min(scrapeCap, deltaAero * scrapeDmgScale + scrapeBase);
       } else {
         slot.consecutiveWallSteps = 0;
       }
 
-      // Check car-to-car proximity, forward-cone TTC penalty, and physical contact
+      // Check car-to-car proximity, forward-cone TTC penalty, clean overtakes, spawn-ghost overlap, and physical contact
       let carContact = false;
+      let ghostOverlap = false;
       let closeProximityPenalty = 0;
+      let ghostOverlapPenaltySum = 0;
       let ttcPenaltySum = 0;
+      let overtakeBonusSum = 0;
       const ttcWeight = rewardWeights.ttcPenalty ?? 0;
+      const overtakeWeight = rewardWeights.cleanOvertakeBonus ?? 0;
+      const ghostOverlapWeight = rewardWeights.ghostOverlapPenalty ?? 0;
       const headingX = Math.sin(slot.car.heading);
       const headingZ = Math.cos(slot.car.heading);
+      const egoGhost = slot.car.spawnGhostTimer ?? 0;
+      const maxGhostDur = Math.max(0.5, slot.spawnGhostDuration || envOptions.spawnGhostSeconds || 2.0);
 
       for (let b = 0; b < slot.traffic.length; b++) {
-        const other = slot.traffic[b].car;
+        const bot = slot.traffic[b];
+        const other = bot.car;
+        const otherGhost = other.spawnGhostTimer ?? 0;
+        const pairGhosted = egoGhost > 0 || otherGhost > 0;
         const dx = other.x - slot.car.x;
         const dz = other.z - slot.car.z;
         const distSq = dx * dx + dz * dz;
         if (distSq < 6.25) {
-          // Within 2.5m center-to-center = physical collision
-          carContact = true;
-          break;
+          if (!pairGhosted) {
+            // Within 2.5m center-to-center (solid cars) = physical collision
+            carContact = true;
+            break;
+          } else {
+            // Non-terminal during spawn ghosting to avoid pack gridlock, but apply an escalating
+            // overlap penalty as ghosting nears expiry so the policy peels into clean air before turning solid.
+            ghostOverlap = true;
+            const activeGhost = Math.max(egoGhost, otherGhost);
+            const ghostProgress = Math.max(0, Math.min(1, 1 - activeGhost / maxGhostDur));
+            const escalation = 0.5 + 2.0 * ghostProgress * ghostProgress;
+            const basePenalty = ghostOverlapWeight > 0 ? ghostOverlapWeight : 0.6;
+            ghostOverlapPenaltySum += basePenalty * escalation;
+            closeProximityPenalty += 3.5 * rewardWeights.closeProximity;
+          }
         } else if (distSq < 36.0) {
-          // Soft warning zone (2.5m..6.0m) encourages clean lateral pass instead of tailgating
+          // Soft warning zone (2.5m..6.0m) stays active even while ghosted to guide clean lane selection
           const dist = Math.sqrt(distSq);
           closeProximityPenalty += (6.0 - dist) * rewardWeights.closeProximity;
         }
 
-        // Forward-cone Time-To-Collision (TTC) closing penalty within 14m
+        // Forward-cone Time-To-Collision (TTC) closing penalty within 14m (active during ghosting too)
         if (ttcWeight > 0 && distSq < 196.0) {
           const aheadDist = dx * headingX + dz * headingZ;
           if (aheadDist > 0) {
@@ -929,9 +1138,49 @@ rl.on('line', (line) => {
             }
           }
         }
+
+        // Clean overtake bonus (opt-in; disabled while ghosted so agents cannot farm passes through ghosted cars)
+        if (overtakeWeight > 0) {
+          let dtOther = other.trackT - slot.car.trackT;
+          if (dtOther > 0.5) dtOther -= 1.0;
+          if (dtOther < -0.5) dtOther += 1.0;
+          const signedDist = dtOther * slot.track.totalLength;
+          if (
+            !pairGhosted &&
+            bot.prevSignedDist > 0 &&
+            bot.prevSignedDist < 30 &&
+            signedDist <= 0 &&
+            signedDist > -15 &&
+            !wallContact &&
+            !isPastKerb
+          ) {
+            overtakeBonusSum += overtakeWeight;
+          }
+          bot.prevSignedDist = signedDist;
+        }
       }
 
-      let reward = forwardMeters * rewardWeights.forwardProgress - closeProximityPenalty - ttcPenaltySum - wallScrapePenalty;
+      let reward =
+        forwardMeters * rewardWeights.forwardProgress -
+        closeProximityPenalty -
+        ghostOverlapPenaltySum -
+        ttcPenaltySum -
+        wallScrapePenalty +
+        overtakeBonusSum;
+
+      // Opt-in corner survival bonus for cleanly navigating high-curvature corners on track
+      const cornerSurvBonus = rewardWeights.cornerSurvivalBonus ?? 0;
+      if (
+        cornerSurvBonus > 0 &&
+        Math.abs(sp.curvature) > 0.02 &&
+        !isPastKerb &&
+        !wallContact &&
+        slot.car.speed > 10.0 &&
+        forwardMeters > 0
+      ) {
+        reward += cornerSurvBonus;
+      }
+
       if (slot.car.speed < rewardWeights.minSpeedThreshold) {
         reward -= (rewardWeights.minSpeedThreshold - slot.car.speed) * rewardWeights.minSpeedPenalty;
       }
@@ -982,6 +1231,7 @@ rl.on('line', (line) => {
       reward -= rewardWeights.throttleBrakeOverlap * (throttle * brake);
 
       let done = false;
+      let truncated = false;
       let crashed = false;
       let carCrash = false;
       let wallCrash = false;
@@ -990,27 +1240,27 @@ rl.on('line', (line) => {
       if (prevT > 0.85 && slot.car.trackT < 0.15 && slot.stepsInEpisode > 150) {
         slot.lapsCompleted++;
         const lapTime = slot.car.lastLapTime ?? 0;
+        const lapBonus = rewardWeights.lapCompletionBonus ?? 0;
+        if (lapBonus > 0 && slot.wallScrapes <= 2) {
+          reward += lapBonus;
+        }
         if (slot.lapsCompleted >= 2 && lapTime >= 20) {
           completedLapTime = lapTime;
           done = true;
+          truncated = true; // Clean finish is a time/lap truncation, not a crash death
         }
       }
 
       // Scale episode cap by track length (~2.2x a 90 km/h lap, min 6000 steps) so long tracks like Le Mans can finish 2 crossings
       const maxSteps = Math.max(6000, Math.ceil((slot.track.totalLength / 25) * 30 * 2.2));
+      const maxScrapes = rewardWeights.maxWallScrapes ?? 6;
 
-      // Terminal crash conditions:
-      // 1. Physical car-to-car collision
-      // 2. High-speed wall smash (deltaAero > 2.5)
-      // 3. Sustained wall pinning (consecutiveWallSteps >= 18, ~0.6s at 30Hz)
-      // 4. Extreme out-of-bounds excursion (absLat > halfW + 7.0)
-      // 5. Stalled / stopped on track (sustained consecutiveStallSteps >= 60 at speed < stallStopSpeed)
-      // 6. Excessive repeated scraping (wallScrapes >= 6)
+      // Terminal crash conditions
       const hardWallCrash =
         deltaAero > 2.5 ||
         slot.consecutiveWallSteps >= 18 ||
         absLat > halfW + 7.0 ||
-        slot.wallScrapes >= 6;
+        slot.wallScrapes >= maxScrapes;
 
       const stallSpeedThreshold = rewardWeights.stallStopSpeed ?? 2.0;
       if (slot.stepsInEpisode > 180 && slot.car.speed < stallSpeedThreshold) {
@@ -1025,17 +1275,21 @@ rl.on('line', (line) => {
         crashed = true;
         carCrash = true;
         done = true;
+        truncated = false;
       } else if (hardWallCrash) {
         reward -= rewardWeights.wallCrash;
         crashed = true;
         wallCrash = true;
         done = true;
+        truncated = false;
       } else if (isStalled) {
         reward -= Math.min(rewardWeights.wallCrash, 3.5);
         crashed = true;
         done = true;
-      } else if (slot.stepsInEpisode > maxSteps) {
+        truncated = false;
+      } else if (!done && slot.stepsInEpisode > maxSteps) {
         done = true;
+        truncated = true;
       }
 
       slot.prevLat = slot.car.lateralOffset;
@@ -1052,17 +1306,33 @@ rl.on('line', (line) => {
         carCrash,
         wallCrash: wallCrash || (wallContact && slot.consecutiveWallSteps === 1),
         stalled: isStalled,
+        ghostOverlap,
       });
 
+      let finalObs: number[] | null = null;
       if (done) {
+        if (truncated) {
+          finalObs = getObs(slot);
+        }
         slots[i] = resetSlot(cfgTracks, cfgCars, true);
       }
 
       obsOut.push(getObs(slots[i]));
       rewardsOut.push(reward);
       donesOut.push(done);
+      truncatedOut.push(truncated);
+      finalObsOut.push(finalObs);
     }
 
-    process.stdout.write(JSON.stringify({ obs: obsOut, rewards: rewardsOut, dones: donesOut, info: infoOut }) + '\n');
+    process.stdout.write(
+      JSON.stringify({
+        obs: obsOut,
+        rewards: rewardsOut,
+        dones: donesOut,
+        truncated: truncatedOut,
+        finalObs: finalObsOut,
+        info: infoOut,
+      }) + '\n',
+    );
   }
 });

@@ -4,6 +4,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { computeCameraFrame, DEFAULT_CHASE_CAMERA } from '../game/camera';
 import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from '../game/cars';
 import { blendDrivingInputs, GamepadController } from '../game/gamepad';
+import { getGameSettings, subscribeGameSettings } from '../game/settings';
 import { MultiplayerClient } from '../game/multiplayer';
 import { computeNeuralAIControl } from '../game/aiNeuralPolicy';
 import {
@@ -193,6 +194,8 @@ export function RaceViewport(props: RaceViewportProps) {
     freecamYaw: number;
     freecamPitch: number;
     freecamSpeed: number;
+    freecamFov: number;
+    freecamShiftScrollAt: number;
     isDraggingFreecam: boolean;
     attractIndex: number;
     attractFocusPassedHalfway: boolean;
@@ -339,6 +342,8 @@ export function RaceViewport(props: RaceViewportProps) {
       freecamYaw: 0,
       freecamPitch: -0.32,
       freecamSpeed: 42,
+      freecamFov: 58,
+      freecamShiftScrollAt: 0,
       isDraggingFreecam: false,
       attractIndex: Math.floor(Math.random() * ATTRACT_SCENARIOS.length),
       attractFocusPassedHalfway: false,
@@ -370,6 +375,7 @@ export function RaceViewport(props: RaceViewportProps) {
       _freecamEuler.setFromQuaternion(camera.quaternion, 'YXZ');
       sim.freecamYaw = _freecamEuler.y;
       sim.freecamPitch = Math.max(-1.45, Math.min(1.45, _freecamEuler.x));
+      sim.freecamFov = 58;
     };
 
     const setSpectatorCameraMode = (nextMode: SpectatorCameraMode) => {
@@ -608,6 +614,13 @@ export function RaceViewport(props: RaceViewportProps) {
         }
       }
 
+      // Brief spawn ghosting on multi-car standing launches prevents gridlock & reverse-into-wall pileups
+      if (newCars.length > 1 && !isQuali && !isPractice && currentPhase !== 'title') {
+        for (const c of newCars) {
+          c.spawnGhostTimer = 2.5;
+        }
+      }
+
       sim.cars = newCars;
       for (const c of newCars) {
         buildCarRigAsync(c.carSpec, c.livery, maxAniso).then((rig) => {
@@ -782,6 +795,10 @@ export function RaceViewport(props: RaceViewportProps) {
     };
 
     const gamepadController = new GamepadController();
+    gamepadController.setEnabled(getGameSettings().controllerEnabled);
+    const unsubscribeGameSettings = subscribeGameSettings((next) => {
+      gamepadController.setEnabled(next.controllerEnabled);
+    });
     gamepadController.attach(window);
 
     const clearKeys = () => {
@@ -870,7 +887,16 @@ export function RaceViewport(props: RaceViewportProps) {
     const onWheel = (e: WheelEvent) => {
       if (isFreecamMode()) {
         e.preventDefault();
-        sim.freecamSpeed = Math.max(8, Math.min(140, sim.freecamSpeed - e.deltaY * 0.035));
+        // Shift+Scroll on some OSes maps wheel delta to deltaX; read whichever axis carries the scroll
+        const scrollDelta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+        const isShift = e.shiftKey || keysPressed.has('ShiftLeft') || keysPressed.has('ShiftRight');
+        if (isShift) {
+          sim.freecamSpeed = Math.max(8, Math.min(140, sim.freecamSpeed - scrollDelta * 0.035));
+          sim.freecamShiftScrollAt = performance.now();
+        } else {
+          // Scroll up (negative delta) zooms in (narrower FOV); scroll down zooms out (wider FOV)
+          sim.freecamFov = Math.max(18, Math.min(95, sim.freecamFov + scrollDelta * 0.035));
+        }
         return;
       }
       if (isInteractiveOrbitMode()) {
@@ -1191,8 +1217,8 @@ export function RaceViewport(props: RaceViewportProps) {
             camera.near = 0.25;
             camera.updateProjectionMatrix();
           }
-          if (Math.abs(camera.fov - 58) > 0.1) {
-            camera.fov += (58 - camera.fov) * Math.min(1, dt * 8);
+          if (Math.abs(camera.fov - sim.freecamFov) > 0.05) {
+            camera.fov += (sim.freecamFov - camera.fov) * Math.min(1, dt * 12);
             camera.updateProjectionMatrix();
           }
 
@@ -1214,14 +1240,12 @@ export function RaceViewport(props: RaceViewportProps) {
 
           const moveFwd = (keysPressed.has('KeyW') ? 1 : 0) - (keysPressed.has('KeyS') ? 1 : 0);
           const moveRight = (keysPressed.has('KeyD') ? 1 : 0) - (keysPressed.has('KeyA') ? 1 : 0);
+          const suppressShiftDown = now - sim.freecamShiftScrollAt < 400;
+          const shiftDown =
+            !suppressShiftDown && (keysPressed.has('ShiftLeft') || keysPressed.has('ShiftRight'));
           const moveUp =
             (keysPressed.has('Space') || keysPressed.has('KeyE') ? 1 : 0) -
-            (keysPressed.has('ShiftLeft') ||
-            keysPressed.has('ShiftRight') ||
-            keysPressed.has('KeyQ') ||
-            keysPressed.has('ControlLeft')
-              ? 1
-              : 0);
+            (shiftDown || keysPressed.has('KeyQ') || keysPressed.has('ControlLeft') ? 1 : 0);
 
           const speed = sim.freecamSpeed;
           sim.freecamPos.addScaledVector(_freecamFwd, moveFwd * speed * dt);
@@ -1730,6 +1754,7 @@ export function RaceViewport(props: RaceViewportProps) {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', clearKeys);
       document.removeEventListener('visibilitychange', clearKeys);
+      unsubscribeGameSettings();
       gamepadController.detach(window);
       ro.disconnect();
       window.removeEventListener('resize', onResize);

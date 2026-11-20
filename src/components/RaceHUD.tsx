@@ -496,7 +496,7 @@ export function RaceHUD({
                 Freecam Flight Mode
               </div>
               <div className="text-[11px] text-slate-300 leading-relaxed">
-                WASD Move · Drag Mouse Look · Space / E Up · Shift / Q Down · Scroll Speed · F Spectate
+                WASD Move · Drag Mouse Look · Space / E Up · Shift / Q Down · Scroll Zoom · Shift+Scroll Speed · F Spectate
               </div>
             </div>
           )}

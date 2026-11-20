@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Volume2, VolumeX, ArrowLeft } from 'lucide-react';
+import { Volume2, VolumeX, ArrowLeft, Settings } from 'lucide-react';
 
 interface PauseModalProps {
   onResume: () => void;
   onRestart: () => void;
   onReturnToTitle: () => void;
+  onOpenSettings?: () => void;
   masterVolume?: number;
   onVolumeChange?: (vol: number) => void;
   isMuted?: boolean;
@@ -15,6 +16,7 @@ export function PauseModal({
   onResume,
   onRestart,
   onReturnToTitle,
+  onOpenSettings,
   masterVolume: propVolume,
   onVolumeChange,
   isMuted: propMuted,
@@ -136,6 +138,17 @@ export function PauseModal({
           >
             Restart Session
           </button>
+          {onOpenSettings && (
+            <button
+              type="button"
+              data-testid="btn-pause-settings"
+              onClick={onOpenSettings}
+              className="w-full py-2.5 rounded bg-[#18202c] hover:bg-[#222c3d] border border-white/10 text-sm font-semibold text-slate-200 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Settings
+            </button>
+          )}
           <button
             type="button"
             onClick={onReturnToTitle}

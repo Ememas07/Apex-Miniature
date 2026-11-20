@@ -6,7 +6,7 @@ import re
 import sys
 
 TIMESTAMPED_FILENAME_RE = re.compile(
-    r"^(\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})_v([1-4])\.json$"
+    r"^(\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})_v([1-8])\.json$"
 )
 
 STANDARD_SUMMARY_KEYS = {
@@ -33,8 +33,11 @@ def parse_file_sort_key(path: Path) -> tuple[datetime, float]:
     return (datetime.min, path.stat().st_mtime)
 
 
-def find_latest_variants(bench_dir: Path, variants: tuple[str, ...] = ("v1", "v2", "v3", "v4")) -> list[Path]:
-    """Find the latest timestamped <HH-mm-ss-dd-MM-yy>_v{1..4}.json file for each variant."""
+def find_latest_variants(
+    bench_dir: Path,
+    variants: tuple[str, ...] = ("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"),
+) -> list[Path]:
+    """Find the latest timestamped <HH-mm-ss-dd-MM-yy>_v{1..8}.json file for each variant."""
     if not bench_dir.is_dir():
         return []
 
@@ -230,7 +233,7 @@ def main():
     parser = argparse.ArgumentParser(description="Minify Apex-Miniature audit JSON files.")
     parser.add_argument("files", nargs="*", help="Audit JSON files to summarize (default: latest files in --dir)")
     parser.add_argument("--dir", default="audit/bench_results", help="Directory to search for benchmark JSONs (default: audit/bench_results)")
-    parser.add_argument("--latest", action="store_true", help="Pick the latest timestamped <HH-mm-ss-dd-MM-yy>_v{1..4}.json for each variant")
+    parser.add_argument("--latest", action="store_true", help="Pick the latest timestamped <HH-mm-ss-dd-MM-yy>_v{1..8}.json for each variant")
     parser.add_argument("--baseline", help="Optional baseline audit JSON file for delta comparison")
     parser.add_argument("--top-tracks", "-n", "--worst-n", type=int, default=8, dest="top_tracks", help="Number of worst tracks to show (default: 8)")
     parser.add_argument("-o", "--out", help="Output Markdown path (prints to stdout if omitted)")

@@ -135,6 +135,7 @@ export class GamepadController {
   private activeIndex: number | null = null;
   private prevSpecialPressed = false;
   private attached = false;
+  private enabled = true;
 
   private readonly onConnected = (e: GamepadEvent): void => {
     const gp = e.gamepad;
@@ -173,6 +174,17 @@ export class GamepadController {
     this.resetEdgeState();
   }
 
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) {
+      this.prevSpecialPressed = false;
+    }
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
   resetEdgeState(): void {
     this.prevSpecialPressed = false;
   }
@@ -182,6 +194,10 @@ export class GamepadController {
    * Always safe even if the browser lacks Gamepad API support or a controller disconnects mid-frame.
    */
   poll(overrideGamepads?: ReadonlyArray<GamepadLike | null | undefined>): GamepadInputState {
+    if (!this.enabled) {
+      this.prevSpecialPressed = false;
+      return { ...NEUTRAL_STATE };
+    }
     let rawList: ReadonlyArray<GamepadLike | null | undefined>;
     if (overrideGamepads) {
       rawList = overrideGamepads;

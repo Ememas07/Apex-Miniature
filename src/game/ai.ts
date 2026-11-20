@@ -33,4 +33,6 @@ export type {
   AiPolicyMixWeights,
   AiPolicyVariantInfo,
   PolicyWeights,
+  PolicyObsNorm,
+  PolicyObsConfig,
 } from './aiNeuralPolicy';

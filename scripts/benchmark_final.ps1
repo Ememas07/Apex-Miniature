@@ -36,12 +36,21 @@ $variants = @(
     @{ Tag = "v1"; Weights = "src/game/aiPolicyWeights_v1.json" },
     @{ Tag = "v2"; Weights = "src/game/aiPolicyWeights_v2.json" },
     @{ Tag = "v3"; Weights = "src/game/aiPolicyWeights_v3.json" },
-    @{ Tag = "v4"; Weights = "src/game/aiPolicyWeights_v4.json" }
+    @{ Tag = "v4"; Weights = "src/game/aiPolicyWeights_v4.json" },
+    @{ Tag = "v5"; Weights = "src/game/aiPolicyWeights_v5.json" },
+    @{ Tag = "v6"; Weights = "src/game/aiPolicyWeights_v6.json" },
+    @{ Tag = "v7"; Weights = "src/game/aiPolicyWeights_v7.json" },
+    @{ Tag = "v8"; Weights = "src/game/aiPolicyWeights_v8.json" }
 )
 
 $generatedFiles = @()
 
 foreach ($v in $variants) {
+    if (-not (Test-Path $v.Weights)) {
+        Write-Host "Skipping $($v.Tag) ($($v.Weights) not found yet)" -ForegroundColor DarkGray
+        continue
+    }
+
     # Capture live system datetime per variant execution in HH-mm-ss-dd-MM-yy format
     $stamp = Get-Date -Format "HH-mm-ss-dd-MM-yy"
     $baseOut = Join-Path $OutDir "$stamp`_$($v.Tag).json"
@@ -52,6 +61,10 @@ foreach ($v in $variants) {
         throw "Benchmark failed for $($v.Tag) (exit code $LASTEXITCODE)"
     }
     $generatedFiles += $baseOut
+}
+
+if ($generatedFiles.Count -eq 0) {
+    throw "No trained policy weight files found to benchmark."
 }
 
 # 2. Generate unified audit result and summary with the completion date & time
@@ -66,6 +79,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Copy-Item $auditResultOut $summaryOut -Force
-Write-Host "All 4 benchmarks completed and minified." -ForegroundColor Green
+Write-Host "All $($generatedFiles.Count) benchmarks completed and minified." -ForegroundColor Green
 Write-Host "Audit result -> $auditResultOut" -ForegroundColor Green
 Write-Host "Summary      -> $summaryOut" -ForegroundColor Green

@@ -8,6 +8,7 @@ import {
   Layers,
   MapPin,
   Palette,
+  Settings,
   Users,
   Volume2,
   Wrench,
@@ -28,6 +29,7 @@ interface TitleOverlayProps {
   onOpenStudio: () => void;
   onOpenLiveryStudio: () => void;
   onOpenSoundStudio: () => void;
+  onOpenSettings: () => void;
 }
 
 function ApexLogo() {
@@ -121,6 +123,7 @@ export function TitleOverlay({
   onOpenStudio,
   onOpenLiveryStudio,
   onOpenSoundStudio,
+  onOpenSettings,
 }: TitleOverlayProps) {
   const car = getCarById(raceConfig.playerCarId);
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
@@ -169,6 +172,15 @@ export function TitleOverlay({
               Room {roomCode}
             </button>
           )}
+          <button
+            type="button"
+            data-testid="btn-open-settings"
+            onClick={onOpenSettings}
+            className="px-3 py-1.5 rounded bg-[#0b0e13]/72 hover:bg-[#141a24]/90 border border-white/15 hover:border-white/30 text-xs font-semibold text-slate-200 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <Settings className="w-3.5 h-3.5 text-slate-300" />
+            <span>Settings</span>
+          </button>
         </div>
       </div>
 

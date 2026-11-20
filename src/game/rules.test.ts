@@ -14,7 +14,7 @@ import {
   validateDriverNumber,
 } from './cars';
 import { CarClassId, LiveryConfig, TrackSpec, TrackWaypoint } from './types';
-import { TRACKS, compileTrack, projectOntoTrack, sampleTrackAtT } from './tracks';
+import { TRACKS, compileTrack, getTrackById, projectOntoTrack, sampleTrackAtT } from './tracks';
 import {
   GamepadController,
   applySteeringCurve,
@@ -2519,20 +2519,24 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
   assert.equal(v10Car.specialActive, false);
 });
 
-test('AI Policy Variants & Validation Hardening: loads base+v1..v4 (64h/128h), blends outputs, and rejects jagged/NaN weights', async () => {
+test('AI Policy Variants & Validation Hardening: loads base+v1..v4, registers v5..v8, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
   const {
     getAiPolicyVariants,
     evaluateNeuralPolicy,
     evaluateBlendedNeuralPolicy,
     validatePolicyWeights,
+    buildObservationVector,
   } = await import('./aiNeuralPolicy');
 
   const variants = getAiPolicyVariants();
-  assert.equal(variants.length, 5);
+  assert.equal(variants.length, 9);
+  const legacyIds = new Set(['base', 'v1', 'v2', 'v3', 'v4']);
   for (const v of variants) {
-    assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
-    assert.equal(v.obsDim, 43);
-    assert.equal(v.hiddenDim, v.id === 'v3' ? 128 : 64);
+    if (legacyIds.has(v.id)) {
+      assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
+      assert.equal(v.obsDim, 43);
+      assert.equal(v.hiddenDim, v.id === 'v3' ? 128 : 64);
+    }
   }
 
   const obs = new Array(43).fill(0);
@@ -2542,6 +2546,60 @@ test('AI Policy Variants & Validation Hardening: loads base+v1..v4 (64h/128h), b
   assert.ok(Number.isFinite(blended.steer) && blended.steer >= -1 && blended.steer <= 1);
   assert.ok(Number.isFinite(blended.throttle) && blended.throttle >= 0 && blended.throttle <= 1);
   assert.ok(Number.isFinite(blended.brake) && blended.brake >= 0 && blended.brake <= 1);
+
+  // Extended v3 3-layer ResMLP + LayerNorm + ObsNorm + window_tanh obsConfig must validate and run cleanly
+  const h = 8;
+  const zeroMat = (rows: number, cols: number) =>
+    Array.from({ length: rows }, () => new Array(cols).fill(0.01));
+  const v3Policy = validatePolicyWeights({
+    version: 3,
+    obsDim: 43,
+    actDim: 3,
+    hiddenDim: h,
+    numHiddenLayers: 3,
+    activation: 'tanh',
+    residual: true,
+    w0: zeroMat(h, 43),
+    b0: new Array(h).fill(0),
+    ln0Weight: new Array(h).fill(1),
+    ln0Bias: new Array(h).fill(0),
+    w1: zeroMat(h, h),
+    b1: new Array(h).fill(0),
+    ln1Weight: new Array(h).fill(1),
+    ln1Bias: new Array(h).fill(0),
+    w2: zeroMat(h, h),
+    b2: new Array(h).fill(0),
+    ln2Weight: new Array(h).fill(1),
+    ln2Bias: new Array(h).fill(0),
+    w3: zeroMat(3, h),
+    b3: [0, 0.3, -0.5],
+    obsNorm: { mean: new Array(43).fill(0), std: new Array(43).fill(1), clip: 10 },
+    obsConfig: {
+      lookaheadMeters: [10, 24, 45, 75, 115, 165, 230, 310],
+      curvatureMode: 'window_tanh',
+      curvatureScale: 14,
+    },
+  });
+  assert.ok(v3Policy !== null, 'Expected valid v3 3-layer ResMLP+LN+ObsNorm policy');
+  const v3Out = evaluateNeuralPolicy(obs, v3Policy);
+  assert.ok(v3Out !== null);
+  assert.ok(v3Out.throttle > 0.5 && v3Out.brake < 0.5, 'Expected positive throttle bias and low brake bias');
+
+  // Verify window_tanh lookahead produces non-saturated, finite curvatures on tight tracks (Monaco)
+  const monaco = compileTrack(getTrackById('monaco'), 720);
+  const testCar = createCarSimState({
+    id: 'obs-test',
+    name: 'Test',
+    isPlayer: false,
+    carId: 'ferrari-499p',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monaco,
+    compound: 'soft',
+  });
+  const obsV3 = buildObservationVector(testCar, monaco, [testCar], 0, 1, undefined, v3Policy.obsConfig);
+  assert.equal(obsV3.length, 43);
+  assert.ok(obsV3.every((v) => Number.isFinite(v)), 'Expected all v3 observations finite');
 
   // Jagged inner row length must be rejected
   const validBase = variants.find((v) => v.id === 'base')!.weights!;
@@ -2565,6 +2623,139 @@ test('AI Policy Variants & Validation Hardening: loads base+v1..v4 (64h/128h), b
   assert.equal(evaluateNeuralPolicy(nanObs, validBase), null);
 });
 
+test('Spawn Ghosting: bypasses car-to-car collisions while timer active, ticks down, then resumes solid collisions', () => {
+  const spa = compileTrack(getTrackById('spa-francorchamps'), 720);
+  const carA = createCarSimState({
+    id: 'ghost-a',
+    name: 'A',
+    isPlayer: false,
+    carId: 'porsche-911-gt3-r',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 0,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  const carB = createCarSimState({
+    id: 'ghost-b',
+    name: 'B',
+    isPlayer: false,
+    carId: 'porsche-911-gt3-r',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+
+  // Place overlapping at closing speed with active spawn ghosting
+  carA.x = 0;
+  carA.z = 0;
+  carA.heading = 0;
+  carA.speed = 35;
+  carA.vx = 0;
+  carA.vz = 35;
+  carA.spawnGhostTimer = 1.0;
+
+  carB.x = 0;
+  carB.z = 4.1;
+  carB.heading = 0;
+  carB.speed = 15;
+  carB.vx = 0;
+  carB.vz = 15;
+  carB.spawnGhostTimer = 1.0;
+
+  const ghostImpact = resolveCarCollisions([carA, carB]);
+  assert.equal(ghostImpact, 0, 'Expected zero car-to-car impact while spawn ghosting is active');
+  assert.equal(carA.vz, 35, 'Expected velocity unchanged while ghosted');
+
+  // Tick timer down to expiry via stepCarPhysics
+  for (let i = 0; i < 65; i++) {
+    stepCarPhysics(carA, { throttle: 0.2, brake: 0, steer: 0, specialPressed: false }, spa, 1 / 60, {
+      trackWetness: 0,
+      totalLaps: 5,
+      isQualifying: false,
+      allCars: [carA, carB],
+    });
+    stepCarPhysics(carB, { throttle: 0.2, brake: 0, steer: 0, specialPressed: false }, spa, 1 / 60, {
+      trackWetness: 0,
+      totalLaps: 5,
+      isQualifying: false,
+      allCars: [carA, carB],
+    });
+  }
+  assert.equal(carA.spawnGhostTimer, 0);
+  assert.equal(carB.spawnGhostTimer, 0);
+
+  // Re-overlap once solid and confirm collision triggers normally
+  carA.x = 0;
+  carA.z = 0;
+  carA.heading = 0;
+  carA.yawRate = 0;
+  carA.vx = 0;
+  carA.vz = 35;
+  carA.speed = 35;
+  carB.x = 0;
+  carB.z = 4.1;
+  carB.heading = 0;
+  carB.yawRate = 0;
+  carB.vx = 0;
+  carB.vz = 15;
+  carB.speed = 15;
+
+  const solidImpact = resolveCarCollisions([carA, carB]);
+  assert.ok(solidImpact > 5, `Expected solid collision impact after ghosting expires, got ${solidImpact}`);
+});
+
+test('Settings & Controller Input Toggle: disabling controller returns neutral state even when gamepad is active', async () => {
+  const { GamepadController } = await import('./gamepad');
+  const { getGameSettings, setGameSettings, subscribeGameSettings } = await import('./settings');
+
+  const pad = {
+    index: 0,
+    id: 'DualShock 4',
+    connected: true,
+    mapping: 'standard',
+    axes: [0.85, 0, -0.6, 0.4],
+    buttons: [
+      { pressed: true, value: 1 },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { pressed: false, value: 0 },
+      { pressed: true, value: 0.9 },
+    ],
+  };
+
+  const ctrl = new GamepadController();
+  const activeState = ctrl.poll([pad]);
+  assert.equal(activeState.connected, true);
+  assert.ok(activeState.throttle > 0.8 && Math.abs(activeState.steer) > 0.5);
+
+  ctrl.setEnabled(false);
+  assert.equal(ctrl.isEnabled(), false);
+  const disabledState = ctrl.poll([pad]);
+  assert.equal(disabledState.connected, false);
+  assert.equal(disabledState.throttle, 0);
+  assert.equal(disabledState.brake, 0);
+  assert.equal(disabledState.steer, 0);
+  assert.equal(disabledState.cameraX, 0);
+  assert.equal(disabledState.cameraY, 0);
+  assert.equal(disabledState.specialJustPressed, false);
+
+  let notified: boolean | null = null;
+  const unsub = subscribeGameSettings((s) => {
+    notified = s.controllerEnabled;
+  });
+  setGameSettings({ controllerEnabled: false });
+  assert.equal(getGameSettings().controllerEnabled, false);
+  assert.equal(notified, false);
+  setGameSettings({ controllerEnabled: true });
+  assert.equal(getGameSettings().controllerEnabled, true);
+  assert.equal(notified, true);
+  unsub();
+});
+
 test('Chase & Orbit Camera Defaults: distinct straight-ahead chase vs car-centered orbit', async () => {
   const { computeCameraFrame, DEFAULT_CHASE_CAMERA } = await import('./camera');
   assert.ok(DEFAULT_CHASE_CAMERA.pitch >= 0.4, 'Default chase pitch should sit high enough for clear forward track sightline');
@@ -2584,4 +2775,5 @@ test('Chase & Orbit Camera Defaults: distinct straight-ahead chase vs car-center
   assert.ok(orbitFrame.lookAt.y > 2, 'Pivot should sit above car origin');
   assert.ok(orbitFrame.position.y > 2 + 4.5, `Expected elevated orbit camera y, got ${orbitFrame.position.y}`);
 });
+
 

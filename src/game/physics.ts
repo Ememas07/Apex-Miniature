@@ -168,6 +168,7 @@ export interface CarSimState {
   aiStuckTimer: number;
   aiPrevHeadingErr: number;
   wallCollisionCooldown?: number;
+  spawnGhostTimer?: number; // seconds remaining where car-to-car collisions are bypassed after spawn/respawn
   pitch?: number; // radians (+ = nose up)
   roll?: number; // radians (+ = right side raised)
   yawRate?: number;
@@ -370,6 +371,7 @@ export function createCarSimState(params: {
     aiStuckTimer: 0,
     aiPrevHeadingErr: 0,
     wallCollisionCooldown: 0,
+    spawnGhostTimer: 0,
     pitch: 0,
     roll: 0,
     yawRate: 0,
@@ -1376,9 +1378,12 @@ export function stepCarPhysics(
     ((proj.sample.curvature > 0 && car.lateralOffset > 0) ||
       (proj.sample.curvature < 0 && car.lateralOffset < 0));
 
-  // Update wall collision cooldown timer
+  // Update wall collision cooldown & spawn ghosting timers
   if (car.wallCollisionCooldown && car.wallCollisionCooldown > 0) {
     car.wallCollisionCooldown = Math.max(0, car.wallCollisionCooldown - dt);
+  }
+  if (car.spawnGhostTimer && car.spawnGhostTimer > 0) {
+    car.spawnGhostTimer = Math.max(0, car.spawnGhostTimer - dt);
   }
 
   // Outer track guardrails / barriers
@@ -1821,7 +1826,14 @@ export function resolveCarCollisions(cars: CarSimState[]): number {
     for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i];
       const b = cars[j];
-      if (a.pitStopRemaining > 0 || b.pitStopRemaining > 0) continue;
+      if (
+        a.pitStopRemaining > 0 ||
+        b.pitStopRemaining > 0 ||
+        (a.spawnGhostTimer ?? 0) > 0 ||
+        (b.spawnGhostTimer ?? 0) > 0
+      ) {
+        continue;
+      }
 
       // Quick broadphase reject (> 6.5m center distance cannot touch)
       const cdx = b.x - a.x;

@@ -35,7 +35,9 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
   };
 
   const handleEqualMix = () => {
-    const next: AiPolicyMixWeights = { base: 0, v1: 0, v2: 0, v3: 0, v4: 0 };
+    const next = Object.fromEntries(
+      AI_POLICY_VARIANT_IDS.map((id) => [id, 0]),
+    ) as AiPolicyMixWeights;
     const count = loadedVariants.length || 1;
     const share = Math.round(100 / count);
     for (const v of loadedVariants) {
