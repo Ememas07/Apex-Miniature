@@ -1,8 +1,7 @@
-import aiPolicyWeightsRaw from './aiPolicyWeights.json';
-import aiPolicyWeightsV1Raw from './aiPolicyWeights_v1.json';
-import aiPolicyWeightsV2Raw from './aiPolicyWeights_v2.json';
-import aiPolicyWeightsV3Raw from './aiPolicyWeights_v3.json';
-import aiPolicyWeightsV4Raw from './aiPolicyWeights_v4.json';
+import aiPolicyWeightsV5Raw from './aiPolicyWeights_v5.json';
+import aiPolicyWeightsV6Raw from './aiPolicyWeights_v6.json';
+import aiPolicyWeightsV7Raw from './aiPolicyWeights_v7.json';
+import aiPolicyWeightsV8Raw from './aiPolicyWeights_v8.json';
 import { BoPMultipliers } from './cars';
 import {
   CarSimState,
@@ -53,22 +52,12 @@ export interface PolicyWeights {
 }
 
 export type AiPolicyVariantId =
-  | 'base'
-  | 'v1'
-  | 'v2'
-  | 'v3'
-  | 'v4'
   | 'v5'
   | 'v6'
   | 'v7'
   | 'v8';
 
 export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = [
-  'base',
-  'v1',
-  'v2',
-  'v3',
-  'v4',
   'v5',
   'v6',
   'v7',
@@ -90,18 +79,13 @@ export interface AiPolicyVariantInfo {
 }
 
 export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
-  base: 100,
-  v1: 0,
-  v2: 0,
-  v3: 0,
-  v4: 0,
   v5: 0,
   v6: 0,
   v7: 0,
-  v8: 0,
+  v8: 100,
 };
 
-const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v1';
+const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v2';
 
 function isFiniteNumberVector(arr: unknown, expectedLength: number): arr is number[] {
   if (!Array.isArray(arr) || arr.length !== expectedLength) return false;
@@ -221,37 +205,12 @@ export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
 }
 
 export const AI_POLICY_WEIGHTS: PolicyWeights =
-  validatePolicyWeights(aiPolicyWeightsRaw) ?? (aiPolicyWeightsRaw as PolicyWeights);
+  validatePolicyWeights(aiPolicyWeightsV8Raw) ?? (aiPolicyWeightsV8Raw as PolicyWeights);
 
 const VARIANT_META: Record<
   AiPolicyVariantId,
   { label: string; shortLabel: string; description: string }
 > = {
-  base: {
-    label: 'Baseline Policy',
-    shortLabel: 'Base',
-    description: 'Default shipped neural policy (aiPolicyWeights.json)',
-  },
-  v1: {
-    label: 'v1 Clean Apex',
-    shortLabel: 'v1 Apex',
-    description: 'Safety & survival focus, anti-stall < 25 km/h floor, gamma 0.995',
-  },
-  v2: {
-    label: 'v2 Momentum',
-    shortLabel: 'v2 Mom.',
-    description: 'Anti-deceleration, jerk & pedal-overlap smoothing, higher entropy',
-  },
-  v3: {
-    label: 'v3 Aggressive Pace',
-    shortLabel: 'v3 Pace',
-    description: '128-unit hidden MLP, 0.60 forward progress, wider kerb usage',
-  },
-  v4: {
-    label: 'v4 Curriculum',
-    shortLabel: 'v4 Curr.',
-    description: '2-phase solo hotlap (35%) -> traffic self-play (65%)',
-  },
   v5: {
     label: 'v5 Hotlap & Pace',
     shortLabel: 'v5 Hotlap',
@@ -274,42 +233,12 @@ const VARIANT_META: Record<
   },
 };
 
-function loadOptionalVariantGlob(): Record<string, unknown> {
-  try {
-    const meta = import.meta as unknown as {
-      glob?: (pattern: string, opts: { eager: boolean }) => Record<string, { default?: unknown } | unknown>;
-    };
-    if (typeof meta.glob === 'function') {
-      const modules = meta.glob('./aiPolicyWeights_v[5-8].json', { eager: true });
-      const out: Record<string, unknown> = {};
-      for (const [k, mod] of Object.entries(modules)) {
-        const m = k.match(/aiPolicyWeights_(v[5-8])\.json$/);
-        if (m) {
-          out[m[1]] = (mod && typeof mod === 'object' && 'default' in mod)
-            ? (mod as { default: unknown }).default
-            : mod;
-        }
-      }
-      return out;
-    }
-  } catch {
-    // Non-Vite runtime (e.g. tsx/Node tests)
-  }
-  return {};
-}
-
 const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
-  const optionalWeights = loadOptionalVariantGlob();
   const weightsById: Record<AiPolicyVariantId, PolicyWeights | null> = {
-    base: validatePolicyWeights(aiPolicyWeightsRaw),
-    v1: validatePolicyWeights(aiPolicyWeightsV1Raw),
-    v2: validatePolicyWeights(aiPolicyWeightsV2Raw),
-    v3: validatePolicyWeights(aiPolicyWeightsV3Raw),
-    v4: validatePolicyWeights(aiPolicyWeightsV4Raw),
-    v5: validatePolicyWeights(optionalWeights.v5),
-    v6: validatePolicyWeights(optionalWeights.v6),
-    v7: validatePolicyWeights(optionalWeights.v7),
-    v8: validatePolicyWeights(optionalWeights.v8),
+    v5: validatePolicyWeights(aiPolicyWeightsV5Raw),
+    v6: validatePolicyWeights(aiPolicyWeightsV6Raw),
+    v7: validatePolicyWeights(aiPolicyWeightsV7Raw),
+    v8: validatePolicyWeights(aiPolicyWeightsV8Raw),
   };
   const out = {} as Record<AiPolicyVariantId, AiPolicyVariantInfo>;
   for (const id of AI_POLICY_VARIANT_IDS) {
@@ -384,11 +313,6 @@ export function setActiveAiPolicyMix(next: Partial<AiPolicyMixWeights>): void {
 
 export function selectSingleAiPolicyVariant(id: AiPolicyVariantId): void {
   const mix: AiPolicyMixWeights = {
-    base: 0,
-    v1: 0,
-    v2: 0,
-    v3: 0,
-    v4: 0,
     v5: 0,
     v6: 0,
     v7: 0,
@@ -419,8 +343,9 @@ export function getNormalizedPolicyMix(
     }
   }
   if (total <= 0 || candidates.length === 0) {
-    const fallback = POLICY_REGISTRY.base.weights;
-    return fallback ? [{ id: 'base', fraction: 1, weights: fallback }] : [];
+    const fallback = POLICY_REGISTRY.v8.weights ?? POLICY_REGISTRY.v7.weights;
+    const fallbackId: AiPolicyVariantId = POLICY_REGISTRY.v8.weights ? 'v8' : 'v7';
+    return fallback ? [{ id: fallbackId, fraction: 1, weights: fallback }] : [];
   }
   return candidates.map((c) => ({
     id: c.id,

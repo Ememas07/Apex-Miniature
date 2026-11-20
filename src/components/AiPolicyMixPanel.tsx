@@ -68,7 +68,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
 
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-[11px] font-telemetry text-sky-300 truncate max-w-[190px]">
-            {summaryText || 'Base 100%'}
+            {summaryText || 'v8 Flag. 100%'}
           </span>
           {compact && (
             <button
@@ -85,28 +85,52 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
 
       {expanded && (
         <div className="space-y-3 pt-2 border-t border-white/10">
-          {/* Quick Single-Model / Blend Presets */}
+          {/* Quick Single-Model & Recommended V5–V8 Blend Presets */}
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() => setActiveAiPolicyMix({ ...DEFAULT_POLICY_MIX })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-white/10 text-[11px] font-semibold text-slate-200 cursor-pointer flex items-center gap-1 whitespace-nowrap"
-              title="Reset to 100% Base neural model"
+              title="Reset to 100% v8 Flagship neural model"
             >
               <RotateCcw className="w-3 h-3" />
-              Base 100%
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 0, v7: 40, v8: 60 })}
+              className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-emerald-500/35 text-[11px] font-semibold text-emerald-300 cursor-pointer whitespace-nowrap"
+              title="60% v8 Flagship + 40% v7 Survival (Best all-rounder)"
+            >
+              Flagship 60/40
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 15, v7: 35, v8: 50 })}
+              className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-sky-500/35 text-[11px] font-semibold text-sky-300 cursor-pointer whitespace-nowrap"
+              title="50% v8 + 35% v7 + 15% v6 (Wheel-to-wheel racecraft)"
+            >
+              Racecraft
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveAiPolicyMix({ v5: 15, v6: 0, v7: 20, v8: 65 })}
+              className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-amber-500/35 text-[11px] font-semibold text-amber-300 cursor-pointer whitespace-nowrap"
+              title="65% v8 + 20% v7 + 15% v5 (Maximum pace)"
+            >
+              Max Pace
             </button>
             {loadedVariants.length > 1 && (
               <button
                 type="button"
                 onClick={handleEqualMix}
-                className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-sky-500/30 text-[11px] font-semibold text-sky-300 cursor-pointer whitespace-nowrap"
+                className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-white/15 text-[11px] font-semibold text-slate-300 cursor-pointer whitespace-nowrap"
               >
-                Equal Blend ({loadedVariants.length})
+                Equal ({loadedVariants.length})
               </button>
             )}
             {variants
-              .filter((v) => v.id !== 'base' && v.loaded)
+              .filter((v) => v.loaded)
               .map((v) => {
                 const isExclusive = normalized.length === 1 && normalized[0].id === v.id;
                 return (

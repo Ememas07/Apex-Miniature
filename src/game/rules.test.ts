@@ -2545,7 +2545,7 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
   assert.equal(v10Car.specialActive, false);
 });
 
-test('AI Policy Variants & Validation Hardening: loads base+v1..v4, registers v5..v8, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
+test('AI Policy Variants & Validation Hardening: exposes only v5..v8, loads all 4, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
   const {
     getAiPolicyVariants,
     evaluateNeuralPolicy,
@@ -2555,19 +2555,19 @@ test('AI Policy Variants & Validation Hardening: loads base+v1..v4, registers v5
   } = await import('./aiNeuralPolicy');
 
   const variants = getAiPolicyVariants();
-  assert.equal(variants.length, 9);
-  const legacyIds = new Set(['base', 'v1', 'v2', 'v3', 'v4']);
+  assert.deepEqual(
+    variants.map((v) => v.id),
+    ['v5', 'v6', 'v7', 'v8'],
+  );
   for (const v of variants) {
-    if (legacyIds.has(v.id)) {
-      assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
-      assert.equal(v.obsDim, 43);
-      assert.equal(v.hiddenDim, v.id === 'v3' ? 128 : 64);
-    }
+    assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
+    assert.equal(v.obsDim, 43);
+    assert.equal(v.hiddenDim, 128);
   }
 
   const obs = new Array(43).fill(0);
   obs[0] = 0.5;
-  const blended = evaluateBlendedNeuralPolicy(obs, { base: 50, v1: 20, v2: 10, v3: 10, v4: 10 });
+  const blended = evaluateBlendedNeuralPolicy(obs, { v5: 15, v6: 15, v7: 30, v8: 40 });
   assert.ok(blended !== null);
   assert.ok(Number.isFinite(blended.steer) && blended.steer >= -1 && blended.steer <= 1);
   assert.ok(Number.isFinite(blended.throttle) && blended.throttle >= 0 && blended.throttle <= 1);
@@ -2628,7 +2628,7 @@ test('AI Policy Variants & Validation Hardening: loads base+v1..v4, registers v5
   assert.ok(obsV3.every((v) => Number.isFinite(v)), 'Expected all v3 observations finite');
 
   // Jagged inner row length must be rejected
-  const validBase = variants.find((v) => v.id === 'base')!.weights!;
+  const validBase = variants.find((v) => v.id === 'v8')!.weights!;
   const jagged = {
     ...validBase,
     w0: validBase.w0.map((row, idx) => (idx === 0 ? row.slice(0, 42) : row)),
@@ -2639,7 +2639,7 @@ test('AI Policy Variants & Validation Hardening: loads base+v1..v4, registers v5
   // NaN weights or NaN observations must fail safe to null rather than leaking NaN
   const nanWeights = {
     ...validBase,
-    b2: [Number.NaN, 0, 0],
+    b2: validBase.b2.map((x, idx) => (idx === 0 ? Number.NaN : x)),
   };
   assert.equal(validatePolicyWeights(nanWeights), null);
   assert.equal(evaluateNeuralPolicy(obs, nanWeights), null);
