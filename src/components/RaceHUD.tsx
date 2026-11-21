@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Cpu,
   Eye,
   Fuel,
   Home,
@@ -83,6 +84,7 @@ export function RaceHUD({
 }: RaceHUDProps) {
   const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
   const [aiServiceCompound, setAiServiceCompound] = useState<TireCompound>('soft');
+  const [showAiVisualizer, setShowAiVisualizer] = useState(false);
   const track = customTrack || getTrackById(trackId);
   const isAiRace = hud.sessionMode === 'ai-race';
   const isHotlapMode = hud.sessionMode === 'practice' || hud.sessionMode === 'time-trial';
@@ -499,13 +501,13 @@ export function RaceHUD({
               hud.blueFlagActive ||
               (hud.dirtyAirStrength ?? 0) > 0.25 ||
               hud.drsEligible ||
-              hud.inAttackModeZone ||
+              (carSpecial.specialType === 'attack-mode' && hud.inAttackModeZone) ||
               (hud.surfaceType && hud.surfaceType !== 'asphalt' && hud.surfaceType !== 'kerb')) && (
               <div className="mt-2 pt-2 short:mt-1 short:pt-1 border-t border-white/10 space-y-1 short:space-y-0.5 text-[11px] short:text-[9px] font-semibold">
                 {hud.blueFlagActive && (
                   <div className="text-sky-400 font-bold">BLUE FLAG — YIELD TO FASTER CAR</div>
                 )}
-                {hud.inAttackModeZone && (
+                {carSpecial.specialType === 'attack-mode' && hud.inAttackModeZone && (
                   <div className="text-fuchsia-300 font-bold">ATTACK MODE ACTIVATION ZONE</div>
                 )}
                 {hud.drsEligible && (
@@ -760,6 +762,26 @@ export function RaceHUD({
         {/* Top-Right Cluster: Compact Minimap & Utility Icon Buttons */}
         <div className="flex flex-col items-end gap-1.5 sm:gap-2 short:gap-1 shrink-0">
           <div className="flex items-center gap-1 sm:gap-1.5 short:gap-1 pointer-events-auto">
+            {hud.aiNeuralTelemetry && (
+              <button
+                type="button"
+                tabIndex={-1}
+                data-testid="btn-toggle-ai-visualizer"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  setShowAiVisualizer((v) => !v);
+                }}
+                aria-label="Toggle AI Neural Telemetry Visualizer"
+                title="AI Neural Visualizer (4 radar slots, 8 curvature probes, live policy outputs)"
+                className={`min-w-[38px] min-h-[38px] sm:min-w-0 sm:min-h-0 p-2 short:p-1.5 rounded border cursor-pointer flex items-center justify-center ${
+                  showAiVisualizer
+                    ? 'bg-sky-600 border-sky-400 text-white'
+                    : 'bg-[#0b0e13]/90 border-white/15 text-slate-200 hover:text-white'
+                }`}
+              >
+                <Cpu className="w-4 h-4 short:w-3.5 short:h-3.5" />
+              </button>
+            )}
             <button
               type="button"
               tabIndex={-1}
@@ -1540,6 +1562,157 @@ export function RaceHUD({
             })()}
           </div>
         )}
+
+      {/* Section 4.2.2: In-Game AI Neural Telemetry & Visualizer Overlay (Pro/Debug Mode) */}
+      {showAiVisualizer && hud.aiNeuralTelemetry && (
+        <div
+          data-testid="hud-ai-neural-visualizer"
+          className="fixed right-3 top-44 sm:right-5 sm:top-48 w-[264px] bg-[#0b0e13]/92 border border-sky-500/35 rounded-md p-3 text-[11px] text-slate-200 shadow-2xl pointer-events-auto space-y-2.5 z-20"
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                <span className="font-display font-bold text-white truncate">
+                  {hud.aiNeuralTelemetry.driverName}
+                </span>
+                {hud.aiNeuralTelemetry.nationality && (
+                  <span className="px-1 py-0.2 rounded bg-white/10 text-[9px] font-telemetry text-slate-300">
+                    {hud.aiNeuralTelemetry.nationality}
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-slate-400 truncate">
+                {hud.aiNeuralTelemetry.personality} · {hud.aiNeuralTelemetry.policyBlendLabel}
+              </div>
+            </div>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
+                hud.aiNeuralTelemetry.activeManeuver === 'defending'
+                  ? 'bg-amber-600/30 text-amber-300 border border-amber-500/40'
+                  : hud.aiNeuralTelemetry.activeManeuver === 'overtaking'
+                  ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                  : hud.aiNeuralTelemetry.activeManeuver === 'recovering'
+                  ? 'bg-red-600/30 text-red-300 border border-red-500/40'
+                  : 'bg-sky-600/25 text-sky-300 border border-sky-500/35'
+              }`}
+            >
+              {hud.aiNeuralTelemetry.activeManeuver}
+            </span>
+          </div>
+
+          {/* Live Neural Policy Outputs: Steer / Throttle / Brake */}
+          <div className="space-y-1.5 font-telemetry tabular-nums">
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="w-9 text-slate-400">STR</span>
+              <div className="flex-1 h-2 bg-[#161c28] rounded overflow-hidden relative">
+                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/25" />
+                <div
+                  className="absolute top-0 bottom-0 bg-sky-400"
+                  style={{
+                    left: hud.aiNeuralTelemetry.steer >= 0 ? '50%' : `${50 + hud.aiNeuralTelemetry.steer * 50}%`,
+                    width: `${Math.abs(hud.aiNeuralTelemetry.steer) * 50}%`,
+                  }}
+                />
+              </div>
+              <span className="w-10 text-right text-sky-300">
+                {hud.aiNeuralTelemetry.steer >= 0 ? '+' : ''}
+                {hud.aiNeuralTelemetry.steer.toFixed(2)}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="w-9 text-slate-400">THR</span>
+              <div className="flex-1 h-2 bg-[#161c28] rounded overflow-hidden">
+                <div
+                  className="h-full bg-emerald-400"
+                  style={{ width: `${Math.round(hud.aiNeuralTelemetry.throttle * 100)}%` }}
+                />
+              </div>
+              <span className="w-10 text-right text-emerald-300">
+                {Math.round(hud.aiNeuralTelemetry.throttle * 100)}%
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="w-9 text-slate-400">BRK</span>
+              <div className="flex-1 h-2 bg-[#161c28] rounded overflow-hidden">
+                <div
+                  className="h-full bg-red-500"
+                  style={{ width: `${Math.round(hud.aiNeuralTelemetry.brake * 100)}%` }}
+                />
+              </div>
+              <span className="w-10 text-right text-red-400">
+                {Math.round(hud.aiNeuralTelemetry.brake * 100)}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+              <span>Starts → Race Crossfade</span>
+              <span className="text-sky-300">
+                {Math.round(hud.aiNeuralTelemetry.startPolicyWeight * 100)}% starts
+              </span>
+            </div>
+          </div>
+
+          {/* 8 Lookahead Curvature Probes */}
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">
+              8 Lookahead Curvature Probes (10m → 310m)
+            </div>
+            <div className="grid grid-cols-8 gap-1 h-9 items-center bg-[#121722] rounded px-1.5 py-1 border border-white/5">
+              {hud.aiNeuralTelemetry.lookaheadCurvatures.map((k, idx) => {
+                const mag = Math.min(1, Math.abs(k));
+                return (
+                  <div key={idx} className="h-full flex flex-col justify-center items-center relative">
+                    <div className="w-full h-px bg-white/15 absolute top-1/2" />
+                    <div
+                      className={`w-2 rounded-xs ${k >= 0 ? 'bg-amber-400' : 'bg-cyan-400'}`}
+                      style={{
+                        height: `${Math.max(2, Math.round(mag * 14))}px`,
+                        transform: k >= 0 ? 'translateY(-45%)' : 'translateY(45%)',
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 4 Neural Traffic Radar Slots */}
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">
+              4 Neural Traffic Radar Slots
+            </div>
+            <div className="grid grid-cols-2 gap-1 font-telemetry text-[10px] tabular-nums">
+              {hud.aiNeuralTelemetry.radarSlots.map((slot, idx) => (
+                <div
+                  key={idx}
+                  className={`px-1.5 py-1 rounded border ${
+                    slot.occupied
+                      ? 'bg-[#151e2e] border-sky-500/35 text-slate-200'
+                      : 'bg-[#0f131b] border-white/5 text-slate-600'
+                  }`}
+                >
+                  {slot.occupied
+                    ? `S${idx + 1}: ${slot.relLongM >= 0 ? '+' : ''}${slot.relLongM}m / ${slot.relLatM >= 0 ? '+' : ''}${slot.relLatM}m`
+                    : `S${idx + 1}: Clear`}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {(hud.aiNeuralTelemetry.strategyIntent || hud.aiNeuralTelemetry.mistakeActive) && (
+            <div className="pt-1 border-t border-white/10 text-[10px] space-y-0.5">
+              {hud.aiNeuralTelemetry.strategyIntent && (
+                <div className="text-amber-300 truncate">
+                  Strategy: {hud.aiNeuralTelemetry.strategyIntent}
+                </div>
+              )}
+              {hud.aiNeuralTelemetry.mistakeActive && (
+                <div className="text-red-400 font-semibold">Mistake event active (lockup/wide)</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

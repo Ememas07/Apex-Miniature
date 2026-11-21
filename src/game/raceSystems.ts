@@ -922,12 +922,16 @@ export function stepRaceControl(
       c.drsEligible = inDrs && withinOneSec;
     }
 
-    // Attack Mode zone check for Formula E
-    const az = zones.attackModeZone;
-    const inAzLong = isTInRange(c.trackT, az.startT, az.endT);
-    const latSigned = c.lateralOffset * az.side;
-    const inAzLat = latSigned >= az.lateralMinRatio * halfW && latSigned <= az.lateralMaxRatio * halfW + 1.2;
-    c.inAttackModeZone = inAzLong && inAzLat;
+    // Attack Mode zone check strictly for Formula E cars only
+    if (c.carSpec.classId === CarClassId.FORMULA_E) {
+      const az = zones.attackModeZone;
+      const inAzLong = isTInRange(c.trackT, az.startT, az.endT);
+      const latSigned = c.lateralOffset * az.side;
+      const inAzLat = latSigned >= az.lateralMinRatio * halfW && latSigned <= az.lateralMaxRatio * halfW + 1.2;
+      c.inAttackModeZone = inAzLong && inAzLat;
+    } else {
+      c.inAttackModeZone = false;
+    }
 
     if (
       c.carSpec.classId === CarClassId.FORMULA_E &&

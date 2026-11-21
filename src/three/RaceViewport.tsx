@@ -62,7 +62,8 @@ import {
   TrackSpecialZones,
   WeatherSystemState,
 } from '../game/raceSystems';
-import { DEFAULT_CAR_SETUP, normalizeCarSetup } from '../game/carSetup';
+import { DEFAULT_CAR_SETUP, getDefaultTrackClassSetup, normalizeCarSetup } from '../game/carSetup';
+import { assignAiRosterGrid, evaluateAiRaceStrategy } from '../game/aiRacecraft';
 import {
   computeLiveDeltaSeconds,
   GhostSample,
@@ -500,39 +501,45 @@ export function RaceViewport(props: RaceViewportProps) {
       });
     };
 
-    const buildZoneMarkers = (compiled: ReturnType<typeof compileTrack>, zones: TrackSpecialZones): THREE.Group => {
+    const buildZoneMarkers = (
+      compiled: ReturnType<typeof compileTrack>,
+      zones: TrackSpecialZones,
+      showAttackModeZone: boolean,
+    ): THREE.Group => {
       const grp = new THREE.Group();
       const halfW = compiled.spec.trackWidth * 0.5;
 
-      // Illuminated off-line Formula E Attack Mode Activation Loop (cyan/magenta chevrons)
-      const az = zones.attackModeZone;
-      const steps = 10;
-      const azSpan = az.endT >= az.startT ? az.endT - az.startT : 1 - az.startT + az.endT;
-      const chevGeo = new THREE.PlaneGeometry(halfW * 0.46, 1.4);
-      const chevMat = new THREE.MeshBasicMaterial({
-        color: 0x38bdf8,
-        transparent: true,
-        opacity: 0.62,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      const borderMat = new THREE.MeshBasicMaterial({
-        color: 0xe879f9,
-        transparent: true,
-        opacity: 0.78,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      const latCenter = az.side * halfW * ((az.lateralMinRatio + az.lateralMaxRatio) * 0.5);
-      for (let i = 0; i < steps; i++) {
-        const t = (az.startT + (azSpan * (i + 0.5)) / steps) % 1;
-        const sp = sampleTrackAtT(compiled, t);
-        const mesh = new THREE.Mesh(chevGeo, i === 0 || i === steps - 1 ? borderMat : chevMat);
-        mesh.position.set(sp.x + sp.nx * latCenter, sp.y + 0.055, sp.z + sp.nz * latCenter);
-        mesh.rotation.order = 'YXZ';
-        mesh.rotation.y = Math.atan2(sp.tx, sp.tz);
-        mesh.rotation.x = -Math.PI / 2;
-        grp.add(mesh);
+      // Illuminated off-line Formula E Attack Mode Activation Loop — ONLY visible when driving Formula E
+      if (showAttackModeZone) {
+        const az = zones.attackModeZone;
+        const steps = 10;
+        const azSpan = az.endT >= az.startT ? az.endT - az.startT : 1 - az.startT + az.endT;
+        const chevGeo = new THREE.PlaneGeometry(halfW * 0.46, 1.4);
+        const chevMat = new THREE.MeshBasicMaterial({
+          color: 0x38bdf8,
+          transparent: true,
+          opacity: 0.62,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const borderMat = new THREE.MeshBasicMaterial({
+          color: 0xe879f9,
+          transparent: true,
+          opacity: 0.78,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const latCenter = az.side * halfW * ((az.lateralMinRatio + az.lateralMaxRatio) * 0.5);
+        for (let i = 0; i < steps; i++) {
+          const t = (az.startT + (azSpan * (i + 0.5)) / steps) % 1;
+          const sp = sampleTrackAtT(compiled, t);
+          const mesh = new THREE.Mesh(chevGeo, i === 0 || i === steps - 1 ? borderMat : chevMat);
+          mesh.position.set(sp.x + sp.nx * latCenter, sp.y + 0.055, sp.z + sp.nz * latCenter);
+          mesh.rotation.order = 'YXZ';
+          mesh.rotation.y = Math.atan2(sp.tx, sp.tz);
+          mesh.rotation.x = -Math.PI / 2;
+          grp.add(mesh);
+        }
       }
 
       // DRS Activation Start Line Markers (crisp motorsport emerald strip across track)
@@ -809,7 +816,11 @@ export function RaceViewport(props: RaceViewportProps) {
       }
       sim.specialZones = computeTrackSpecialZones(compiled);
       if (!isTitle) {
-        const zm = buildZoneMarkers(compiled, sim.specialZones);
+        const isAiRaceMode = cfg.sessionMode === 'ai-race';
+        const showFeAttackZone = isAiRaceMode
+          ? cfg.activeClasses.includes(CarClassId.FORMULA_E)
+          : getCarById(cfg.playerCarId).classId === CarClassId.FORMULA_E;
+        const zm = buildZoneMarkers(compiled, sim.specialZones, showFeAttackZone);
         sim.zoneMarkersGroup = zm;
         scene.add(zm);
       }
@@ -918,6 +929,7 @@ export function RaceViewport(props: RaceViewportProps) {
 
       let peerCursor = 0;
       let aiCursor = 0;
+      const aiRoster = assignAiRosterGrid(totalGrid, cfg.aiDifficulty, aiPaceMult);
       for (let slot = 0; slot < totalGrid; slot++) {
         if (slot === playerSlot && !isTitle && !isAiRace) {
           const pCar = createCarSimState({
@@ -931,7 +943,7 @@ export function RaceViewport(props: RaceViewportProps) {
             compound: cfg.startingCompound,
             startType: gridStartType,
             rollingSpeed: formationSpeedMs,
-            setup: cfg.carSetup,
+            setup: cfg.carSetup ?? getDefaultTrackClassSetup(playerSpec.id, compiled.spec.id),
             damageLevel: cfg.damageLevel ?? 'light',
             absLevel: cfg.absLevel ?? 'low',
           });
@@ -969,46 +981,46 @@ export function RaceViewport(props: RaceViewportProps) {
             compound: cfg.startingCompound,
             startType: gridStartType,
             rollingSpeed: formationSpeedMs,
+            setup: getDefaultTrackClassSetup(peer.carId, compiled.spec.id),
             damageLevel: cfg.damageLevel ?? 'light',
           });
           sim.rollingFormationLanes.set(peerCar.id, peerCar.lateralOffset);
           newCars.push(peerCar);
         } else {
-          // Fill remaining grid slots with AI Bots across active classes
-          const pick = sortedPool[(aiCursor * 3 + slot) % sortedPool.length];
-          const personality = PERSONALITIES[aiCursor % PERSONALITIES.length];
-          // Genuine per-driver pace variance (wider spread on Alien so the field isn't an identical pace train)
-          const spreadSlot = ((aiCursor * 17 + slot * 5) % 9) / 8; // 0..1 deterministic distribution
-          const jitter =
-            cfg.aiDifficulty === 'Alien'
-              ? 0.925 + spreadSlot * 0.115
-              : 0.965 + spreadSlot * 0.065;
-          let aiLivery = {
-            ...pick.defaultLivery,
-            driverNumber: String(((aiCursor + 2) * 7) % 98 + 1),
-          };
-          const botName = AI_NAMES[aiCursor % AI_NAMES.length];
+          // Fill remaining grid slots with structured 2-car team AI Roster pairings
+          const teamPairIdx = Math.floor(aiCursor / 2);
+          const pick = sortedPool[teamPairIdx % sortedPool.length];
+          const assignment = aiRoster[aiCursor % aiRoster.length];
+          const profile = assignment.profile;
 
-          // If car has multiple team liveries (F1 2026, F1 2021, LMP2), cycle through them across the AI grid
-          if (pick.liveries && pick.liveries.length > 0) {
-            const preset = pick.liveries[aiCursor % pick.liveries.length];
-            aiLivery = { ...preset.livery };
-          }
+          const hasTeamPresets = Boolean(pick.liveries && pick.liveries.length > 0);
+          const baseLivery = hasTeamPresets
+            ? { ...pick.liveries![teamPairIdx % pick.liveries!.length].livery }
+            : { ...pick.defaultLivery };
+          const aiLivery = assignment.applyCoordinatedLivery(baseLivery, hasTeamPresets);
 
           const bot = createCarSimState({
             id: `ai-${aiCursor}`,
-            name: botName,
+            name: profile.name,
             isPlayer: false,
             carId: pick.id,
             livery: aiLivery,
             gridSlot: slot,
             compiledTrack: compiled,
             compound:
-              sim.weatherSystem.trackWetness > 0.30 || (cfg.weather === 'dynamic-rain' && aiCursor % 3 === 0)
+              sim.weatherSystem.trackWetness > 0.34 || (cfg.weather === 'dynamic-rain' && aiCursor % 3 === 0)
                 ? 'wet'
                 : 'medium',
-            personality,
-            aiPaceMultiplier: aiPaceMult * jitter,
+            personality: profile.personality,
+            aiPaceMultiplier: assignment.paceMultiplier,
+            aiDriverId: profile.id,
+            aiNationality: profile.nationality,
+            aiTeamName: profile.teamName,
+            aiRivalId: profile.rivalId,
+            aiSkillRating: profile.skill,
+            aiWetSkill: profile.wetSkill,
+            aiConsistency: profile.consistency,
+            setup: getDefaultTrackClassSetup(pick.id, compiled.spec.id),
             startType: gridStartType,
             rollingSpeed: formationSpeedMs,
             damageLevel: cfg.damageLevel ?? 'light',
@@ -1924,26 +1936,31 @@ export function RaceViewport(props: RaceViewportProps) {
                 c.lateralOffset,
                 roadHalfW,
               );
-              // Autonomous AI weather/tire on-track service reactivity on longer races (NO pit lanes)
+              // Section 4.1.2: Authentic AI On-Track Race Strategy & Weather Reactivity (NO pit lanes!)
               if (
                 isRealRace &&
                 !c.finished &&
                 !c.aiPendingStop &&
                 c.pitStopRemaining <= 0 &&
                 c.pitCooldown <= 0 &&
-                p.raceConfig.sessionMode !== 'ai-race' &&
-                (isTimedRace || effectiveTotalLaps >= 4) &&
                 c.lap >= 2 &&
-                (isTimedRace ? (raceTimeRemaining ?? 0) > 65 : effectiveTotalLaps - c.lap >= 1)
+                (isTimedRace || effectiveTotalLaps >= 3)
               ) {
-                if (sim.trackWetness > 0.62 && c.compound !== 'wet') {
-                  c.aiPendingStop = { action: 'tyres', compound: 'wet' };
-                } else if (sim.trackWetness < 0.14 && c.compound === 'wet') {
-                  c.aiPendingStop = { action: 'tyres', compound: 'medium' };
-                } else if (c.tireWear < 13) {
-                  c.aiPendingStop = { action: 'tyres', compound: sim.trackWetness > 0.35 ? 'wet' : 'medium' };
-                } else if (c.fuel < 6) {
-                  c.aiPendingStop = { action: 'fuel' };
+                const estRemLaps = isTimedRace
+                  ? Math.max(0, (raceTimeRemaining ?? 0) / Math.max(45, c.bestLapTime ?? 75))
+                  : Math.max(0, effectiveTotalLaps - c.lap + (1 - c.trackT));
+                const strat = evaluateAiRaceStrategy({
+                  car: c,
+                  allCars: sim.cars,
+                  trackWetness: sim.trackWetness,
+                  remainingLaps: estRemLaps,
+                  isTimedRace,
+                  raceTimeRemainingSeconds: raceTimeRemaining,
+                  damageLevel: dmgLvl,
+                });
+                if (strat) {
+                  c.aiPendingStop = { action: strat.action, compound: strat.compound };
+                  c.aiStrategyIntent = strat.reason;
                 }
               }
 
@@ -2222,14 +2239,31 @@ export function RaceViewport(props: RaceViewportProps) {
             }
 
             const isManuallyAdjustingOrbit = sim.isDraggingOrbit || isRightStickOrbiting;
+            // Tighter center-lock when going slow (e.g., Safety Car / pit-stop pullover) or weaving rapidly
+            const lowSpeedFactor = Math.max(0, Math.min(1, (34 - focusCar.speed) / 24));
+            const weaveFactor = Math.max(
+              0,
+              Math.min(1, (Math.abs(focusCar.yawRate ?? 0) - 0.25) / 1.1 + Math.abs(focusCar.steerAngle) * 0.75),
+            );
+            const centerLockBoost = Math.max(lowSpeedFactor, weaveFactor);
+
             if (isManuallyAdjustingOrbit) {
               // Capture manual yaw offset relative to car's heading without fighting active drags
               sim.orbitYawOffset = normalizeAngleRad(sim.targetOrbitWorldYaw - (focusCar.heading + Math.PI));
             } else {
-              // Follow car heading at preserved manual yaw/pitch offsets (never snap pitch or yaw back)
+              // Follow car heading at preserved manual yaw/pitch offsets, locking tightly during slow/weave driving
               const desiredWorldYaw = focusCar.heading + Math.PI + sim.orbitYawOffset;
               const yawDiff = normalizeAngleRad(desiredWorldYaw - sim.targetOrbitWorldYaw);
-              sim.targetOrbitWorldYaw += yawDiff * (1 - Math.exp(-9.5 * dt));
+              const yawFollowRate = 9.5 + centerLockBoost * 20.5; // 9.5 at high speed -> up to 30 when slow/weaving
+              sim.targetOrbitWorldYaw += yawDiff * (1 - Math.exp(-yawFollowRate * dt));
+              // Clamp maximum trailing lag when camera is centered during low-speed weaving (e.g., under SC)
+              if (centerLockBoost > 0.25 && Math.abs(sim.orbitYawOffset) < 0.08) {
+                const postDiff = normalizeAngleRad(desiredWorldYaw - sim.targetOrbitWorldYaw);
+                const maxLag = 0.16 - centerLockBoost * 0.11; // down to ~0.05 rad (~2.8 deg) under SC weaving
+                if (Math.abs(postDiff) > maxLag) {
+                  sim.targetOrbitWorldYaw = desiredWorldYaw - Math.sign(postDiff) * maxLag;
+                }
+              }
             }
 
             // Roll-only reset back to 0 after ~2.5s idle delay using smooth damping (leave pitch & yaw alone)
@@ -2245,7 +2279,8 @@ export function RaceViewport(props: RaceViewportProps) {
               }
             }
 
-            const angDamp = sim.isDraggingOrbit ? 1.0 : 1 - Math.exp(-16 * dt);
+            const angRate = 16 + centerLockBoost * 18; // tighter follow under slow speeds / rapid weaving
+            const angDamp = sim.isDraggingOrbit ? 1.0 : 1 - Math.exp(-angRate * dt);
             const worldDiff = normalizeAngleRad(sim.targetOrbitWorldYaw - sim.orbitWorldYaw);
             sim.orbitWorldYaw += worldDiff * angDamp;
             sim.orbitPitch += (sim.targetOrbitPitch - sim.orbitPitch) * angDamp;
@@ -2919,6 +2954,23 @@ export function RaceViewport(props: RaceViewportProps) {
           managedAiCarId: isAiRaceHud ? hudFocusCar.id : null,
           aiPaceOrder: hudFocusCar.aiPaceOrder ?? 'balanced',
           weekendStage: p.raceConfig.weekendStage,
+          aiNeuralTelemetry: (() => {
+            if (!hudFocusCar.isPlayer && !hudFocusCar.isHumanPeer && hudFocusCar.aiLastTelemetry) {
+              return hudFocusCar.aiLastTelemetry;
+            }
+            // In player sessions with AI, show nearest AI car's live neural telemetry when visualizer is toggled
+            let nearestAi: CarSimState | null = null;
+            let bestDist = Infinity;
+            for (const c of sim.cars) {
+              if (c.isPlayer || c.isHumanPeer || !c.aiLastTelemetry) continue;
+              const d = Math.hypot(c.x - hudFocusCar.x, c.z - hudFocusCar.z);
+              if (d < bestDist) {
+                bestDist = d;
+                nearestAi = c;
+              }
+            }
+            return nearestAi?.aiLastTelemetry ?? null;
+          })(),
         };
 
         p.onHudUpdate(snapshot);

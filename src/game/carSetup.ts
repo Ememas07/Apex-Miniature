@@ -1,4 +1,4 @@
-import { BoPMultipliers } from './cars';
+import { BoPMultipliers, getCarById } from './cars';
 import { CarClassId, CarSetupConfig } from './types';
 
 export type SetupPresetId = 'balanced' | 'low-downforce' | 'high-downforce' | 'wet';
@@ -248,13 +248,381 @@ function readSetupStore(): Record<string, CarSetupConfig> {
   }
 }
 
+type TrackSetupArchetype = 'low-drag' | 'high-downforce' | 'high-speed-aero' | 'bumpy-braking' | 'balanced';
+
+const TRACK_ARCHETYPE_MAP: Record<string, { archetype: TrackSetupArchetype; label: string }> = {
+  // Ultra Low-Drag / High-Speed
+  monza: { archetype: 'low-drag', label: 'Monza Low-Drag' },
+  'le-mans': { archetype: 'low-drag', label: 'Le Mans Low-Drag' },
+  baku: { archetype: 'low-drag', label: 'Baku Low-Drag' },
+  'las-vegas': { archetype: 'low-drag', label: 'Las Vegas Low-Drag' },
+  'daytona-road': { archetype: 'low-drag', label: 'Daytona Low-Drag' },
+  jeddah: { archetype: 'low-drag', label: 'Jeddah High-Speed' },
+  'paul-ricard': { archetype: 'low-drag', label: 'Paul Ricard Low-Drag' },
+  'road-america': { archetype: 'low-drag', label: 'Road America Low-Drag' },
+  // Maximum Downforce / Street & Tight Technical
+  monaco: { archetype: 'high-downforce', label: 'Monaco Max-DF' },
+  singapore: { archetype: 'high-downforce', label: 'Singapore Max-DF' },
+  hungaroring: { archetype: 'high-downforce', label: 'Hungaroring High-DF' },
+  'long-beach': { archetype: 'high-downforce', label: 'Long Beach Street' },
+  'detroit-street': { archetype: 'high-downforce', label: 'Detroit Street' },
+  zandvoort: { archetype: 'high-downforce', label: 'Zandvoort High-DF' },
+  'mexico-city': { archetype: 'high-downforce', label: 'Mexico High-DF' },
+  'lime-rock': { archetype: 'high-downforce', label: 'Lime Rock Technical' },
+  miami: { archetype: 'high-downforce', label: 'Miami Technical' },
+  madring: { archetype: 'high-downforce', label: 'Madring High-DF' },
+  // High-Speed Aero & Elevation
+  'spa-francorchamps': { archetype: 'high-speed-aero', label: 'Spa Aero-Efficiency' },
+  silverstone: { archetype: 'high-speed-aero', label: 'Silverstone High-Speed' },
+  suzuka: { archetype: 'high-speed-aero', label: 'Suzuka High-Speed' },
+  cota: { archetype: 'high-speed-aero', label: 'COTA High-Speed' },
+  portimao: { archetype: 'high-speed-aero', label: 'Portimao Elevation' },
+  interlagos: { archetype: 'high-speed-aero', label: 'Interlagos Balanced' },
+  'red-bull-ring': { archetype: 'high-speed-aero', label: 'Red Bull Ring' },
+  'watkins-glen': { archetype: 'high-speed-aero', label: 'Watkins Glen' },
+  mosport: { archetype: 'high-speed-aero', label: 'Mosport High-Speed' },
+  'road-atlanta': { archetype: 'high-speed-aero', label: 'Road Atlanta' },
+  fuji: { archetype: 'high-speed-aero', label: 'Fuji Aero-Efficiency' },
+  sepang: { archetype: 'high-speed-aero', label: 'Sepang High-Speed' },
+  lusail: { archetype: 'high-speed-aero', label: 'Lusail High-Speed' },
+  barcelona: { archetype: 'high-speed-aero', label: 'Barcelona Aero' },
+  'albert-park': { archetype: 'high-speed-aero', label: 'Albert Park' },
+  // Bumpy / Heavy Braking & Traction
+  sebring: { archetype: 'bumpy-braking', label: 'Sebring Bumpy-Enduro' },
+  montreal: { archetype: 'bumpy-braking', label: 'Montreal Braking-Kerb' },
+  imola: { archetype: 'bumpy-braking', label: 'Imola Kerb-Traction' },
+  'laguna-seca': { archetype: 'bumpy-braking', label: 'Laguna Seca Technical' },
+  bahrain: { archetype: 'bumpy-braking', label: 'Bahrain Traction' },
+  shanghai: { archetype: 'bumpy-braking', label: 'Shanghai Front-Limited' },
+  'yas-marina': { archetype: 'bumpy-braking', label: 'Yas Marina Traction' },
+  'mid-ohio': { archetype: 'bumpy-braking', label: 'Mid-Ohio Bumpy' },
+  vir: { archetype: 'bumpy-braking', label: 'VIR Elevation' },
+  'indianapolis-road': { archetype: 'bumpy-braking', label: 'Indy Road' },
+};
+
+type SetupClassBucket = 'F1' | 'GTP' | 'LMP2' | 'GT3' | 'OTHER';
+
+function resolveSetupClassBucket(classId: CarClassId): SetupClassBucket {
+  if (
+    classId === CarClassId.F1_2026 ||
+    classId === CarClassId.F1_2021 ||
+    classId === CarClassId.F1_2005
+  ) {
+    return 'F1';
+  }
+  if (classId === CarClassId.HYPERCAR_GTP) return 'GTP';
+  if (classId === CarClassId.LMP2) return 'LMP2';
+  if (classId === CarClassId.GT3) return 'GT3';
+  return 'OTHER';
+}
+
+const CLASS_ARCHETYPE_SETUPS: Record<
+  Exclude<SetupClassBucket, 'OTHER'>,
+  Record<TrackSetupArchetype, CarSetupConfig>
+> = {
+  F1: {
+    'low-drag': {
+      frontWing: 24,
+      rearWing: 18,
+      brakeBalance: 57.5,
+      finalDrive: 7,
+      suspensionStiffness: 74,
+      arbBalance: 4,
+      diffLock: 46,
+      startingFuel: 92,
+      tirePressureFront: 24.8,
+      tirePressureRear: 23.6,
+    },
+    'high-downforce': {
+      frontWing: 90,
+      rearWing: 88,
+      brakeBalance: 54.5,
+      finalDrive: -7,
+      suspensionStiffness: 56,
+      arbBalance: 14,
+      diffLock: 62,
+      startingFuel: 88,
+      tirePressureFront: 23.2,
+      tirePressureRear: 22.4,
+    },
+    'high-speed-aero': {
+      frontWing: 66,
+      rearWing: 62,
+      brakeBalance: 56.0,
+      finalDrive: 1,
+      suspensionStiffness: 76,
+      arbBalance: 8,
+      diffLock: 52,
+      startingFuel: 94,
+      tirePressureFront: 24.4,
+      tirePressureRear: 23.4,
+    },
+    'bumpy-braking': {
+      frontWing: 62,
+      rearWing: 66,
+      brakeBalance: 55.0,
+      finalDrive: -2,
+      suspensionStiffness: 54,
+      arbBalance: -6,
+      diffLock: 48,
+      startingFuel: 95,
+      tirePressureFront: 23.8,
+      tirePressureRear: 22.8,
+    },
+    balanced: {
+      frontWing: 58,
+      rearWing: 56,
+      brakeBalance: 56.0,
+      finalDrive: 0,
+      suspensionStiffness: 70,
+      arbBalance: 6,
+      diffLock: 52,
+      startingFuel: 95,
+      tirePressureFront: 24.0,
+      tirePressureRear: 23.2,
+    },
+  },
+  GTP: {
+    'low-drag': {
+      frontWing: 26,
+      rearWing: 22,
+      brakeBalance: 58.0,
+      finalDrive: 8,
+      suspensionStiffness: 66,
+      arbBalance: -4,
+      diffLock: 44,
+      startingFuel: 96,
+      tirePressureFront: 25.0,
+      tirePressureRear: 24.4,
+    },
+    'high-downforce': {
+      frontWing: 82,
+      rearWing: 84,
+      brakeBalance: 55.0,
+      finalDrive: -6,
+      suspensionStiffness: 46,
+      arbBalance: 10,
+      diffLock: 60,
+      startingFuel: 92,
+      tirePressureFront: 23.4,
+      tirePressureRear: 22.8,
+    },
+    'high-speed-aero': {
+      frontWing: 56,
+      rearWing: 54,
+      brakeBalance: 56.5,
+      finalDrive: 2,
+      suspensionStiffness: 64,
+      arbBalance: 4,
+      diffLock: 52,
+      startingFuel: 98,
+      tirePressureFront: 24.2,
+      tirePressureRear: 23.6,
+    },
+    'bumpy-braking': {
+      frontWing: 58,
+      rearWing: 64,
+      brakeBalance: 55.5,
+      finalDrive: -2,
+      suspensionStiffness: 42,
+      arbBalance: -10,
+      diffLock: 48,
+      startingFuel: 100,
+      tirePressureFront: 23.6,
+      tirePressureRear: 23.0,
+    },
+    balanced: {
+      frontWing: 52,
+      rearWing: 52,
+      brakeBalance: 56.5,
+      finalDrive: 0,
+      suspensionStiffness: 58,
+      arbBalance: 2,
+      diffLock: 50,
+      startingFuel: 98,
+      tirePressureFront: 24.0,
+      tirePressureRear: 23.5,
+    },
+  },
+  LMP2: {
+    'low-drag': {
+      frontWing: 28,
+      rearWing: 24,
+      brakeBalance: 57.5,
+      finalDrive: 7,
+      suspensionStiffness: 62,
+      arbBalance: 0,
+      diffLock: 46,
+      startingFuel: 95,
+      tirePressureFront: 24.6,
+      tirePressureRear: 24.0,
+    },
+    'high-downforce': {
+      frontWing: 84,
+      rearWing: 82,
+      brakeBalance: 54.5,
+      finalDrive: -6,
+      suspensionStiffness: 44,
+      arbBalance: 12,
+      diffLock: 58,
+      startingFuel: 90,
+      tirePressureFront: 23.2,
+      tirePressureRear: 22.8,
+    },
+    'high-speed-aero': {
+      frontWing: 60,
+      rearWing: 56,
+      brakeBalance: 56.0,
+      finalDrive: 1,
+      suspensionStiffness: 60,
+      arbBalance: 6,
+      diffLock: 52,
+      startingFuel: 95,
+      tirePressureFront: 24.0,
+      tirePressureRear: 23.5,
+    },
+    'bumpy-braking': {
+      frontWing: 60,
+      rearWing: 62,
+      brakeBalance: 55.0,
+      finalDrive: -2,
+      suspensionStiffness: 40,
+      arbBalance: -6,
+      diffLock: 48,
+      startingFuel: 96,
+      tirePressureFront: 23.5,
+      tirePressureRear: 23.0,
+    },
+    balanced: {
+      frontWing: 54,
+      rearWing: 52,
+      brakeBalance: 56.0,
+      finalDrive: 0,
+      suspensionStiffness: 56,
+      arbBalance: 4,
+      diffLock: 50,
+      startingFuel: 95,
+      tirePressureFront: 23.8,
+      tirePressureRear: 23.4,
+    },
+  },
+  GT3: {
+    'low-drag': {
+      frontWing: 26,
+      rearWing: 28,
+      brakeBalance: 58.5,
+      finalDrive: 6,
+      suspensionStiffness: 54,
+      arbBalance: -8,
+      diffLock: 42,
+      startingFuel: 95,
+      tirePressureFront: 24.5,
+      tirePressureRear: 24.2,
+    },
+    'high-downforce': {
+      frontWing: 78,
+      rearWing: 82,
+      brakeBalance: 55.5,
+      finalDrive: -5,
+      suspensionStiffness: 38,
+      arbBalance: 6,
+      diffLock: 56,
+      startingFuel: 90,
+      tirePressureFront: 23.0,
+      tirePressureRear: 22.6,
+    },
+    'high-speed-aero': {
+      frontWing: 56,
+      rearWing: 60,
+      brakeBalance: 57.0,
+      finalDrive: 1,
+      suspensionStiffness: 50,
+      arbBalance: -4,
+      diffLock: 48,
+      startingFuel: 96,
+      tirePressureFront: 23.8,
+      tirePressureRear: 23.4,
+    },
+    'bumpy-braking': {
+      frontWing: 54,
+      rearWing: 62,
+      brakeBalance: 56.0,
+      finalDrive: -2,
+      suspensionStiffness: 34,
+      arbBalance: -12,
+      diffLock: 44,
+      startingFuel: 98,
+      tirePressureFront: 23.2,
+      tirePressureRear: 22.8,
+    },
+    balanced: {
+      frontWing: 50,
+      rearWing: 54,
+      brakeBalance: 57.0,
+      finalDrive: 0,
+      suspensionStiffness: 46,
+      arbBalance: -4,
+      diffLock: 48,
+      startingFuel: 96,
+      tirePressureFront: 23.6,
+      tirePressureRear: 23.2,
+    },
+  },
+};
+
+/**
+ * Returns the tailored motorsport default setup for a car + track combination.
+ * Provides dedicated per-track × per-class engineering baselines for GTP, LMP2, GT3, and F1.
+ */
+export function getDefaultTrackClassSetup(carId: string, trackId: string): CarSetupConfig {
+  const car = getCarById(carId);
+  const bucket = resolveSetupClassBucket(car.classId);
+  const trackInfo = TRACK_ARCHETYPE_MAP[trackId];
+  const archetype: TrackSetupArchetype = trackInfo?.archetype ?? 'balanced';
+
+  if (bucket !== 'OTHER') {
+    return normalizeCarSetup(CLASS_ARCHETYPE_SETUPS[bucket][archetype]);
+  }
+
+  // Fallback for other classes (GT4, Formula E, Road/Supercar) using track archetype
+  if (archetype === 'low-drag') return { ...CAR_SETUP_PRESETS[1].setup };
+  if (archetype === 'high-downforce') return { ...CAR_SETUP_PRESETS[2].setup };
+  return { ...DEFAULT_CAR_SETUP };
+}
+
+export function getTrackClassSetupLabel(carId: string, trackId: string): string {
+  const car = getCarById(carId);
+  const bucket = resolveSetupClassBucket(car.classId);
+  const trackInfo = TRACK_ARCHETYPE_MAP[trackId];
+  const classTag = bucket === 'OTHER' ? car.classId : bucket;
+  return `${classTag} · ${trackInfo?.label ?? 'Balanced Baseline'}`;
+}
+
 export function getSavedCarSetup(carId: string, trackId: string): CarSetupConfig {
   const store = readSetupStore();
   const specific = store[`${carId}::${trackId}`];
   if (specific) return normalizeCarSetup(specific);
   const carDefault = store[`${carId}::*`];
   if (carDefault) return normalizeCarSetup(carDefault);
-  return { ...DEFAULT_CAR_SETUP };
+  return getDefaultTrackClassSetup(carId, trackId);
+}
+
+export function hasUserSavedCarSetup(carId: string, trackId: string): boolean {
+  const store = readSetupStore();
+  return Boolean(store[`${carId}::${trackId}`] || store[`${carId}::*`]);
+}
+
+export function clearSavedCarSetup(carId: string, trackId: string): CarSetupConfig {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const store = readSetupStore();
+      delete store[`${carId}::${trackId}`];
+      localStorage.setItem(SETUP_STORAGE_KEY, JSON.stringify(store));
+    }
+  } catch {
+    // ignore
+  }
+  return getDefaultTrackClassSetup(carId, trackId);
 }
 
 export function saveCarSetup(carId: string, trackId: string, setup: CarSetupConfig): CarSetupConfig {

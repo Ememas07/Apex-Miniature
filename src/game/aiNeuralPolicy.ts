@@ -1,8 +1,4 @@
-import aiPolicyWeightsV5Raw from './aiPolicyWeights_v5.json';
-import aiPolicyWeightsV6Raw from './aiPolicyWeights_v6.json';
-import aiPolicyWeightsV7Raw from './aiPolicyWeights_v7.json';
-import aiPolicyWeightsV8Raw from './aiPolicyWeights_v8.json';
-import aiPolicyWeightsV9Raw from './aiPolicyWeights_v9.json';
+import aiPolicyWeightsV1Raw from './aiPolicyWeights_v1.json';
 import aiPolicyWeightsStartsRaw from './aiPolicyWeights_starts.json';
 import { BoPMultipliers } from './cars';
 import {
@@ -12,7 +8,14 @@ import {
   ControlInput,
 } from './physics';
 import { CompiledTrack, sampleTrackAtT } from './tracks';
-import { AIDifficulty, RaceStartType } from './types';
+import { AIDifficulty, AiNeuralTelemetrySnapshot, RaceStartType } from './types';
+import {
+  buildAiNeuralTelemetrySnapshot,
+  PERSONALITY_POLICY_PROFILES,
+  resolvePersonalityBlendedMix,
+  stepAiStuckRecovery,
+  stepHumanLikeMistake,
+} from './aiRacecraft';
 
 export interface PolicyObsNorm {
   mean: number[];
@@ -53,22 +56,9 @@ export interface PolicyWeights {
   meta?: Record<string, unknown>;
 }
 
-export type AiPolicyVariantId =
-  | 'v5'
-  | 'v6'
-  | 'v7'
-  | 'v8'
-  | 'v9'
-  | 'v9_2';
+export type AiPolicyVariantId = 'v1' | 'v2';
 
-export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = [
-  'v5',
-  'v6',
-  'v7',
-  'v8',
-  'v9',
-  'v9_2',
-] as const;
+export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = ['v1', 'v2'] as const;
 
 export type AiPolicyMixWeights = Record<AiPolicyVariantId, number>;
 
@@ -81,6 +71,7 @@ export interface AiPolicyVariantInfo {
   loaded: boolean;
   hiddenDim: number | null;
   obsDim: number | null;
+  binaryAvailable?: boolean;
   meta: Record<string, unknown> | null;
 }
 
@@ -95,16 +86,13 @@ export interface StartPolicyStatus {
 }
 
 export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
-  v5: 0,
-  v6: 0,
-  v7: 0,
-  v8: 0,
-  v9: 100,
-  v9_2: 0,
+  v1: 100,
+  v2: 0,
 };
 
-const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v4';
+const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v5_unified';
 const START_POLICY_MODE_STORAGE_KEY = 'apex_ai_start_policy_mode_v1';
+const PERSONALITY_BLEND_STORAGE_KEY = 'apex_ai_personality_blend_v1';
 
 function isFiniteNumberVector(arr: unknown, expectedLength: number): arr is number[] {
   if (!Array.isArray(arr) || arr.length !== expectedLength) return false;
@@ -224,53 +212,34 @@ export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
 }
 
 export const AI_POLICY_WEIGHTS: PolicyWeights =
-  validatePolicyWeights(aiPolicyWeightsV9Raw) ??
-  validatePolicyWeights(aiPolicyWeightsV8Raw) ??
-  (aiPolicyWeightsV8Raw as PolicyWeights);
+  validatePolicyWeights(aiPolicyWeightsV1Raw) ??
+  (aiPolicyWeightsV1Raw as PolicyWeights);
 
 const VARIANT_META: Record<
   AiPolicyVariantId,
   { label: string; shortLabel: string; description: string }
 > = {
-  v5: {
-    label: 'v5 Hotlap & Pace',
-    shortLabel: 'v5 Hotlap',
-    description: '128h LayerNorm+ObsNorm solo pace specialist, 310m window lookahead',
+  v1: {
+    label: 'v1 Physics Master',
+    shortLabel: 'v1 Phys',
+    description:
+      '59-input physics-aware ResMLP: 4-wheel tires, brakes/fade/lock-up, dirty air, wet/puddles, damage & setups',
   },
-  v6: {
-    label: 'v6 Traffic Racecraft',
-    shortLabel: 'v6 Traffic',
-    description: '128h LayerNorm+ObsNorm wheel-to-wheel overtaking & TTC modulation',
-  },
-  v7: {
-    label: 'v7 Wall Survival',
-    shortLabel: 'v7 Surv.',
-    description: '128h ResMLP technical/street specialist, adaptive hard-track focus',
-  },
-  v8: {
-    label: 'v8 Flagship Adaptive',
-    shortLabel: 'v8 Flag.',
-    description: '3x128 ResMLP 3-phase adaptive curriculum all-track flagship driver',
-  },
-  v9: {
-    label: 'v9 Apex Master',
-    shortLabel: 'v9 Master',
-    description: '3x128 ResMLP all-in-one: multi-line traffic, bump-drafting, max pace & track discipline',
-  },
-  v9_2: {
-    label: 'v9.2 Advanced Physics',
-    shortLabel: 'v9.2 Phys',
-    description: '59-input physics-aware ResMLP: 4-wheel tires, brakes, dirty air, crests, surfaces, flags & damage',
+  v2: {
+    label: 'v2 Racecraft Master',
+    shortLabel: 'v2 Craft',
+    description:
+      'Section 4 AI model: Turn-1 braking discipline, multi-class traffic etiquette, one-move defense & strategy-aware ResMLP',
   },
 };
 
-function loadOptionalV92Json(): unknown | null {
+function loadOptionalV2Json(): unknown | null {
   try {
-    // Literal import.meta.glob is statically transformed by Vite (returns {} until v9_2 is trained).
+    // Literal import.meta.glob is statically transformed by Vite (returns {} until v2 is trained).
     // In Node/tsx environments where import.meta.glob does not exist, the try/catch safely returns null.
     const mods = (import.meta as unknown as {
       glob: (pattern: string, opts: { eager: boolean; import: string }) => Record<string, unknown>;
-    }).glob('./aiPolicyWeights_v9_2.json', { eager: true, import: 'default' });
+    }).glob('./aiPolicyWeights_v2.json', { eager: true, import: 'default' });
     const values = Object.values(mods);
     return values.length > 0 ? values[0] : null;
   } catch {
@@ -279,14 +248,10 @@ function loadOptionalV92Json(): unknown | null {
 }
 
 const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
-  const v92Raw = loadOptionalV92Json();
+  const v2Raw = loadOptionalV2Json();
   const weightsById: Record<AiPolicyVariantId, PolicyWeights | null> = {
-    v5: validatePolicyWeights(aiPolicyWeightsV5Raw),
-    v6: validatePolicyWeights(aiPolicyWeightsV6Raw),
-    v7: validatePolicyWeights(aiPolicyWeightsV7Raw),
-    v8: validatePolicyWeights(aiPolicyWeightsV8Raw),
-    v9: validatePolicyWeights(aiPolicyWeightsV9Raw),
-    v9_2: v92Raw ? validatePolicyWeights(v92Raw) : null,
+    v1: validatePolicyWeights(aiPolicyWeightsV1Raw),
+    v2: v2Raw ? validatePolicyWeights(v2Raw) : null,
   };
   const out = {} as Record<AiPolicyVariantId, AiPolicyVariantInfo>;
   for (const id of AI_POLICY_VARIANT_IDS) {
@@ -298,11 +263,46 @@ const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
       loaded: Boolean(w),
       hiddenDim: w ? w.hiddenDim ?? w.w0.length : null,
       obsDim: w ? w.obsDim : null,
+      binaryAvailable: id === 'v1' ? true : Boolean(w),
       meta: w?.meta ?? null,
     };
   }
   return out;
 })();
+
+/**
+ * Loads compact ANB1 binary weights (.bin) from a URL into the live policy registry
+ * (e.g. '/models/policies/aiPolicyWeights_v1.bin' or '..._v2.bin').
+ */
+export async function loadPolicyWeightsFromBinaryUrl(
+  target: AiPolicyVariantId | 'starts',
+  url: string,
+): Promise<boolean> {
+  if (typeof fetch !== 'function') return false;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const buf = await res.arrayBuffer();
+    const decoded = decodePolicyWeightsBinary(buf);
+    if (!decoded) return false;
+    if (target === 'starts') {
+      activeStartPolicyWeights = decoded;
+      return true;
+    }
+    POLICY_REGISTRY[target] = {
+      ...POLICY_REGISTRY[target],
+      weights: decoded,
+      loaded: true,
+      hiddenDim: decoded.hiddenDim ?? decoded.w0.length,
+      obsDim: decoded.obsDim,
+      binaryAvailable: true,
+      meta: decoded.meta ?? null,
+    };
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 let activeStartPolicyWeights: PolicyWeights | null = validatePolicyWeights(aiPolicyWeightsStartsRaw);
 
@@ -434,12 +434,8 @@ export function setActiveAiPolicyMix(next: Partial<AiPolicyMixWeights>): void {
 
 export function selectSingleAiPolicyVariant(id: AiPolicyVariantId): void {
   const mix: AiPolicyMixWeights = {
-    v5: 0,
-    v6: 0,
-    v7: 0,
-    v8: 0,
-    v9: 0,
-    v9_2: 0,
+    v1: 0,
+    v2: 0,
   };
   mix[id] = 100;
   setActiveAiPolicyMix(mix);
@@ -449,6 +445,45 @@ export function subscribeAiPolicyMix(listener: (mix: AiPolicyMixWeights) => void
   mixListeners.add(listener);
   return () => {
     mixListeners.delete(listener);
+  };
+}
+
+function readStoredPersonalityBlend(): boolean {
+  if (typeof window === 'undefined' || !window.localStorage) return true;
+  try {
+    const raw = window.localStorage.getItem(PERSONALITY_BLEND_STORAGE_KEY);
+    if (raw === 'false') return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+let personalityPolicyBlendingEnabled = readStoredPersonalityBlend();
+const personalityBlendListeners = new Set<(enabled: boolean) => void>();
+
+export function getPersonalityPolicyBlendingEnabled(): boolean {
+  return personalityPolicyBlendingEnabled;
+}
+
+export function setPersonalityPolicyBlendingEnabled(enabled: boolean): void {
+  personalityPolicyBlendingEnabled = enabled;
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem(PERSONALITY_BLEND_STORAGE_KEY, String(enabled));
+    } catch {
+      // ignore
+    }
+  }
+  for (const fn of personalityBlendListeners) fn(enabled);
+}
+
+export function subscribePersonalityPolicyBlending(
+  listener: (enabled: boolean) => void,
+): () => void {
+  personalityBlendListeners.add(listener);
+  return () => {
+    personalityBlendListeners.delete(listener);
   };
 }
 
@@ -466,18 +501,8 @@ export function getNormalizedPolicyMix(
     }
   }
   if (total <= 0 || candidates.length === 0) {
-    const fallback =
-      POLICY_REGISTRY.v9_2.weights ??
-      POLICY_REGISTRY.v9.weights ??
-      POLICY_REGISTRY.v8.weights ??
-      POLICY_REGISTRY.v7.weights;
-    const fallbackId: AiPolicyVariantId = POLICY_REGISTRY.v9_2.weights
-      ? 'v9_2'
-      : POLICY_REGISTRY.v9.weights
-        ? 'v9'
-        : POLICY_REGISTRY.v8.weights
-          ? 'v8'
-          : 'v7';
+    const fallback = POLICY_REGISTRY.v2.weights ?? POLICY_REGISTRY.v1.weights;
+    const fallbackId: AiPolicyVariantId = POLICY_REGISTRY.v2.weights ? 'v2' : 'v1';
     return fallback ? [{ id: fallbackId, fraction: 1, weights: fallback }] : [];
   }
   return candidates.map((c) => ({
@@ -1415,19 +1440,81 @@ export function computeNeuralAIControl(
   difficulty?: AIDifficulty,
   startContext?: NeuralStartContext,
 ): ControlInput {
-  // Always evaluate heuristic control for race management, pit triggers, and safety bounds
+  // Always evaluate heuristic control for race management, on-track service triggers, and kinematic safety bounds
   const heuristic = computeAIControl(car, compiledTrack, allCars, dt, trackWetness);
 
-  // If boxing on track or finished, defer directly to heuristic controller
-  if (car.pitStopRemaining > 0 || car.finished) {
+  // If servicing on track, pending on-track service stop, or finished, defer directly to heuristic controller
+  if (car.pitStopRemaining > 0 || car.aiPendingStop || car.finished) {
+    car.aiLastTelemetry = {
+      carId: car.id,
+      driverName: car.name,
+      nationality: car.aiNationality,
+      teamName: car.aiTeamName,
+      personality: car.personality ?? 'Metronome',
+      policyBlendLabel: car.aiPendingStop ? 'On-Track Service Pullover' : 'Service Complete',
+      startPolicyWeight: 0,
+      steer: Number(heuristic.steer.toFixed(3)),
+      throttle: Number(heuristic.throttle.toFixed(3)),
+      brake: Number(heuristic.brake.toFixed(3)),
+      lookaheadCurvatures: [0, 0, 0, 0, 0, 0, 0, 0],
+      radarSlots: [
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+      ],
+      activeManeuver: 'servicing',
+      strategyIntent: car.aiStrategyIntent ?? null,
+      mistakeActive: false,
+    };
     return heuristic;
+  }
+
+  // Section 4.1.6: Stuck / Crash 3-Point Reverse & >3s Anti-Roadblock Ghost Recovery
+  const raceElapsed = startContext?.raceElapsed ?? (car.totalTime > 0 ? car.totalTime : 10);
+  const recovery = stepAiStuckRecovery(car, compiledTrack, dt, raceElapsed > 1.8);
+  if (recovery.active) {
+    car.aiLastTelemetry = {
+      carId: car.id,
+      driverName: car.name,
+      nationality: car.aiNationality,
+      teamName: car.aiTeamName,
+      personality: car.personality ?? 'Metronome',
+      policyBlendLabel: recovery.ghosted ? 'Ghost Recovery' : '3-Point Reverse',
+      startPolicyWeight: 0,
+      steer: Number(recovery.steer.toFixed(3)),
+      throttle: Number(recovery.throttle.toFixed(3)),
+      brake: Number(recovery.brake.toFixed(3)),
+      lookaheadCurvatures: [0, 0, 0, 0, 0, 0, 0, 0],
+      radarSlots: [
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+        { occupied: false, relLongM: 0, relLatM: 0, relSpeedMs: 0, classDiff: 0 },
+      ],
+      activeManeuver: 'recovering',
+      strategyIntent: car.aiStrategyIntent ?? null,
+      mistakeActive: false,
+    };
+    return {
+      steer: recovery.steer,
+      throttle: recovery.throttle,
+      brake: recovery.brake,
+      specialPressed: false,
+      specialJustPressed: false,
+    };
   }
 
   const skillTarget = mapDifficultyToSkillTarget(difficulty, car.aiPaceMultiplier);
   const prevSteer = car.steerAngle;
 
-  // Build per-obsConfig observations (cached so identical configs compute only once)
-  const entries = getNormalizedPolicyMix(activePolicyMix);
+  // Section 4.2.3: Per-Personality Neural Policy Blending (v1 / v2)
+  const effectiveMix = resolvePersonalityBlendedMix(
+    activePolicyMix,
+    car.personality,
+    personalityPolicyBlendingEnabled,
+  );
+  const entries = getNormalizedPolicyMix(effectiveMix);
   if (entries.length === 0) return heuristic;
 
   const obsCache = new Map<string, number[]>();
@@ -1460,10 +1547,12 @@ export function computeNeuralAIControl(
     return obs;
   };
 
+  let primaryObs: number[] | null = null;
   let policyOut: { steer: number; throttle: number; brake: number } | null = null;
   if (entries.length === 1) {
     const w = entries[0].weights;
-    policyOut = evaluateNeuralPolicy(getCachedObs(w.obsConfig, w.obsDim), w);
+    primaryObs = getCachedObs(w.obsConfig, w.obsDim);
+    policyOut = evaluateNeuralPolicy(primaryObs, w);
   } else {
     let steer = 0;
     let throttle = 0;
@@ -1471,7 +1560,9 @@ export function computeNeuralAIControl(
     let weightSum = 0;
     for (let i = 0; i < entries.length; i++) {
       const { fraction, weights } = entries[i];
-      const res = evaluateNeuralPolicy(getCachedObs(weights.obsConfig, weights.obsDim), weights);
+      const obs = getCachedObs(weights.obsConfig, weights.obsDim);
+      if (!primaryObs) primaryObs = obs;
+      const res = evaluateNeuralPolicy(obs, weights);
       if (!res) continue;
       steer += res.steer * fraction;
       throttle += res.throttle * fraction;
@@ -1493,6 +1584,19 @@ export function computeNeuralAIControl(
   let blendedSteer = policyOut.steer;
   let blendedThrottle = policyOut.throttle;
   let blendedBrake = policyOut.brake;
+
+  // Apply subtle per-personality neural control profile (brake timing & exit smoothness)
+  if (personalityPolicyBlendingEnabled && car.personality) {
+    const pProf = PERSONALITY_POLICY_PROFILES[car.personality];
+    if (pProf) {
+      if (blendedBrake > 0.08 && blendedBrake < 0.85) {
+        blendedBrake = Math.max(0, Math.min(1, blendedBrake * pProf.brakeBias));
+      }
+      if (Math.abs(blendedSteer) > 0.35 && blendedBrake < 0.1 && car.tireWear < 75) {
+        blendedThrottle = Math.max(0, Math.min(1, blendedThrottle * pProf.throttleSmoothness));
+      }
+    }
+  }
 
   // Dedicated Start Policy (selectable: Trained Neural / Auto Launch Assist / Off)
   const startWeight = activeStartPolicyMode === 'off' ? 0 : computeStartPhaseWeight(car, startContext);
@@ -1517,6 +1621,14 @@ export function computeNeuralAIControl(
           brake: 0,
         };
       }
+      // Turn-1 braking awareness during neural starts handoff so cars never plow into Turn 1
+      if (startOut && heuristic.brake > 0.28 && car.speed > 18.0) {
+        startOut = {
+          steer: startOut.steer * 0.65 + heuristic.steer * 0.35,
+          throttle: Math.min(startOut.throttle, heuristic.throttle),
+          brake: Math.max(startOut.brake, heuristic.brake * 0.95),
+        };
+      }
     }
     if (!startOut) {
       startOut = computeStartLaunchControl(
@@ -1536,6 +1648,25 @@ export function computeNeuralAIControl(
   const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
   const halfW = (currentSample.width ?? compiledTrack.spec.trackWidth) * 0.5;
   const offTrackRatio = Math.abs(car.lateralOffset) / Math.max(1, halfW);
+
+  // Physics-Aware Turn-1 & Heavy Braking Kinematic Safety Guard:
+  // Prevents pre-physics-overhaul weights (and cold-tire Turn-1 approaches) from under-braking
+  // and plowing straight into Turn 1 walls/gravel, while leaving straightaways & bump-drafting untouched.
+  const isTurn1Window = raceElapsed >= 0 && raceElapsed < 14.0;
+  const brakeThreshold = isTurn1Window ? 0.28 : 0.44;
+  if (car.speed > 18.0 && heuristic.brake > brakeThreshold && blendedBrake < heuristic.brake * 0.82) {
+    const brakeDeficit = heuristic.brake - blendedBrake;
+    const guardGain = isTurn1Window
+      ? Math.min(1.0, 0.55 + (heuristic.brake - 0.25) * 1.1)
+      : Math.min(0.88, (heuristic.brake - 0.38) * 1.35);
+    blendedBrake = Math.min(1.0, blendedBrake + brakeDeficit * guardGain);
+    blendedThrottle = Math.min(blendedThrottle, Math.max(0, 1 - blendedBrake * 1.6));
+    // Nudge steering toward apex when severely overspeeding into Turn 1
+    if (heuristic.brake > 0.55) {
+      const steerAssist = isTurn1Window ? 0.42 : 0.28;
+      blendedSteer = blendedSteer * (1 - steerAssist) + heuristic.steer * steerAssist;
+    }
+  }
 
   // Straight-line bump-drafting: prevent overly timid neural lifting/braking when tucked behind
   // a car (including the player) at high speed on a clear straightaway.
@@ -1578,6 +1709,30 @@ export function computeNeuralAIControl(
     }
   }
 
+  // One-move defensive / blue-flag lateral discipline assist on neural steering
+  if (car.aiDefenseCommitted && startWeight < 0.2 && offTrackRatio < 0.85) {
+    blendedSteer = blendedSteer * 0.70 + heuristic.steer * 0.30;
+  } else if (car.blueFlagActive && startWeight < 0.2 && offTrackRatio < 0.85) {
+    blendedSteer = blendedSteer * 0.65 + heuristic.steer * 0.35;
+    blendedThrottle *= 0.92;
+  }
+
+  // Section 4.1.4: Human-Like Mistakes (difficulty + pressure scaled; disabled on starts & straights)
+  const mistake = stepHumanLikeMistake({
+    car,
+    dt,
+    difficulty,
+    nearCurvature: currentSample.curvature ?? 0,
+    brakeInput: blendedBrake,
+    underPressure: Boolean(car.aiDefenseCommitted),
+    raceElapsed,
+  });
+  if (mistake.active) {
+    blendedSteer += mistake.steerDelta;
+    blendedThrottle *= mistake.throttleMultiplier;
+    blendedBrake *= mistake.brakeMultiplier;
+  }
+
   if (offTrackRatio > 1.05) {
     // Smoothly blend toward heuristic recovery over 1.05..1.25
     const blendWeight = Math.min(1.0, (offTrackRatio - 1.05) / 0.20);
@@ -1597,11 +1752,45 @@ export function computeNeuralAIControl(
     blendedThrottle *= throttleScale;
   }
 
+  const finalSteer = Math.max(-1, Math.min(1, blendedSteer));
+  const finalThrottle = Math.max(0, Math.min(1, blendedThrottle));
+  const finalBrake = Math.max(0, Math.min(1, blendedBrake));
+
+  // Capture live neural telemetry snapshot for Section 4.2.2 HUD Neural Visualizer
+  const blendLabel = entries
+    .map((e) => `${POLICY_REGISTRY[e.id].shortLabel} ${Math.round(e.fraction * 100)}%`)
+    .join(' · ');
+  const activeManeuver: AiNeuralTelemetrySnapshot['activeManeuver'] =
+    startWeight > 0.25
+      ? 'launch'
+      : car.blueFlagActive
+      ? 'blue-flag'
+      : car.aiDefenseCommitted
+      ? 'defending'
+      : car.aiPassTimer > 0
+      ? 'overtaking'
+      : 'racing';
+
+  if (primaryObs) {
+    car.aiLastTelemetry = buildAiNeuralTelemetrySnapshot({
+      car,
+      obs: primaryObs,
+      steer: finalSteer,
+      throttle: finalThrottle,
+      brake: finalBrake,
+      startPolicyWeight: startWeight,
+      policyBlendLabel: blendLabel,
+      activeManeuver,
+      strategyIntent: car.aiStrategyIntent ?? null,
+      mistakeActive: mistake.active,
+    });
+  }
+
   // Preserve DRS / special triggers and manual transmission signals from heuristic
   return {
-    steer: Math.max(-1, Math.min(1, blendedSteer)),
-    throttle: Math.max(0, Math.min(1, blendedThrottle)),
-    brake: Math.max(0, Math.min(1, blendedBrake)),
+    steer: finalSteer,
+    throttle: finalThrottle,
+    brake: finalBrake,
     specialPressed: heuristic.specialPressed,
     specialJustPressed: heuristic.specialJustPressed,
     shiftUp: heuristic.shiftUp,
