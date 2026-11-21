@@ -41,7 +41,8 @@ $allVariants = @(
     @{ Tag = "v5"; Weights = "src/game/aiPolicyWeights_v5.json" },
     @{ Tag = "v6"; Weights = "src/game/aiPolicyWeights_v6.json" },
     @{ Tag = "v7"; Weights = "src/game/aiPolicyWeights_v7.json" },
-    @{ Tag = "v8"; Weights = "src/game/aiPolicyWeights_v8.json" }
+    @{ Tag = "v8"; Weights = "src/game/aiPolicyWeights_v8.json" },
+    @{ Tag = "v9"; Weights = "src/game/aiPolicyWeights_v9.json" }
 )
 
 if ($Variants -and $Variants.Count -gt 0) {

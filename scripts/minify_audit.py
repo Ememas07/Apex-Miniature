@@ -6,7 +6,7 @@ import re
 import sys
 
 TIMESTAMPED_FILENAME_RE = re.compile(
-    r"^(\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})_v([1-8])\.json$"
+    r"^(\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})_v(\d+)\.json$"
 )
 
 STANDARD_SUMMARY_KEYS = {
@@ -35,7 +35,7 @@ def parse_file_sort_key(path: Path) -> tuple[datetime, float]:
 
 def find_latest_variants(
     bench_dir: Path,
-    variants: tuple[str, ...] = ("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"),
+    variants: tuple[str, ...] = ("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"),
 ) -> list[Path]:
     """Find the latest timestamped <HH-mm-ss-dd-MM-yy>_v{1..8}.json file for each variant."""
     if not bench_dir.is_dir():

@@ -220,8 +220,8 @@ def save_reports(out_base: str, all_evaluations: list[dict]):
 def main():
     parser = argparse.ArgumentParser(description="Apex Miniature: Deterministic All-Tracks & All-Cars PPO Benchmark")
     parser.add_argument("--weights", default="src/game/aiPolicyWeights_v1.json", help="Path to policy weights JSON")
-    parser.add_argument("--all", action="store_true", help="Automatically loop over available v1-v8 checkpoints")
-    parser.add_argument("--variants", nargs="*", default=None, help="Optional subset of variants to evaluate (e.g. v5 v6 v7 v8)")
+    parser.add_argument("--all", action="store_true", help="Automatically loop over available v1-v9 checkpoints")
+    parser.add_argument("--variants", nargs="*", default=None, help="Optional subset of variants to evaluate (e.g. v5 v6 v7 v8 v9)")
     parser.add_argument("--envs", type=int, default=16, help="Parallel evaluation batch size")
     parser.add_argument("--max-steps", type=int, default=6000, help="Max steps per episode (default 6000, 10000 on Le Mans)")
     parser.add_argument("--all-liveries", action="store_true", help="Test all liveries/selectable cars instead of base models")
@@ -232,7 +232,7 @@ def main():
 
     weight_candidates = []
     if args.all or args.variants:
-        var_list = args.variants if args.variants else ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"]
+        var_list = args.variants if args.variants else ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"]
         for v in var_list:
             tag = v if v.startswith("v") else f"v{v}"
             candidate = f"src/game/aiPolicyWeights_{tag}.json"
