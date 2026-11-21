@@ -45,12 +45,32 @@ import {
 import { buildCarRigAsync } from './objCarLoader';
 import { buildTrackEnvironment, BuiltTrackScene } from './trackBuilder';
 import { telemetryRecorder } from '../game/telemetryRecorder';
+import {
+  computeTrackSpecialZones,
+  createRaceControlState,
+  createWeatherSystemState,
+  cycleErsMode,
+  evaluateStandingStartLaunch,
+  LAUNCH_RPM_SWEET_SPOT,
+  RaceControlState,
+  sampleLocalTrackSurfaceWeather,
+  stepRaceControl,
+  stepWeatherSystem,
+  TrackSpecialZones,
+  WeatherSystemState,
+} from '../game/raceSystems';
+import { DEFAULT_CAR_SETUP, normalizeCarSetup } from '../game/carSetup';
 
 export interface SpectateControls {
   cycleCar: (dir: 1 | -1) => void;
   selectCar: (carId: string) => void;
   setCameraMode: (mode: SpectatorCameraMode) => void;
   toggleCameraMode: () => void;
+}
+
+export interface InRaceTelemetryControls {
+  cycleErsMode: () => void;
+  adjustBrakeBalance: (delta: number) => void;
 }
 
 interface RaceViewportProps {
@@ -72,6 +92,7 @@ interface RaceViewportProps {
   onToggleMute: () => void;
   onPitHandlerReady?: (handler: (action: PitServiceAction, nextCompound?: TireCompound) => boolean) => void;
   onSpectateControlsReady?: (controls: SpectateControls) => void;
+  onInRaceControlsReady?: (controls: InRaceTelemetryControls) => void;
 }
 
 function detectSoftwareGl(): boolean {
@@ -166,6 +187,12 @@ export function RaceViewport(props: RaceViewportProps) {
     greenFlagFlash: number;
     trackWetness: number;
     rainTimer: number;
+    weatherSystem: WeatherSystemState;
+    raceControl: RaceControlState;
+    specialZones: TrackSpecialZones;
+    launchStatus: 'none' | 'perfect' | 'jump-start';
+    launchStatusTimer: number;
+    jumpStartTriggered: boolean;
     trauma: number;
     qualiTime: number | null;
     qualiGridPos: number | null;
@@ -174,6 +201,7 @@ export function RaceViewport(props: RaceViewportProps) {
     lastTelemetryTime: number;
     slipstreamMesh: THREE.InstancedMesh | null;
     rainMesh: THREE.InstancedMesh | null;
+    zoneMarkersGroup: THREE.Group | null;
     keysPressed: Set<string>;
     specialJustPressed: boolean;
     worldVersion: number;
@@ -294,12 +322,180 @@ export function RaceViewport(props: RaceViewportProps) {
     rainMesh.visible = false;
     scene.add(rainMesh);
 
+    // Pooled InstancedMesh for Carbon-Fiber Impact Debris & Brake Lock-Up Tire Smoke
+    const debrisGeo = new THREE.BoxGeometry(0.16, 0.05, 0.24);
+    const debrisMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.45,
+      metalness: 0.4,
+    });
+    const debrisCount = 36;
+    const debrisMesh = new THREE.InstancedMesh(debrisGeo, debrisMat, debrisCount);
+    debrisMesh.frustumCulled = false;
+    debrisMesh.visible = false;
+    scene.add(debrisMesh);
+    const debrisPool = Array.from({ length: debrisCount }, () => ({
+      active: false,
+      x: 0,
+      y: 0,
+      z: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      rx: 0,
+      ry: 0,
+      life: 0,
+      maxLife: 1,
+    }));
+    let debrisCursor = 0;
+
+    const smokeGeo = new THREE.DodecahedronGeometry(0.28, 0);
+    const smokeMat = new THREE.MeshBasicMaterial({
+      color: 0xe2e8f0,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+    });
+    const smokeCount = 32;
+    const smokeMesh = new THREE.InstancedMesh(smokeGeo, smokeMat, smokeCount);
+    smokeMesh.frustumCulled = false;
+    smokeMesh.visible = false;
+    scene.add(smokeMesh);
+    const smokePool = Array.from({ length: smokeCount }, () => ({
+      active: false,
+      x: 0,
+      y: 0,
+      z: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      life: 0,
+      maxLife: 0.7,
+    }));
+    let smokeCursor = 0;
+
+    // Miniature 3D Safety Car with Flashing Amber/Green Roof Lightbar
+    const safetyCarGroup = new THREE.Group();
+    safetyCarGroup.visible = false;
+    const scBodyGeo = new THREE.BoxGeometry(1.92, 0.56, 4.45);
+    const scBodyMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.65, roughness: 0.28 });
+    const scBody = new THREE.Mesh(scBodyGeo, scBodyMat);
+    scBody.position.set(0, 0.52, 0);
+    scBody.castShadow = !isSoftwareGl;
+    safetyCarGroup.add(scBody);
+
+    const scCabinGeo = new THREE.BoxGeometry(1.48, 0.42, 2.0);
+    const scCabinMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.5, roughness: 0.2 });
+    const scCabin = new THREE.Mesh(scCabinGeo, scCabinMat);
+    scCabin.position.set(0, 0.96, -0.15);
+    safetyCarGroup.add(scCabin);
+
+    const scStripeGeo = new THREE.BoxGeometry(1.95, 0.14, 4.47);
+    const scStripeMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.35, metalness: 0.2 });
+    const scStripe = new THREE.Mesh(scStripeGeo, scStripeMat);
+    scStripe.position.set(0, 0.42, 0);
+    safetyCarGroup.add(scStripe);
+
+    const scLightGeo = new THREE.BoxGeometry(0.46, 0.14, 0.22);
+    const scLeftLightMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      emissive: 0xf59e0b,
+      emissiveIntensity: 2.2,
+    });
+    const scRightLightMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      emissive: 0xf59e0b,
+      emissiveIntensity: 0.2,
+    });
+    const scLeftLight = new THREE.Mesh(scLightGeo, scLeftLightMat);
+    scLeftLight.position.set(-0.28, 1.24, -0.1);
+    const scRightLight = new THREE.Mesh(scLightGeo, scRightLightMat);
+    scRightLight.position.set(0.28, 1.24, -0.1);
+    safetyCarGroup.add(scLeftLight, scRightLight);
+    scene.add(safetyCarGroup);
+
+    const disposeGroupResources = (grp: THREE.Group) => {
+      grp.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((m) => m.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+      });
+    };
+
+    const buildZoneMarkers = (compiled: ReturnType<typeof compileTrack>, zones: TrackSpecialZones): THREE.Group => {
+      const grp = new THREE.Group();
+      const halfW = compiled.spec.trackWidth * 0.5;
+
+      // Illuminated off-line Formula E Attack Mode Activation Loop (cyan/magenta chevrons)
+      const az = zones.attackModeZone;
+      const steps = 10;
+      const azSpan = az.endT >= az.startT ? az.endT - az.startT : 1 - az.startT + az.endT;
+      const chevGeo = new THREE.PlaneGeometry(halfW * 0.46, 1.4);
+      const chevMat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.62,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const borderMat = new THREE.MeshBasicMaterial({
+        color: 0xe879f9,
+        transparent: true,
+        opacity: 0.78,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const latCenter = az.side * halfW * ((az.lateralMinRatio + az.lateralMaxRatio) * 0.5);
+      for (let i = 0; i < steps; i++) {
+        const t = (az.startT + (azSpan * (i + 0.5)) / steps) % 1;
+        const sp = sampleTrackAtT(compiled, t);
+        const mesh = new THREE.Mesh(chevGeo, i === 0 || i === steps - 1 ? borderMat : chevMat);
+        mesh.position.set(sp.x + sp.nx * latCenter, sp.y + 0.055, sp.z + sp.nz * latCenter);
+        mesh.rotation.order = 'YXZ';
+        mesh.rotation.y = Math.atan2(sp.tx, sp.tz);
+        mesh.rotation.x = -Math.PI / 2;
+        grp.add(mesh);
+      }
+
+      // DRS Activation Start Line Markers (crisp motorsport emerald strip across track)
+      const drsLineGeo = new THREE.PlaneGeometry(halfW * 1.9, 0.55);
+      const drsLineMat = new THREE.MeshBasicMaterial({
+        color: 0x10b981,
+        transparent: true,
+        opacity: 0.72,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      for (const dz of zones.drsZones) {
+        const sp = sampleTrackAtT(compiled, dz.activationStartT);
+        const line = new THREE.Mesh(drsLineGeo, drsLineMat);
+        line.position.set(sp.x, sp.y + 0.05, sp.z);
+        line.rotation.order = 'YXZ';
+        line.rotation.y = Math.atan2(sp.tx, sp.tz);
+        line.rotation.x = -Math.PI / 2;
+        grp.add(line);
+      }
+      return grp;
+    };
+
     const audio = new MotorsportAudioEngine();
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
     const keysPressed = new Set<string>();
 
     const initialTrackSpec = propsRef.current.raceConfig.customTrack || getTrackById(propsRef.current.raceConfig.trackId);
     const initialCompiled = compileTrack(initialTrackSpec);
+    const initialWeatherSystem = createWeatherSystemState({
+      weatherMode: propsRef.current.raceConfig.weather,
+      weatherPreset: propsRef.current.raceConfig.weatherPreset,
+      customTimeline: propsRef.current.raceConfig.weatherTimeline,
+      compiledTrack: initialCompiled,
+      totalLaps: propsRef.current.raceConfig.totalLaps,
+    });
     const sim = {
       scene,
       camera,
@@ -317,8 +513,14 @@ export function RaceViewport(props: RaceViewportProps) {
       rollingFormationLanes: new Map<string, number>(),
       raceElapsed: 0,
       greenFlagFlash: 0,
-      trackWetness: 0,
+      trackWetness: initialWeatherSystem.trackWetness,
       rainTimer: 0,
+      weatherSystem: initialWeatherSystem,
+      raceControl: createRaceControlState(),
+      specialZones: computeTrackSpecialZones(initialCompiled),
+      launchStatus: 'none' as 'none' | 'perfect' | 'jump-start',
+      launchStatusTimer: 0,
+      jumpStartTriggered: false,
       trauma: 0,
       qualiTime: null as number | null,
       qualiGridPos: null as number | null,
@@ -327,6 +529,7 @@ export function RaceViewport(props: RaceViewportProps) {
       lastTelemetryTime: 0,
       slipstreamMesh,
       rainMesh,
+      zoneMarkersGroup: null as THREE.Group | null,
       keysPressed,
       specialJustPressed: false,
       worldVersion: 0,
@@ -415,6 +618,27 @@ export function RaceViewport(props: RaceViewportProps) {
       return ok;
     });
 
+    const cyclePlayerErsMode = () => {
+      const pCar = sim.cars.find((c) => c.isPlayer);
+      if (!pCar) return;
+      pCar.ersMode = cycleErsMode(pCar.ersMode ?? 'balanced');
+      sim.audio.playBeep(640, 0.05);
+    };
+
+    const adjustPlayerBrakeBalance = (delta: number) => {
+      const pCar = sim.cars.find((c) => c.isPlayer);
+      if (!pCar) return;
+      const cur = pCar.setup ?? { ...DEFAULT_CAR_SETUP };
+      const next = Math.max(46, Math.min(68, Math.round((cur.brakeBalance + delta) * 2) / 2));
+      pCar.setup = normalizeCarSetup({ ...cur, brakeBalance: next });
+      sim.audio.playBeep(500 + (next - 46) * 8, 0.04);
+    };
+
+    propsRef.current.onInRaceControlsReady?.({
+      cycleErsMode: cyclePlayerErsMode,
+      adjustBrakeBalance: adjustPlayerBrakeBalance,
+    });
+
     propsRef.current.onSpectateControlsReady?.({
       cycleCar: (dir: 1 | -1) => {
         if (sim.cars.length === 0) return;
@@ -466,6 +690,37 @@ export function RaceViewport(props: RaceViewportProps) {
       const builtTrack = buildTrackEnvironment(compiled, maxAniso);
       sim.trackScene = builtTrack;
       scene.add(builtTrack.group);
+
+      // Rebuild DRS & Attack Mode track zone markers
+      if (sim.zoneMarkersGroup) {
+        scene.remove(sim.zoneMarkersGroup);
+        disposeGroupResources(sim.zoneMarkersGroup);
+        sim.zoneMarkersGroup = null;
+      }
+      sim.specialZones = computeTrackSpecialZones(compiled);
+      if (!isTitle) {
+        const zm = buildZoneMarkers(compiled, sim.specialZones);
+        sim.zoneMarkersGroup = zm;
+        scene.add(zm);
+      }
+
+      // Initialize dynamic weather & Race Control for this session
+      sim.weatherSystem = createWeatherSystemState({
+        weatherMode: isTitle ? 'dry' : cfg.weather,
+        weatherPreset: isTitle ? 'clear-dry' : cfg.weatherPreset,
+        customTimeline: isTitle ? undefined : cfg.weatherTimeline,
+        compiledTrack: compiled,
+        totalLaps: cfg.totalLaps,
+      });
+      sim.raceControl = createRaceControlState();
+      sim.launchStatus = 'none';
+      sim.launchStatusTimer = 0;
+      sim.jumpStartTriggered = false;
+      safetyCarGroup.visible = false;
+      for (let i = 0; i < debrisPool.length; i++) debrisPool[i].active = false;
+      for (let i = 0; i < smokePool.length; i++) smokePool[i].active = false;
+      debrisMesh.visible = false;
+      smokeMesh.visible = false;
 
       scene.background = new THREE.Color(builtTrack.skyColor);
       scene.fog = new THREE.FogExp2(builtTrack.fogColor, 0.0017);
@@ -560,6 +815,9 @@ export function RaceViewport(props: RaceViewportProps) {
             compound: cfg.startingCompound,
             startType: gridStartType,
             rollingSpeed: formationSpeedMs,
+            setup: cfg.carSetup,
+            damageLevel: cfg.damageLevel ?? 'light',
+            absLevel: cfg.absLevel ?? 'low',
           });
           if (isQuali || isPractice) {
             // Flying hotlap start: place just before final corner at clean rolling speed
@@ -589,6 +847,7 @@ export function RaceViewport(props: RaceViewportProps) {
             compound: cfg.startingCompound,
             startType: gridStartType,
             rollingSpeed: formationSpeedMs,
+            damageLevel: cfg.damageLevel ?? 'light',
           });
           sim.rollingFormationLanes.set(peerCar.id, peerCar.lateralOffset);
           newCars.push(peerCar);
@@ -622,11 +881,16 @@ export function RaceViewport(props: RaceViewportProps) {
             livery: aiLivery,
             gridSlot: slot,
             compiledTrack: compiled,
-            compound: cfg.weather === 'dynamic-rain' && aiCursor % 3 === 0 ? 'wet' : 'medium',
+            compound:
+              sim.weatherSystem.trackWetness > 0.30 || (cfg.weather === 'dynamic-rain' && aiCursor % 3 === 0)
+                ? 'wet'
+                : 'medium',
             personality,
             aiPaceMultiplier: aiPaceMult * jitter,
             startType: gridStartType,
             rollingSpeed: formationSpeedMs,
+            damageLevel: cfg.damageLevel ?? 'light',
+            absLevel: 'low',
           });
           if (currentPhase === 'title') {
             // Spread title cars gracefully around the track for a live world showcase!
@@ -701,7 +965,7 @@ export function RaceViewport(props: RaceViewportProps) {
             ? 3.2
             : 2.0
           : 0;
-      sim.trackWetness = cfg.weather === 'dynamic-rain' && !isTitle ? 0.35 : 0;
+      sim.trackWetness = sim.weatherSystem.trackWetness;
       sim.rainTimer = 0;
       sim.trauma = 0;
       sim.finishEmitted = false;
@@ -792,16 +1056,28 @@ export function RaceViewport(props: RaceViewportProps) {
       if (
         (code === 'BracketLeft' || code === 'BracketRight') &&
         !e.repeat &&
-        curPhase === 'playing' &&
-        propsRef.current.raceConfig.sessionMode === 'ai-race' &&
+        (curPhase === 'playing' || curPhase === 'qualifying') &&
         sim.cars.length > 0
       ) {
-        const dir = code === 'BracketRight' ? 1 : -1;
-        const idx = sim.cars.findIndex((c) => c.id === sim.spectatedCarId);
-        const nextIdx = idx < 0 ? 0 : (idx + dir + sim.cars.length) % sim.cars.length;
-        const nextCar = sim.cars[nextIdx];
-        sim.spectatedCarId = nextCar.id;
-        resetGameplayCamera(nextCar, true);
+        if (propsRef.current.raceConfig.sessionMode === 'ai-race') {
+          const dir = code === 'BracketRight' ? 1 : -1;
+          const idx = sim.cars.findIndex((c) => c.id === sim.spectatedCarId);
+          const nextIdx = idx < 0 ? 0 : (idx + dir + sim.cars.length) % sim.cars.length;
+          const nextCar = sim.cars[nextIdx];
+          sim.spectatedCarId = nextCar.id;
+          resetGameplayCamera(nextCar, true);
+        } else {
+          adjustPlayerBrakeBalance(code === 'BracketRight' ? 0.5 : -0.5);
+        }
+        return;
+      }
+      if (
+        code === 'KeyB' &&
+        !e.repeat &&
+        (curPhase === 'playing' || curPhase === 'qualifying') &&
+        propsRef.current.raceConfig.sessionMode !== 'ai-race'
+      ) {
+        cyclePlayerErsMode();
         return;
       }
       if (code === 'KeyR' && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
@@ -1159,9 +1435,34 @@ export function RaceViewport(props: RaceViewportProps) {
           } else if (sim.countdown === 0 && prevCeil > 0) {
             sim.audio.playBeep(880, 0.28);
             sim.greenFlagFlash = 1.4;
+            // Standing-start launch & jump-start evaluation at lights out
+            if (sim.activeStartType === 'standing' && playerCar && !isQuali && !isPractice) {
+              const launchEval = evaluateStandingStartLaunch({
+                rpmNormalized: playerCar.rpmNormalized,
+                jumpStartTriggered: sim.jumpStartTriggered && p.raceConfig.jumpStartEnabled !== false,
+              });
+              sim.launchStatus = launchEval.status;
+              sim.launchStatusTimer = launchEval.status === 'none' ? 0 : 3.2;
+              if (launchEval.launchBoostSeconds > 0) {
+                playerCar.launchBoostTimer = launchEval.launchBoostSeconds;
+                sim.raceControl.message = 'PERFECT LAUNCH! OPTIMAL RPM ENGAGEMENT';
+                sim.raceControl.messageTimer = 2.6;
+              } else if (launchEval.postRacePenaltySeconds > 0) {
+                playerCar.postRacePenaltySeconds =
+                  (playerCar.postRacePenaltySeconds ?? 0) + launchEval.postRacePenaltySeconds;
+                playerCar.penaltyReason = 'jump-start';
+                playerCar.penaltyType = 'time-penalty';
+                sim.raceControl.message = `JUMP START DETECTED — +${launchEval.postRacePenaltySeconds}s TIME PENALTY`;
+                sim.raceControl.messageTimer = 4.2;
+              }
+            }
           }
         } else if (sim.greenFlagFlash > 0) {
           sim.greenFlagFlash = Math.max(0, sim.greenFlagFlash - dt);
+        }
+        if (sim.launchStatusTimer > 0) {
+          sim.launchStatusTimer = Math.max(0, sim.launchStatusTimer - dt);
+          if (sim.launchStatusTimer <= 0) sim.launchStatus = 'none';
         }
 
         // Update gantry lights (red buildup for standing start, amber formation pulse for rolling start)
@@ -1185,14 +1486,26 @@ export function RaceViewport(props: RaceViewportProps) {
           });
         }
 
-        // Dynamic Rain Weather curve
-        if (p.raceConfig.weather === 'dynamic-rain') {
-          sim.rainTimer += dt;
-          sim.trackWetness = 0.42 + Math.sin(sim.rainTimer * 0.08) * 0.35;
-          rainMesh.visible = sim.trackWetness > 0.3;
-        } else {
-          sim.trackWetness = 0;
-          rainMesh.visible = false;
+        // Dynamic Weather & Track Evolution (replaces old sine wave)
+        {
+          let leaderDist = 0;
+          for (let i = 0; i < sim.cars.length; i++) {
+            if (sim.cars[i].totalDistance > leaderDist) leaderDist = sim.cars[i].totalDistance;
+          }
+          const raceProgress =
+            !isQuali && !isPractice && p.raceConfig.totalLaps > 0
+              ? Math.max(0, Math.min(1, leaderDist / Math.max(1, p.raceConfig.totalLaps)))
+              : undefined;
+          stepWeatherSystem(
+            sim.weatherSystem,
+            dt,
+            sim.compiledTrack.spec.scenery,
+            sim.cars.length,
+            raceProgress,
+          );
+          sim.trackWetness = sim.weatherSystem.trackWetness;
+          rainMesh.visible = sim.weatherSystem.rainIntensity > 0.08;
+          rainMat.opacity = Math.min(0.65, 0.16 + sim.weatherSystem.rainIntensity * 0.48);
         }
 
         // Read keyboard + gamepad (PS4/DualShock/Xbox/Mobile) + mobile touchpad controls
@@ -1262,6 +1575,23 @@ export function RaceViewport(props: RaceViewportProps) {
 
         if (sim.countdown <= 0) {
           sim.raceElapsed += dt;
+          const isRealRace = !isQuali && !isPractice && activePhase === 'playing';
+          stepRaceControl(sim.raceControl, sim.cars, sim.compiledTrack, sim.specialZones, dt, {
+            totalLaps: p.raceConfig.totalLaps,
+            isRace: isRealRace,
+            safetyCarEnabled: p.raceConfig.safetyCarEnabled !== false,
+          });
+
+          const scSpeedLimit =
+            sim.raceControl.safetyCar.phase === 'sc' ||
+            sim.raceControl.safetyCar.phase === 'sc-ending' ||
+            sim.raceControl.safetyCar.phase === 'vsc'
+              ? sim.raceControl.safetyCar.speedLimitMs
+              : undefined;
+          const roadHalfW = sim.compiledTrack.spec.trackWidth * 0.5;
+          const dmgLvl = p.raceConfig.damageLevel ?? 'light';
+          const absLvl = p.raceConfig.absLevel ?? 'low';
+
           const startCtx =
             !isQuali && !isPractice
               ? { raceElapsed: sim.raceElapsed, startType: sim.activeStartType }
@@ -1270,6 +1600,12 @@ export function RaceViewport(props: RaceViewportProps) {
             const c = sim.cars[i];
             if (c.isPlayer) {
               c.pitStrategy = p.pitStrategy;
+              const localW = sampleLocalTrackSurfaceWeather(
+                sim.weatherSystem,
+                c.trackT,
+                c.lateralOffset,
+                roadHalfW,
+              );
               const playerInput = {
                 throttle,
                 brake,
@@ -1284,6 +1620,14 @@ export function RaceViewport(props: RaceViewportProps) {
                 dt,
                 {
                   trackWetness: sim.trackWetness,
+                  localWetness: localW.localWetness,
+                  puddleIntensity: localW.puddleIntensity,
+                  trackRubber: sim.weatherSystem.trackRubber,
+                  trackTempC: localW.trackTempC,
+                  safetyCarSpeedLimitMs: scSpeedLimit,
+                  drsZoneEnforced: isRealRace,
+                  damageLevel: dmgLvl,
+                  absLevel: absLvl,
                   totalLaps: p.raceConfig.totalLaps,
                   isQualifying: isQuali,
                   isPractice,
@@ -1307,17 +1651,31 @@ export function RaceViewport(props: RaceViewportProps) {
                 c.specialActive = pkt.specialActive;
               }
             } else {
+              const localW = sampleLocalTrackSurfaceWeather(
+                sim.weatherSystem,
+                c.trackT,
+                c.lateralOffset,
+                roadHalfW,
+              );
               const aiIn = computeNeuralAIControl(
                 c,
                 sim.compiledTrack,
                 sim.cars,
                 dt,
-                sim.trackWetness,
+                localW.localWetness,
                 p.raceConfig.aiDifficulty,
                 startCtx,
               );
               stepCarPhysics(c, aiIn, sim.compiledTrack, dt, {
                 trackWetness: sim.trackWetness,
+                localWetness: localW.localWetness,
+                puddleIntensity: localW.puddleIntensity,
+                trackRubber: sim.weatherSystem.trackRubber,
+                trackTempC: localW.trackTempC,
+                safetyCarSpeedLimitMs: scSpeedLimit,
+                drsZoneEnforced: isRealRace,
+                damageLevel: dmgLvl,
+                absLevel: 'low',
                 totalLaps: p.raceConfig.totalLaps,
                 isQualifying: isQuali,
                 isPractice,
@@ -1394,6 +1752,19 @@ export function RaceViewport(props: RaceViewportProps) {
                 ? Math.min(targetGridRpm, playerCar.rpmNormalized + dt * rate)
                 : Math.max(targetGridRpm, playerCar.rpmNormalized - dt * rate);
             playerCar.rpmNormalized = nextRpm;
+
+            // Jump-start detection: pinning full throttle past redline right before lights out without holding brake
+            if (
+              p.raceConfig.jumpStartEnabled !== false &&
+              !isQuali &&
+              !isPractice &&
+              sim.countdown < 0.75 &&
+              throttle > 0.94 &&
+              brake < 0.1 &&
+              playerCar.rpmNormalized > 0.96
+            ) {
+              sim.jumpStartTriggered = true;
+            }
           }
         }
 
@@ -1724,7 +2095,7 @@ export function RaceViewport(props: RaceViewportProps) {
         sim.audio.updateEngine(0, 0, 'v8-hybrid', false);
       }
 
-      // Sync Car 3D Transforms, Rotating Wheels, Active Aero Flap & Lights
+      // Sync Car 3D Transforms, Rotating Wheels, Active Aero Flap, Visual Damage & Rival Boost LEDs
       for (let i = 0; i < sim.cars.length; i++) {
         const c = sim.cars[i];
         const rig = sim.carRigs.get(c.id);
@@ -1734,15 +2105,22 @@ export function RaceViewport(props: RaceViewportProps) {
         const fallbackTilt = computeRoadSurfaceTilt(trkSample, c.heading);
         const roadPitch = c.pitch ?? fallbackTilt.pitchRad;
         const roadRoll = c.roll ?? fallbackTilt.rollRad;
+        const heaveLift = (c.suspensionHeave ?? 0) * 0.14 + (c.sausageKerbHop ?? 0) * 0.18;
 
-        rig.root.position.set(c.x, c.y + 0.02, c.z);
+        rig.root.position.set(c.x, c.y + 0.02 + Math.max(-0.04, heaveLift), c.z);
         rig.root.rotation.order = 'YXZ';
         rig.root.rotation.y = c.heading;
         rig.root.rotation.x = -roadPitch;
         rig.root.rotation.z = -roadRoll;
 
-        // Subtle die-cast suspension roll in corners
-        rig.bodyGroup.rotation.z = -c.steerAngle * Math.min(1, c.speed / 30) * 0.09;
+        // Subtle die-cast suspension roll in corners + flat-spot vibration + bent suspension tilt
+        const flatSpotJitter =
+          (c.flatSpotVibration ?? 0) > 0.05 && c.speed > 8
+            ? Math.sin(now * 0.055 + i) * (c.flatSpotVibration ?? 0) * 0.015
+            : 0;
+        const suspTilt = (c.damage?.suspensionPullDir ?? 0) * ((c.damage?.suspension ?? 0) / 100) * 0.14;
+        rig.bodyGroup.rotation.z =
+          -c.steerAngle * Math.min(1, c.speed / 30) * 0.09 + flatSpotJitter + suspTilt;
 
         const wheelSpin = (((c.gear === -1 ? -1 : 1) * c.speed) / 0.35) * dt;
         for (const w of rig.allWheels) {
@@ -1752,18 +2130,193 @@ export function RaceViewport(props: RaceViewportProps) {
           fw.rotation.y = -c.steerAngle;
         }
 
-        // Active Aero Wing Flaps (F1 2026 Front + Rear Wing Articulation)
-        if (resolveCarSpecial(c.carSpec).specialType === 'active-aero') {
-          if (rig.rearWingFlap) {
-            const targetRear = c.specialActive ? 0.02 : 0.42;
-            rig.rearWingFlap.rotation.x += (targetRear - rig.rearWingFlap.rotation.x) * Math.min(1, dt * 14);
-          }
-          if (rig.frontWingFlap) {
-            const targetFront = c.specialActive ? 0.02 : 0.28;
-            rig.frontWingFlap.rotation.x += (targetFront - rig.frontWingFlap.rotation.x) * Math.min(1, dt * 14);
+        // Visual damage cues: broken/flickering headlights + detached/bent aero wing flaps
+        if (rig.headlightMats.length > 0) {
+          const broken = Boolean(c.damage?.headlightBroken);
+          for (let hIdx = 0; hIdx < rig.headlightMats.length; hIdx++) {
+            const hMat = rig.headlightMats[hIdx];
+            if (broken) {
+              const flicker = ((Math.floor(now / 90) + hIdx * 3 + i) % 7) === 0;
+              hMat.emissiveIntensity = hIdx === 0 ? 0.02 : flicker ? 0.9 : 0.12;
+            } else if (hMat.emissiveIntensity < 0.8) {
+              hMat.emissiveIntensity = 1.4;
+            }
           }
         }
+
+        // Rival boost / Push-to-Pass / Attack Mode LED & rain-light indicator on rear brakeLightMat
+        if (rig.brakeLightMat) {
+          if (c.specialActive || c.attackModeTimer > 0) {
+            const pulse = (now % 260) < 130;
+            rig.brakeLightMat.emissive.setHex(
+              c.attackModeTimer > 0 ? 0x38bdf8 : 0xf59e0b,
+            );
+            rig.brakeLightMat.emissiveIntensity = pulse ? 3.2 : 0.8;
+          } else {
+            rig.brakeLightMat.emissive.setHex(0xef4444);
+            rig.brakeLightMat.emissiveIntensity =
+              (c.brakeLockupIntensity ?? 0) > 0.1 || c.pitStopRemaining > 0 ? 2.6 : 0.55;
+          }
+        }
+
+        // Active Aero / DRS Wing Flaps + visual damage detachment/bend
+        if (rig.rearWingFlap) {
+          if (c.damage?.rearWingDetached) {
+            rig.rearWingFlap.visible = false;
+          } else {
+            rig.rearWingFlap.visible = true;
+            const wingBend = ((c.damage?.rearWing ?? 0) / 100) * 0.25;
+            rig.rearWingFlap.rotation.z = wingBend;
+            if (resolveCarSpecial(c.carSpec).specialType === 'active-aero') {
+              const targetRear = c.specialActive ? 0.02 : 0.42;
+              rig.rearWingFlap.rotation.x += (targetRear - rig.rearWingFlap.rotation.x) * Math.min(1, dt * 14);
+            }
+          }
+        }
+        if (rig.frontWingFlap) {
+          if (c.damage?.frontWingDetached) {
+            rig.frontWingFlap.visible = false;
+          } else {
+            rig.frontWingFlap.visible = true;
+            rig.frontWingFlap.rotation.z = -((c.damage?.frontWing ?? 0) / 100) * 0.22;
+            if (resolveCarSpecial(c.carSpec).specialType === 'active-aero') {
+              const targetFront = c.specialActive ? 0.02 : 0.28;
+              rig.frontWingFlap.rotation.x += (targetFront - rig.frontWingFlap.rotation.x) * Math.min(1, dt * 14);
+            }
+          }
+        }
+
+        // Spawn pooled carbon-fiber impact debris burst on heavy contact
+        if ((c.debrisBurstIntensity ?? 0) > 0.12) {
+          const burst = Math.min(6, Math.ceil((c.debrisBurstIntensity ?? 0) * 5));
+          for (let b = 0; b < burst; b++) {
+            const pItem = debrisPool[debrisCursor];
+            debrisCursor = (debrisCursor + 1) % debrisCount;
+            pItem.active = true;
+            pItem.x = c.x + (Math.random() - 0.5) * 1.4;
+            pItem.y = c.y + 0.5 + Math.random() * 0.4;
+            pItem.z = c.z + (Math.random() - 0.5) * 1.4;
+            pItem.vx = (Math.random() - 0.5) * 11;
+            pItem.vy = 3.5 + Math.random() * 6.5;
+            pItem.vz = (Math.random() - 0.5) * 11;
+            pItem.rx = Math.random() * Math.PI;
+            pItem.ry = Math.random() * Math.PI;
+            pItem.life = 0;
+            pItem.maxLife = 0.75 + Math.random() * 0.65;
+          }
+          c.debrisBurstIntensity = 0;
+        }
+
+        // Spawn pooled tire lock-up white smoke puffs under heavy braking lock-up
+        if ((c.brakeLockupIntensity ?? 0) > 0.28 && c.speed > 10 && Math.random() < 0.65) {
+          const sItem = smokePool[smokeCursor];
+          smokeCursor = (smokeCursor + 1) % smokeCount;
+          const sinH = Math.sin(c.heading);
+          const cosH = Math.cos(c.heading);
+          const side = Math.random() < 0.5 ? -0.75 : 0.75;
+          sItem.active = true;
+          sItem.x = c.x + sinH * 1.2 + cosH * side;
+          sItem.y = c.y + 0.22;
+          sItem.z = c.z + cosH * 1.2 - sinH * side;
+          sItem.vx = -sinH * 2.0 + (Math.random() - 0.5) * 1.2;
+          sItem.vy = 0.9 + Math.random() * 0.8;
+          sItem.vz = -cosH * 2.0 + (Math.random() - 0.5) * 1.2;
+          sItem.life = 0;
+          sItem.maxLife = 0.48 + Math.random() * 0.28;
+        }
       }
+
+      // Sync 3D Safety Car mesh & alternating flashing roof lightbar
+      const scState = sim.raceControl.safetyCar;
+      const showSc = scState.active && (scState.phase === 'sc' || scState.phase === 'sc-ending');
+      safetyCarGroup.visible = showSc;
+      if (showSc) {
+        const scSample = sampleTrackAtT(sim.compiledTrack, scState.trackT);
+        const scTilt = computeRoadSurfaceTilt(scSample, scState.heading);
+        safetyCarGroup.position.set(scState.x, scState.y + 0.02, scState.z);
+        safetyCarGroup.rotation.order = 'YXZ';
+        safetyCarGroup.rotation.y = scState.heading;
+        safetyCarGroup.rotation.x = -scTilt.pitchRad;
+        safetyCarGroup.rotation.z = -scTilt.rollRad;
+        const flashA = Math.floor(now / 180) % 2 === 0;
+        const lightHex = scState.phase === 'sc-ending' ? 0x22c55e : 0xf59e0b;
+        scLeftLightMat.color.setHex(lightHex);
+        scLeftLightMat.emissive.setHex(lightHex);
+        scRightLightMat.color.setHex(lightHex);
+        scRightLightMat.emissive.setHex(lightHex);
+        scLeftLightMat.emissiveIntensity = flashA ? 3.2 : 0.12;
+        scRightLightMat.emissiveIntensity = flashA ? 0.12 : 3.2;
+      }
+
+      // Step pooled carbon debris & brake lock-up smoke InstancedMeshes
+      let anyDebris = false;
+      for (let i = 0; i < debrisCount; i++) {
+        const d = debrisPool[i];
+        if (!d.active) {
+          _particleDummy.position.set(0, -999, 0);
+          _particleDummy.scale.set(0.001, 0.001, 0.001);
+          _particleDummy.updateMatrix();
+          debrisMesh.setMatrixAt(i, _particleDummy.matrix);
+          continue;
+        }
+        d.life += dt;
+        if (d.life >= d.maxLife) {
+          d.active = false;
+          _particleDummy.position.set(0, -999, 0);
+          _particleDummy.scale.set(0.001, 0.001, 0.001);
+          _particleDummy.updateMatrix();
+          debrisMesh.setMatrixAt(i, _particleDummy.matrix);
+          continue;
+        }
+        anyDebris = true;
+        d.vy -= 18 * dt;
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        d.z += d.vz * dt;
+        d.rx += 7 * dt;
+        d.ry += 5 * dt;
+        const fadeScale = Math.max(0.1, 1 - d.life / d.maxLife);
+        _particleDummy.position.set(d.x, d.y, d.z);
+        _particleDummy.rotation.set(d.rx, d.ry, 0);
+        _particleDummy.scale.setScalar(fadeScale);
+        _particleDummy.updateMatrix();
+        debrisMesh.setMatrixAt(i, _particleDummy.matrix);
+      }
+      debrisMesh.visible = anyDebris;
+      if (anyDebris) debrisMesh.instanceMatrix.needsUpdate = true;
+
+      let anySmoke = false;
+      for (let i = 0; i < smokeCount; i++) {
+        const s = smokePool[i];
+        if (!s.active) {
+          _particleDummy.position.set(0, -999, 0);
+          _particleDummy.scale.set(0.001, 0.001, 0.001);
+          _particleDummy.updateMatrix();
+          smokeMesh.setMatrixAt(i, _particleDummy.matrix);
+          continue;
+        }
+        s.life += dt;
+        if (s.life >= s.maxLife) {
+          s.active = false;
+          _particleDummy.position.set(0, -999, 0);
+          _particleDummy.scale.set(0.001, 0.001, 0.001);
+          _particleDummy.updateMatrix();
+          smokeMesh.setMatrixAt(i, _particleDummy.matrix);
+          continue;
+        }
+        anySmoke = true;
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.z += s.vz * dt;
+        const grow = 0.55 + (s.life / s.maxLife) * 1.45;
+        _particleDummy.position.set(s.x, s.y, s.z);
+        _particleDummy.rotation.set(s.life * 2, s.life * 1.5, 0);
+        _particleDummy.scale.setScalar(grow);
+        _particleDummy.updateMatrix();
+        smokeMesh.setMatrixAt(i, _particleDummy.matrix);
+      }
+      smokeMesh.visible = anySmoke;
+      if (anySmoke) smokeMesh.instanceMatrix.needsUpdate = true;
 
       // Sync Floating Billboarded Nametags (position, distance scaling & opacity fade — zero per-frame texture creation)
       const isAiRaceFrame = p.raceConfig.sessionMode === 'ai-race';
@@ -1893,14 +2446,30 @@ export function RaceViewport(props: RaceViewportProps) {
           pitStrategy: hudFocusCar.pitStrategy,
           cameraMode: p.cameraMode,
           standings,
-          minimapDots: sim.cars.map((c) => ({
-            id: c.id,
-            x: c.x,
-            z: c.z,
-            classId: c.carSpec.classId,
-            isPlayer: isAiRaceHud ? c.id === hudFocusCar.id : c.isPlayer,
-            isHumanPeer: c.isHumanPeer,
-          })),
+          minimapDots: [
+            ...sim.cars.map((c) => ({
+              id: c.id,
+              x: c.x,
+              z: c.z,
+              classId: c.carSpec.classId,
+              isPlayer: isAiRaceHud ? c.id === hudFocusCar.id : c.isPlayer,
+              isHumanPeer: c.isHumanPeer,
+            })),
+            ...(sim.raceControl.safetyCar.active &&
+            (sim.raceControl.safetyCar.phase === 'sc' || sim.raceControl.safetyCar.phase === 'sc-ending')
+              ? [
+                  {
+                    id: 'safety-car',
+                    x: sim.raceControl.safetyCar.x,
+                    z: sim.raceControl.safetyCar.z,
+                    classId: CarClassId.SUPERCAR,
+                    isPlayer: false,
+                    isHumanPeer: false,
+                    isSafetyCar: true,
+                  },
+                ]
+              : []),
+          ],
           qualiResultTime: sim.qualiTime,
           qualiGridPos: sim.qualiGridPos,
           sessionMode: p.raceConfig.sessionMode ?? 'race',
@@ -1912,6 +2481,53 @@ export function RaceViewport(props: RaceViewportProps) {
           sectorTimes: hudFocusCar.sectorTimes ? [...hudFocusCar.sectorTimes] : [null, null, null],
           bestSectorTimes: hudFocusCar.bestSectorTimes ? [...hudFocusCar.bestSectorTimes] : [null, null, null],
           lastLapSectorTimes: hudFocusCar.lastLapSectorTimes ? [...hudFocusCar.lastLapSectorTimes] : [null, null, null],
+          // Section 1.2: Race Control, Flags, Safety Car, Penalties & Standing Start
+          raceFlag: sim.raceControl.globalFlag,
+          sectorFlags: [...sim.raceControl.sectorFlags] as ['green' | 'yellow', 'green' | 'yellow', 'green' | 'yellow'],
+          blueFlagActive: Boolean(hudFocusCar.blueFlagActive),
+          safetyCarPhase: sim.raceControl.safetyCar.phase,
+          safetyCarSpeedLimitKmh:
+            sim.raceControl.safetyCar.phase !== 'none'
+              ? Math.round(sim.raceControl.safetyCar.speedLimitMs * SPEED_KMH_FACTOR)
+              : undefined,
+          raceControlMessage: sim.raceControl.message,
+          postRacePenaltySeconds: hudFocusCar.postRacePenaltySeconds ?? 0,
+          penaltyReason: hudFocusCar.penaltyReason ?? null,
+          penaltyType: hudFocusCar.penaltyType ?? null,
+          launchStatus: sim.launchStatus,
+          launchRpmSweetSpot: LAUNCH_RPM_SWEET_SPOT,
+          // Section 1.3: Class-specific mechanics
+          ersMode: hudFocusCar.ersMode ?? 'balanced',
+          drsEligible: Boolean(hudFocusCar.drsEligible),
+          inDrsZone: Boolean(hudFocusCar.inDrsZone),
+          inAttackModeZone: Boolean(hudFocusCar.inAttackModeZone),
+          // Section 1.4: Dynamic weather & track evolution
+          weatherCondition: sim.weatherSystem.condition,
+          weatherNextLabel: sim.weatherSystem.nextForecastLabel,
+          ambientTempC: Math.round(sim.weatherSystem.ambientTempC),
+          trackTempC: Math.round(sim.weatherSystem.trackTempC),
+          trackRubber: sim.weatherSystem.trackRubber,
+          racingLineWetness: sim.weatherSystem.racingLineWetness,
+          offLineWetness: sim.weatherSystem.offLineWetness,
+          // Section 2.1-2.3: 4-wheel tires, brakes, dirty air, surface, setup & localized damage
+          tires: hudFocusCar.tires
+            ? {
+                fl: { ...hudFocusCar.tires.fl },
+                fr: { ...hudFocusCar.tires.fr },
+                rl: { ...hudFocusCar.tires.rl },
+                rr: { ...hudFocusCar.tires.rr },
+              }
+            : undefined,
+          brakeTempFront: Math.round(hudFocusCar.brakeTempFront ?? 280),
+          brakeTempRear: Math.round(hudFocusCar.brakeTempRear ?? 250),
+          brakeFade: hudFocusCar.brakeFade ?? 0,
+          brakeLockup: hudFocusCar.brakeLockupIntensity ?? 0,
+          brakeBalance: hudFocusCar.setup?.brakeBalance ?? DEFAULT_CAR_SETUP.brakeBalance,
+          dirtyAirStrength: hudFocusCar.dirtyAirStrength ?? 0,
+          surfaceType: hudFocusCar.surfaceType ?? 'asphalt',
+          crestLoadFactor: hudFocusCar.crestLoadFactor ?? 1,
+          damage: hudFocusCar.damage ? { ...hudFocusCar.damage } : undefined,
+          damageLevel: p.raceConfig.damageLevel ?? 'light',
         };
 
         p.onHudUpdate(snapshot);
@@ -1972,6 +2588,17 @@ export function RaceViewport(props: RaceViewportProps) {
       });
       sim.carNametags.clear();
       sim.trackScene?.dispose();
+      if (sim.zoneMarkersGroup) {
+        scene.remove(sim.zoneMarkersGroup);
+        disposeGroupResources(sim.zoneMarkersGroup);
+        sim.zoneMarkersGroup = null;
+      }
+      scene.remove(safetyCarGroup);
+      disposeGroupResources(safetyCarGroup);
+      debrisGeo.dispose();
+      debrisMat.dispose();
+      smokeGeo.dispose();
+      smokeMat.dispose();
       slipGeo.dispose();
       slipMat.dispose();
       rainGeo.dispose();

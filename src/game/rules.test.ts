@@ -2547,25 +2547,27 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
   assert.equal(v10Car.specialActive, false);
 });
 
-test('AI Policy Variants & Validation Hardening: exposes v5..v9, loads v5..v8, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
+test('AI Policy Variants & Validation Hardening: exposes v5..v9_2, loads v5..v9 + starts, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
   const {
     getAiPolicyVariants,
     evaluateNeuralPolicy,
     evaluateBlendedNeuralPolicy,
     validatePolicyWeights,
     buildObservationVector,
+    getStartPolicyStatus,
   } = await import('./aiNeuralPolicy');
 
   const variants = getAiPolicyVariants();
   assert.deepEqual(
     variants.map((v) => v.id),
-    ['v5', 'v6', 'v7', 'v8', 'v9'],
+    ['v5', 'v6', 'v7', 'v8', 'v9', 'v9_2'],
   );
-  for (const v of variants.filter((entry) => entry.id !== 'v9')) {
+  for (const v of variants.filter((entry) => entry.id !== 'v9_2')) {
     assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
     assert.equal(v.obsDim, 43);
     assert.equal(v.hiddenDim, 128);
   }
+  assert.equal(getStartPolicyStatus().loaded, true, 'Expected starts policy to be loaded directly');
 
   const obs = new Array(43).fill(0);
   obs[0] = 0.5;
@@ -2690,6 +2692,8 @@ test('Starts Policy & Standing Launch Guard: packed 2x2 grid launches cleanly at
     computeNeuralAIControl,
     computeStartPhaseWeight,
     setStartPolicyWeights,
+    getStartPolicyWeights,
+    setStartPolicyMode,
     getStartPolicyStatus,
   } = await import('./aiNeuralPolicy');
 
@@ -2708,15 +2712,28 @@ test('Starts Policy & Standing Launch Guard: packed 2x2 grid launches cleanly at
     }),
   );
 
-  // Verify mid-pack car (slot 5) at speed=0 launches straight ahead with strong throttle and zero braking
+  // Verify mid-pack car (slot 5) at speed=0 launches straight ahead with trained starts policy (no stall, zero brake)
   const midCar = grid[5];
-  const launchIn = computeNeuralAIControl(midCar, spa, grid, 1 / 60, 0, 'Alien', {
+  const initialWeights = getStartPolicyWeights();
+  assert.equal(getStartPolicyStatus().source, 'neural');
+  const neuralLaunchIn = computeNeuralAIControl(midCar, spa, grid, 1 / 60, 0, 'Alien', {
     raceElapsed: 0.2,
     startType: 'standing',
   });
-  assert.ok(launchIn.throttle >= 0.85, `Expected strong launch throttle, got ${launchIn.throttle}`);
-  assert.equal(launchIn.brake, 0, `Expected zero launch brake, got ${launchIn.brake}`);
-  assert.ok(Math.abs(launchIn.steer) < 0.45, `Expected clean straight launch steering, got ${launchIn.steer}`);
+  assert.ok(neuralLaunchIn.throttle >= 0.55, `Expected clean neural launch throttle, got ${neuralLaunchIn.throttle}`);
+  assert.equal(neuralLaunchIn.brake, 0, `Expected zero launch brake, got ${neuralLaunchIn.brake}`);
+  assert.ok(Math.abs(neuralLaunchIn.steer) < 0.45, `Expected clean straight launch steering, got ${neuralLaunchIn.steer}`);
+
+  // Verify launch-assist fallback mode produces strong full-traction throttle
+  setStartPolicyMode('launch-assist');
+  assert.equal(getStartPolicyStatus().source, 'launch-assist');
+  const assistLaunchIn = computeNeuralAIControl(midCar, spa, grid, 1 / 60, 0, 'Alien', {
+    raceElapsed: 0.2,
+    startType: 'standing',
+  });
+  assert.ok(assistLaunchIn.throttle >= 0.85, `Expected strong launch-assist throttle, got ${assistLaunchIn.throttle}`);
+  assert.equal(assistLaunchIn.brake, 0, `Expected zero launch brake, got ${assistLaunchIn.brake}`);
+  setStartPolicyMode('neural');
 
   // Verify standing & rolling handoff curve fades cleanly from 1.0 -> 0.0
   assert.equal(computeStartPhaseWeight({ speed: 0, totalDistance: -0.02 }, { raceElapsed: 0.5, startType: 'standing' }), 1.0);
@@ -2724,10 +2741,11 @@ test('Starts Policy & Standing Launch Guard: packed 2x2 grid launches cleanly at
   assert.equal(computeStartPhaseWeight({ speed: 28, totalDistance: -0.05 }, { raceElapsed: 1.0, startType: 'rolling' }), 1.0);
   assert.equal(computeStartPhaseWeight({ speed: 55, totalDistance: 0.12 }, { raceElapsed: 5.0, startType: 'rolling' }), 0.0);
 
-  // Verify custom trained starts policy can be injected and cleared cleanly
-  assert.equal(getStartPolicyStatus().source, 'launch-assist');
+  // Verify custom trained starts policy can be cleared and restored cleanly
   setStartPolicyWeights(null);
   assert.equal(getStartPolicyStatus().loaded, false);
+  setStartPolicyWeights(initialWeights);
+  assert.equal(getStartPolicyStatus().loaded, true);
 });
 
 test('Rolling Start & Bump-Drafting: rolling grid spawns in motion, stays Lap 1 across S/F, and straight-line tow stays on throttle', async () => {
@@ -3209,6 +3227,222 @@ test('AI nametag plates use F. Lastname while full names remain intact for resul
   });
   assert.equal(humanPlate.nameText, 'Alex Vance');
 });
+
+test('Section 1 & 2 Systems: Dynamic weather evolution, drying line, track rubbering, DRS/Attack zones, flags & standing-start launch', async () => {
+  const {
+    createWeatherSystemState,
+    stepWeatherSystem,
+    sampleLocalTrackSurfaceWeather,
+    computeTrackSpecialZones,
+    createRaceControlState,
+    stepRaceControl,
+    evaluateStandingStartLaunch,
+    cycleErsMode,
+  } = await import('./raceSystems');
+
+  const spa = compileTrack(getTrackById('spa-francorchamps'));
+  const weather = createWeatherSystemState({
+    weatherMode: 'dynamic-rain',
+    weatherPreset: 'drying-track',
+    compiledTrack: spa,
+    totalLaps: 5,
+  });
+  const initLineWet = weather.racingLineWetness;
+  for (let i = 0; i < 60; i++) {
+    stepWeatherSystem(weather, 0.5, spa.spec.scenery, 12, 0.45);
+  }
+  assert.ok(
+    weather.racingLineWetness < initLineWet,
+    'Racing line should dry during drying-track phase',
+  );
+  assert.ok(
+    weather.racingLineWetness <= weather.offLineWetness + 0.01,
+    'Racing line should dry faster than off-line asphalt',
+  );
+  const spaHalfW = spa.spec.trackWidth * 0.5;
+  const onLine = sampleLocalTrackSurfaceWeather(weather, 0.25, 0.0, spaHalfW);
+  const offLine = sampleLocalTrackSurfaceWeather(weather, 0.25, spaHalfW * 0.85, spaHalfW);
+  assert.ok(offLine.localWetness >= onLine.localWetness);
+
+  // DRS & Formula E Attack Mode zones
+  const zones = computeTrackSpecialZones(spa);
+  assert.ok(zones.drsZones.length >= 1, 'Circuit must derive at least 1 DRS zone');
+  assert.ok(zones.attackModeZone.lateralMinRatio > 0.3, 'Attack mode zone must be off-line');
+
+  // ERS mode cycling
+  assert.equal(cycleErsMode('balanced'), 'overtake');
+  assert.equal(cycleErsMode('quali'), 'harvest');
+
+  // Standing-start launch & jump-start evaluation
+  const perfect = evaluateStandingStartLaunch({ rpmNormalized: 0.78, jumpStartTriggered: false });
+  assert.equal(perfect.status, 'perfect');
+  assert.ok(perfect.launchBoostSeconds > 1.0);
+  const jumped = evaluateStandingStartLaunch({ rpmNormalized: 0.99, jumpStartTriggered: true });
+  assert.equal(jumped.status, 'jump-start');
+  assert.equal(jumped.postRacePenaltySeconds, 5);
+
+  // Local yellow & Blue flag detection
+  const rc = createRaceControlState();
+  const fastCar = createCarSimState({
+    id: 'fast',
+    name: 'Leader',
+    isPlayer: false,
+    carId: 'f1-2026-aero',
+    livery: getCarById('f1-2026-aero').defaultLivery,
+    gridSlot: 0,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  const slowCar = createCarSimState({
+    id: 'slow',
+    name: 'Backmarker',
+    isPlayer: true,
+    carId: 'gt3-ferrari-296',
+    livery: getCarById('gt3-ferrari-296').defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'medium',
+  });
+  fastCar.trackT = 0.20;
+  fastCar.totalDistance = 1.20;
+  fastCar.speed = 65;
+  slowCar.trackT = 0.208;
+  slowCar.totalDistance = 0.208;
+  slowCar.speed = 42;
+  stepRaceControl(rc, [fastCar, slowCar], spa, zones, 0.1, {
+    totalLaps: 5,
+    isRace: true,
+    safetyCarEnabled: true,
+  });
+  assert.equal(slowCar.blueFlagActive, true, 'Lapped slower-class car should receive a Blue Flag');
+});
+
+test('Section 2 Physics & Garage: 4-wheel tires, brake lock-up without ABS, surface classification, car setup APXSET round-trip, localized damage & 59-dim v9_2 policy', async () => {
+  const {
+    CAR_SETUP_PRESETS,
+    encodeSetupCode,
+    decodeSetupCode,
+    computeSetupPhysicsModifiers,
+  } = await import('./carSetup');
+  const {
+    applyLocalizedImpactDamage,
+    classifyTrackSurface,
+  } = await import('./physics');
+  const {
+    buildPhysicsAwareObservationVector,
+    validatePolicyWeights,
+    evaluateNeuralPolicy,
+    encodePolicyWeightsBinary,
+    decodePolicyWeightsBinary,
+  } = await import('./aiNeuralPolicy');
+
+  // Setup APXSET share code round-trip
+  const monzaSetup = CAR_SETUP_PRESETS.find((p) => p.id === 'low-downforce')!.setup;
+  const code = encodeSetupCode(monzaSetup);
+  assert.ok(code.startsWith('APXSET:'));
+  const decoded = decodeSetupCode(code);
+  assert.ok(decoded !== null);
+  assert.equal(decoded!.rearWing, monzaSetup.rearWing);
+  const monzaMods = computeSetupPhysicsModifiers(monzaSetup);
+  const monacoMods = computeSetupPhysicsModifiers(
+    CAR_SETUP_PRESETS.find((p) => p.id === 'high-downforce')!.setup,
+  );
+  assert.ok(monzaMods.topSpeedMult > monacoMods.topSpeedMult, 'Low-downforce setup must yield higher top speed');
+  assert.ok(monacoMods.overallDownforceMult > monzaMods.overallDownforceMult, 'High-downforce setup must yield higher cornering downforce');
+
+  // Surface classification
+  const spa = compileTrack(getTrackById('spa-francorchamps'));
+  const halfW = spa.spec.trackWidth * 0.5;
+  assert.equal(classifyTrackSurface(0, halfW, 0, spa.spec.scenery, 0).surface, 'asphalt');
+  assert.equal(classifyTrackSurface(halfW + 0.5, halfW, 0.02, spa.spec.scenery, 0).surface, 'kerb');
+  assert.equal(classifyTrackSurface(halfW + 1.9, halfW, 0.03, spa.spec.scenery, 0).surface, 'sausage-kerb');
+  assert.equal(classifyTrackSurface(-(halfW + 3.4), halfW, 0.02, 'forest', 0).surface, 'gravel');
+
+  // 4-wheel tire dynamics, brake lock-up (ABS off), & localized damage levels
+  const car = createCarSimState({
+    id: 'p1',
+    name: 'Test',
+    isPlayer: true,
+    carId: 'f1-2026-aero',
+    livery: getCarById('f1-2026-aero').defaultLivery,
+    gridSlot: 0,
+    compiledTrack: spa,
+    compound: 'soft',
+    absLevel: 'off',
+    damageLevel: 'realistic',
+  });
+  car.speed = 65;
+  car.vx = Math.sin(car.heading) * 65;
+  car.vz = Math.cos(car.heading) * 65;
+  for (let i = 0; i < 20; i++) {
+    stepCarPhysics(car, { throttle: 0, brake: 1, steer: 0, specialPressed: false }, spa, 1 / 60, {
+      trackWetness: 0,
+      totalLaps: 5,
+      isQualifying: false,
+      allCars: [car],
+      absLevel: 'off',
+      damageLevel: 'realistic',
+    });
+  }
+  assert.ok((car.brakeTempFront ?? 0) > 300, 'Hard braking should heat front brakes');
+  assert.ok(car.tires !== undefined && car.tires.fl.flatSpot > 0, 'Heavy braking with ABS off should create front flat-spot');
+
+  applyLocalizedImpactDamage(car, 'front', 14, 20, 1);
+  assert.ok((car.damage?.frontWing ?? 0) > 10, 'Front impact should damage frontWing zone');
+  const noDmgCar = createCarSimState({
+    id: 'p2',
+    name: 'NoDmg',
+    isPlayer: false,
+    carId: 'f1-2026-aero',
+    livery: getCarById('f1-2026-aero').defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+    damageLevel: 'off',
+  });
+  applyLocalizedImpactDamage(noDmgCar, 'front', 14, 20, 1);
+  assert.equal(noDmgCar.damage?.frontWing ?? 0, 0, 'Damage level off should inflict zero damage');
+
+  // 59-dim v9_2 physics-aware observation vector + validation + ANB1 binary round-trip
+  const obs59 = buildPhysicsAwareObservationVector(car, spa, [car], car.steerAngle, 1.0, car.bopMultipliers);
+  assert.equal(obs59.length, 59);
+  assert.ok(obs59.every((v) => Number.isFinite(v)), 'All 59 obs features must be finite');
+
+  const h = 8;
+  const zMat = (r: number, c: number) => Array.from({ length: r }, () => new Array(c).fill(0.01));
+  const v92Policy = validatePolicyWeights({
+    version: 3,
+    obsDim: 59,
+    actDim: 3,
+    hiddenDim: h,
+    numHiddenLayers: 3,
+    activation: 'tanh',
+    residual: true,
+    w0: zMat(h, 59),
+    b0: new Array(h).fill(0),
+    ln0Weight: new Array(h).fill(1),
+    ln0Bias: new Array(h).fill(0),
+    w1: zMat(h, h),
+    b1: new Array(h).fill(0),
+    ln1Weight: new Array(h).fill(1),
+    ln1Bias: new Array(h).fill(0),
+    w2: zMat(h, h),
+    b2: new Array(h).fill(0),
+    ln2Weight: new Array(h).fill(1),
+    ln2Bias: new Array(h).fill(0),
+    w3: zMat(3, h),
+    b3: [0, 0.2, -0.4],
+    obsNorm: { mean: new Array(59).fill(0), std: new Array(59).fill(1), clip: 10 },
+  });
+  assert.ok(v92Policy !== null && v92Policy.obsDim === 59);
+  const act59 = evaluateNeuralPolicy(obs59, v92Policy!);
+  assert.ok(act59 !== null);
+  assert.ok(Number.isFinite(act59!.steer) && Number.isFinite(act59!.throttle) && Number.isFinite(act59!.brake));
+  const binBuf = encodePolicyWeightsBinary(v92Policy!);
+  const binDecoded = decodePolicyWeightsBinary(binBuf);
+  assert.ok(binDecoded !== null && binDecoded.obsDim === 59);
+});
+
 
 
 

@@ -8,10 +8,14 @@ import {
   getActiveAiPolicyMix,
   getAiPolicyVariants,
   getNormalizedPolicyMix,
+  getStartPolicyMode,
   getStartPolicyStatus,
   selectSingleAiPolicyVariant,
   setActiveAiPolicyMix,
+  setStartPolicyMode,
+  StartPolicyMode,
   subscribeAiPolicyMix,
+  subscribeStartPolicyMode,
 } from '../game/aiNeuralPolicy';
 
 interface AiPolicyMixPanelProps {
@@ -22,10 +26,16 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
   const variants = useMemo(() => getAiPolicyVariants(), []);
   const startPolicy = useMemo(() => getStartPolicyStatus(), []);
   const [mix, setMix] = useState<AiPolicyMixWeights>(() => getActiveAiPolicyMix());
+  const [startMode, setStartMode] = useState<StartPolicyMode>(() => getStartPolicyMode());
   const [expanded, setExpanded] = useState(!compact);
 
   useEffect(() => {
-    return subscribeAiPolicyMix((next) => setMix({ ...next }));
+    const u1 = subscribeAiPolicyMix((next) => setMix({ ...next }));
+    const u2 = subscribeStartPolicyMode((next) => setStartMode(next));
+    return () => {
+      u1();
+      u2();
+    };
   }, []);
 
   const normalized = useMemo(() => getNormalizedPolicyMix(mix), [mix]);
@@ -70,7 +80,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
 
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-[11px] font-telemetry text-sky-300 truncate max-w-[190px]">
-            {summaryText || 'v8 Flag. 100%'}
+            {summaryText || 'v9 Master 100%'}
           </span>
           {compact && (
             <button
@@ -87,28 +97,28 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
 
       {expanded && (
         <div className="space-y-3 pt-2 border-t border-white/10">
-          {/* Quick Single-Model & Recommended V5–V8 Blend Presets */}
+          {/* Quick Single-Model & Recommended Blend Presets */}
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() => setActiveAiPolicyMix({ ...DEFAULT_POLICY_MIX })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-white/10 text-[11px] font-semibold text-slate-200 cursor-pointer flex items-center gap-1 whitespace-nowrap"
-              title="Reset to 100% v8 Flagship neural model"
+              title="Reset to 100% v9 Master neural model"
             >
               <RotateCcw className="w-3 h-3" />
               Reset
             </button>
             <button
               type="button"
-              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 0, v7: 40, v8: 60, v9: 0 })}
+              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 0, v7: 20, v8: 25, v9: 55, v9_2: 0 })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-emerald-500/35 text-[11px] font-semibold text-emerald-300 cursor-pointer whitespace-nowrap"
-              title="60% v8 Flagship + 40% v7 Survival (Best all-rounder)"
+              title="55% v9 Master + 25% v8 Flagship + 20% v7 Survival"
             >
-              Flagship 60/40
+              Master Blend
             </button>
             <button
               type="button"
-              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 15, v7: 35, v8: 50, v9: 0 })}
+              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 15, v7: 35, v8: 50, v9: 0, v9_2: 0 })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-sky-500/35 text-[11px] font-semibold text-sky-300 cursor-pointer whitespace-nowrap"
               title="50% v8 + 35% v7 + 15% v6 (Wheel-to-wheel racecraft)"
             >
@@ -116,9 +126,9 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
             </button>
             <button
               type="button"
-              onClick={() => setActiveAiPolicyMix({ v5: 15, v6: 0, v7: 20, v8: 65, v9: 0 })}
+              onClick={() => setActiveAiPolicyMix({ v5: 15, v6: 0, v7: 15, v8: 20, v9: 50, v9_2: 0 })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-amber-500/35 text-[11px] font-semibold text-amber-300 cursor-pointer whitespace-nowrap"
-              title="65% v8 + 20% v7 + 15% v5 (Maximum pace)"
+              title="50% v9 + 20% v8 + 15% v7 + 15% v5 (Maximum pace)"
             >
               Max Pace
             </button>
@@ -180,6 +190,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
                         {info.loaded ? (
                           <span className="text-[10px] font-telemetry text-emerald-400 whitespace-nowrap">
                             Loaded{info.hiddenDim ? ` · ${info.hiddenDim}h` : ''}
+                            {info.obsDim === 59 ? ' · 59-obs' : ''}
                             {meanSpeed !== null ? ` · ~${meanSpeed} km/h` : ''}
                           </span>
                         ) : (
@@ -222,17 +233,39 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
               );
             })}
           </div>
-          {/* Always-Active Race Start Policy Indicator */}
-          <div className="rounded px-2.5 py-1.5 border border-emerald-500/25 bg-[#0d161b] flex items-center justify-between gap-2 text-[11px]">
+
+          {/* Selectable Race Start Policy Mode */}
+          <div className="rounded px-2.5 py-2 border border-emerald-500/25 bg-[#0d161b] flex flex-wrap items-center justify-between gap-2 text-[11px]">
             <div className="min-w-0">
               <span className="font-semibold text-emerald-300">Starts Policy</span>
-              <span className="text-slate-400"> · Always active on standing &amp; rolling starts</span>
+              <span className="text-slate-400">
+                {' '}
+                · {startPolicy.loaded ? `Trained Neural (${startPolicy.hiddenDim}h)` : 'Neural Missing'}
+              </span>
             </div>
-            <span className="font-telemetry text-[10px] text-emerald-200 whitespace-nowrap">
-              {startPolicy.loaded
-                ? `Trained Neural${startPolicy.hiddenDim ? ` · ${startPolicy.hiddenDim}h` : ''}`
-                : 'Auto Launch Assist'}
-            </span>
+            <div className="flex items-center gap-1">
+              {(
+                [
+                  { id: 'neural' as StartPolicyMode, label: 'Trained Neural', disabled: !startPolicy.loaded },
+                  { id: 'launch-assist' as StartPolicyMode, label: 'Auto Assist', disabled: false },
+                  { id: 'off' as StartPolicyMode, label: 'Off', disabled: false },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  disabled={opt.disabled}
+                  onClick={() => setStartPolicyMode(opt.id)}
+                  className={`px-2 py-0.5 rounded border text-[10px] font-semibold cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${
+                    startMode === opt.id
+                      ? 'bg-emerald-600 border-emerald-400 text-white'
+                      : 'bg-[#121c22] hover:bg-[#1a2830] border-white/10 text-slate-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

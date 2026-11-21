@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { CarSetupModal } from './components/CarSetupModal';
 import { CarsShowcaseModal } from './components/CarsShowcaseModal';
 import { LiveryStudioModal } from './components/LiveryStudioModal';
 import { MultiplayerModal } from './components/MultiplayerModal';
@@ -12,6 +13,7 @@ import { TitleOverlay } from './components/TitleOverlay';
 import { TouchControlsOverlay } from './components/TouchControlsOverlay';
 import { TracksShowcaseModal } from './components/TracksShowcaseModal';
 import { TrackStudioModal } from './components/TrackStudioModal';
+import { getSavedCarSetup } from './game/carSetup';
 import { CARS, getCarById, resolveCarSpecial } from './game/cars';
 import { registerCustomTrackInMemory } from './game/customTracks';
 import {
@@ -38,7 +40,7 @@ import {
   TireCompound,
   TrackSpec,
 } from './game/types';
-import { RaceViewport, SpectateControls } from './three/RaceViewport';
+import { InRaceTelemetryControls, RaceViewport, SpectateControls } from './three/RaceViewport';
 
 const INITIAL_CAR = CARS[0]; // Ferrari 499P
 
@@ -50,6 +52,7 @@ const INITIAL_CONFIG: RaceConfig = {
   gridSize: 12,
   totalLaps: 5,
   weather: 'dry',
+  weatherPreset: 'clear-dry',
   startingCompound: 'soft',
   qualifyingEnabled: false,
   aiDifficulty: 'Pro',
@@ -57,6 +60,10 @@ const INITIAL_CONFIG: RaceConfig = {
   noAi: false,
   sessionMode: 'race',
   startType: 'standing',
+  damageLevel: 'light',
+  absLevel: 'low',
+  safetyCarEnabled: true,
+  jumpStartEnabled: true,
 };
 
 export default function App() {
@@ -83,6 +90,7 @@ export default function App() {
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
   const [soundStudioOpen, setSoundStudioOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [carSetupOpen, setCarSetupOpen] = useState(false);
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -93,6 +101,7 @@ export default function App() {
   const [touchCapable, setTouchCapable] = useState<boolean>(() => isTouchCapableDevice());
   const [spectatorCameraMode, setSpectatorCameraMode] = useState<SpectatorCameraMode>('spectate');
   const spectateControlsRef = useRef<SpectateControls | null>(null);
+  const inRaceControlsRef = useRef<InRaceTelemetryControls | null>(null);
   const [muted, setMuted] = useState(false);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
     nextCompound: 'soft',
@@ -159,6 +168,12 @@ export default function App() {
       window.removeEventListener('resize', onResize);
     };
   }, []);
+
+  // Load saved per-(car, track) setup whenever playerCarId or trackId changes
+  useEffect(() => {
+    const saved = getSavedCarSetup(raceConfig.playerCarId, raceConfig.trackId);
+    setRaceConfig((prev) => ({ ...prev, carSetup: saved }));
+  }, [raceConfig.playerCarId, raceConfig.trackId]);
 
   // Subscribe to Multiplayer events
   useEffect(() => {
@@ -467,6 +482,9 @@ export default function App() {
         onSpectateControlsReady={(controls) => {
           spectateControlsRef.current = controls;
         }}
+        onInRaceControlsReady={(controls) => {
+          inRaceControlsRef.current = controls;
+        }}
       />
 
       {/* Title Screen (kept mounted during title phase for smooth fade-in/fade-out with sub-menus) */}
@@ -515,6 +533,7 @@ export default function App() {
           onChangeLivery={handleChangeLivery}
           onStartRace={handleStartSinglePlayer}
           onOpenStudio={(trackToEdit) => handleOpenStudio(trackToEdit)}
+          onOpenCarSetup={() => setCarSetupOpen(true)}
           onClose={() => setRaceMenuOpen(false)}
         />
       )}
@@ -655,6 +674,8 @@ export default function App() {
             onToggleMute={handleToggleMute}
             onTogglePause={handleTogglePause}
             onReturnToTitle={handleReturnToTitle}
+            onCycleErsMode={() => inRaceControlsRef.current?.cycleErsMode()}
+            onAdjustBrakeBalance={(delta) => inRaceControlsRef.current?.adjustBrakeBalance(delta)}
           />
           <TouchControlsOverlay
             visible={touchControlsActive}
@@ -715,6 +736,20 @@ export default function App() {
 
       {/* Settings Modal (accessible from Title Paddock & Pause Menu) */}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+
+      {/* Garage Car Setup & BoP Workbench Modal */}
+      {carSetupOpen && (
+        <CarSetupModal
+          open={carSetupOpen}
+          carId={raceConfig.playerCarId}
+          trackId={raceConfig.trackId}
+          currentSetup={raceConfig.carSetup}
+          onClose={() => setCarSetupOpen(false)}
+          onApplySetup={(setup) => {
+            handleUpdateConfig({ carSetup: setup });
+          }}
+        />
+      )}
 
       {/* Post-Race Results Modal */}
       {phase === 'gameover' && finalSnapshot && (

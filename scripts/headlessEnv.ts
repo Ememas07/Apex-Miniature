@@ -17,10 +17,12 @@ import type { PolicyObsConfig, PolicyWeights } from '../src/game/aiNeuralPolicy'
 const { createCarSimState, resolveCarCollisions, resolveWallContact, stepCarPhysics } = await import('../src/game/physics');
 const {
   buildObservationVector,
+  buildPhysicsAwareObservationVector,
   decodePolicyWeightsBinary,
   evaluateNeuralPolicy,
   validatePolicyWeights,
 } = await import('../src/game/aiNeuralPolicy');
+const { DEFAULT_CAR_SETUP, normalizeCarSetup } = await import('../src/game/carSetup');
 const { compileTrack, sampleTrackAtT, TRACKS } = await import('../src/game/tracks');
 const { CARS, getAllSelectableCars } = await import('../src/game/cars');
 
@@ -54,6 +56,9 @@ export interface RewardWeights {
   bumpDraftBonus?: number;
   launchAccelBonus?: number;
   alternateLineOvertakeBonus?: number;
+  brakeLockupPenalty?: number;
+  tireOverheatPenalty?: number;
+  gravelPenalty?: number;
 }
 
 export interface TrafficMix {
@@ -73,6 +78,9 @@ export interface EnvOptions {
   rollingStartRatio: number;
   maxEpisodeSteps: number;
   multiLineTrafficRatio: number;
+  obsDim: 43 | 59;
+  advancedPhysicsRandomization: boolean;
+  wetEpisodeRatio: number;
 }
 
 const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
@@ -103,6 +111,9 @@ const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
   bumpDraftBonus: 0.0,
   launchAccelBonus: 0.0,
   alternateLineOvertakeBonus: 0.0,
+  brakeLockupPenalty: 0.0,
+  tireOverheatPenalty: 0.0,
+  gravelPenalty: 0.0,
 };
 
 const DEFAULT_TRAFFIC_MIX: TrafficMix = {
@@ -122,6 +133,9 @@ const DEFAULT_ENV_OPTIONS: EnvOptions = {
   rollingStartRatio: 0.45,
   maxEpisodeSteps: 0,
   multiLineTrafficRatio: 0.0,
+  obsDim: 43,
+  advancedPhysicsRandomization: false,
+  wetEpisodeRatio: 0.0,
 };
 
 interface TrafficBot {
@@ -152,6 +166,10 @@ interface EnvSlot {
   consecutiveOffTrackSteps: number;
   consecutiveStallSteps: number;
   spawnGhostDuration: number;
+  episodeWetness: number;
+  episodeTrackRubber: number;
+  episodeTrackTempC: number;
+  episodeDamageLevel: 'off' | 'visual-only' | 'light' | 'realistic';
 }
 
 const DEFAULT_CARS: string[] = CARS.map((c: any) => c.id);
@@ -333,6 +351,15 @@ function applyConfigPatch(msg: Record<string, any>, resetDefaults: boolean): voi
     }
     if (typeof eo.startScenarioRatio === 'number' && Number.isFinite(eo.startScenarioRatio)) {
       envOptions.startScenarioRatio = Math.max(0, Math.min(1.0, eo.startScenarioRatio));
+    }
+    if (eo.obsDim === 59 || eo.obsDim === 43) {
+      envOptions.obsDim = eo.obsDim;
+    }
+    if (typeof eo.advancedPhysicsRandomization === 'boolean') {
+      envOptions.advancedPhysicsRandomization = eo.advancedPhysicsRandomization;
+    }
+    if (typeof eo.wetEpisodeRatio === 'number' && Number.isFinite(eo.wetEpisodeRatio)) {
+      envOptions.wetEpisodeRatio = Math.max(0, Math.min(1.0, eo.wetEpisodeRatio));
     }
     if (typeof eo.rollingStartRatio === 'number' && Number.isFinite(eo.rollingStartRatio)) {
       envOptions.rollingStartRatio = Math.max(0, Math.min(1.0, eo.rollingStartRatio));
@@ -528,15 +555,26 @@ function spawnCarAt(
 
 function computeTrafficControl(bot: TrafficBot, track: CompiledTrack, allCars: CarSimState[]): ControlInput {
   if (bot.mode === 'neural' && bot.policy) {
-    const obs = buildObservationVector(
-      bot.car,
-      track,
-      allCars,
-      bot.car.steerAngle,
-      1.0,
-      bot.car.bopMultipliers,
-      bot.policy.obsConfig,
-    );
+    const obs =
+      bot.policy.obsDim === 59
+        ? buildPhysicsAwareObservationVector(
+            bot.car,
+            track,
+            allCars,
+            bot.car.steerAngle,
+            1.0,
+            bot.car.bopMultipliers,
+            bot.policy.obsConfig,
+          )
+        : buildObservationVector(
+            bot.car,
+            track,
+            allCars,
+            bot.car.steerAngle,
+            1.0,
+            bot.car.bopMultipliers,
+            bot.policy.obsConfig,
+          );
     const ctrl = runNeuralPolicy(obs, bot.policy);
     // Slight pace variation (0.94..1.00) so self-play cars create natural overtakes instead of static trains
     ctrl.throttle *= bot.paceScale;
@@ -826,10 +864,55 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
     consecutiveOffTrackSteps: 0,
     consecutiveStallSteps: 0,
     spawnGhostDuration,
+    ...(() => {
+      let episodeWetness = 0;
+      let episodeTrackRubber = 0.35;
+      let episodeTrackTempC = 32;
+      let episodeDamageLevel: 'off' | 'visual-only' | 'light' | 'realistic' = 'light';
+      if (envOptions.advancedPhysicsRandomization) {
+        const isWet = Math.random() < envOptions.wetEpisodeRatio;
+        episodeWetness = isWet ? 0.25 + Math.random() * 0.72 : 0;
+        episodeTrackRubber = isWet ? 0.1 + Math.random() * 0.25 : 0.2 + Math.random() * 0.75;
+        episodeTrackTempC = isWet ? 16 + Math.random() * 10 : 22 + Math.random() * 24;
+        episodeDamageLevel = Math.random() < 0.45 ? 'realistic' : 'light';
+        if (isWet && Math.random() < 0.7) {
+          car.compound = 'wet';
+        }
+        // Subtle realistic car setup randomization so v9_2 generalizes across garage setups
+        car.setup = normalizeCarSetup({
+          ...DEFAULT_CAR_SETUP,
+          frontWing: 40 + Math.random() * 35,
+          rearWing: 40 + Math.random() * 35,
+          brakeBalance: 53 + Math.random() * 7,
+          suspensionStiffness: 40 + Math.random() * 35,
+          arbBalance: 40 + Math.random() * 30,
+          diffLock: 35 + Math.random() * 35,
+        });
+        car.absLevel = Math.random() < 0.3 ? 'off' : 'low';
+        car.damageLevel = episodeDamageLevel;
+      }
+      return {
+        episodeWetness,
+        episodeTrackRubber,
+        episodeTrackTempC,
+        episodeDamageLevel,
+      };
+    })(),
   };
 }
 
 function getObs(slot: EnvSlot): number[] {
+  if (envOptions.obsDim === 59) {
+    return buildPhysicsAwareObservationVector(
+      slot.car,
+      slot.track,
+      slot.allCars,
+      slot.car.steerAngle,
+      1.0,
+      slot.car.bopMultipliers,
+      activeObsConfig,
+    );
+  }
   return buildObservationVector(
     slot.car,
     slot.track,
@@ -1001,15 +1084,26 @@ function handleMessage(msg: any): void {
         // Step physics with neural policy (respecting policy.obsConfig for full train/eval parity)
         let ctrl: ControlInput;
         if (policy) {
-          const obs = buildObservationVector(
-            car,
-            track,
-            [car],
-            car.steerAngle,
-            1.0,
-            car.bopMultipliers,
-            policy.obsConfig,
-          );
+          const obs =
+            policy.obsDim === 59
+              ? buildPhysicsAwareObservationVector(
+                  car,
+                  track,
+                  [car],
+                  car.steerAngle,
+                  1.0,
+                  car.bopMultipliers,
+                  policy.obsConfig,
+                )
+              : buildObservationVector(
+                  car,
+                  track,
+                  [car],
+                  car.steerAngle,
+                  1.0,
+                  car.bopMultipliers,
+                  policy.obsConfig,
+                );
           ctrl = runNeuralPolicy(obs, policy);
         } else {
           ctrl = { steer: 0, throttle: 0.5, brake: 0, specialPressed: false };
@@ -1178,7 +1272,11 @@ function runStepBatch(actions: number[][] | Float32Array): {
         for (let b = 0; b < slot.traffic.length; b++) {
           const bot = slot.traffic[b];
           stepCarPhysics(bot.car, trafficInputs[b], slot.track, SUB_DT, {
-            trackWetness: 0,
+            trackWetness: slot.episodeWetness,
+            localWetness: slot.episodeWetness,
+            trackRubber: slot.episodeTrackRubber,
+            trackTempC: slot.episodeTrackTempC,
+            damageLevel: slot.episodeDamageLevel,
             totalLaps: 99,
             isQualifying: false,
             allCars: slot.allCars,
@@ -1192,9 +1290,19 @@ function runStepBatch(actions: number[][] | Float32Array): {
           }
         }
 
-        // Step RL ego car
+        // Step RL ego car (off-line stays wetter when episode is wet)
+        const egoHalfW = Math.max(4, (slot.track.spec.trackWidth ?? 14) * 0.5);
+        const offLineRatio = Math.min(1, Math.max(0, (Math.abs(slot.car.lateralOffset) / egoHalfW - 0.35) / 0.6));
+        const egoLocalWet = slot.episodeWetness > 0 ? Math.min(1, slot.episodeWetness * (0.88 + offLineRatio * 0.25)) : 0;
+        const egoPuddle = slot.episodeWetness > 0.45 && offLineRatio > 0.6 ? (slot.episodeWetness - 0.4) * 0.6 : 0;
         stepCarPhysics(slot.car, egoInput, slot.track, SUB_DT, {
-          trackWetness: 0,
+          trackWetness: slot.episodeWetness,
+          localWetness: egoLocalWet,
+          puddleIntensity: egoPuddle,
+          trackRubber: slot.episodeTrackRubber,
+          trackTempC: slot.episodeTrackTempC,
+          damageLevel: slot.episodeDamageLevel,
+          absLevel: slot.car.absLevel ?? 'low',
           totalLaps: 99,
           isQualifying: false,
           allCars: slot.allCars,
@@ -1466,6 +1574,20 @@ function runStepBatch(actions: number[][] | Float32Array): {
       reward -= rewardWeights.steerJerk * steerJerk * steerJerk;
       reward -= rewardWeights.throttleBrakeOverlap * (throttle * brake);
 
+      // Advanced physics reward shaping for v9_2 (brake lock-up, tire overheating, gravel excursion)
+      const lockPen = rewardWeights.brakeLockupPenalty ?? 0;
+      if (lockPen > 0 && (slot.car.brakeLockupIntensity ?? 0) > 0.15) {
+        reward -= lockPen * (slot.car.brakeLockupIntensity ?? 0);
+      }
+      const heatPen = rewardWeights.tireOverheatPenalty ?? 0;
+      if (heatPen > 0 && slot.car.tireTemp > 110) {
+        reward -= heatPen * Math.min(1.5, (slot.car.tireTemp - 110) / 25);
+      }
+      const gravPen = rewardWeights.gravelPenalty ?? 0;
+      if (gravPen > 0 && (slot.car.surfaceType === 'gravel' || slot.car.surfaceType === 'sausage-kerb')) {
+        reward -= gravPen;
+      }
+
       let done = false;
       let truncated = false;
       let crashed = false;
@@ -1576,7 +1698,7 @@ function runStepBatch(actions: number[][] | Float32Array): {
 
 function encodeBinaryStepResponse(res: ReturnType<typeof runStepBatch>): Buffer {
   const n = res.obs.length;
-  const OBS_DIM = 43;
+  const OBS_DIM = envOptions.obsDim;
   const finalObsPairs: Array<{ idx: number; obs: number[] }> = [];
   for (let i = 0; i < n; i++) {
     const fo = res.finalObs[i];

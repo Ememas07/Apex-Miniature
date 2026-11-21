@@ -17,6 +17,7 @@ import {
 import { CAR_CLASSES, getCarById, resolveCarSpecial } from '../game/cars';
 import { formatLapTime } from '../game/physics';
 import { compileTrack, getTrackById } from '../game/tracks';
+import { formatWeatherCondition } from '../game/raceSystems';
 import { HudSnapshot, PitServiceAction, PitStrategy, TireCompound, TrackSpec } from '../game/types';
 
 interface RaceHUDProps {
@@ -34,6 +35,8 @@ interface RaceHUDProps {
   onToggleMute: () => void;
   onTogglePause: () => void;
   onReturnToTitle: () => void;
+  onCycleErsMode?: () => void;
+  onAdjustBrakeBalance?: (delta: number) => void;
   touchControlsActive?: boolean;
 }
 
@@ -52,6 +55,8 @@ export function RaceHUD({
   onToggleMute,
   onTogglePause,
   onReturnToTitle,
+  onCycleErsMode,
+  onAdjustBrakeBalance,
   touchControlsActive = false,
 }: RaceHUDProps) {
   const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
@@ -386,12 +391,40 @@ export function RaceHUD({
 
           {/* Contextual Racecraft / Rulebook Alerts (player sessions only) */}
           {!isAiRace &&
-            (hud.inSlipstream || hud.penaltyTimeRemaining > 0 || hud.warningCount > 0 || hud.pitStopRemaining > 0) && (
+            (hud.inSlipstream ||
+              hud.penaltyTimeRemaining > 0 ||
+              (hud.postRacePenaltySeconds ?? 0) > 0 ||
+              hud.warningCount > 0 ||
+              hud.pitStopRemaining > 0 ||
+              hud.blueFlagActive ||
+              (hud.dirtyAirStrength ?? 0) > 0.25 ||
+              hud.drsEligible ||
+              hud.inAttackModeZone ||
+              (hud.surfaceType && hud.surfaceType !== 'asphalt' && hud.surfaceType !== 'kerb')) && (
               <div className="mt-2 pt-2 short:mt-1 short:pt-1 border-t border-white/10 space-y-1 short:space-y-0.5 text-[11px] short:text-[9px] font-semibold">
+                {hud.blueFlagActive && (
+                  <div className="text-sky-400 font-bold">BLUE FLAG — YIELD TO FASTER CAR</div>
+                )}
+                {hud.inAttackModeZone && (
+                  <div className="text-fuchsia-300 font-bold">ATTACK MODE ACTIVATION ZONE</div>
+                )}
+                {hud.drsEligible && (
+                  <div className="text-emerald-300 font-bold">DRS AVAILABLE (&lt;1.0s)</div>
+                )}
                 {hud.inSlipstream && (
                   <div className="text-sky-300">
                     <span className="short:hidden">SLIPSTREAM TOW ACTIVE</span>
                     <span className="hidden short:inline">SLIPSTREAM TOW</span>
+                  </div>
+                )}
+                {(hud.dirtyAirStrength ?? 0) > 0.25 && (
+                  <div className="text-amber-300">
+                    DIRTY AIR (-{Math.round((hud.dirtyAirStrength ?? 0) * 18)}% FRONT GRIP)
+                  </div>
+                )}
+                {hud.surfaceType && hud.surfaceType !== 'asphalt' && hud.surfaceType !== 'kerb' && (
+                  <div className="text-orange-300 uppercase">
+                    SURFACE: {hud.surfaceType.replace('-', ' ')}
                   </div>
                 )}
                 {hud.pitStopRemaining > 0 && (
@@ -400,83 +433,184 @@ export function RaceHUD({
                   </div>
                 )}
                 {hud.penaltyTimeRemaining > 0 && hud.pitStopRemaining <= 0 && (
-                  <div className="text-red-400">
-                    PENALTY {hud.penaltyTimeRemaining.toFixed(1)}s
+                  <div className="text-red-400 font-bold">
+                    SLOW DOWN: {hud.penaltyTimeRemaining.toFixed(1)}s
+                    {hud.penaltyReason ? ` (${hud.penaltyReason.replace('-', ' ').toUpperCase()})` : ''}
+                  </div>
+                )}
+                {(hud.postRacePenaltySeconds ?? 0) > 0 && (
+                  <div className="text-rose-400 font-bold">
+                    POST-RACE TIME PENALTY: +{hud.postRacePenaltySeconds}s
                   </div>
                 )}
                 {hud.warningCount > 0 && hud.penaltyTimeRemaining <= 0 && (
                   <div className="text-amber-300">
-                    Track Limits ({hud.warningCount})
+                    {hud.warningCount >= 3 ? 'BLACK & WHITE FLAG' : `Track Limits (${hud.warningCount})`}
                   </div>
                 )}
               </div>
             )}
         </div>
 
-        {/* Top-Center: Start Lights Countdown, Green Flag Flash, OR Sleek Landscape Touch Telemetry Strip */}
-        {hud.countdown > 0 ? (
-          <div
-            className={`bg-[#0b0e13]/95 border rounded-md px-6 py-3 short:px-3.5 short:py-1.5 text-center shadow-xl ${
-              hud.startType === 'rolling' ? 'border-amber-400/50' : 'border-white/15'
-            }`}
-          >
+        {/* Top-Center: Start Lights Countdown + Launch RPM Gauge, Flags / SC / VSC / Race Control */}
+        <div className="flex flex-col items-center gap-1.5 max-w-[340px]">
+          {hud.countdown > 0 ? (
             <div
-              className={`text-xs short:text-[9px] uppercase tracking-widest font-semibold ${
-                hud.startType === 'rolling' ? 'text-amber-300' : 'text-slate-400'
+              className={`bg-[#0b0e13]/95 border rounded-md px-6 py-3 short:px-3.5 short:py-1.5 text-center shadow-xl ${
+                hud.startType === 'rolling' ? 'border-amber-400/50' : 'border-white/15'
               }`}
             >
-              {hud.startType === 'rolling' ? 'Rolling Start · Hold Formation' : 'Standing Start · Ready'}
-            </div>
-            <div
-              className={`text-3xl short:text-xl font-display font-extrabold tabular-nums mt-0.5 leading-none ${
-                hud.startType === 'rolling' ? 'text-amber-400' : 'text-red-500'
-              }`}
-            >
-              {Math.ceil(hud.countdown)}
-            </div>
-          </div>
-        ) : (hud.greenFlagFlash ?? 0) > 0 ? (
-          <div className="bg-emerald-950/90 border border-emerald-400/60 rounded-md px-6 py-2.5 short:px-3.5 short:py-1 text-center shadow-xl">
-            <div className="text-lg short:text-sm font-display font-extrabold text-emerald-300 tracking-widest uppercase leading-none">
-              GREEN FLAG!
-            </div>
-          </div>
-        ) : touchControlsActive && !isAiRace ? (
-          <div className="hidden sm:flex short:flex flex-col bg-[#0b0e13]/85 border border-white/12 rounded-md px-3 py-1.5 short:px-2.5 short:py-1 shadow-lg min-w-[168px] short:min-w-[152px]">
-            <div className="flex items-baseline justify-between gap-2.5">
-              <div className="flex items-baseline gap-1">
-                <span
-                  data-testid="hud-speed"
-                  className="text-xl short:text-lg font-display font-extrabold text-white tabular-nums leading-none"
-                >
-                  {hud.speedKmh}
-                </span>
-                <span className="text-[8px] text-slate-400 uppercase tracking-wider">KM/H</span>
-              </div>
-              <div className="flex items-baseline gap-1">
-                <span className="text-[8px] text-slate-400 uppercase">G</span>
-                <span className="text-base short:text-sm font-display font-bold text-amber-400 tabular-nums leading-none">
-                  {hud.gear === -1 ? 'R' : hud.gear}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[9px] font-telemetry leading-none">
-                <span className={hud.tireWear < 30 ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
-                  {hud.compound.slice(0, 1).toUpperCase()}{hud.tireWear}%
-                </span>
-                <span className="text-amber-300 font-semibold">F{hud.fuel}%</span>
-              </div>
-            </div>
-            <div className="mt-1 h-1 rounded bg-[#1a202c] overflow-hidden">
               <div
-                className="h-full transition-all duration-75"
-                style={{
-                  width: `${Math.round(hud.rpmNormalized * 100)}%`,
-                  backgroundColor: hud.rpmNormalized > 0.85 ? '#ef4444' : '#38bdf8',
-                }}
-              />
+                className={`text-xs short:text-[9px] uppercase tracking-widest font-semibold ${
+                  hud.startType === 'rolling' ? 'text-amber-300' : 'text-slate-400'
+                }`}
+              >
+                {hud.startType === 'rolling' ? 'Rolling Start · Hold Formation' : 'Standing Start · Hold Sweet Spot'}
+              </div>
+              <div
+                className={`text-3xl short:text-xl font-display font-extrabold tabular-nums mt-0.5 leading-none ${
+                  hud.startType === 'rolling' ? 'text-amber-400' : 'text-red-500'
+                }`}
+              >
+                {Math.ceil(hud.countdown)}
+              </div>
+              {hud.startType === 'standing' && !isAiRace && (
+                <div className="mt-2 w-48 mx-auto">
+                  <div className="relative h-2.5 rounded bg-[#18202c] border border-white/10 overflow-hidden">
+                    <div
+                      className="absolute inset-y-0 bg-emerald-500/40 border-x border-emerald-400"
+                      style={{
+                        left: `${Math.round((hud.launchRpmSweetSpot?.[0] ?? 0.66) * 100)}%`,
+                        width: `${Math.round(((hud.launchRpmSweetSpot?.[1] ?? 0.88) - (hud.launchRpmSweetSpot?.[0] ?? 0.66)) * 100)}%`,
+                      }}
+                    />
+                    <div
+                      className="absolute inset-y-0 left-0 bg-sky-400/80 transition-all duration-75"
+                      style={{ width: `${Math.round(hud.rpmNormalized * 100)}%` }}
+                    />
+                  </div>
+                  <div className="mt-0.5 flex justify-between text-[9px] text-slate-400 font-telemetry">
+                    <span>RPM</span>
+                    <span className={hud.rpmNormalized > 0.94 ? 'text-red-400 font-bold' : 'text-emerald-300'}>
+                      {hud.rpmNormalized > 0.94 ? 'JUMP RISK!' : 'SWEET SPOT 66–88%'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ) : null}
+          ) : hud.launchStatus === 'perfect' ? (
+            <div className="bg-emerald-950/92 border border-emerald-400/70 rounded-md px-5 py-2 text-center shadow-xl">
+              <div className="text-sm font-display font-extrabold text-emerald-300 tracking-widest uppercase">
+                PERFECT LAUNCH! +BOOST
+              </div>
+            </div>
+          ) : hud.launchStatus === 'jump-start' ? (
+            <div className="bg-red-950/95 border border-red-400/70 rounded-md px-5 py-2 text-center shadow-xl">
+              <div className="text-sm font-display font-extrabold text-red-300 tracking-widest uppercase">
+                JUMP START · +5s PENALTY
+              </div>
+            </div>
+          ) : (hud.greenFlagFlash ?? 0) > 0 ? (
+            <div className="bg-emerald-950/90 border border-emerald-400/60 rounded-md px-6 py-2.5 short:px-3.5 short:py-1 text-center shadow-xl">
+              <div className="text-lg short:text-sm font-display font-extrabold text-emerald-300 tracking-widest uppercase leading-none">
+                GREEN FLAG!
+              </div>
+            </div>
+          ) : hud.safetyCarPhase === 'sc' || hud.safetyCarPhase === 'sc-ending' ? (
+            <div
+              className={`border rounded-md px-4 py-1.5 text-center shadow-xl ${
+                hud.safetyCarPhase === 'sc-ending'
+                  ? 'bg-emerald-950/92 border-emerald-400/70 text-emerald-200'
+                  : 'bg-amber-950/95 border-amber-400/80 text-amber-200'
+              }`}
+            >
+              <div className="text-xs font-display font-extrabold tracking-widest uppercase">
+                {hud.safetyCarPhase === 'sc-ending' ? 'SAFETY CAR IN THIS LAP' : 'SAFETY CAR DEPLOYED'}
+              </div>
+              {hud.safetyCarSpeedLimitKmh && (
+                <div className="text-[10px] font-telemetry mt-0.5">
+                  MAX DELTA SPEED: {hud.safetyCarSpeedLimitKmh} KM/H · NO OVERTAKING
+                </div>
+              )}
+            </div>
+          ) : hud.safetyCarPhase === 'vsc' ? (
+            <div className="bg-amber-950/95 border border-amber-400/80 rounded-md px-4 py-1.5 text-center shadow-xl text-amber-200">
+              <div className="text-xs font-display font-extrabold tracking-widest uppercase">
+                VIRTUAL SAFETY CAR (VSC)
+              </div>
+              {hud.safetyCarSpeedLimitKmh && (
+                <div className="text-[10px] font-telemetry mt-0.5">
+                  HOLD DELTA &le; {hud.safetyCarSpeedLimitKmh} KM/H
+                </div>
+              )}
+            </div>
+          ) : hud.raceFlag === 'yellow' || hud.raceFlag === 'double-yellow' ? (
+            <div className="bg-yellow-950/92 border border-yellow-400/80 rounded-md px-4 py-1 text-center shadow-lg">
+              <div className="text-xs font-display font-extrabold text-yellow-300 tracking-widest uppercase">
+                {hud.raceFlag === 'double-yellow' ? 'DOUBLE YELLOW FLAG' : 'LOCAL YELLOW FLAG'}
+              </div>
+              {hud.sectorFlags && (
+                <div className="text-[10px] font-telemetry text-yellow-200/90 flex items-center justify-center gap-2 mt-0.5">
+                  {hud.sectorFlags.map((sf, idx) => (
+                    <span
+                      key={idx}
+                      className={sf === 'yellow' ? 'text-yellow-300 font-bold' : 'text-slate-400'}
+                    >
+                      S{idx + 1}:{sf === 'yellow' ? 'YEL' : 'CLR'}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : hud.raceFlag === 'white' ? (
+            <div className="bg-slate-900/92 border border-white/60 rounded-md px-4 py-1 text-center shadow-lg">
+              <div className="text-xs font-display font-extrabold text-white tracking-widest uppercase">
+                WHITE FLAG · FINAL LAP
+              </div>
+            </div>
+          ) : touchControlsActive && !isAiRace ? (
+            <div className="hidden sm:flex short:flex flex-col bg-[#0b0e13]/85 border border-white/12 rounded-md px-3 py-1.5 short:px-2.5 short:py-1 shadow-lg min-w-[168px] short:min-w-[152px]">
+              <div className="flex items-baseline justify-between gap-2.5">
+                <div className="flex items-baseline gap-1">
+                  <span
+                    data-testid="hud-speed"
+                    className="text-xl short:text-lg font-display font-extrabold text-white tabular-nums leading-none"
+                  >
+                    {hud.speedKmh}
+                  </span>
+                  <span className="text-[8px] text-slate-400 uppercase tracking-wider">KM/H</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-[8px] text-slate-400 uppercase">G</span>
+                  <span className="text-base short:text-sm font-display font-bold text-amber-400 tabular-nums leading-none">
+                    {hud.gear === -1 ? 'R' : hud.gear}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[9px] font-telemetry leading-none">
+                  <span className={hud.tireWear < 30 ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
+                    {hud.compound.slice(0, 1).toUpperCase()}{hud.tireWear}%
+                  </span>
+                  <span className="text-amber-300 font-semibold">F{hud.fuel}%</span>
+                </div>
+              </div>
+              <div className="mt-1 h-1 rounded bg-[#1a202c] overflow-hidden">
+                <div
+                  className="h-full transition-all duration-75"
+                  style={{
+                    width: `${Math.round(hud.rpmNormalized * 100)}%`,
+                    backgroundColor: hud.rpmNormalized > 0.85 ? '#ef4444' : '#38bdf8',
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {hud.raceControlMessage && hud.countdown <= 0 && (
+            <div className="bg-[#0b0e13]/92 border border-white/15 rounded px-3 py-1 text-[10px] font-display font-bold tracking-wider uppercase text-slate-100 shadow-lg text-center">
+              RC: {hud.raceControlMessage}
+            </div>
+          )}
+        </div>
 
         {/* Top-Right Cluster: Compact Minimap & Utility Icon Buttons */}
         <div className="flex flex-col items-end gap-1.5 sm:gap-2 short:gap-1 shrink-0">
@@ -552,7 +686,9 @@ export function RaceHUD({
               />
               {hud.minimapDots.map((dot) => {
                 const { px, py } = minimapGeometry.project(dot.x, dot.z);
-                const dotColor = dot.isPlayer
+                const dotColor = dot.isSafetyCar
+                  ? '#f59e0b'
+                  : dot.isPlayer
                   ? '#ffffff'
                   : dot.isHumanPeer
                   ? '#facc15'
@@ -562,15 +698,38 @@ export function RaceHUD({
                     key={dot.id}
                     cx={px}
                     cy={py}
-                    r={dot.isPlayer ? 4.2 : 2.6}
+                    r={dot.isSafetyCar ? 4.4 : dot.isPlayer ? 4.2 : 2.6}
                     fill={dotColor}
-                    stroke={dot.isPlayer ? '#ef4444' : '#0b0e13'}
-                    strokeWidth={dot.isPlayer ? 1.5 : 0.6}
+                    stroke={dot.isSafetyCar ? '#ffffff' : dot.isPlayer ? '#ef4444' : '#0b0e13'}
+                    strokeWidth={dot.isPlayer || dot.isSafetyCar ? 1.5 : 0.6}
                   />
                 );
               })}
             </svg>
           </div>
+
+          {/* Dynamic Weather & Track Evolution Chip */}
+          {hud.weatherCondition && (
+            <div className="hidden sm:block bg-[#0b0e13]/85 border border-white/12 rounded-md px-2 py-1 text-[10px] text-right max-w-[168px] leading-tight">
+              <div className="font-semibold text-slate-200 flex items-center justify-end gap-1.5">
+                <span className={hud.trackWetness > 0.15 ? 'text-sky-300' : 'text-amber-200'}>
+                  {formatWeatherCondition(hud.weatherCondition)}
+                </span>
+                <span className="font-telemetry text-slate-400">
+                  {hud.trackTempC ?? 30}°C
+                </span>
+              </div>
+              <div className="text-[9px] text-slate-400 font-telemetry">
+                Grip {Math.round((hud.trackRubber ?? 0.3) * 100)}%
+                {hud.trackWetness > 0.08
+                  ? ` · Line ${Math.round((hud.racingLineWetness ?? hud.trackWetness) * 100)}%`
+                  : ''}
+              </div>
+              {hud.weatherNextLabel && (
+                <div className="text-[9px] text-sky-300/90 truncate">{hud.weatherNextLabel}</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -824,14 +983,147 @@ export function RaceHUD({
               />
             </div>
 
+            {/* 4-Wheel Tire Temps/Wear + Brakes + Live Brake Bias & ERS Mode */}
+            {hud.tires && (
+              <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-2 gap-2 text-[10px]">
+                <div className="grid grid-cols-2 gap-1">
+                  {(['fl', 'fr', 'rl', 'rr'] as const).map((k) => {
+                    const wh = hud.tires![k];
+                    const tempColor =
+                      wh.temp > 112
+                        ? 'text-red-400 border-red-500/40'
+                        : wh.temp < 62
+                        ? 'text-sky-300 border-sky-500/35'
+                        : 'text-emerald-300 border-emerald-500/35';
+                    return (
+                      <div
+                        key={k}
+                        className={`rounded bg-[#131924] border px-1.5 py-0.5 flex items-center justify-between font-telemetry ${tempColor}`}
+                      >
+                        <span className="uppercase text-[9px] text-slate-400">{k}</span>
+                        <span>
+                          {Math.round(wh.wear)}% · {Math.round(wh.temp)}°
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-col justify-between gap-1 text-[10px]">
+                  <div className="flex items-center justify-between font-telemetry">
+                    <span className="text-slate-400">Brakes F/R</span>
+                    <span
+                      className={
+                        (hud.brakeFade ?? 0) > 0.2
+                          ? 'text-red-400 font-bold'
+                          : (hud.brakeLockup ?? 0) > 0.25
+                          ? 'text-amber-300 font-bold'
+                          : 'text-slate-200'
+                      }
+                    >
+                      {hud.brakeTempFront ?? 280}°/{hud.brakeTempRear ?? 250}°
+                      {(hud.brakeFade ?? 0) > 0.2
+                        ? ' FADE'
+                        : (hud.brakeLockup ?? 0) > 0.25
+                        ? ' LOCK'
+                        : ''}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-1 pointer-events-auto">
+                    <span className="text-slate-400">BBias</span>
+                    <div className="flex items-center gap-1">
+                      {!isAiRace && onAdjustBrakeBalance && (
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          onClick={(e) => {
+                            e.currentTarget.blur();
+                            onAdjustBrakeBalance(-0.5);
+                          }}
+                          className="px-1 rounded bg-[#18202c] hover:bg-[#243044] text-slate-200 border border-white/10 cursor-pointer"
+                          title="Shift Brake Bias Rearward ([)"
+                        >
+                          -
+                        </button>
+                      )}
+                      <span className="font-telemetry text-white min-w-[38px] text-center">
+                        {(hud.brakeBalance ?? 56).toFixed(1)}%
+                      </span>
+                      {!isAiRace && onAdjustBrakeBalance && (
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          onClick={(e) => {
+                            e.currentTarget.blur();
+                            onAdjustBrakeBalance(0.5);
+                          }}
+                          className="px-1 rounded bg-[#18202c] hover:bg-[#243044] text-slate-200 border border-white/10 cursor-pointer"
+                          title="Shift Brake Bias Forward (])"
+                        >
+                          +
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {!isAiRace && onCycleErsMode && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onCycleErsMode();
+                      }}
+                      className="w-full py-0.5 px-1.5 rounded bg-[#151d2b] hover:bg-[#1e2a3d] border border-sky-500/35 text-[9px] font-bold uppercase tracking-wider text-sky-300 flex items-center justify-between cursor-pointer"
+                      title="Cycle Energy Deployment Mode [B]"
+                    >
+                      <span>ERS Mode [B]</span>
+                      <span className="text-white">{(hud.ersMode ?? 'balanced').toUpperCase()}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Localized Mechanical Damage Mini-Strip (shown when damaged) */}
+            {hud.damage &&
+              (hud.damage.frontWing > 5 ||
+                hud.damage.rearWing > 5 ||
+                hud.damage.engine > 5 ||
+                hud.damage.suspension > 5) && (
+                <div className="mt-1.5 pt-1.5 border-t border-white/10 grid grid-cols-4 gap-1.5 text-[9px] font-telemetry">
+                  {(
+                    [
+                      ['FW', hud.damage.frontWing],
+                      ['RW', hud.damage.rearWing],
+                      ['ENG', hud.damage.engine],
+                      ['SUSP', hud.damage.suspension],
+                    ] as const
+                  ).map(([lbl, val]) => (
+                    <div
+                      key={lbl}
+                      className={`px-1 py-0.5 rounded bg-[#131924] text-center ${
+                        val > 55 ? 'text-red-400 font-bold' : val > 20 ? 'text-amber-300' : 'text-slate-400'
+                      }`}
+                    >
+                      {lbl} {Math.round(val)}%
+                    </div>
+                  ))}
+                </div>
+              )}
+
             {/* Class Special & Track Surface Footer */}
             <div className="mt-2 flex items-center justify-between gap-4 text-[11px] text-slate-400 whitespace-nowrap">
               <span>
                 {carSpecial.specialType === 'active-aero' ? (
                   <span>
                     Active Aero:{' '}
-                    <strong className={hud.specialActive ? 'text-emerald-400' : 'text-slate-200'}>
-                      {hud.specialActive ? 'STRAIGHT (LOW DRAG +12%)' : 'CORNER (HIGH DOWNFORCE)'}
+                    <strong className={hud.specialActive ? 'text-emerald-400' : hud.drsEligible ? 'text-emerald-300' : 'text-slate-200'}>
+                      {hud.specialActive
+                        ? 'DRS / LOW DRAG (+12%)'
+                        : hud.drsEligible
+                        ? 'DRS READY [E]'
+                        : hud.inDrsZone
+                        ? 'IN DRS ZONE (>1s)'
+                        : 'HIGH DOWNFORCE'}
                     </strong>{' '}
                     {!isAiRace && <span className="text-[10px] text-slate-500">[Shift/E/X]</span>}
                   </span>
@@ -843,7 +1135,7 @@ export function RaceHUD({
                         ? `ACTIVE ${hud.attackModeTimer?.toFixed(1) ?? '15.0'}s (+15% PWR)`
                         : `${hud.attackModeUsesRemaining ?? 2}/2 USES READY`}
                     </strong>{' '}
-                    {!isAiRace && <span className="text-[10px] text-slate-500">[Shift/E/X]</span>}
+                    {!isAiRace && <span className="text-[10px] text-slate-500">[Zone / E]</span>}
                   </span>
                 ) : carSpecial.specialType === 'v10-overboost' ? (
                   <span>

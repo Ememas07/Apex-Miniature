@@ -1,17 +1,29 @@
 import { CAR_CLASSES, getCarById, resolveCarSpecial, getCarBoP, BoPMultipliers, getRealWorldCarDimensions } from './cars';
+import { computeSetupPhysicsModifiers, DEFAULT_CAR_SETUP, normalizeCarSetup, resolveEffectiveBoP } from './carSetup';
+import { getErsModeProfile } from './raceSystems';
 import { CompiledTrack, computeTrackWallHalfWidth, projectOntoTrack, sampleTrackAtT } from './tracks';
 import tuningConfigRaw from './tuningConfig.json';
 import {
+  AbsLevel,
   AIDifficulty,
   AIPersonality,
   CarClassId,
+  CarSetupConfig,
   CarSpec,
+  DamageLevel,
   DriverStandingsEntry,
+  ErsMode,
+  FourWheelTireState,
   LiveryConfig,
+  LocalizedDamageState,
+  PenaltyReason,
+  PenaltyType,
   PitServiceAction,
   PitStrategy,
   RaceStartType,
+  SceneryTheme,
   TireCompound,
+  TrackSurfaceType,
 } from './types';
 
 export interface TuningConfig {
@@ -183,6 +195,57 @@ export interface CarSimState {
   sectorTimes?: [number | null, number | null, number | null];
   bestSectorTimes?: [number | null, number | null, number | null];
   lastLapSectorTimes?: [number | null, number | null, number | null];
+  // Advanced Driving Physics (Section 2.1, 2.2, 2.3) & Race Rules (Section 1.2, 1.3, 1.4)
+  tires?: FourWheelTireState;
+  brakeTempFront?: number; // Celsius (ambient ~35 .. 1000)
+  brakeTempRear?: number;
+  brakeFade?: number; // 0..1
+  brakeLockupIntensity?: number; // 0..1
+  flatSpotVibration?: number; // 0..1
+  dirtyAirStrength?: number; // 0..1 high-speed corner turbulent wake
+  surfaceType?: TrackSurfaceType;
+  crestLoadFactor?: number; // 0.55..1.45 vertical normal load from crests/dips
+  suspensionHeave?: number; // meters vertical chassis hop/compression
+  sausageKerbHop?: number; // 0..1 active kerb hop upset
+  prevSpeedMs?: number; // for longitudinal G weight transfer
+  prevThrottle?: number; // for lift-off oversteer detection
+  damage?: LocalizedDamageState;
+  damageLevel?: DamageLevel;
+  absLevel?: AbsLevel;
+  setup?: CarSetupConfig;
+  ersMode?: ErsMode;
+  drsEligible?: boolean;
+  inDrsZone?: boolean;
+  inAttackModeZone?: boolean;
+  blueFlagActive?: boolean;
+  blackAndWhiteFlagged?: boolean;
+  disqualified?: boolean;
+  postRacePenaltySeconds?: number;
+  penaltyReason?: PenaltyReason | null;
+  penaltyType?: PenaltyType | null;
+  launchBoostTimer?: number; // >0 seconds of standing-start perfect-launch traction bonus
+  debrisBurstIntensity?: number; // >0 transient impact debris cue for 3D VFX
+  localWetness?: number;
+  puddleIntensity?: number;
+  trackRubber?: number;
+}
+
+export function createInitialFourWheelTires(initialTemp = 72): FourWheelTireState {
+  const mk = () => ({ wear: 100, temp: initialTemp, flatSpot: 0, graining: 0, load: 1.0 });
+  return { fl: mk(), fr: mk(), rl: mk(), rr: mk() };
+}
+
+export function createInitialLocalizedDamage(): LocalizedDamageState {
+  return {
+    frontWing: 0,
+    rearWing: 0,
+    engine: 0,
+    suspension: 0,
+    suspensionPullDir: 0,
+    headlightBroken: false,
+    frontWingDetached: false,
+    rearWingDetached: false,
+  };
 }
 
 /**
@@ -371,10 +434,15 @@ export function createCarSimState(params: {
   bopEnabled?: boolean;
   startType?: RaceStartType;
   rollingSpeed?: number;
+  damageLevel?: DamageLevel;
+  absLevel?: AbsLevel;
+  setup?: CarSetupConfig;
 }): CarSimState {
   const bopEnabled = params.bopEnabled ?? true;
-  const bop = bopEnabled ? getCarBoP(params.carId) : { topSpeedMult: 1.0, gripMult: 1.0, downforceMult: 1.0, brakingMult: 1.0 };
   const carSpec = getCarById(params.carId);
+  const rawBop = bopEnabled ? getCarBoP(params.carId) : { topSpeedMult: 1.0, gripMult: 1.0, downforceMult: 1.0, brakingMult: 1.0 };
+  const bop = bopEnabled ? resolveEffectiveBoP(rawBop, carSpec.id, carSpec.classId) : rawBop;
+  const normalizedSetup = params.setup ? normalizeCarSetup(params.setup) : { ...DEFAULT_CAR_SETUP };
   const row = Math.floor(params.gridSlot / 2);
   const col = params.gridSlot % 2;
   const isRolling = params.startType === 'rolling';
@@ -400,6 +468,7 @@ export function createCarSimState(params: {
   const z = sp.z + sp.nz * lat;
   const heading = Math.atan2(sp.tx, sp.tz);
   const initSpeed = isRolling ? Math.max(14, params.rollingSpeed ?? 26) : 0;
+  const startingFuel = normalizedSetup.startingFuel;
 
   return {
     id: params.id,
@@ -429,9 +498,41 @@ export function createCarSimState(params: {
     compound: params.compound,
     tireWear: 100,
     tireTemp: 72,
-    fuel: 100,
-    fuelLapsRemaining: 14.3,
+    tires: createInitialFourWheelTires(72),
+    brakeTempFront: 240,
+    brakeTempRear: 220,
+    brakeFade: 0,
+    brakeLockupIntensity: 0,
+    flatSpotVibration: 0,
+    dirtyAirStrength: 0,
+    surfaceType: 'asphalt',
+    crestLoadFactor: 1.0,
+    suspensionHeave: 0,
+    sausageKerbHop: 0,
+    prevSpeedMs: initSpeed,
+    prevThrottle: 0,
+    fuel: startingFuel,
+    fuelLapsRemaining: Number(((startingFuel / 100) * 14.3).toFixed(1)),
     aeroDamage: 0,
+    damage: createInitialLocalizedDamage(),
+    damageLevel: params.damageLevel ?? 'light',
+    absLevel: params.absLevel ?? 'low',
+    setup: normalizedSetup,
+    ersMode: 'balanced',
+    drsEligible: false,
+    inDrsZone: false,
+    inAttackModeZone: false,
+    blueFlagActive: false,
+    blackAndWhiteFlagged: false,
+    disqualified: false,
+    postRacePenaltySeconds: 0,
+    penaltyReason: null,
+    penaltyType: null,
+    launchBoostTimer: 0,
+    debrisBurstIntensity: 0,
+    localWetness: 0,
+    puddleIntensity: 0,
+    trackRubber: 0.25,
     specialCharge: 100,
     specialActive: false,
     attackModeUsesRemaining: 2,
@@ -572,12 +673,237 @@ export function resolveWallContact(
   const impactSpeed = Math.max(0, vNorm);
   const DAMAGE_THRESHOLD_SPEED = 25 / SPEED_KMH_FACTOR; // 6.944 m/s
   if (impactSpeed >= DAMAGE_THRESHOLD_SPEED && (!car.wallCollisionCooldown || car.wallCollisionCooldown <= 0)) {
-    // 75% reduced damage accumulation (0.25x rate) with 0.5s cooldown
-    const heavyDmg = (impactSpeed - DAMAGE_THRESHOLD_SPEED) * 0.25;
-    car.aeroDamage = Math.min(100, car.aeroDamage + Math.min(5.0, heavyDmg));
+    const heavyDmg = Math.min(5.0, (impactSpeed - DAMAGE_THRESHOLD_SPEED) * 0.25);
+    const noseAngle = Math.abs(headingDiff);
+    const zone: 'front' | 'side' | 'rear' =
+      noseAngle > 0.45 ? 'front' : noseAngle > 2.3 ? 'rear' : 'side';
+    applyLocalizedImpactDamage(car, zone, heavyDmg, impactSpeed, side);
     car.wallCollisionCooldown = 0.5;
     car.lastWallImpact = Math.max(car.lastWallImpact ?? 0, impactSpeed);
   }
+}
+
+/**
+ * Applies localized damage to front wing, rear wing, engine, and suspension while keeping
+ * aggregate `car.aeroDamage` synced and respecting `car.damageLevel` ('off' | 'visual-only' | 'light' | 'realistic').
+ */
+export function applyLocalizedImpactDamage(
+  car: CarSimState,
+  zone: 'front' | 'rear' | 'side',
+  baseDmg: number,
+  impactSpeedMs: number,
+  lateralSide: number = 0,
+): void {
+  const level = car.damageLevel ?? 'light';
+  if (level === 'off') return;
+  if (!car.damage) car.damage = createInitialLocalizedDamage();
+
+  const scale = level === 'realistic' ? 1.85 : level === 'visual-only' ? 0.65 : 1.0;
+  const scaled = Math.min(18.0, baseDmg * scale);
+  const d = car.damage;
+
+  if (zone === 'front') {
+    d.frontWing = Math.min(100, d.frontWing + scaled * 1.45);
+    d.engine = Math.min(100, d.engine + scaled * 0.35);
+    d.suspension = Math.min(100, d.suspension + scaled * 0.30);
+    if (impactSpeedMs > 12.0 || d.frontWing > 32) {
+      d.headlightBroken = true;
+    }
+    if (d.frontWing > 58) {
+      d.frontWingDetached = true;
+    }
+  } else if (zone === 'rear') {
+    d.rearWing = Math.min(100, d.rearWing + scaled * 1.45);
+    d.engine = Math.min(100, d.engine + scaled * 0.55);
+    if (d.rearWing > 58) {
+      d.rearWingDetached = true;
+    }
+  } else {
+    d.suspension = Math.min(100, d.suspension + scaled * 1.35);
+    d.frontWing = Math.min(100, d.frontWing + scaled * 0.45);
+    d.rearWing = Math.min(100, d.rearWing + scaled * 0.35);
+    if (lateralSide !== 0) {
+      d.suspensionPullDir = Math.max(-1, Math.min(1, d.suspensionPullDir + Math.sign(lateralSide) * 0.25));
+    }
+  }
+
+  // Emit visual carbon debris particle cue on meaningful impacts
+  if (impactSpeedMs > 8.5) {
+    car.debrisBurstIntensity = Math.min(1, Math.max(car.debrisBurstIntensity ?? 0, (impactSpeedMs - 7.0) / 14.0));
+  }
+
+  // Sync aggregate aeroDamage for HUD/legacy consumers (0 performance impact in visual-only mode handled in stepCarPhysics)
+  car.aeroDamage = Math.min(100, car.aeroDamage + (level === 'realistic' ? baseDmg * 1.6 : baseDmg));
+}
+
+/**
+ * Classifies track surface type and returns grip, rolling drag, and gravel sinking resistance.
+ */
+export function classifyTrackSurface(
+  lateralOffset: number,
+  halfW: number,
+  curvature: number,
+  scenery: SceneryTheme,
+  localWetness: number,
+): {
+  surface: TrackSurfaceType;
+  gripMult: number;
+  dragMult: number;
+  gravelDecelMs2: number;
+  sausageUpset: number;
+} {
+  const absLat = Math.abs(lateralOffset);
+  const absCurv = Math.abs(curvature);
+  const isInsideCorner =
+    absCurv > 0.008 &&
+    ((curvature > 0 && lateralOffset > 0) || (curvature < 0 && lateralOffset < 0));
+
+  if (absLat <= halfW - 0.55) {
+    return { surface: 'asphalt', gripMult: 1.0, dragMult: 1.0, gravelDecelMs2: 0, sausageUpset: 0 };
+  }
+
+  // Apex kerb & painted sausage kerb
+  if (absLat <= halfW + 1.55) {
+    if (isInsideCorner) {
+      return {
+        surface: 'kerb',
+        gripMult: Math.max(0.74, 0.96 - localWetness * 0.18),
+        dragMult: 0.985,
+        gravelDecelMs2: 0,
+        sausageUpset: 0,
+      };
+    }
+    return { surface: 'asphalt', gripMult: 0.98, dragMult: 0.99, gravelDecelMs2: 0, sausageUpset: 0 };
+  }
+
+  // Sausage kerb on tight chicanes / inner apex beyond primary kerb
+  if (isInsideCorner && absCurv > 0.024 && absLat <= halfW + 2.35) {
+    return {
+      surface: 'sausage-kerb',
+      gripMult: Math.max(0.60, 0.78 - localWetness * 0.18),
+      dragMult: 0.94,
+      gravelDecelMs2: 0,
+      sausageUpset: 1.0,
+    };
+  }
+
+  // Street/stadium circuits have painted concrete runoff
+  if (scenery === 'street-night' || scenery === 'stadium') {
+    return {
+      surface: 'concrete-runoff',
+      gripMult: Math.max(0.66, 0.86 - localWetness * 0.16),
+      dragMult: 0.93,
+      gravelDecelMs2: 0,
+      sausageUpset: 0,
+    };
+  }
+
+  // Wet astroturf strip just outside kerbs on modern circuits (ice-like when wet)
+  if (absLat <= halfW + 2.85) {
+    return {
+      surface: 'astroturf',
+      gripMult: localWetness > 0.18 ? Math.max(0.36, 0.72 - localWetness * 0.42) : 0.79,
+      dragMult: 0.90,
+      gravelDecelMs2: 0,
+      sausageUpset: 0,
+    };
+  }
+
+  // Outer gravel traps on high-curvature corners in desert / forest / parkland tracks
+  const isOutsideCorner =
+    absCurv > 0.014 &&
+    ((curvature > 0 && lateralOffset < 0) || (curvature < 0 && lateralOffset > 0));
+  if (isOutsideCorner && (scenery === 'desert' || scenery === 'forest' || scenery === 'parkland')) {
+    const depthRatio = Math.min(1, (absLat - (halfW + 2.85)) / 4.0);
+    return {
+      surface: 'gravel',
+      gripMult: 0.48,
+      dragMult: 0.64 - depthRatio * 0.10,
+      gravelDecelMs2: 4.5 + depthRatio * 5.0,
+      sausageUpset: 0.25,
+    };
+  }
+
+  // Standard grass runoff
+  return {
+    surface: 'grass',
+    gripMult: Math.max(0.40, 0.60 - localWetness * 0.20),
+    dragMult: 0.74,
+    gravelDecelMs2: 1.2,
+    sausageUpset: 0,
+  };
+}
+
+/**
+ * Computes high-speed cornering turbulent wake (dirty air) front-downforce loss when following
+ * high-downforce cars closely through fast corners.
+ */
+export function computeDirtyAirStrength(
+  car: Pick<CarSimState, 'id' | 'trackT' | 'lateralOffset' | 'speed' | 'pitStopRemaining' | 'carSpec'>,
+  allCars: ReadonlyArray<Pick<CarSimState, 'id' | 'trackT' | 'lateralOffset' | 'speed' | 'pitStopRemaining' | 'carSpec'>>,
+  trackLength: number,
+  curvature: number,
+  steerMag: number,
+): number {
+  if (car.pitStopRemaining > 0 || car.speed < 28) return 0;
+  const cornerActivity = Math.max(steerMag, Math.min(1, Math.abs(curvature) * 55));
+  if (cornerActivity < 0.14) return 0;
+
+  const isHighDfSelf =
+    car.carSpec.classId === CarClassId.F1_2026 ||
+    car.carSpec.classId === CarClassId.F1_2021 ||
+    car.carSpec.classId === CarClassId.F1_2005 ||
+    car.carSpec.classId === CarClassId.HYPERCAR_GTP ||
+    car.carSpec.classId === CarClassId.LMP2;
+  const selfSensitivity = isHighDfSelf ? 1.0 : 0.45;
+  const speedRamp = Math.max(0, Math.min(1, (car.speed - 28) / 36));
+
+  let best = 0;
+  for (let i = 0; i < allCars.length; i++) {
+    const other = allCars[i];
+    if (other.id === car.id || other.pitStopRemaining > 0) continue;
+    let dT = other.trackT - car.trackT;
+    if (dT < 0) dT += 1;
+    const distAhead = dT * trackLength;
+    if (distAhead < 2.2 || distAhead > 28.0) continue;
+    const latDiff = Math.abs(other.lateralOffset - car.lateralOffset);
+    if (latDiff > 4.2) continue;
+
+    const leadWakeMult =
+      other.carSpec.classId === CarClassId.F1_2026 ||
+      other.carSpec.classId === CarClassId.F1_2021 ||
+      other.carSpec.classId === CarClassId.F1_2005
+        ? 1.0
+        : other.carSpec.classId === CarClassId.HYPERCAR_GTP || other.carSpec.classId === CarClassId.LMP2
+          ? 0.85
+          : 0.55;
+    const longFactor = Math.exp(-(distAhead - 2.2) / 10.5);
+    const latFactor = Math.exp(-((latDiff / 2.6) * (latDiff / 2.6)));
+    const val = longFactor * latFactor * speedRamp * cornerActivity * selfSensitivity * leadWakeMult;
+    if (val > best) best = val;
+  }
+  return Math.max(0, Math.min(1, best));
+}
+
+/**
+ * Computes vertical load multiplier over track crests (<1.0 unloading) and dips (>1.0 compression)
+ * using the longitudinal slope derivative from `compiledTrack`.
+ */
+export function computeCrestLoadFactor(
+  compiledTrack: CompiledTrack,
+  trackT: number,
+  speedMs: number,
+): number {
+  if (speedMs < 14) return 1.0;
+  const ds = 8.0;
+  const trackLen = Math.max(100, compiledTrack.totalLength);
+  const dtStep = ds / trackLen;
+  const prevSp = sampleTrackAtT(compiledTrack, (((trackT - dtStep) % 1) + 1) % 1);
+  const nextSp = sampleTrackAtT(compiledTrack, (trackT + dtStep) % 1);
+  // Positive dSlopeDs means curving upward (compression / dip); negative means cresting over a hilltop (unloading)
+  const dSlopeDs = (nextSp.ty - prevSp.ty) / (2 * ds);
+  const verticalAccelG = (speedMs * speedMs * dSlopeDs) / 9.81;
+  return Math.max(0.62, Math.min(1.38, 1.0 + verticalAccelG * 0.65));
 }
 
 /**
@@ -742,6 +1068,14 @@ export function stepCarPhysics(
     isPractice?: boolean;
     allCars: CarSimState[];
     bopEnabled?: boolean;
+    localWetness?: number;
+    puddleIntensity?: number;
+    trackRubber?: number;
+    trackTempC?: number;
+    safetyCarSpeedLimitMs?: number | null;
+    drsZoneEnforced?: boolean;
+    damageLevel?: DamageLevel;
+    absLevel?: AbsLevel;
   },
 ): void {
   if (car.finished) {
@@ -751,6 +1085,15 @@ export function stepCarPhysics(
     car.x += car.vx * dt;
     car.z += car.vz * dt;
     return;
+  }
+
+  if (!car.tires) car.tires = createInitialFourWheelTires(car.tireTemp || 72);
+  if (!car.damage) car.damage = createInitialLocalizedDamage();
+  if (opts.damageLevel) car.damageLevel = opts.damageLevel;
+  if (opts.absLevel) car.absLevel = opts.absLevel;
+  car.debrisBurstIntensity = Math.max(0, (car.debrisBurstIntensity ?? 0) - dt * 2.5);
+  if (car.launchBoostTimer && car.launchBoostTimer > 0) {
+    car.launchBoostTimer = Math.max(0, car.launchBoostTimer - dt);
   }
 
   const classMeta = CAR_CLASSES[car.carSpec.classId];
@@ -770,7 +1113,13 @@ export function stepCarPhysics(
         car.compound = car.pitStrategy.nextCompound;
         car.tireWear = 100;
         car.tireTemp = 72;
+        car.tires = createInitialFourWheelTires(72);
+        car.flatSpotVibration = 0;
         car.aeroDamage = Math.max(0, car.aeroDamage - 25);
+        car.damage.frontWing = Math.max(0, car.damage.frontWing - 25);
+        car.damage.rearWing = Math.max(0, car.damage.rearWing - 25);
+        if (car.damage.frontWing < 45) car.damage.frontWingDetached = false;
+        if (car.damage.rearWing < 45) car.damage.rearWingDetached = false;
       } else if (completedTask === 'fuel') {
         car.fuel = 100;
         car.fuelLapsRemaining = Math.max(12, car.fuelLapsRemaining);
@@ -778,8 +1127,11 @@ export function stepCarPhysics(
         car.compound = car.pitStrategy.nextCompound;
         car.tireWear = 100;
         car.tireTemp = 72;
+        car.tires = createInitialFourWheelTires(72);
+        car.flatSpotVibration = 0;
         car.fuel = 100;
         car.aeroDamage = 0;
+        car.damage = createInitialLocalizedDamage();
       }
 
       if (car.pitQueue.length > 0) {
@@ -797,6 +1149,14 @@ export function stepCarPhysics(
   }
 
   const halfW = compiledTrack.spec.trackWidth * 0.5;
+  const setupMod = computeSetupPhysicsModifiers(car.setup);
+  const effectiveWetness = Math.max(0, Math.min(1, opts.localWetness ?? opts.trackWetness));
+  const puddleIntensity = Math.max(0, Math.min(1, opts.puddleIntensity ?? 0));
+  const trackRubber = Math.max(0, Math.min(1, opts.trackRubber ?? 0.25));
+  const trackTempC = opts.trackTempC ?? (28 - effectiveWetness * 10);
+  car.localWetness = effectiveWetness;
+  car.puddleIntensity = puddleIntensity;
+  car.trackRubber = trackRubber;
 
   // Class / car-specific special toggle activation (press once ON, press again OFF, auto-OFF on depletion/expiry)
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
@@ -805,11 +1165,16 @@ export function stepCarPhysics(
 
   switch (specialType) {
     case 'active-aero': {
+      const drsAllowed = !opts.drsZoneEnforced || Boolean(car.drsEligible);
       if (isSpecialTriggered) {
-        car.specialActive = !car.specialActive;
+        if (car.specialActive) {
+          car.specialActive = false;
+        } else if (drsAllowed) {
+          car.specialActive = true;
+        }
       }
-      if (car.specialActive && input.brake > 0.35) {
-        // Braking automatically closes low-drag wing back to high-downforce corner mode
+      if (car.specialActive && (input.brake > 0.35 || (opts.drsZoneEnforced && !car.inDrsZone))) {
+        // Braking or leaving DRS zone automatically closes low-drag wing back to high-downforce corner mode
         car.specialActive = false;
       }
       break;
@@ -897,13 +1262,44 @@ export function stepCarPhysics(
   car.inSlipstream = slipstreamStrength >= 0.14;
   car.lastWallImpact = 0;
 
+  // Sample current 3D road normal tilt, surface classification, crest unloading & dirty air
+  const currentRoadSample = sampleTrackAtT(compiledTrack, car.trackT);
+  const roadTilt = computeRoadSurfaceTilt(currentRoadSample, car.heading);
+  const sampleHalfWNow = (currentRoadSample.width ?? compiledTrack.spec.trackWidth) * 0.5;
+  const surfaceInfo = classifyTrackSurface(
+    car.lateralOffset,
+    sampleHalfWNow,
+    currentRoadSample.curvature || 0,
+    compiledTrack.spec.scenery,
+    effectiveWetness,
+  );
+  car.surfaceType = surfaceInfo.surface;
+  if (surfaceInfo.sausageUpset > 0 && car.speed > 10) {
+    car.sausageKerbHop = Math.min(1, (car.sausageKerbHop ?? 0) + surfaceInfo.sausageUpset * Math.min(1, car.speed / 35) * dt * 12);
+  } else {
+    car.sausageKerbHop = Math.max(0, (car.sausageKerbHop ?? 0) - dt * 5.5);
+  }
+  const crestLoadFactor = computeCrestLoadFactor(compiledTrack, car.trackT, car.speed);
+  car.crestLoadFactor = crestLoadFactor;
+  const dirtyAirStrength = computeDirtyAirStrength(
+    car,
+    opts.allCars,
+    compiledTrack.totalLength,
+    currentRoadSample.curvature || 0,
+    Math.abs(input.steer),
+  );
+  car.dirtyAirStrength = dirtyAirStrength;
+
   // Compute physical performance scalars & Balance of Performance
   if (opts.bopEnabled !== undefined) {
     car.bopEnabled = opts.bopEnabled;
   }
-  const bop = (car.bopEnabled !== false)
+  const rawBop = (car.bopEnabled !== false)
     ? (car.bopMultipliers ?? getCarBoP(car.carSpec.id))
     : { topSpeedMult: 1.0, gripMult: 1.0, downforceMult: 1.0, brakingMult: 1.0 };
+  const bop = (car.bopEnabled !== false)
+    ? resolveEffectiveBoP(rawBop, car.carSpec.id, car.carSpec.classId)
+    : rawBop;
 
   const paceScale = classMeta.basePaceIndex;
   const tuning = resolveTuningConfig(car.carSpec?.classId);
@@ -1025,34 +1421,72 @@ export function stepCarPhysics(
     tuning.brakeForceScale *
     bop.brakingMult;
 
-  const compoundMod = getCompoundModifiers(car.compound, opts.trackWetness);
-  const wearGripFactor = 0.72 + 0.28 * Math.pow(car.tireWear / 100, 0.7);
-  const damageFactor = 1 - (car.aeroDamage / 100) * 0.11;
+  const compoundMod = getCompoundModifiers(car.compound, effectiveWetness);
+  const tState = car.tires;
+  const avgTireWear = (tState.fl.wear + tState.fr.wear + tState.rl.wear + tState.rr.wear) * 0.25;
+  const wearGripFactor = 0.72 + 0.28 * Math.pow(avgTireWear / 100, 0.7);
+  // Localized damage effects (bypassed in 'off' and 'visual-only' modes)
+  const mechDamageActive = car.damageLevel !== 'off' && car.damageLevel !== 'visual-only';
+  const dmg = car.damage;
+  const frontWingDmgFactor = mechDamageActive ? 1 - (dmg.frontWing / 100) * 0.22 - (dmg.frontWingDetached ? 0.08 : 0) : 1.0;
+  const rearWingDmgFactor = mechDamageActive ? 1 - (dmg.rearWing / 100) * 0.22 - (dmg.rearWingDetached ? 0.08 : 0) : 1.0;
+  const engineDmgFactor = mechDamageActive ? 1 - (dmg.engine / 100) * 0.16 : 1.0;
+  const suspDmgGripFactor = mechDamageActive ? 1 - (dmg.suspension / 100) * 0.12 : 1.0;
+  const damageFactor = mechDamageActive ? 1 - (car.aeroDamage / 100) * 0.11 : 1.0;
   const fuelFactor = car.fuel > 0 ? 1.0 : 0.45;
+  // Fuel weight effect: lighter fuel load subtly improves acceleration & cornering responsiveness
+  const fuelWeightMassBonusKg = (car.fuel / 100) * (isFormula ? 65 : isGTP || isLMP2 ? 55 : 48);
+  const effectiveMassKg = massKg - 32 + fuelWeightMassBonusKg;
 
-  let specialSpeedMult = 1.0;
-  let specialAccelMult = 1.0;
+  // ERS Deployment Mode continuous modulation (Harvest / Balanced / Overtake / Quali)
+  const ersActiveEligible =
+    specialType === 'ers-overtake' || specialType === 'hybrid-deploy' || specialType === 'attack-mode';
+  let ersModeSpeedBonus = 0;
+  let ersModeAccelBonus = 0;
+  if (ersActiveEligible && car.ersMode && car.ersMode !== 'balanced') {
+    const ersProf = getErsModeProfile(car.ersMode);
+    if (ersProf.drainPerSec > 0) {
+      if (car.specialCharge > 4 && input.throttle > 0.25) {
+        ersModeSpeedBonus = ersProf.topSpeedBonus;
+        ersModeAccelBonus = ersProf.accelBonus;
+        car.specialCharge = Math.max(0, car.specialCharge - ersProf.drainPerSec * dt * input.throttle);
+      }
+    } else {
+      // Harvest mode: slightly less straight pull, faster battery regen
+      ersModeSpeedBonus = ersProf.topSpeedBonus;
+      ersModeAccelBonus = ersProf.accelBonus;
+      car.specialCharge = Math.min(100, car.specialCharge + Math.abs(ersProf.drainPerSec) * dt * (input.brake > 0.15 ? 1.6 : 0.7));
+    }
+  }
+
+  let specialSpeedMult = 1.0 + ersModeSpeedBonus;
+  let specialAccelMult = (1.0 + ersModeAccelBonus) * setupMod.accelMult * engineDmgFactor;
   let specialGripMult = 1.0;
   if (car.specialActive) {
     if (specialType === 'active-aero') {
       // 2026 F1: +3.8% low-drag straight Vmax (350-355 km/h), -25% cornering grip
       specialSpeedMult = 1.038;
-      specialAccelMult = 1.06;
+      specialAccelMult *= 1.06;
       specialGripMult = 0.75;
     } else if (specialType === 'attack-mode') {
       // Formula E: AWD launch & +15% power, +5.5% top speed (315-324 km/h)
       specialSpeedMult = 1.055;
-      specialAccelMult = 1.18;
+      specialAccelMult *= 1.18;
       specialGripMult = 1.08;
     } else if (specialType === 'ers-overtake' || specialType === 'hybrid-deploy') {
       // 2021 F1 & Hypercar: +12% mid/high-speed pull, +2.0% Vmax
-      specialSpeedMult = 1.020;
-      specialAccelMult = 1.12;
+      specialSpeedMult = 1.020 + ersModeSpeedBonus * 0.5;
+      specialAccelMult *= 1.12;
     } else if (specialType === 'v10-overboost' || specialType === 'rich-fuel-overboost') {
       // 2005 F1 & Non-hybrid LMH: +8% power surge with +35% fuel burn
       specialSpeedMult = 1.026;
-      specialAccelMult = 1.08;
+      specialAccelMult *= 1.08;
     }
+  }
+
+  // DRS boost for F1_2021 when DRS eligible + special active in DRS zone
+  if (isF121 && car.drsEligible && car.specialActive) {
+    specialSpeedMult *= 1.022;
   }
 
   const slipstreamMult = 1.0 + 0.052 * slipstreamStrength;
@@ -1067,13 +1501,17 @@ export function stepCarPhysics(
     }
     if (car.penaltyTimeRemaining <= 0) {
       car.penaltyTimeRemaining = 0;
+      car.penaltyReason = null;
+      car.penaltyType = null;
     }
   }
 
-  // Off-track / runoff resistance
-  const onAsphalt = Math.abs(car.lateralOffset) <= halfW + 1.0;
-  const offTrackDrag = onAsphalt ? 1.0 : 0.72;
-  const offTrackGrip = onAsphalt ? 1.0 : 0.65;
+  // Surface-specific resistance & puddle hydroplaning (replaces binary onAsphalt)
+  const puddleDragFactor = 1.0 - puddleIntensity * 0.14;
+  const puddleGripFactor = 1.0 - puddleIntensity * 0.34;
+  const rubberGripBonus = 1.0 + trackRubber * 0.04 * (1 - effectiveWetness * 0.85);
+  const offTrackDrag = surfaceInfo.dragMult * puddleDragFactor;
+  const offTrackGrip = surfaceInfo.gripMult * puddleGripFactor * rubberGripBonus;
 
   // Dynamic pack pace variance for AI (leaders subtly slow, chasers behind player push harder to promote fights)
   const aiPackPace = car.isPlayer
@@ -1084,21 +1522,24 @@ export function stepCarPhysics(
   const aiStraightScale = car.isPlayer
     ? 1.0
     : Math.max(0.86, Math.min(1.075, 1.0 + (effectiveAiPace - 1.0) * 0.40));
-  const dragVmaxFactor = Math.pow(tuning.dragScale, -0.22);
+  const dragVmaxFactor = Math.pow(tuning.dragScale * setupMod.dragMult, -0.22);
   let effectiveMaxSpeed =
     maxSpeedBase *
+    setupMod.topSpeedMult *
     specialSpeedMult *
     slipstreamMult *
     damageFactor *
+    (mechDamageActive ? 1 - (dmg.rearWing / 100) * 0.05 : 1.0) *
     fuelFactor *
     offTrackDrag *
     penaltyCap *
     aiStraightScale *
     dragVmaxFactor;
 
-  // Sample current 3D road normal tilt (slope + banking) for longitudinal gravity and lateral banking forces
-  const currentRoadSample = sampleTrackAtT(compiledTrack, car.trackT);
-  const roadTilt = computeRoadSurfaceTilt(currentRoadSample, car.heading);
+  // Enforce Safety Car / VSC speed limit for AI automatically (players receive steward delta enforcement)
+  if (!car.isPlayer && opts.safetyCarSpeedLimitMs && opts.safetyCarSpeedLimitMs > 0) {
+    effectiveMaxSpeed = Math.min(effectiveMaxSpeed, opts.safetyCarSpeedLimitMs);
+  }
 
   // Longitudinal acceleration, braking & transmission drivetrain
   const throttle = Math.max(0, Math.min(1, input.throttle));
@@ -1205,20 +1646,80 @@ export function stepCarPhysics(
       const pWheelW = powerWatts * specialAccelMult * fuelFactor * throttle * powerCurveFactor;
       const fPowerN = pWheelW / Math.max(4.5, car.speed);
 
-      // Tire traction limit (static launch grip + aero downforce load, scaled by tire compound & wear)
+      // Tire traction limit (static launch grip + aero downforce load + crest load + differential exit traction + perfect launch boost)
+      const launchBonusMult = (car.launchBoostTimer ?? 0) > 0 ? 1.12 : 1.0;
       const tireLaunchFactor =
-        (0.75 + 0.25 * compoundMod.grip) * (0.85 + 0.15 * wearGripFactor) * offTrackGrip;
+        (0.75 + 0.25 * compoundMod.grip) *
+        (0.85 + 0.15 * wearGripFactor) *
+        offTrackGrip *
+        setupMod.diffExitTractionMult *
+        launchBonusMult *
+        Math.pow(crestLoadFactor, 0.55);
       const fTractionN =
-        massKg * (launchGripG * GRAVITY * tireLaunchFactor + downforceTractionCoeff * car.speed * car.speed);
+        effectiveMassKg * (launchGripG * GRAVITY * tireLaunchFactor + downforceTractionCoeff * car.speed * car.speed);
 
       const fDriveN = limiterTorqueCut === 0 ? 0 : Math.min(fPowerN, fTractionN);
       const fNetN = fDriveN - fAeroDragN - fRollN;
-      car.speed = Math.max(0, car.speed + (fNetN / massKg) * dt);
+      car.speed = Math.max(0, car.speed + (fNetN / effectiveMassKg) * dt);
     }
 
+    // Brake disc thermal model, cold bite, hot fade & wheel lock-up (ABS-modulated)
+    const brakeBiasF = setupMod.brakeBiasFront;
+    const brakeBiasR = 1 - brakeBiasF;
+    const brakeHeatPower = brake * car.speed * (isFormula ? 10.5 : isGTP || isLMP2 ? 9.5 : 8.4);
+    const brakeAmbient = Math.max(25, trackTempC + 10);
+    const brakeCoolRate = (0.045 + car.speed * 0.0042) * (1 + effectiveWetness * 0.45);
+    const curBTF = car.brakeTempFront ?? 240;
+    const curBTR = car.brakeTempRear ?? 220;
+    const nextBTF = Math.max(
+      brakeAmbient,
+      Math.min(1020, curBTF + (brakeHeatPower * brakeBiasF * 1.15 - (curBTF - brakeAmbient) * brakeCoolRate) * dt),
+    );
+    const nextBTR = Math.max(
+      brakeAmbient,
+      Math.min(1020, curBTR + (brakeHeatPower * brakeBiasR * 1.15 - (curBTR - brakeAmbient) * brakeCoolRate) * dt),
+    );
+    car.brakeTempFront = nextBTF;
+    car.brakeTempRear = nextBTR;
+
+    const avgBrakeTemp = nextBTF * brakeBiasF + nextBTR * brakeBiasR;
+    const coldBrakeEff = avgBrakeTemp < 180 ? 0.88 + 0.12 * Math.max(0, (avgBrakeTemp - 50) / 130) : 1.0;
+    const hotFadeLoss = avgBrakeTemp > 760 ? Math.min(0.28, ((avgBrakeTemp - 760) / 260) * 0.28) : 0;
+    car.brakeFade = Math.min(1, hotFadeLoss / 0.28);
+    const brakeThermalEff = coldBrakeEff * (1 - hotFadeLoss);
+
+    let lockupIntensity = 0;
     if (brake > 0) {
-      const fBrakeN = massKg * brakeBase * compoundMod.grip * brake + fAeroDragN + fRollN;
-      car.speed = Math.max(0, car.speed - (fBrakeN / massKg) * dt);
+      const absLvl = car.absLevel ?? 'low';
+      const absMargin = absLvl === 'high' ? 1.18 : absLvl === 'low' ? 0.96 : 0.74;
+      const lockThreshold =
+        absMargin *
+        compoundMod.grip *
+        Math.max(0.65, offTrackGrip) *
+        Math.pow(crestLoadFactor, 0.5) *
+        (1 - Math.abs(brakeBiasF - 0.56) * 1.1);
+      if (car.speed > 14 && brake > lockThreshold && absLvl !== 'high') {
+        lockupIntensity = Math.min(1, (brake - lockThreshold) / Math.max(0.15, 1.05 - lockThreshold));
+      }
+      // Locked wheels lose peak friction slightly and scrub flat-spots onto front/rear tires
+      const lockupDecelPenalty = 1 - lockupIntensity * 0.16;
+      const fBrakeN =
+        effectiveMassKg *
+          brakeBase *
+          compoundMod.grip *
+          brakeThermalEff *
+          lockupDecelPenalty *
+          Math.pow(crestLoadFactor, 0.4) *
+          brake +
+        fAeroDragN +
+        fRollN;
+      car.speed = Math.max(0, car.speed - (fBrakeN / effectiveMassKg) * dt);
+    }
+    car.brakeLockupIntensity = lockupIntensity;
+
+    // Gravel trap progressive deceleration & sinking drag
+    if (surfaceInfo.gravelDecelMs2 > 0 && car.speed > 2.5) {
+      car.speed = Math.max(0, car.speed - surfaceInfo.gravelDecelMs2 * (0.5 + 0.5 * speedRatio) * dt);
     }
 
     // Natural aero/rolling drag & realistic RPM/gear-dependent engine braking when coasting or above effectiveMaxSpeed
@@ -1397,22 +1898,59 @@ export function stepCarPhysics(
   const inputStraightness = Math.max(0, 1.0 - steerMag * 3.0);
   const exitSettling = Math.max(wheelStraightness, inputStraightness * 0.85);
 
+  // Longitudinal G & abrupt lift-off detection for authentic weight transfer & pitch/roll coupling
+  const prevSpd = car.prevSpeedMs ?? car.speed;
+  const rawLongAccel = dt > 1e-4 ? (car.speed - prevSpd) / dt : 0;
+  const longG = Math.max(-4.5, Math.min(2.5, rawLongAccel / 9.81));
+  const liftOffDrop = Math.max(0, (car.prevThrottle ?? throttle) - throttle);
+  const liftOffOversteer = liftOffDrop > 0.35 && car.speed > 26 && steerMag > 0.22 ? Math.min(0.055, liftOffDrop * 0.065) : 0;
+  car.prevSpeedMs = car.speed;
+  car.prevThrottle = throttle;
+
+  // Suspension alignment pull from localized suspension damage
+  const suspPullSteer = mechDamageActive && dmg.suspension > 10
+    ? dmg.suspensionPullDir * (dmg.suspension / 100) * 0.045
+    : 0;
+
   // Trail-braking bonus: braking while turning loads and sharpens front-axle bite
   const trailBrakeBonus = brake > 0.05 && brake < 0.75 && Math.abs(steerInput) > 0.2 ? 1.20 : 1.0;
-  const sampleBank = sampleTrackAtT(compiledTrack, car.trackT).banking || 0;
+  const sampleBank = currentRoadSample.banking || 0;
   const bankingGripBonus = 1.0 + Math.sin(Math.abs(sampleBank)) * 0.35;
-  const { classGripMult, classDownforceBonus } = computeClassGripProfile(classId, car.speed, tuning, bop.downforceMult);
+  const { classGripMult, classDownforceBonus } = computeClassGripProfile(
+    classId,
+    car.speed,
+    tuning,
+    bop.downforceMult * setupMod.overallDownforceMult,
+  );
+  // Tire thermal window + graining + flat-spot grip factor across 4 wheels
+  const wheelGrip = (w: { wear: number; temp: number; flatSpot: number; graining: number }) => {
+    const tempDelta = w.temp - compoundMod.optimalTemp;
+    const coldPenalty = tempDelta < -18 ? Math.min(0.11, ((-18 - tempDelta) / 40) * 0.11) : 0;
+    const hotPenalty = tempDelta > 16 ? Math.min(0.14, ((tempDelta - 16) / 35) * 0.14) : 0;
+    const wFactor = 0.72 + 0.28 * Math.pow(w.wear / 100, 0.7);
+    return wFactor * (1 - coldPenalty - hotPenalty - w.graining * 0.08 - w.flatSpot * 0.09);
+  };
+  const frontTireGrip = (wheelGrip(tState.fl) + wheelGrip(tState.fr)) * 0.5;
+  const rearTireGrip = (wheelGrip(tState.rl) + wheelGrip(tState.rr)) * 0.5;
+  const avgWheelGrip = (frontTireGrip + rearTireGrip) * 0.5;
+
+  // Crest unloading scales normal load; sausage kerb hop briefly reduces contact patch grip
+  const crestGripFactor = Math.pow(crestLoadFactor, 0.55);
+  const sausageHopPenalty = 1.0 - (car.sausageKerbHop ?? 0) * 0.24 * setupMod.kerbComplianceMult;
   const availableGrip =
     gripBase *
     classGripMult *
     compoundMod.grip *
-    wearGripFactor *
+    avgWheelGrip *
     specialGripMult *
     offTrackGrip *
     damageFactor *
+    suspDmgGripFactor *
     trailBrakeBonus *
     bankingGripBonus *
-    classDownforceBonus;
+    classDownforceBonus *
+    crestGripFactor *
+    sausageHopPenalty;
 
   const rightX = -Math.cos(car.heading);
   const rightZ = Math.sin(car.heading);
@@ -1424,16 +1962,36 @@ export function stepCarPhysics(
   // Preserve pointy front-axle balance during active steering while shifting to neutral/rear-planted stability as soon as steering releases
   const activeTurnWeight = Math.min(1, steerMag * 1.15);
   const staticFrontShare = bAxle / wheelbase + (isGTP ? 0.045 : 0.020) * activeTurnWeight;
-  const weightTransfer = (brake * 0.14 - throttle * 0.065) * (car.speed > 2 ? 1 : 0);
-  const frontShare = Math.max(0.38, Math.min(0.65, staticFrontShare + weightTransfer));
+  // Direct physics coupling: longitudinal G (braking/accel) + lift-off oversteer shifts front/rear grip bias
+  const dynamicWeightTransfer =
+    (brake * 0.14 - throttle * 0.065 + Math.max(-0.06, Math.min(0.08, -longG * 0.028)) + liftOffOversteer) *
+    (car.speed > 2 ? 1 : 0);
+  const frontShare = Math.max(0.36, Math.min(0.67, staticFrontShare + dynamicWeightTransfer));
   const rearShare = 1.0 - frontShare;
+
+  // Dirty air / turbulent wake reduces front downforce in fast corners; localized wing damage & setup balance axles
+  const dirtyAirFrontLoss = 1.0 - dirtyAirStrength * 0.22;
+  const frontAxleBalance =
+    (frontTireGrip / Math.max(0.4, avgWheelGrip)) *
+    setupMod.frontMechGripMult *
+    setupMod.frontDownforceMult *
+    setupMod.diffTurnInMult *
+    frontWingDmgFactor *
+    dirtyAirFrontLoss *
+    (1 - (car.brakeLockupIntensity ?? 0) * 0.22);
+  const rearAxleBalance =
+    (rearTireGrip / Math.max(0.4, avgWheelGrip)) *
+    setupMod.rearMechGripMult *
+    setupMod.rearDownforceMult *
+    rearWingDmgFactor;
 
   // Lateral tire friction limit (mu * Fz) in Newtons
   const latGripAccel = availableGrip * 11.8;
   const fMaxTotalN = massKg * latGripAccel;
-  const frontTurnInMult = 1.0 + (isGTP ? 0.12 : 0.045) * activeTurnWeight;
+  const frontTurnInMult = (1.0 + (isGTP ? 0.12 : 0.045) * activeTurnWeight) * frontAxleBalance;
   const rearStraightAeroPlant =
-    1.0 + (0.16 + (isFormula || isGTP || isLMP2 ? 0.09 : 0.03)) * speedNorm * speedNorm * exitSettling;
+    (1.0 + (0.16 + (isFormula || isGTP || isLMP2 ? 0.09 : 0.03)) * speedNorm * speedNorm * exitSettling) *
+    rearAxleBalance;
   const fMaxFrontN = fMaxTotalN * frontShare * (isReversing ? 0.75 : 1.0) * frontTurnInMult;
   const fMaxRearN =
     fMaxTotalN *
@@ -1455,7 +2013,7 @@ export function stepCarPhysics(
   } else {
     const subSteps = dt > 0.008 ? 4 : 2;
     const subDt = dt / subSteps;
-    const delta = car.steerAngle * moveSign;
+    const delta = (car.steerAngle + suspPullSteer) * moveSign;
 
     for (let s = 0; s < subSteps; s++) {
       const vReg = Math.hypot(vFwd, 2.2);
@@ -1559,11 +2117,21 @@ export function stepCarPhysics(
   const proj = projectOntoTrack(compiledTrack, car.x, car.z, car.trackT);
   const bank = proj.sample.banking || 0;
   car.lateralOffset = proj.lateralOffset;
-  car.y = proj.sample.y + car.lateralOffset * Math.sin(bank);
+  const heaveTarget =
+    (car.sausageKerbHop ?? 0) * 0.11 * setupMod.kerbComplianceMult +
+    (1.0 - crestLoadFactor) * 0.045;
+  car.suspensionHeave = (car.suspensionHeave ?? 0) + (heaveTarget - (car.suspensionHeave ?? 0)) * (1 - Math.exp(-18 * dt));
+  car.y = proj.sample.y + car.lateralOffset * Math.sin(bank) + (car.suspensionHeave ?? 0);
   const newTilt = computeRoadSurfaceTilt(proj.sample, car.heading);
+  // Couple longitudinal brake dive / accel squat and lateral cornering body roll into car pitch & roll
+  const latGApprox = Math.max(-3.8, Math.min(3.8, (car.speed * rYaw) / 9.81));
+  const dynPitch = Math.max(-0.055, Math.min(0.045, longG * 0.016 * setupMod.pitchRollScale));
+  const dynRoll = Math.max(-0.075, Math.min(0.075, latGApprox * 0.018 * setupMod.pitchRollScale));
+  const targetPitch = newTilt.pitchRad + dynPitch;
+  const targetRoll = newTilt.rollRad + dynRoll;
   const tiltDamp = 1 - Math.exp(-15 * dt);
-  car.pitch = (car.pitch ?? newTilt.pitchRad) + (newTilt.pitchRad - (car.pitch ?? newTilt.pitchRad)) * tiltDamp;
-  car.roll = (car.roll ?? newTilt.rollRad) + (newTilt.rollRad - (car.roll ?? newTilt.rollRad)) * tiltDamp;
+  car.pitch = (car.pitch ?? targetPitch) + (targetPitch - (car.pitch ?? targetPitch)) * tiltDamp;
+  car.roll = (car.roll ?? targetRoll) + (targetRoll - (car.roll ?? targetRoll)) * tiltDamp;
 
   // Kerb contact detection on curved apexes
   const sampleHalfW = (proj.sample.width ? proj.sample.width : compiledTrack.spec.trackWidth) * 0.5;
@@ -1625,8 +2193,13 @@ export function stepCarPhysics(
     car.warningCount += 1;
     car.offTrackCooldown = 3.0;
     if (car.warningCount > 3) {
-      // Cap slow-down penalties at 0.5s–1.2s max
+      // Cap slow-down penalties at 0.5s–1.2s max; repeated violations also accrue +3s steward penalty
+      car.penaltyReason = 'corner-cut';
+      car.penaltyType = car.warningCount >= 6 ? 'time-penalty' : 'slow-down';
       car.penaltyTimeRemaining = Math.min(1.2, Math.max(0.6, car.penaltyTimeRemaining + 0.8));
+      if (car.warningCount >= 6) {
+        car.postRacePenaltySeconds = (car.postRacePenaltySeconds ?? 0) + 3;
+      }
     }
   }
 
@@ -1712,14 +2285,67 @@ export function stepCarPhysics(
     ? car.trackT - 1
     : (car.lap - 1) + car.trackT;
 
-  // Tire wear, temperature & fuel consumption (calibrated so a full tank lasts ~12-16 laps at full push)
+  // Per-Corner 4-Wheel Tire Modeling (FL / FR / RL / RR wear, thermal dynamics, graining & lock-up flat spots)
   const efficiencyFactor = 1.25 - (attrs.efficiency / 100) * 0.55;
   const cornerLoad = Math.abs(steerInput) * speedNorm;
-  const wearDelta = (0.014 + cornerLoad * 0.045 + car.understeerFactor * 0.04) * compoundMod.wearRate * efficiencyFactor * dt;
-  car.tireWear = Math.max(5, car.tireWear - wearDelta);
+  const latShift = Math.max(-0.45, Math.min(0.45, (car.speed * rYaw) / 36.0)); // + = turning right (loads left tires)
+  const longShift = Math.max(-0.35, Math.min(0.35, brake * 0.30 - throttle * 0.18));
+  const fBaseLoad = (1.0 + longShift) * crestLoadFactor;
+  const rBaseLoad = (1.0 - longShift) * crestLoadFactor;
+  const loads = {
+    fl: Math.max(0.25, fBaseLoad * (1.0 + latShift)),
+    fr: Math.max(0.25, fBaseLoad * (1.0 - latShift)),
+    rl: Math.max(0.25, rBaseLoad * (1.0 + latShift)),
+    rr: Math.max(0.25, rBaseLoad * (1.0 - latShift)),
+  };
 
-  const targetTemp = compoundMod.optimalTemp + cornerLoad * 24 + car.understeerFactor * 16 - opts.trackWetness * 14;
-  car.tireTemp += (targetTemp - car.tireTemp) * Math.min(1, dt * 1.4);
+  const lockup = car.brakeLockupIntensity ?? 0;
+  const rearWheelspin = throttle > 0.82 && car.speed < 28 && !isFE ? (throttle - 0.82) * 2.5 : 0;
+  const trackTempBias = (trackTempC - 26) * 0.45;
+  const baseWearStep = (0.014 + cornerLoad * 0.045 + car.understeerFactor * 0.04) * compoundMod.wearRate * efficiencyFactor;
+
+  const updateWheel = (
+    w: { wear: number; temp: number; flatSpot: number; graining: number; load: number },
+    load: number,
+    isFront: boolean,
+  ) => {
+    w.load = load;
+    const heatMult = isFront ? setupMod.frontTireHeatMult : setupMod.rearTireHeatMult;
+    const wearMult = isFront ? setupMod.frontTireWearMult : setupMod.rearTireWearMult;
+    const extraScrub = isFront
+      ? car.understeerFactor * 0.55 + lockup * 0.9
+      : rearWheelspin * 0.65 + car.lateralSlip * 0.35;
+
+    w.wear = Math.max(5, w.wear - baseWearStep * (0.65 + 0.35 * load + extraScrub * 0.4) * wearMult * dt);
+
+    const targetWheelTemp =
+      compoundMod.optimalTemp +
+      trackTempBias +
+      (cornerLoad * 24 * load + extraScrub * 22) * heatMult -
+      effectiveWetness * 14 -
+      puddleIntensity * 8;
+    w.temp += (targetWheelTemp - w.temp) * Math.min(1, dt * (1.2 + load * 0.35));
+
+    // Lock-up accumulates flat-spot on fronts (or rears if rear-biased)
+    if (lockup > 0.15 && ((isFront && setupMod.brakeBiasFront >= 0.52) || (!isFront && setupMod.brakeBiasFront < 0.52))) {
+      w.flatSpot = Math.min(1, w.flatSpot + lockup * 0.065 * dt);
+    }
+    // Cold graining if pushing hard while tire is significantly below operating window
+    if (w.temp < compoundMod.optimalTemp - 16 && cornerLoad > 0.45) {
+      w.graining = Math.min(1, w.graining + 0.03 * cornerLoad * dt);
+    } else if (w.temp >= compoundMod.optimalTemp - 6) {
+      w.graining = Math.max(0, w.graining - 0.04 * dt);
+    }
+  };
+
+  updateWheel(tState.fl, loads.fl, true);
+  updateWheel(tState.fr, loads.fr, true);
+  updateWheel(tState.rl, loads.rl, false);
+  updateWheel(tState.rr, loads.rr, false);
+
+  car.tireWear = (tState.fl.wear + tState.fr.wear + tState.rl.wear + tState.rr.wear) * 0.25;
+  car.tireTemp = (tState.fl.temp + tState.fr.temp + tState.rl.temp + tState.rr.temp) * 0.25;
+  car.flatSpotVibration = Math.max(tState.fl.flatSpot, tState.fr.flatSpot, tState.rl.flatSpot, tState.rr.flatSpot);
 
   // Recalibrated fuel consumption: a full tank lasts ~12-16 laps at 1:1 scale (a 5km-7km lap burns ~6-8% of a tank)
   const lapProgressDelta = (car.speed * dt) / Math.max(2000, compiledTrack.totalLength);
@@ -2207,14 +2833,45 @@ export function resolveCarCollisions(cars: CarSimState[]): number {
       a.speed = Math.max(0, a.gear === -1 ? -aProj : aProj);
       b.speed = Math.max(0, b.gear === -1 ? -bProj : bProj);
 
-      // 5. Damage only above 25 km/h closing speed, capped at 3.5% per contact
+      // 5. Localized damage only above 25 km/h closing speed, capped at 3.5% per contact (light default)
       if (closingSpeed >= C.DAMAGE_THRESHOLD_SPEED) {
         maxImpact = Math.max(maxImpact, closingSpeed);
         a.lastCollisionImpact = Math.max(a.lastCollisionImpact ?? 0, closingSpeed);
         b.lastCollisionImpact = Math.max(b.lastCollisionImpact ?? 0, closingSpeed);
         const dmg = Math.min(3.5, (closingSpeed - C.DAMAGE_THRESHOLD_SPEED) * 0.25);
-        a.aeroDamage = Math.min(100, a.aeroDamage + dmg);
-        b.aeroDamage = Math.min(100, b.aeroDamage + dmg);
+
+        // Determine hit zone on A and B using contact lever arm projected onto each car's heading
+        const aLocalFwd = rAx * bodyA.fwdX + rAz * bodyA.fwdZ;
+        const aLocalLat = rAx * (-bodyA.fwdZ) + rAz * bodyA.fwdX;
+        const zoneA: 'front' | 'rear' | 'side' =
+          aLocalFwd > bodyA.halfL * 0.45 ? 'front' : aLocalFwd < -bodyA.halfL * 0.45 ? 'rear' : 'side';
+
+        const bLocalFwd = rBx * bodyB.fwdX + rBz * bodyB.fwdZ;
+        const bLocalLat = rBx * (-bodyB.fwdZ) + rBz * bodyB.fwdX;
+        const zoneB: 'front' | 'rear' | 'side' =
+          bLocalFwd > bodyB.halfL * 0.45 ? 'front' : bLocalFwd < -bodyB.halfL * 0.45 ? 'rear' : 'side';
+
+        applyLocalizedImpactDamage(a, zoneA, dmg, closingSpeed, aLocalLat);
+        applyLocalizedImpactDamage(b, zoneB, dmg, closingSpeed, bLocalLat);
+
+        // Avoidable-contact stewarding: rear-ending another car at high closing speed triggers warning/penalty
+        if (closingSpeed > 12.5 && !isBumpDraft) {
+          if (zoneA === 'front' && zoneB === 'rear') {
+            a.warningCount += 1;
+            a.penaltyReason = 'avoidable-contact';
+            if (a.warningCount >= 3) {
+              a.penaltyType = 'time-penalty';
+              a.postRacePenaltySeconds = (a.postRacePenaltySeconds ?? 0) + 5;
+            }
+          } else if (zoneB === 'front' && zoneA === 'rear') {
+            b.warningCount += 1;
+            b.penaltyReason = 'avoidable-contact';
+            if (b.warningCount >= 3) {
+              b.penaltyType = 'time-penalty';
+              b.postRacePenaltySeconds = (b.postRacePenaltySeconds ?? 0) + 5;
+            }
+          }
+        }
       }
     }
   }
@@ -2656,14 +3313,22 @@ export function computeAIControl(
     }
   }
 
+  // Blue Flag Multi-Class Yielding: slower cars cleanly open the racing line and ease slightly for faster approaching traffic
+  if (car.blueFlagActive && car.speed > 14 && Math.abs(car.lateralOffset) < halfW * 0.72) {
+    const yieldSide = car.lateralOffset >= 0 ? Math.min(maxSafeLane, halfW * 0.68) : Math.max(minSafeLane, -halfW * 0.68);
+    car.aiTargetOffset += (yieldSide - car.aiTargetOffset) * Math.min(1, dt * 3.5);
+    throttle *= 0.90;
+  }
+
   return { throttle, brake, steer, specialPressed, specialJustPressed: specialPressed };
 }
 
 export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTrack): DriverStandingsEntry[] {
+  const effectiveTime = (c: CarSimState) => c.totalTime + (c.postRacePenaltySeconds ?? 0);
   const sorted = [...cars].sort((a, b) => {
     if (a.finished && !b.finished) return -1;
     if (!a.finished && b.finished) return 1;
-    if (a.finished && b.finished) return a.totalTime - b.totalTime;
+    if (a.finished && b.finished) return effectiveTime(a) - effectiveTime(b);
     return b.totalDistance - a.totalDistance;
   });
 
@@ -2680,11 +3345,11 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
     let intervalToLeaderSec = 0;
     if (idx > 0) {
       if (leader.finished && c.finished) {
-        intervalToLeaderSec = Math.max(0, c.totalTime - leader.totalTime);
+        intervalToLeaderSec = Math.max(0, effectiveTime(c) - effectiveTime(leader));
       } else if (leader.finished && !c.finished) {
         // Elapsed gap since leader crossed plus estimated remaining time to the finish line
         const remainingLaps = Math.max(0, leader.lap - c.totalDistance);
-        const elapsedSinceLeader = Math.max(0, c.totalTime - leader.totalTime);
+        const elapsedSinceLeader = Math.max(0, effectiveTime(c) - effectiveTime(leader));
         intervalToLeaderSec = elapsedSinceLeader + (remainingLaps * compiledTrack.totalLength) / refSpeed;
       } else {
         const distDiffLeader = Math.max(0, (leader.totalDistance - c.totalDistance) * compiledTrack.totalLength);
@@ -2695,10 +3360,10 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
     let intervalToAheadSec = 0;
     if (ahead) {
       if (ahead.finished && c.finished) {
-        intervalToAheadSec = Math.max(0, c.totalTime - ahead.totalTime);
+        intervalToAheadSec = Math.max(0, effectiveTime(c) - effectiveTime(ahead));
       } else if (ahead.finished && !c.finished) {
         const remainingLaps = Math.max(0, ahead.lap - c.totalDistance);
-        const elapsedSinceAhead = Math.max(0, c.totalTime - ahead.totalTime);
+        const elapsedSinceAhead = Math.max(0, effectiveTime(c) - effectiveTime(ahead));
         intervalToAheadSec = elapsedSinceAhead + (remainingLaps * compiledTrack.totalLength) / refSpeed;
       } else {
         const distDiffAhead = Math.max(0, (ahead.totalDistance - c.totalDistance) * compiledTrack.totalLength);
@@ -2724,7 +3389,8 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
       intervalToLeader: Number(intervalToLeaderSec.toFixed(2)),
       bestLapTime: c.bestLapTime,
       lastLapTime: c.lastLapTime,
-      totalTime: c.totalTime,
+      totalTime: effectiveTime(c),
+      postRacePenaltySeconds: c.postRacePenaltySeconds ?? 0,
       pitStops: c.pitStops,
       inPit: c.pitStopRemaining > 0,
       finished: c.finished,

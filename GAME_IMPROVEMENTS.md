@@ -33,58 +33,58 @@
 - **Animated Pit Crew & Interactive Pit Minigame (Optional Arcade Mode):** Render pit crew silhouettes/jacks/wheel guns in the box; optionally add a timing-based release/jack prompt to shave 0.3–0.6s off pit time.
 - **Unsafe Release & Pit Traffic Avoidance:** Ghost cars slightly in pit stalls or enforce safe-release hold when another car is passing in the fast lane.
 
-### 1.2 Authentic Flag Rules, Race Control & Penalties
-- **Full Flag System (Yellow, Local Yellow, Blue, Green, Black, White, Checkered):**
-  - **Local Yellow Flags:** Trigger when a car spins, stops, or crashes in a sector; penalize overtaking under yellow.
-  - **Blue Flags (Crucial for Multi-Class Racing!):** Alert GT3/GT4/LMP2 cars when faster Hypercars/F1 cars are lapping them, and make slower AI classes yield off the racing line cleanly.
-  - **White Flag (Final Lap)** & **Black-and-White Flag** (unsportsmanlike driving warning before time penalty).
-- **Safety Car (SC) & Virtual Safety Car (VSC):**
-  - Trigger SC/VSC on severe multi-car pileups or stopped cars, bunching the pack for dramatic restarts and opening strategic "cheap pit stop" windows.
-  - Include a miniature safety car model with flashing amber/green roof lightbar.
-- **Stewarding & Penalty Variety:**
-  - Differentiate track-limit corner cutting (`warningCount` → slow-down or +3s/+5s post-race penalty) from car-to-car avoidable contact penalties.
-  - Add **Drive-Through** and **Stop-and-Go** penalty options for serious infractions, plus a clear visual "Slow Down to Serve Penalty" zone indicator.
-- **Jump-Start Detection on Standing Starts:** Allow players to rev the engine during the 5-red-light sequence and launch manually on lights out; launching early triggers a false-start penalty, while nailing the RPM sweet spot grants a launch traction boost.
+### 1.2 Authentic Flag Rules, Race Control & Penalties ✅
+- [x] **Full Flag System (Yellow, Local Yellow, Blue, Green, Black, White, Checkered):**
+  - [x] **Local Yellow Flags:** Trigger when a car spins, stops, or crashes in a sector; penalize overtaking under yellow.
+  - [x] **Blue Flags (Crucial for Multi-Class Racing!):** Alert GT3/GT4/LMP2 cars when faster Hypercars/F1 cars are lapping them, and make slower AI classes yield off the racing line cleanly.
+  - [x] **White Flag (Final Lap)** & **Black-and-White Flag** (unsportsmanlike driving warning before time penalty).
+- [x] **Safety Car (SC) & Virtual Safety Car (VSC):**
+  - [x] Trigger SC/VSC on severe multi-car pileups or stopped cars, bunching the pack for dramatic restarts and opening strategic "cheap pit stop" windows.
+  - [x] Include a miniature safety car model with flashing amber/green roof lightbar.
+- [x] **Stewarding & Penalty Variety:**
+  - [x] Differentiate track-limit corner cutting (`warningCount` → slow-down or +3s/+5s post-race penalty) from car-to-car avoidable contact penalties.
+  - [x] Add **Drive-Through** and **Stop-and-Go** penalty options for serious infractions, plus a clear visual "Slow Down to Serve Penalty" zone indicator.
+- [x] **Jump-Start Detection on Standing Starts:** Allow players to rev the engine during the 5-red-light sequence and launch manually on lights out; launching early triggers a false-start penalty, while nailing the RPM sweet spot grants a launch traction boost.
 
-### 1.3 Deeper Class-Specific Mechanics
-- **DRS Zones (Track-Defined Detection & Activation Lines):** For F1 eras (`F1_2026`, `F1_2021`) and `active-aero`, define genuine DRS detection/activation zones per circuit (<1.0s gap to car ahead) in addition to or replacing generic boost cooldowns.
-- **Energy Deployment Modes (ERS / Hybrid / Formula E):** Let players cycle battery modes (`Quali / Overtake / Balanced / Harvest`) in-race via hotkeys or MFD instead of a single binary boost button.
-- **Attack Mode Activation Zone (Formula E):** Render an illuminated off-line Attack Mode loop on track that cars must drive through to arm `attackModeTimer`, mirroring real Formula E strategy.
-- **Push-to-Pass Counter:** For prototype/open-wheel classes, show remaining push-to-pass seconds/uses clearly and display a visual LED/light cue on rivals when they deploy boost.
+### 1.3 Deeper Class-Specific Mechanics ✅
+- [x] **DRS Zones (Track-Defined Detection & Activation Lines):** For F1 eras (`F1_2026`, `F1_2021`) and `active-aero`, define genuine DRS detection/activation zones per circuit (<1.0s gap to car ahead) in addition to or replacing generic boost cooldowns.
+- [x] **Energy Deployment Modes (ERS / Hybrid / Formula E):** Let players cycle battery modes (`Quali / Overtake / Balanced / Harvest`) in-race via hotkeys or MFD instead of a single binary boost button.
+- [x] **Attack Mode Activation Zone (Formula E):** Render an illuminated off-line Attack Mode loop on track that cars must drive through to arm `attackModeTimer`, mirroring real Formula E strategy.
+- [x] **Push-to-Pass Counter:** For prototype/open-wheel classes, show remaining push-to-pass seconds/uses clearly and display a visual LED/light cue on rivals when they deploy boost.
 
-### 1.4 Dynamic Weather & Track Evolution
-- **Richer Weather States Beyond `dry` / `dynamic-rain`:** Add `overcast`, `light-drizzle`, `heavy-storm`, `drying-track`, and customizable **Weather Forecast Timeline** (e.g., dry start → mid-race shower → dry finish) instead of a deterministic sine wave (`Math.sin(sim.rainTimer * 0.08)` in `RaceViewport.tsx`).
-- **Drying Racing Line & Standing Water Puddles:** Simulate faster drying along the rubbered-in racing line while off-line stays wet (rewarding wet-weather off-line karting lines vs. dry-line risk on slicks).
-- **Track Rubbering / Grip Evolution:** Gradually increase asphalt grip across laps in Practice, Qualifying, and Race sessions; wash away rubber when heavy rain hits.
-- **Ambient & Track Temperature Simulation:** Tie track temp to time-of-day and cloud cover, directly impacting `tireTemp` warm-up, graining, and overheating.
+### 1.4 Dynamic Weather & Track Evolution ✅
+- [x] **Richer Weather States Beyond `dry` / `dynamic-rain`:** Add `overcast`, `light-drizzle`, `heavy-storm`, `drying-track`, and customizable **Weather Forecast Timeline** (e.g., dry start → mid-race shower → dry finish) instead of a deterministic sine wave (`Math.sin(sim.rainTimer * 0.08)` in `RaceViewport.tsx`).
+- [x] **Drying Racing Line & Standing Water Puddles:** Simulate faster drying along the rubbered-in racing line while off-line stays wet (rewarding wet-weather off-line karting lines vs. dry-line risk on slicks).
+- [x] **Track Rubbering / Grip Evolution:** Gradually increase asphalt grip across laps in Practice, Qualifying, and Race sessions; wash away rubber when heavy rain hits.
+- [x] **Ambient & Track Temperature Simulation:** Tie track temp to time-of-day and cloud cover, directly impacting `tireTemp` warm-up, graining, and overheating.
 
 ---
 
-## 2. Driving Physics, Car Setup & Handling Realism
+## 2. Driving Physics, Car Setup & Handling Realism ✅
 
-### 2.1 Tire, Suspension & Chassis Dynamics
-- **Per-Corner Tire Modeling (FL / FR / RL / RR):** Upgrade single scalar `tireWear` & `tireTemp` (`CarSimState`) into 4 individual wheels so front-left graining on clockwise tracks, rear-tire spin overheating, and lock-up flat spots feel tangible and strategic.
-- **Brake Temperature & Fade / Lock-Up Physics:** Model brake disc temperature (cold brakes = poor bite; overheated brakes = fade) and wheel lock-up under heavy braking without ABS, with visual lock-up smoke and flat-spot vibration.
-- **Weight Transfer & Pitch/Roll Coupling:** Link longitudinal acceleration/braking and lateral G-forces directly to front/rear grip bias (trail-braking rotates the nose into apexes; abrupt lift-off induces manageable oversteer).
-- **Dirty Air / Turbulent Wake:** Alongside positive straight-line `slipstreamStrength`, add realistic high-speed cornering front-downforce loss when following high-downforce cars (`F1_*`, `HYPERCAR_GTP`) closely through fast sweepers.
-- **Surface-Specific Physics Beyond Asphalt & Kerb:** Differentiate grass, gravel traps (progressive deceleration + sinking), painted sausage kerbs (chassis upset/hop), wet astroturf (ice-like grip), and concrete runoff.
-- **Elevation & Crest Unloading:** Use the existing `computeRoadSurfaceTilt` / `trackElevations.ts` slope derivatives to reduce vertical load over crests (e.g., Eau Rouge/Raidillon, Laguna Seca Corkscrew) and increase compression grip in dips.
+### 2.1 Tire, Suspension & Chassis Dynamics ✅
+- [x] **Per-Corner Tire Modeling (FL / FR / RL / RR):** Upgrade single scalar `tireWear` & `tireTemp` (`CarSimState`) into 4 individual wheels so front-left graining on clockwise tracks, rear-tire spin overheating, and lock-up flat spots feel tangible and strategic.
+- [x] **Brake Temperature & Fade / Lock-Up Physics:** Model brake disc temperature (cold brakes = poor bite; overheated brakes = fade) and wheel lock-up under heavy braking without ABS, with visual lock-up smoke and flat-spot vibration.
+- [x] **Weight Transfer & Pitch/Roll Coupling:** Link longitudinal acceleration/braking and lateral G-forces directly to front/rear grip bias (trail-braking rotates the nose into apexes; abrupt lift-off induces manageable oversteer).
+- [x] **Dirty Air / Turbulent Wake:** Alongside positive straight-line `slipstreamStrength`, add realistic high-speed cornering front-downforce loss when following high-downforce cars (`F1_*`, `HYPERCAR_GTP`) closely through fast sweepers.
+- [x] **Surface-Specific Physics Beyond Asphalt & Kerb:** Differentiate grass, gravel traps (progressive deceleration + sinking), painted sausage kerbs (chassis upset/hop), wet astroturf (ice-like grip), and concrete runoff.
+- [x] **Elevation & Crest Unloading:** Use the existing `computeRoadSurfaceTilt` / `trackElevations.ts` slope derivatives to reduce vertical load over crests (e.g., Eau Rouge/Raidillon, Laguna Seca Corkscrew) and increase compression grip in dips.
 
-### 2.2 Garage Car Setup & Tuning Workbench
-- **Per-Track Car Setup Editor:** Let players tune a concise, approachable set of sim-cade parameters (with presets like *Low Downforce / Monza*, *Balanced*, *High Downforce / Monaco*, *Wet*):
-  - Front & Rear Aero Wing Angle (top speed vs. cornering grip tradeoff)
-  - Brake Balance (Front/Rear % — adjustable live in-race!)
-  - Gear Ratio Final Drive (Short/Acceleration vs. Tall/Top Speed)
-  - Suspension Stiffness / Anti-Roll Bar Balance (Understeer vs. Oversteer)
-  - Differential Locking (Entry stability vs. Exit traction)
-  - Starting Fuel Load & Tire Pressures
-- **Save / Share Setup Codes:** Export/import car setups per `(carId, trackId)` just like Track Studio's `APXTRK:` share codes.
-- **Live BoP Inspector & Custom BoP Sandboxes:** Expose `bopConfig.json` overrides in a dedicated Race Director / Custom League drawer so players can adjust class parity or create custom BoP series.
+### 2.2 Garage Car Setup & Tuning Workbench ✅
+- [x] **Per-Track Car Setup Editor:** Let players tune a concise, approachable set of sim-cade parameters (with presets like *Low Downforce / Monza*, *Balanced*, *High Downforce / Monaco*, *Wet*):
+  - [x] Front & Rear Aero Wing Angle (top speed vs. cornering grip tradeoff)
+  - [x] Brake Balance (Front/Rear % — adjustable live in-race!)
+  - [x] Gear Ratio Final Drive (Short/Acceleration vs. Tall/Top Speed)
+  - [x] Suspension Stiffness / Anti-Roll Bar Balance (Understeer vs. Oversteer)
+  - [x] Differential Locking (Entry stability vs. Exit traction)
+  - [x] Starting Fuel Load & Tire Pressures
+- [x] **Save / Share Setup Codes:** Export/import car setups per `(carId, trackId)` just like Track Studio's `APXTRK:` share codes.
+- [x] **Live BoP Inspector & Custom BoP Sandboxes:** Expose `bopConfig.json` overrides in a dedicated Race Director / Custom League drawer so players can adjust class parity or create custom BoP series.
 
-### 2.3 Mechanical & Visual Damage System
-- **Localized Damage Zones:** Split `aeroDamage` into Front Wing/Splitter (understeer), Rear Wing (top-speed instability), Engine/Cooling (reduced power/overheating), and Suspension (steering pull/alignment offset).
-- **Configurable Damage Realism:** Offer `Off / Visual Only / Light (Sim-Cade) / Realistic (Simulation)` in Race Setup.
-- **Visual Damage & Debris:** Detachable endplates/spoilers, scuffed/dented paint overlays, headlight flicker/breakage in night races, and temporary carbon debris particles on heavy impacts.
+### 2.3 Mechanical & Visual Damage System ✅
+- [x] **Localized Damage Zones:** Split `aeroDamage` into Front Wing/Splitter (understeer), Rear Wing (top-speed instability), Engine/Cooling (reduced power/overheating), and Suspension (steering pull/alignment offset).
+- [x] **Configurable Damage Realism:** Offer `Off / Visual Only / Light (Sim-Cade) / Realistic (Simulation)` in Race Setup.
+- [x] **Visual Damage & Debris:** Detachable endplates/spoilers, scuffed/dented paint overlays, headlight flicker/breakage in night races, and temporary carbon debris particles on heavy impacts.
 
 ---
 

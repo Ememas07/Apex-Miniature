@@ -15,6 +15,7 @@ import {
   Trash2,
   Upload,
   Users,
+  Wrench,
   X,
 } from 'lucide-react';
 import {
@@ -33,6 +34,7 @@ import {
   getSavedCustomTracks,
   importTrackFromString,
 } from '../game/customTracks';
+import { WEATHER_PRESETS } from '../game/raceSystems';
 import { generateRandomScenario } from '../game/randomScenario';
 import {
   TRACKS,
@@ -42,8 +44,10 @@ import {
   getTrackById,
 } from '../game/tracks';
 import {
+  AbsLevel,
   AIDifficulty,
   CarClassId,
+  DamageLevel,
   HeadlightTint,
   LiveryConfig,
   LiveryTemplate,
@@ -53,6 +57,9 @@ import {
   TireCompound,
   TrackRegion,
   TrackSpec,
+  WeatherCondition,
+  WeatherForecastSegment,
+  WeatherPresetId,
 } from '../game/types';
 import { GarageAngle, GarageViewport } from '../three/GarageViewport';
 import { AiPolicyMixPanel } from './AiPolicyMixPanel';
@@ -65,6 +72,7 @@ interface RaceMenuModalProps {
   onChangeLivery: (livery: LiveryConfig) => void;
   onStartRace: (patch: Partial<RaceConfig>) => void;
   onOpenStudio?: (trackToEdit?: TrackSpec) => void;
+  onOpenCarSetup?: () => void;
   onClose: () => void;
 }
 
@@ -153,6 +161,7 @@ export function RaceMenuModal({
   onChangeLivery,
   onStartRace,
   onOpenStudio,
+  onOpenCarSetup,
   onClose,
 }: RaceMenuModalProps) {
   const activeCar = useMemo(() => getCarById(config.playerCarId), [config.playerCarId]);
@@ -269,8 +278,20 @@ export function RaceMenuModal({
   };
 
   const handleLaunch = () => {
+    const sharedSystems = {
+      weather: config.weather,
+      weatherPreset: config.weatherPreset,
+      weatherTimeline: config.weatherTimeline,
+      damageLevel: config.damageLevel ?? 'light',
+      absLevel: config.absLevel ?? 'low',
+      safetyCarEnabled: config.safetyCarEnabled ?? true,
+      jumpStartEnabled: config.jumpStartEnabled ?? true,
+      carSetup: config.carSetup,
+    };
+
     if (isAiRace) {
       onStartRace({
+        ...sharedSystems,
         sessionMode: 'ai-race',
         trackId: config.trackId,
         customTrack: config.customTrack,
@@ -281,7 +302,6 @@ export function RaceMenuModal({
         noAi: false,
         aiDifficulty: config.aiDifficulty,
         qualifyingEnabled: false,
-        weather: config.weather,
         startingCompound: config.startingCompound,
       });
       return;
@@ -289,11 +309,11 @@ export function RaceMenuModal({
 
     if (isSolo) {
       onStartRace({
+        ...sharedSystems,
         sessionMode: 'practice',
         trackId: config.trackId,
         customTrack: config.customTrack,
         totalLaps: config.totalLaps,
-        weather: config.weather,
         startingCompound: config.startingCompound,
         qualifyingEnabled: false,
         noAi: true,
@@ -304,6 +324,7 @@ export function RaceMenuModal({
     }
 
     onStartRace({
+      ...sharedSystems,
       sessionMode: 'race',
       trackId: config.trackId,
       customTrack: config.customTrack,
@@ -314,7 +335,6 @@ export function RaceMenuModal({
       noAi: false,
       aiDifficulty: config.aiDifficulty,
       qualifyingEnabled: config.qualifyingEnabled,
-      weather: config.weather,
       startingCompound: config.startingCompound,
     });
   };
@@ -765,11 +785,13 @@ export function RaceMenuModal({
                 <button
                   type="button"
                   data-testid="btn-weather-toggle"
-                  onClick={() =>
+                  onClick={() => {
+                    const nextWet = config.weather !== 'dynamic-rain';
                     onUpdateConfig({
-                      weather: config.weather === 'dynamic-rain' ? 'dry' : 'dynamic-rain',
-                    })
-                  }
+                      weather: nextWet ? 'dynamic-rain' : 'dry',
+                      weatherPreset: nextWet ? 'passing-shower' : 'clear-dry',
+                    });
+                  }}
                   className="flex items-center justify-center gap-2 py-2 px-3 rounded border border-white/15 bg-[#141923] hover:bg-[#1b2230] text-xs font-semibold text-slate-200 cursor-pointer whitespace-nowrap"
                 >
                   {config.weather === 'dynamic-rain' ? (
@@ -807,6 +829,196 @@ export function RaceMenuModal({
                   </div>
                 )}
               </div>
+
+              {/* Dynamic Weather Forecast Preset & Optional Custom Timeline */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-slate-300">Weather Forecast</span>
+                  <span className="text-[10px] text-slate-400">Rubbering &amp; Drying Line</span>
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {[
+                    ...WEATHER_PRESETS.map((wp) => ({ id: wp.id as WeatherPresetId, label: wp.label })),
+                    { id: 'custom' as WeatherPresetId, label: 'Custom' },
+                  ].map((opt) => {
+                    const activePreset =
+                      config.weatherPreset ?? (config.weather === 'dynamic-rain' ? 'passing-shower' : 'clear-dry');
+                    const active = activePreset === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          const isWet =
+                            opt.id !== 'clear-dry' && opt.id !== 'overcast';
+                          const defaultCustom: WeatherForecastSegment[] = config.weatherTimeline ?? [
+                            { progressFraction: 0.0, condition: 'dry', rainIntensity: 0.0 },
+                            { progressFraction: 0.4, condition: 'rain', rainIntensity: 0.7 },
+                            { progressFraction: 0.75, condition: 'drying-track', rainIntensity: 0.0 },
+                          ];
+                          onUpdateConfig({
+                            weatherPreset: opt.id,
+                            weather: isWet ? 'dynamic-rain' : 'dry',
+                            ...(opt.id === 'custom' ? { weatherTimeline: defaultCustom } : {}),
+                          });
+                        }}
+                        className={`py-1 px-1.5 rounded text-[10px] font-semibold border cursor-pointer truncate transition-colors ${
+                          active
+                            ? 'bg-sky-600/25 border-sky-400 text-sky-200'
+                            : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {config.weatherPreset === 'custom' && (
+                  <div className="mt-1.5 grid grid-cols-3 gap-1.5 bg-[#121722] border border-white/10 rounded p-2">
+                    {[
+                      { idx: 0, label: 'Start', frac: 0.0 },
+                      { idx: 1, label: 'Mid-Race', frac: 0.4 },
+                      { idx: 2, label: 'Finish', frac: 0.75 },
+                    ].map((stage) => {
+                      const tl = config.weatherTimeline ?? [
+                        { progressFraction: 0.0, condition: 'dry' as WeatherCondition, rainIntensity: 0 },
+                        { progressFraction: 0.4, condition: 'rain' as WeatherCondition, rainIntensity: 0.7 },
+                        { progressFraction: 0.75, condition: 'drying-track' as WeatherCondition, rainIntensity: 0 },
+                      ];
+                      const cur = tl[stage.idx]?.condition ?? 'dry';
+                      return (
+                        <label key={stage.idx} className="text-[10px] text-slate-400 flex flex-col gap-0.5">
+                          <span>{stage.label}</span>
+                          <select
+                            value={cur}
+                            onChange={(e) => {
+                              const cond = e.target.value as WeatherCondition;
+                              const rainMap: Record<WeatherCondition, number> = {
+                                dry: 0,
+                                overcast: 0,
+                                'light-drizzle': 0.35,
+                                rain: 0.72,
+                                'heavy-storm': 1.0,
+                                'drying-track': 0,
+                              };
+                              const nextTl = [...tl];
+                              nextTl[stage.idx] = {
+                                progressFraction: stage.frac,
+                                condition: cond,
+                                rainIntensity: rainMap[cond],
+                              };
+                              const anyWet = nextTl.some((s) => s.rainIntensity > 0 || s.condition === 'drying-track');
+                              onUpdateConfig({
+                                weatherTimeline: nextTl,
+                                weather: anyWet ? 'dynamic-rain' : 'dry',
+                              });
+                            }}
+                            className="bg-[#0b0e13] border border-white/15 rounded px-1 py-0.5 text-[10px] text-slate-200"
+                          >
+                            <option value="dry">Dry</option>
+                            <option value="overcast">Overcast</option>
+                            <option value="light-drizzle">Drizzle</option>
+                            <option value="rain">Rain</option>
+                            <option value="heavy-storm">Storm</option>
+                            <option value="drying-track">Drying</option>
+                          </select>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Damage Realism & ABS Assist */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-[11px] font-semibold text-slate-300 block mb-1">Damage</span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {([
+                      { id: 'off', label: 'Off' },
+                      { id: 'visual-only', label: 'Visual' },
+                      { id: 'light', label: 'Light' },
+                      { id: 'realistic', label: 'Realistic' },
+                    ] as Array<{ id: DamageLevel; label: string }>).map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => onUpdateConfig({ damageLevel: d.id })}
+                        className={`py-1 rounded text-[10px] font-bold border cursor-pointer ${
+                          (config.damageLevel ?? 'light') === d.id
+                            ? 'bg-red-600/25 border-red-400 text-red-200'
+                            : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-semibold text-slate-300 block mb-1">ABS Assist</span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['off', 'low', 'high'] as AbsLevel[]).map((lvl) => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        onClick={() => onUpdateConfig({ absLevel: lvl })}
+                        className={`py-1 rounded text-[10px] font-bold uppercase border cursor-pointer ${
+                          (config.absLevel ?? 'low') === lvl
+                            ? 'bg-emerald-600/25 border-emerald-400 text-emerald-200'
+                            : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
+                  </div>
+                  {!isSolo && (
+                    <div className="mt-1.5 grid grid-cols-2 gap-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateConfig({ safetyCarEnabled: !(config.safetyCarEnabled ?? true) })
+                        }
+                        className={`py-1 rounded text-[9px] font-bold border cursor-pointer ${
+                          (config.safetyCarEnabled ?? true)
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                            : 'bg-[#141923] border-white/10 text-slate-500'
+                        }`}
+                      >
+                        SC/VSC: {(config.safetyCarEnabled ?? true) ? 'ON' : 'OFF'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateConfig({ jumpStartEnabled: !(config.jumpStartEnabled ?? true) })
+                        }
+                        className={`py-1 rounded text-[9px] font-bold border cursor-pointer ${
+                          (config.jumpStartEnabled ?? true)
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                            : 'bg-[#141923] border-white/10 text-slate-500'
+                        }`}
+                      >
+                        Jump-Start: {(config.jumpStartEnabled ?? true) ? 'ON' : 'OFF'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Car Setup & BoP Workbench Button */}
+              {onOpenCarSetup && !isAiRace && (
+                <button
+                  type="button"
+                  data-testid="btn-open-car-setup"
+                  onClick={onOpenCarSetup}
+                  className="w-full py-2 px-3 rounded border border-sky-500/45 bg-sky-600/15 hover:bg-sky-600/25 text-xs font-display font-bold text-sky-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span>Car Setup &amp; Live BoP Workbench</span>
+                </button>
+              )}
 
               {/* Starting Tire Compound */}
               <div>

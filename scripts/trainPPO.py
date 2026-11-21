@@ -480,6 +480,84 @@ VARIANTS = {
             "ttcPenalty": 0.42,
         },
     },
+    "v9_2": {
+        "name": "v9_2_physics_master",
+        "description": "Advanced Physics Master (v9_2): 59-dim obs (4-wheel tires, brakes/fade/lock-up, dirty air, wet/puddles, damage, crest load, blue flags), 3x192 ResMLP LN+ObsNorm, tuned for 9800X3D + RTX 4060",
+        "obs_dim": 59,
+        "hidden_dim": 192,
+        "num_hidden_layers": 3,
+        "layer_norm": True,
+        "residual": True,
+        "activation": "tanh",
+        "ortho_init": True,
+        "use_obs_norm": True,
+        "obs_config": OBS_CONFIG_V7_TECHNICAL,
+        "default_steps": 512,
+        "default_workers": 12,
+        "gamma": 0.997,
+        "gae_lambda": 0.96,
+        "actor_lr_start": 2.6e-4,
+        "critic_lr_start": 4.8e-4,
+        "lr_end": 1.2e-5,
+        "lr_schedule": "cosine",
+        "ent_start": 0.010,
+        "ent_end": 0.001,
+        "max_std_start": 0.45,
+        "max_std_end": 0.08,
+        "action_bound_coef": 0.02,
+        "vf_clip": 0.2,
+        "target_kl": 0.022,
+        "adaptive_tracks": True,
+        "checkpoint_metric": "composite",
+        "weights": os.path.join("src", "game", "aiPolicyWeights_v9_2.json"),
+        "backup": os.path.join("src", "game", "aiPolicyWeights_v9_2.best.json"),
+        "metrics": os.path.join("audit", "ppo_metrics_v9_2.jsonl"),
+        "data_js": os.path.join("audit", "ppo_data_v9_2.js"),
+        "pool_dir": os.path.join("audit", "selfplay_pool_v9_2"),
+        "curriculum": "v9_master_3phase",
+        "env_options": {
+            "obsDim": 59,
+            "advancedPhysicsRandomization": True,
+            "wetEpisodeRatio": 0.30,
+            "brakingZoneSpawnRatio": 0.38,
+            "tightPackRatio": 0.25,
+            "multiLineTrafficRatio": 0.55,
+            "startScenarioRatio": 0.14,
+            "rollingStartRatio": 0.45,
+            "technicalTrackBoost": 2.5,
+            "spawnGhostSeconds": 1.8,
+            "enableCarPhysicsCollisions": True,
+        },
+        "rewards": {
+            "forwardProgress": 0.52,
+            "closeProximity": 0.11,
+            "minSpeedThreshold": 14.0,
+            "minSpeedPenalty": 0.10,
+            "floorSpeedThreshold": 7.5,
+            "floorSpeedPenalty": 0.40,
+            "offTrackBase": 1.65,
+            "offTrackSlope": 0.52,
+            "steerJerk": 0.09,
+            "throttleBrakeOverlap": 0.26,
+            "carCrash": 26.0,
+            "wallCrash": 32.0,
+            "wallScrapeBase": 1.45,
+            "wallScrapeDamageScale": 0.90,
+            "wallScrapeCap": 5.0,
+            "maxWallScrapes": 3,
+            "lapCompletionBonus": 25.0,
+            "cornerSurvivalBonus": 0.11,
+            "cleanOvertakeBonus": 4.6,
+            "alternateLineOvertakeBonus": 2.9,
+            "bumpDraftBonus": 0.14,
+            "ghostOverlapPenalty": 2.0,
+            "stallStopSpeed": 2.0,
+            "ttcPenalty": 0.42,
+            "brakeLockupPenalty": 0.25,
+            "tireOverheatPenalty": 0.15,
+            "gravelPenalty": 0.85,
+        },
+    },
     "starts": {
         "name": "starts_grid_launch",
         "description": "Dedicated Race Starts Specialist: 2x128 ResMLP LN+ObsNorm trained on 2x2 standing (0 m/s) & rolling formation starts into Turn 1",
@@ -842,9 +920,10 @@ def export_actor_to_json(
     meta_with_ts["savedAt"] = datetime.now(timezone.utc).isoformat()
 
     is_v3 = model.is_extended or (obs_rms is not None) or (obs_config is not None)
+    obs_dim_export = int(layers[0].in_features)
     payload: dict = {
         "version": 3 if is_v3 else 2,
-        "obsDim": OBS_DIM,
+        "obsDim": obs_dim_export,
         "actDim": ACT_DIM,
         "hiddenDim": hidden_dim,
     }
@@ -904,9 +983,10 @@ def export_actor_to_bin(
     norms = model.get_actor_norms()
     has_ln = len(norms) > 0
     has_obs_norm = obs_rms is not None
+    obs_dim_export = int(layers[0].in_features)
     header = {
         "version": 3,
-        "obsDim": OBS_DIM,
+        "obsDim": obs_dim_export,
         "hiddenDim": hidden_dim,
         "actDim": ACT_DIM,
         "numHiddenLayers": model.num_hidden_layers,
@@ -1218,10 +1298,11 @@ def _read_bin_frame(stream) -> tuple[int, bytes]:
 class VectorEnvPool:
     """Shards N parallel slots across W independent headlessEnv Node processes for multi-core CPU speed."""
 
-    def __init__(self, num_envs: int, num_workers: int = 1, binary_ipc: bool = True):
+    def __init__(self, num_envs: int, num_workers: int = 1, binary_ipc: bool = True, obs_dim: int = OBS_DIM):
         self.num_envs = num_envs
         self.num_workers = max(1, min(num_workers, num_envs))
         self.binary_ipc = binary_ipc
+        self.obs_dim = obs_dim
         base = num_envs // self.num_workers
         rem = num_envs % self.num_workers
         self.slices: list[tuple[int, int]] = []
@@ -1289,8 +1370,8 @@ class VectorEnvPool:
                 off = 0
                 (n_w,) = struct.unpack_from("<I", mv, off)
                 off += 4
-                obs_len = n_w * OBS_DIM * 4
-                obs_arr = np.frombuffer(mv[off:off + obs_len], dtype="<f4").reshape(n_w, OBS_DIM).copy()
+                obs_len = n_w * self.obs_dim * 4
+                obs_arr = np.frombuffer(mv[off:off + obs_len], dtype="<f4").reshape(n_w, self.obs_dim).copy()
                 off += obs_len
                 rew_len = n_w * 4
                 rew_arr = np.frombuffer(mv[off:off + rew_len], dtype="<f4").copy()
@@ -1305,8 +1386,8 @@ class VectorEnvPool:
                 for _ in range(fobs_count):
                     (env_idx,) = struct.unpack_from("<I", mv, off)
                     off += 4
-                    fobs_w[env_idx] = np.frombuffer(mv[off:off + OBS_DIM * 4], dtype="<f4").copy()
-                    off += OBS_DIM * 4
+                    fobs_w[env_idx] = np.frombuffer(mv[off:off + self.obs_dim * 4], dtype="<f4").copy()
+                    off += self.obs_dim * 4
                 (info_len,) = struct.unpack_from("<I", mv, off)
                 off += 4
                 info_list = json.loads(bytes(mv[off:off + info_len]).decode("utf-8"))
@@ -1421,6 +1502,7 @@ def schedule_value(start: float, end: float, progress: float, mode: str = "linea
 def train_single_variant(var_key: str, args):
     cfg = VARIANTS[var_key]
     var_name = cfg["name"]
+    obs_dim = int(cfg.get("obs_dim", OBS_DIM))
     hidden_dim = args.hidden_dim if args.hidden_dim is not None else cfg["hidden_dim"]
     num_hidden_layers = int(cfg.get("num_hidden_layers", 2))
     use_layer_norm = bool(cfg.get("layer_norm", False))
@@ -1451,11 +1533,12 @@ def train_single_variant(var_key: str, args):
     device = resolve_device(getattr(args, "device", "auto"))
     dev_name_str = ""
     if device.type == "cuda" and torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        torch.set_float32_matmul_precision("high")
         dev_idx = device.index if device.index is not None else 0
         if dev_idx < torch.cuda.device_count():
             dev_name_str = f" ({torch.cuda.get_device_name(dev_idx)})"
 
-    arch_desc = f"{num_hidden_layers}x{hidden_dim}"
+    arch_desc = f"{obs_dim}in->{num_hidden_layers}x{hidden_dim}"
     if use_layer_norm:
         arch_desc += "+LN"
     if use_residual:
@@ -1473,7 +1556,7 @@ def train_single_variant(var_key: str, args):
     from_scratch = args.scratch or not os.path.exists(init_source_path)
     init_log_std = -0.7 if from_scratch else -1.6
     model = ActorCritic(
-        obs_dim=OBS_DIM,
+        obs_dim=obs_dim,
         act_dim=ACT_DIM,
         hidden_dim=hidden_dim,
         init_log_std=init_log_std,
@@ -1483,7 +1566,7 @@ def train_single_variant(var_key: str, args):
         activation=activation,
         ortho_init=ortho_init,
     ).to(device)
-    obs_rms = RunningMeanStd(OBS_DIM, clip=10.0) if use_obs_norm else None
+    obs_rms = RunningMeanStd(obs_dim, clip=10.0) if use_obs_norm else None
 
     loaded, prev_best = (False, -1e9) if from_scratch else load_actor_from_json(model, init_source_path, hidden_dim, obs_rms=obs_rms)
     if loaded:
@@ -1537,7 +1620,7 @@ def train_single_variant(var_key: str, args):
     active_env_options = init_eo_patch if init_eo_patch is not None else base_env_options
 
     use_binary_ipc = not getattr(args, "no_binary_ipc", False)
-    pool = VectorEnvPool(args.envs, num_workers=num_workers, binary_ipc=use_binary_ipc)
+    pool = VectorEnvPool(args.envs, num_workers=num_workers, binary_ipc=use_binary_ipc, obs_dim=obs_dim)
     init_payload: dict = {
         "tracks": args.tracks,
         "cars": args.cars,
@@ -1609,7 +1692,7 @@ def train_single_variant(var_key: str, args):
             with torch.no_grad():
                 model.log_std.clamp_(max=math.log(cur_max_std))
 
-            obs_buf = np.zeros((steps_per_update, args.envs, OBS_DIM), dtype=np.float32)
+            obs_buf = np.zeros((steps_per_update, args.envs, obs_dim), dtype=np.float32)
             act_buf = np.zeros((steps_per_update, args.envs, ACT_DIM), dtype=np.float32)
             logp_buf = np.zeros((steps_per_update, args.envs), dtype=np.float32)
             rew_buf = np.zeros((steps_per_update, args.envs), dtype=np.float32)
@@ -1750,7 +1833,7 @@ def train_single_variant(var_key: str, args):
             var_y = float(np.var(y_true))
             explained_var = 0.0 if var_y < 1e-8 else float(1.0 - np.var(y_true - y_pred) / var_y)
 
-            b_obs = torch.tensor(obs_buf.reshape(-1, OBS_DIM), dtype=torch.float32, device=device)
+            b_obs = torch.tensor(obs_buf.reshape(-1, obs_dim), dtype=torch.float32, device=device)
             b_act = torch.tensor(act_buf.reshape(-1, ACT_DIM), dtype=torch.float32, device=device)
             b_logp = torch.tensor(logp_buf.reshape(-1), dtype=torch.float32, device=device)
             b_adv = torch.tensor(advantages.reshape(-1), dtype=torch.float32, device=device)

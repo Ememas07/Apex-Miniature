@@ -2,6 +2,8 @@ import aiPolicyWeightsV5Raw from './aiPolicyWeights_v5.json';
 import aiPolicyWeightsV6Raw from './aiPolicyWeights_v6.json';
 import aiPolicyWeightsV7Raw from './aiPolicyWeights_v7.json';
 import aiPolicyWeightsV8Raw from './aiPolicyWeights_v8.json';
+import aiPolicyWeightsV9Raw from './aiPolicyWeights_v9.json';
+import aiPolicyWeightsStartsRaw from './aiPolicyWeights_starts.json';
 import { BoPMultipliers } from './cars';
 import {
   CarSimState,
@@ -56,7 +58,8 @@ export type AiPolicyVariantId =
   | 'v6'
   | 'v7'
   | 'v8'
-  | 'v9';
+  | 'v9'
+  | 'v9_2';
 
 export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = [
   'v5',
@@ -64,6 +67,7 @@ export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = [
   'v7',
   'v8',
   'v9',
+  'v9_2',
 ] as const;
 
 export type AiPolicyMixWeights = Record<AiPolicyVariantId, number>;
@@ -80,9 +84,12 @@ export interface AiPolicyVariantInfo {
   meta: Record<string, unknown> | null;
 }
 
+export type StartPolicyMode = 'neural' | 'launch-assist' | 'off';
+
 export interface StartPolicyStatus {
   loaded: boolean;
   source: 'neural' | 'launch-assist';
+  mode: StartPolicyMode;
   hiddenDim: number | null;
   meta: Record<string, unknown> | null;
 }
@@ -91,11 +98,13 @@ export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
   v5: 0,
   v6: 0,
   v7: 0,
-  v8: 100,
-  v9: 0,
+  v8: 0,
+  v9: 100,
+  v9_2: 0,
 };
 
-const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v3';
+const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v4';
+const START_POLICY_MODE_STORAGE_KEY = 'apex_ai_start_policy_mode_v1';
 
 function isFiniteNumberVector(arr: unknown, expectedLength: number): arr is number[] {
   if (!Array.isArray(arr) || arr.length !== expectedLength) return false;
@@ -145,7 +154,7 @@ export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
   const actDim = candidate.actDim ?? outW?.length ?? 3;
 
   if (
-    obsDim !== 43 ||
+    (obsDim !== 43 && obsDim !== 59) ||
     actDim !== 3 ||
     !Number.isInteger(hiddenDim) ||
     hiddenDim <= 0 ||
@@ -215,7 +224,9 @@ export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
 }
 
 export const AI_POLICY_WEIGHTS: PolicyWeights =
-  validatePolicyWeights(aiPolicyWeightsV8Raw) ?? (aiPolicyWeightsV8Raw as PolicyWeights);
+  validatePolicyWeights(aiPolicyWeightsV9Raw) ??
+  validatePolicyWeights(aiPolicyWeightsV8Raw) ??
+  (aiPolicyWeightsV8Raw as PolicyWeights);
 
 const VARIANT_META: Record<
   AiPolicyVariantId,
@@ -246,18 +257,20 @@ const VARIANT_META: Record<
     shortLabel: 'v9 Master',
     description: '3x128 ResMLP all-in-one: multi-line traffic, bump-drafting, max pace & track discipline',
   },
+  v9_2: {
+    label: 'v9.2 Advanced Physics',
+    shortLabel: 'v9.2 Phys',
+    description: '59-input physics-aware ResMLP: 4-wheel tires, brakes, dirty air, crests, surfaces, flags & damage',
+  },
 };
 
-function loadOptionalViteJson(pattern: 'v9' | 'starts'): unknown | null {
+function loadOptionalV92Json(): unknown | null {
   try {
-    const metaAny = import.meta as unknown as {
-      glob?: (path: string, opts: { eager: boolean; import: string }) => Record<string, unknown>;
-    };
-    if (typeof metaAny?.glob !== 'function') return null;
-    const mods =
-      pattern === 'v9'
-        ? metaAny.glob('./aiPolicyWeights_v9.json', { eager: true, import: 'default' })
-        : metaAny.glob('./aiPolicyWeights_starts.json', { eager: true, import: 'default' });
+    // Literal import.meta.glob is statically transformed by Vite (returns {} until v9_2 is trained).
+    // In Node/tsx environments where import.meta.glob does not exist, the try/catch safely returns null.
+    const mods = (import.meta as unknown as {
+      glob: (pattern: string, opts: { eager: boolean; import: string }) => Record<string, unknown>;
+    }).glob('./aiPolicyWeights_v9_2.json', { eager: true, import: 'default' });
     const values = Object.values(mods);
     return values.length > 0 ? values[0] : null;
   } catch {
@@ -266,13 +279,14 @@ function loadOptionalViteJson(pattern: 'v9' | 'starts'): unknown | null {
 }
 
 const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
-  const v9Raw = loadOptionalViteJson('v9');
+  const v92Raw = loadOptionalV92Json();
   const weightsById: Record<AiPolicyVariantId, PolicyWeights | null> = {
     v5: validatePolicyWeights(aiPolicyWeightsV5Raw),
     v6: validatePolicyWeights(aiPolicyWeightsV6Raw),
     v7: validatePolicyWeights(aiPolicyWeightsV7Raw),
     v8: validatePolicyWeights(aiPolicyWeightsV8Raw),
-    v9: v9Raw ? validatePolicyWeights(v9Raw) : null,
+    v9: validatePolicyWeights(aiPolicyWeightsV9Raw),
+    v9_2: v92Raw ? validatePolicyWeights(v92Raw) : null,
   };
   const out = {} as Record<AiPolicyVariantId, AiPolicyVariantInfo>;
   for (const id of AI_POLICY_VARIANT_IDS) {
@@ -290,10 +304,52 @@ const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
   return out;
 })();
 
-let activeStartPolicyWeights: PolicyWeights | null = (() => {
-  const raw = loadOptionalViteJson('starts');
-  return raw ? validatePolicyWeights(raw) : null;
-})();
+let activeStartPolicyWeights: PolicyWeights | null = validatePolicyWeights(aiPolicyWeightsStartsRaw);
+
+function readStoredStartPolicyMode(): StartPolicyMode {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return activeStartPolicyWeights ? 'neural' : 'launch-assist';
+  }
+  try {
+    const raw = window.localStorage.getItem(START_POLICY_MODE_STORAGE_KEY);
+    if (raw === 'neural' || raw === 'launch-assist' || raw === 'off') {
+      return raw === 'neural' && !activeStartPolicyWeights ? 'launch-assist' : raw;
+    }
+  } catch {
+    // ignore
+  }
+  return activeStartPolicyWeights ? 'neural' : 'launch-assist';
+}
+
+let activeStartPolicyMode: StartPolicyMode = readStoredStartPolicyMode();
+const startModeListeners = new Set<(mode: StartPolicyMode) => void>();
+
+export function getStartPolicyMode(): StartPolicyMode {
+  return activeStartPolicyMode;
+}
+
+export function setStartPolicyMode(mode: StartPolicyMode): void {
+  const resolved: StartPolicyMode =
+    mode === 'neural' && !activeStartPolicyWeights ? 'launch-assist' : mode;
+  activeStartPolicyMode = resolved;
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem(START_POLICY_MODE_STORAGE_KEY, resolved);
+    } catch {
+      // ignore
+    }
+  }
+  for (const listener of startModeListeners) {
+    listener(resolved);
+  }
+}
+
+export function subscribeStartPolicyMode(listener: (mode: StartPolicyMode) => void): () => void {
+  startModeListeners.add(listener);
+  return () => {
+    startModeListeners.delete(listener);
+  };
+}
 
 export function getStartPolicyWeights(): PolicyWeights | null {
   return activeStartPolicyWeights;
@@ -314,7 +370,8 @@ export function getStartPolicyStatus(): StartPolicyStatus {
   const w = activeStartPolicyWeights;
   return {
     loaded: Boolean(w),
-    source: w ? 'neural' : 'launch-assist',
+    source: activeStartPolicyMode === 'neural' && w ? 'neural' : 'launch-assist',
+    mode: activeStartPolicyMode,
     hiddenDim: w ? (w.hiddenDim ?? w.w0.length) : null,
     meta: w?.meta ?? null,
   };
@@ -382,6 +439,7 @@ export function selectSingleAiPolicyVariant(id: AiPolicyVariantId): void {
     v7: 0,
     v8: 0,
     v9: 0,
+    v9_2: 0,
   };
   mix[id] = 100;
   setActiveAiPolicyMix(mix);
@@ -409,12 +467,17 @@ export function getNormalizedPolicyMix(
   }
   if (total <= 0 || candidates.length === 0) {
     const fallback =
-      POLICY_REGISTRY.v9.weights ?? POLICY_REGISTRY.v8.weights ?? POLICY_REGISTRY.v7.weights;
-    const fallbackId: AiPolicyVariantId = POLICY_REGISTRY.v9.weights
-      ? 'v9'
-      : POLICY_REGISTRY.v8.weights
-        ? 'v8'
-        : 'v7';
+      POLICY_REGISTRY.v9_2.weights ??
+      POLICY_REGISTRY.v9.weights ??
+      POLICY_REGISTRY.v8.weights ??
+      POLICY_REGISTRY.v7.weights;
+    const fallbackId: AiPolicyVariantId = POLICY_REGISTRY.v9_2.weights
+      ? 'v9_2'
+      : POLICY_REGISTRY.v9.weights
+        ? 'v9'
+        : POLICY_REGISTRY.v8.weights
+          ? 'v8'
+          : 'v7';
     return fallback ? [{ id: fallbackId, fraction: 1, weights: fallback }] : [];
   }
   return candidates.map((c) => ({
@@ -611,26 +674,98 @@ export function buildObservationVector(
   return obs;
 }
 
+/**
+ * Extended 59-input observation vector for `v9_2` that appends 16 advanced-physics & racecraft
+ * signals (4-corner tires, brakes, dirty air, crests, surfaces, localized damage, wetness/rubber, flags)
+ * directly after the canonical 43-input vector.
+ */
+export function buildPhysicsAwareObservationVector(
+  car: CarSimState,
+  compiledTrack: CompiledTrack,
+  allCars: CarSimState[],
+  prevSteer: number,
+  skillTarget: number = 1.0,
+  bopOverride?: BoPMultipliers,
+  obsConfig?: PolicyObsConfig,
+): number[] {
+  const obs = buildObservationVector(
+    car,
+    compiledTrack,
+    allCars,
+    prevSteer,
+    skillTarget,
+    bopOverride,
+    obsConfig,
+  );
+  const t = car.tires;
+  const flWear = t ? t.fl.wear / 100 : car.tireWear / 100;
+  const frWear = t ? t.fr.wear / 100 : car.tireWear / 100;
+  const rlWear = t ? t.rl.wear / 100 : car.tireWear / 100;
+  const rrWear = t ? t.rr.wear / 100 : car.tireWear / 100;
+  const frontTempNorm = t ? Math.max(-1, Math.min(1, ((t.fl.temp + t.fr.temp) * 0.5 - 90) / 40)) : 0;
+  const rearTempNorm = t ? Math.max(-1, Math.min(1, ((t.rl.temp + t.rr.temp) * 0.5 - 90) / 40)) : 0;
+  const brakeTempNorm = Math.max(0, Math.min(1, ((car.brakeTempFront ?? 240) - 100) / 800));
+  const brakeLockup = Math.max(0, Math.min(1, car.brakeLockupIntensity ?? 0));
+  const dirtyAir = Math.max(0, Math.min(1, car.dirtyAirStrength ?? 0));
+  const crestDelta = Math.max(-1, Math.min(1, ((car.crestLoadFactor ?? 1.0) - 1.0) * 2.2));
+  const surfaceEnc =
+    car.surfaceType === 'asphalt' ? 0.0
+      : car.surfaceType === 'kerb' ? 0.2
+      : car.surfaceType === 'sausage-kerb' ? 0.45
+      : car.surfaceType === 'concrete-runoff' ? 0.5
+      : car.surfaceType === 'astroturf' ? 0.7
+      : car.surfaceType === 'grass' ? 0.85
+      : car.surfaceType === 'gravel' ? 1.0
+      : 0.0;
+  const dmg = car.damage;
+  const frontDmg = dmg ? dmg.frontWing / 100 : car.aeroDamage / 100;
+  const rearDmg = dmg ? dmg.rearWing / 100 : car.aeroDamage / 100;
+  const mechDmg = dmg ? Math.max(dmg.engine, dmg.suspension) / 100 : 0;
+  const localWet = Math.max(0, Math.min(1, car.localWetness ?? 0));
+  const raceControlFlag = car.blueFlagActive ? 1.0 : car.drsEligible ? -0.5 : 0.0;
+
+  obs.push(
+    flWear,
+    frWear,
+    rlWear,
+    rrWear,
+    frontTempNorm,
+    rearTempNorm,
+    brakeTempNorm,
+    brakeLockup,
+    dirtyAir,
+    crestDelta,
+    surfaceEnc,
+    frontDmg,
+    rearDmg,
+    mechDmg,
+    localWet,
+    raceControlFlag,
+  );
+  return obs;
+}
+
 const SCRATCH_BUFFERS = new Map<
-  number,
+  string,
   { xIn: Float32Array; h0: Float32Array; h1: Float32Array; h2: Float32Array }
 >();
 
-function getScratchBuffers(hiddenDim: number): {
+function getScratchBuffers(hiddenDim: number, obsDim: number = 43): {
   xIn: Float32Array;
   h0: Float32Array;
   h1: Float32Array;
   h2: Float32Array;
 } {
-  let entry = SCRATCH_BUFFERS.get(hiddenDim);
+  const key = `${obsDim}x${hiddenDim}`;
+  let entry = SCRATCH_BUFFERS.get(key);
   if (!entry) {
     entry = {
-      xIn: new Float32Array(43),
+      xIn: new Float32Array(obsDim),
       h0: new Float32Array(hiddenDim),
       h1: new Float32Array(hiddenDim),
       h2: new Float32Array(hiddenDim),
     };
-    SCRATCH_BUFFERS.set(hiddenDim, entry);
+    SCRATCH_BUFFERS.set(key, entry);
   }
   return entry;
 }
@@ -1001,33 +1136,33 @@ export function evaluateNeuralPolicy(
   obs: number[],
   weights: PolicyWeights = AI_POLICY_WEIGHTS,
 ): { steer: number; throttle: number; brake: number } | null {
-  if (!weights || !Array.isArray(obs) || obs.length !== 43) return null;
+  if (!weights || !Array.isArray(obs)) return null;
   const packed = packPolicyWeights(weights);
-  if (!packed) return null;
+  if (!packed || obs.length !== packed.obsDim) return null;
 
-  const { hiddenDim, numHidden, useSilu, useResidual, useLinearOutput } = packed;
-  const { xIn, h0, h1, h2 } = getScratchBuffers(hiddenDim);
+  const { obsDim, hiddenDim, numHidden, useSilu, useResidual, useLinearOutput } = packed;
+  const { xIn, h0, h1, h2 } = getScratchBuffers(hiddenDim, obsDim);
 
   if (packed.obsMean && packed.obsInvStd) {
     const mean = packed.obsMean;
     const invStd = packed.obsInvStd;
     const clip = packed.obsClip;
-    for (let j = 0; j < 43; j++) {
+    for (let j = 0; j < obsDim; j++) {
       const v = obs[j];
       if (!Number.isFinite(v)) return null;
       const norm = (v - mean[j]) * invStd[j];
       xIn[j] = norm > clip ? clip : norm < -clip ? -clip : norm;
     }
   } else {
-    for (let j = 0; j < 43; j++) {
+    for (let j = 0; j < obsDim; j++) {
       const v = obs[j];
       if (!Number.isFinite(v)) return null;
       xIn[j] = v;
     }
   }
 
-  // Layer 0: 43 -> hiddenDim
-  matVecAddBiasF32(packed.w0, packed.b0, xIn, h0, hiddenDim, 43);
+  // Layer 0: obsDim -> hiddenDim
+  matVecAddBiasF32(packed.w0, packed.b0, xIn, h0, hiddenDim, obsDim);
   if (packed.ln0Weight && packed.ln0Bias) {
     applyLayerNormInPlace(h0, hiddenDim, packed.ln0Weight, packed.ln0Bias);
   }
@@ -1296,19 +1431,30 @@ export function computeNeuralAIControl(
   if (entries.length === 0) return heuristic;
 
   const obsCache = new Map<string, number[]>();
-  const getCachedObs = (obsConfig?: PolicyObsConfig): number[] => {
-    const key = getObsConfigKey(obsConfig);
+  const getCachedObs = (obsConfig?: PolicyObsConfig, obsDim: number = 43): number[] => {
+    const key = `${obsDim}:${getObsConfigKey(obsConfig)}`;
     let obs = obsCache.get(key);
     if (!obs) {
-      obs = buildObservationVector(
-        car,
-        compiledTrack,
-        allCars,
-        prevSteer,
-        1.0,
-        car.bopMultipliers,
-        obsConfig,
-      );
+      obs =
+        obsDim === 59
+          ? buildPhysicsAwareObservationVector(
+              car,
+              compiledTrack,
+              allCars,
+              prevSteer,
+              1.0,
+              car.bopMultipliers,
+              obsConfig,
+            )
+          : buildObservationVector(
+              car,
+              compiledTrack,
+              allCars,
+              prevSteer,
+              1.0,
+              car.bopMultipliers,
+              obsConfig,
+            );
       obsCache.set(key, obs);
     }
     return obs;
@@ -1316,7 +1462,8 @@ export function computeNeuralAIControl(
 
   let policyOut: { steer: number; throttle: number; brake: number } | null = null;
   if (entries.length === 1) {
-    policyOut = evaluateNeuralPolicy(getCachedObs(entries[0].weights.obsConfig), entries[0].weights);
+    const w = entries[0].weights;
+    policyOut = evaluateNeuralPolicy(getCachedObs(w.obsConfig, w.obsDim), w);
   } else {
     let steer = 0;
     let throttle = 0;
@@ -1324,7 +1471,7 @@ export function computeNeuralAIControl(
     let weightSum = 0;
     for (let i = 0; i < entries.length; i++) {
       const { fraction, weights } = entries[i];
-      const res = evaluateNeuralPolicy(getCachedObs(weights.obsConfig), weights);
+      const res = evaluateNeuralPolicy(getCachedObs(weights.obsConfig, weights.obsDim), weights);
       if (!res) continue;
       steer += res.steer * fraction;
       throttle += res.throttle * fraction;
@@ -1347,13 +1494,13 @@ export function computeNeuralAIControl(
   let blendedThrottle = policyOut.throttle;
   let blendedBrake = policyOut.brake;
 
-  // Dedicated Start Policy (always active during standing & rolling race starts with smooth crossfade)
-  const startWeight = computeStartPhaseWeight(car, startContext);
+  // Dedicated Start Policy (selectable: Trained Neural / Auto Launch Assist / Off)
+  const startWeight = activeStartPolicyMode === 'off' ? 0 : computeStartPhaseWeight(car, startContext);
   if (startWeight > 0.001) {
     let startOut: { steer: number; throttle: number; brake: number } | null = null;
-    if (activeStartPolicyWeights) {
+    if (activeStartPolicyMode === 'neural' && activeStartPolicyWeights) {
       startOut = evaluateNeuralPolicy(
-        getCachedObs(activeStartPolicyWeights.obsConfig),
+        getCachedObs(activeStartPolicyWeights.obsConfig, activeStartPolicyWeights.obsDim),
         activeStartPolicyWeights,
       );
       // Lightweight anti-stall floor on the first 2.5s of a standing launch even for early checkpoints

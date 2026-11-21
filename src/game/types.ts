@@ -190,6 +190,107 @@ export type TireCompound = 'soft' | 'medium' | 'hard' | 'wet';
 
 export type WeatherMode = 'dry' | 'dynamic-rain';
 
+export type WeatherCondition =
+  | 'dry'
+  | 'overcast'
+  | 'light-drizzle'
+  | 'rain'
+  | 'heavy-storm'
+  | 'drying-track';
+
+export type WeatherPresetId =
+  | 'clear-dry'
+  | 'overcast'
+  | 'passing-shower'
+  | 'storm-front'
+  | 'drying-track'
+  | 'dynamic-random'
+  | 'custom';
+
+export interface WeatherForecastSegment {
+  /** Normalized session time / race progress [0..1] where this segment starts */
+  progressFraction: number;
+  condition: WeatherCondition;
+  /** Target rain intensity [0..1] */
+  rainIntensity: number;
+}
+
+export type DamageLevel = 'off' | 'visual-only' | 'light' | 'realistic';
+
+export type AbsLevel = 'off' | 'low' | 'high';
+
+export type ErsMode = 'harvest' | 'balanced' | 'overtake' | 'quali';
+
+export type TrackSurfaceType =
+  | 'asphalt'
+  | 'kerb'
+  | 'sausage-kerb'
+  | 'concrete-runoff'
+  | 'astroturf'
+  | 'grass'
+  | 'gravel';
+
+export interface WheelTireState {
+  wear: number; // 100 down to 0
+  temp: number; // Celsius
+  flatSpot: number; // 0..1
+  graining: number; // 0..1
+  load: number; // normalized vertical load ~0.2..2.0
+}
+
+export interface FourWheelTireState {
+  fl: WheelTireState;
+  fr: WheelTireState;
+  rl: WheelTireState;
+  rr: WheelTireState;
+}
+
+export interface LocalizedDamageState {
+  frontWing: number; // 0..100
+  rearWing: number; // 0..100
+  engine: number; // 0..100
+  suspension: number; // 0..100
+  suspensionPullDir: number; // -1..+1 steering pull direction
+  headlightBroken: boolean;
+  frontWingDetached: boolean;
+  rearWingDetached: boolean;
+}
+
+export interface CarSetupConfig {
+  frontWing: number; // 0..100 (50 = balanced)
+  rearWing: number; // 0..100 (50 = balanced)
+  brakeBalance: number; // 45..68 (% front)
+  finalDrive: number; // -10..+10 (negative = short accel, positive = tall Vmax)
+  suspensionStiffness: number; // 0..100 (50 = balanced)
+  arbBalance: number; // -50..+50 (negative = understeer, positive = oversteer)
+  diffLock: number; // 0..100 (0 = open/entry turn-in, 100 = locked/exit traction)
+  startingFuel: number; // 15..100 (%)
+  tirePressureFront: number; // 18..32 psi
+  tirePressureRear: number; // 18..32 psi
+}
+
+export type RaceFlagState =
+  | 'green'
+  | 'yellow'
+  | 'double-yellow'
+  | 'vsc'
+  | 'sc'
+  | 'white'
+  | 'black-and-white'
+  | 'black'
+  | 'checkered';
+
+export type SectorFlag = 'green' | 'yellow';
+
+export type PenaltyReason =
+  | 'corner-cut'
+  | 'avoidable-contact'
+  | 'yellow-overtake'
+  | 'jump-start'
+  | 'vsc-speeding';
+
+export type PenaltyType = 'slow-down' | 'time-penalty' | 'drive-through' | 'stop-and-go';
+
 export type AIDifficulty = 'Rookie' | 'Amateur' | 'Pro' | 'Alien';
 
 export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffic-Smart';
@@ -219,9 +320,16 @@ export interface RaceConfig {
   noAi: boolean; // quick toggle for No AI (Humans Only / Solo)
   totalLaps: number; // 0 = continuous practice, 1..20 race laps
   weather: WeatherMode;
+  weatherPreset?: WeatherPresetId;
+  weatherTimeline?: WeatherForecastSegment[];
   startingCompound: TireCompound;
   qualifyingEnabled: boolean;
   aiDifficulty: AIDifficulty;
+  damageLevel?: DamageLevel;
+  absLevel?: AbsLevel;
+  safetyCarEnabled?: boolean;
+  jumpStartEnabled?: boolean;
+  carSetup?: CarSetupConfig;
   roomCode?: string;
   sessionMode?: SinglePlayerSessionMode;
   startType?: RaceStartType;
@@ -246,6 +354,7 @@ export interface DriverStandingsEntry {
   bestLapTime: number | null;
   lastLapTime: number | null;
   totalTime: number;
+  postRacePenaltySeconds?: number;
   pitStops: number;
   inPit: boolean;
   finished: boolean;
@@ -260,6 +369,8 @@ export interface HudSnapshot {
   countdown: number; // >0 before green flag
   startType?: RaceStartType;
   greenFlagFlash?: number; // >0 brief GREEN FLAG banner after start
+  launchStatus?: 'none' | 'staging' | 'perfect' | 'jump-start';
+  launchRpmSweetSpot?: [number, number];
   speedKmh: number;
   gear: number;
   rpmNormalized: number; // 0..1
@@ -276,18 +387,49 @@ export interface HudSnapshot {
   intervalBehind: number | null;
   tireWear: number; // 100 down to 0
   tireTemp: number; // Celsius
+  tires?: FourWheelTireState;
+  brakeTempFront?: number;
+  brakeTempRear?: number;
+  brakeFade?: number; // 0..1
+  brakeLockup?: number; // 0..1
+  brakeBalance?: number; // % front (45..68)
   compound: TireCompound;
   fuel: number; // 100 down to 0
   fuelLapsRemaining: number; // estimated laps of fuel remaining
   aeroDamage: number; // 0 up to 100
+  damage?: LocalizedDamageState;
+  damageLevel?: DamageLevel;
   specialCharge: number; // 0..100
   specialActive: boolean;
+  ersMode?: ErsMode;
+  drsEligible?: boolean;
+  inDrsZone?: boolean;
   attackModeUsesRemaining?: number;
   attackModeTimer?: number;
+  inAttackModeZone?: boolean;
   inSlipstream: boolean;
+  dirtyAirStrength?: number; // 0..1
+  surfaceType?: TrackSurfaceType;
+  crestLoadFactor?: number;
   trackWetness: number; // 0..1
+  weatherCondition?: WeatherCondition;
+  racingLineWetness?: number;
+  offLineWetness?: number;
+  trackRubber?: number; // 0..1
+  ambientTempC?: number;
+  trackTempC?: number;
+  weatherNextLabel?: string;
   warningCount: number;
   penaltyTimeRemaining: number;
+  postRacePenaltySeconds?: number;
+  penaltyReason?: PenaltyReason | null;
+  penaltyType?: PenaltyType | null;
+  raceFlag?: RaceFlagState;
+  sectorFlags?: [SectorFlag, SectorFlag, SectorFlag];
+  blueFlagActive?: boolean;
+  safetyCarPhase?: 'none' | 'vsc' | 'sc' | 'sc-ending';
+  safetyCarSpeedLimitKmh?: number | null;
+  raceControlMessage?: string | null;
   isStoppedOnTrack: boolean;
   pitStopRemaining: number;
   pitStopTotal: number;
@@ -303,6 +445,7 @@ export interface HudSnapshot {
     classId: CarClassId;
     isPlayer: boolean;
     isHumanPeer: boolean;
+    isSafetyCar?: boolean;
   }>;
   qualiResultTime: number | null;
   qualiGridPos: number | null;
