@@ -86,11 +86,11 @@ async function startServer() {
   });
   app.use(express.json({ limit: '50mb' }));
 
-  app.get(['/api/health', '/Apex-Miniature/api/health'], (_req, res) => {
+  app.get(['/api/health', '/Apex-Miniature-Legacy/api/health', '/Apex-Miniature/api/health'], (_req, res) => {
     res.json({ ok: true, activeRooms: rooms.size });
   });
 
-  app.get(['/api/rooms/:code', '/Apex-Miniature/api/rooms/:code'], (req, res) => {
+  app.get(['/api/rooms/:code', '/Apex-Miniature-Legacy/api/rooms/:code', '/Apex-Miniature/api/rooms/:code'], (req, res) => {
     const code = String(req.params.code || '').toUpperCase().trim();
     const room = rooms.get(code);
     if (!room) {
@@ -243,7 +243,7 @@ async function startServer() {
     ws.on('error', cleanup);
   });
 
-  app.post(['/api/telemetry', '/Apex-Miniature/api/telemetry'], (req, res) => {
+  app.post(['/api/telemetry', '/Apex-Miniature-Legacy/api/telemetry', '/Apex-Miniature/api/telemetry'], (req, res) => {
     try {
       const demo = req.body;
       if (
@@ -275,6 +275,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
+    app.use('/Apex-Miniature-Legacy', express.static(distPath));
     app.use('/Apex-Miniature', express.static(distPath));
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {

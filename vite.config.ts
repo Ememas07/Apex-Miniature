@@ -134,11 +134,18 @@ export default defineConfig(() => {
           target: 'ws://localhost:3000',
           ws: true,
         },
+        '/Apex-Miniature-Legacy/ws': {
+          target: 'ws://localhost:3000',
+          ws: true,
+        },
         '/Apex-Miniature/ws': {
           target: 'ws://localhost:3000',
           ws: true,
         },
         '/api': {
+          target: 'http://localhost:3000',
+        },
+        '/Apex-Miniature-Legacy/api': {
           target: 'http://localhost:3000',
         },
         '/Apex-Miniature/api': {

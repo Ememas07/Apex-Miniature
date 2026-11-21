@@ -1793,34 +1793,34 @@ test('Multiplayer URL builder preserves deployment base path and window.location
       location: {
         protocol: 'https:',
         host: 'marc-mas.ddns.net',
-        pathname: '/Apex-Miniature',
+        pathname: '/Apex-Miniature-Legacy',
       },
     };
-    assert.equal(getDeploymentBasePath(), '/Apex-Miniature/');
-    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature/ws');
-    assert.equal(getRoomRestUrl('room1'), '/Apex-Miniature/api/rooms/ROOM1');
+    assert.equal(getDeploymentBasePath(), '/Apex-Miniature-Legacy/');
+    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature-Legacy/ws');
+    assert.equal(getRoomRestUrl('room1'), '/Apex-Miniature-Legacy/api/rooms/ROOM1');
 
     // Production subpath with trailing slash
     (globalThis as any).window = {
       location: {
         protocol: 'https:',
         host: 'marc-mas.ddns.net',
-        pathname: '/Apex-Miniature/',
+        pathname: '/Apex-Miniature-Legacy/',
       },
     };
-    assert.equal(getDeploymentBasePath(), '/Apex-Miniature/');
-    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature/ws');
+    assert.equal(getDeploymentBasePath(), '/Apex-Miniature-Legacy/');
+    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature-Legacy/ws');
 
     // Production subpath with index.html
     (globalThis as any).window = {
       location: {
         protocol: 'https:',
         host: 'marc-mas.ddns.net',
-        pathname: '/Apex-Miniature/index.html',
+        pathname: '/Apex-Miniature-Legacy/index.html',
       },
     };
-    assert.equal(getDeploymentBasePath(), '/Apex-Miniature/');
-    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature/ws');
+    assert.equal(getDeploymentBasePath(), '/Apex-Miniature-Legacy/');
+    assert.equal(getWebSocketUrl(), 'wss://marc-mas.ddns.net/Apex-Miniature-Legacy/ws');
 
     // Local dev with port 3000
     (globalThis as any).window = {

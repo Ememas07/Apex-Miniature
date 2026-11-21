@@ -2,7 +2,8 @@
 
 **Apex Miniature** is a 3D die-cast miniature sim-cade motorsport racing game inspired by iRacing and classic arcade racers. Built with React, Three.js, Tailwind CSS, and WebSocket multiplayer, created with **Gemini 4 Hydrogen** in Google AI Studio.
 
-🕹️ **Play Live**: [https://marc-mas.ddns.net/Apex-Miniature/](https://marc-mas.ddns.net/Apex-Miniature/)  
+🕹️ **Play Live (Legacy)**: [https://marc-mas.ddns.net/Apex-Miniature-Legacy/](https://marc-mas.ddns.net/Apex-Miniature-Legacy/)  
+🕹️ **Modern Version**: [https://marc-mas.ddns.net/Apex-Miniature/](https://marc-mas.ddns.net/Apex-Miniature/)  
 🏠 **Hub**: [Marc's Gemini Studio Hub](https://marc-mas.ddns.net/)
 
 ---

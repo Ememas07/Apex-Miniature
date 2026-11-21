@@ -4,6 +4,7 @@ import {
   Car,
   ChevronRight,
   Compass,
+  ExternalLink,
   Flag,
   Layers,
   MapPin,
@@ -163,6 +164,14 @@ export function TitleOverlay({
         </div>
 
         <div className="flex items-center gap-3 pointer-events-auto">
+          <a
+            href="../Apex-Miniature"
+            className="px-3 py-1.5 rounded bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 hover:border-sky-400 text-xs font-semibold text-sky-300 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 shadow"
+            title="Switch to modern version"
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
+            <span>Return to modern version</span>
+          </a>
           {roomCode && (
             <button
               type="button"
