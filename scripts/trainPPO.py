@@ -81,8 +81,6 @@ VARIANTS = {
         "checkpoint_metric": "composite",
         "weights": os.path.join("src", "game", "aiPolicyWeights_v1.json"),
         "backup": os.path.join("audit", "aiPolicyWeights_v1.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v1.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v1.js"),
         "pool_dir": os.path.join("audit", "selfplay_pool_v1"),
         "curriculum": "v1_physics_3phase",
         "env_options": {
@@ -161,8 +159,6 @@ VARIANTS = {
         "checkpoint_metric": "composite",
         "weights": os.path.join("src", "game", "aiPolicyWeights_v2.json"),
         "backup": os.path.join("audit", "aiPolicyWeights_v2.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v2.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v2.js"),
         "pool_dir": os.path.join("audit", "selfplay_pool_v2"),
         "curriculum": "v2_racecraft_3phase",
         "env_options": {
@@ -241,8 +237,6 @@ VARIANTS = {
         "checkpoint_metric": "composite",
         "weights": os.path.join("src", "game", "aiPolicyWeights_starts.json"),
         "backup": os.path.join("audit", "aiPolicyWeights_starts.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_starts.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_starts.js"),
         "pool_dir": os.path.join("audit", "selfplay_pool_starts"),
         "curriculum": False,
         "traffic_mix": {"soloRatio": 0.05, "scriptedRatio": 0.55, "selfplayRatio": 0.40},
@@ -712,42 +706,6 @@ def save_selfplay_snapshot(
             os.remove(os.path.join(pool_dir, oldest))
         except OSError:
             pass
-
-
-def write_dashboard_data(
-    data_js_path: str,
-    variant_name: str,
-    history: list[dict],
-    best_laps_track_class: dict[tuple[str, str], float],
-    best_laps_class: dict[str, tuple[float, str]],
-    peak_speed_class: dict[str, float],
-):
-    os.makedirs(os.path.dirname(os.path.abspath(data_js_path)), exist_ok=True)
-    best_laps_track: dict[str, dict] = {}
-    for (tid, cid), lt in best_laps_track_class.items():
-        if tid not in best_laps_track or lt < best_laps_track[tid]["time"]:
-            best_laps_track[tid] = {"time": round(lt, 2), "carClass": cid}
-
-    payload = {
-        "variant": variant_name,
-        "history": history[-250:],
-        "bestLapsClass": {
-            cid: {"time": round(lt, 2), "track": tid}
-            for cid, (lt, tid) in best_laps_class.items()
-        },
-        "bestLapsTrack": best_laps_track,
-        "peakSpeedsClass": {
-            cid: round(spd, 1)
-            for cid, spd in peak_speed_class.items()
-        },
-    }
-
-    tmp_path = data_js_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write("window.PPO_DATA = ")
-        json.dump(payload, f)
-        f.write(";\n")
-    os.replace(tmp_path, data_js_path)
 
 
 def compute_curriculum_state(
@@ -1281,8 +1239,6 @@ def train_single_variant(var_key: str, args):
 
     weights_path = args.weights if args.weights else cfg["weights"]
     backup_weights_path = args.backup if args.backup else cfg["backup"]
-    metrics_path = args.metrics if args.metrics else cfg["metrics"]
-    data_js_path = args.data_js if args.data_js else cfg["data_js"]
     pool_dir = args.pool_dir if args.pool_dir else cfg["pool_dir"]
     curriculum_mode = args.curriculum if args.curriculum is not None else cfg["curriculum"]
     is_curriculum = bool(curriculum_mode)
@@ -1361,9 +1317,6 @@ def train_single_variant(var_key: str, args):
         )
         print(f"[{var_name}] Seeded empty self-play pool in {pool_dir}")
 
-    if os.path.exists(metrics_path):
-        os.remove(metrics_path)
-
     cfg_actor_lr = float(cfg.get("actor_lr_start", 3e-4))
     cfg_critic_lr = float(cfg.get("critic_lr_start", 3e-4))
     critic_lr_start = args.critic_lr if args.critic_lr else cfg_critic_lr
@@ -1417,11 +1370,7 @@ def train_single_variant(var_key: str, args):
 
     use_reset_best = args.reset_best and not args.no_reset_best
     best_score = -1e9 if (from_scratch or use_reset_best or args.init_from) else prev_best
-    best_laps_track_class: dict[tuple[str, str], float] = {}
-    best_laps_class: dict[str, tuple[float, str]] = {}
-    peak_speed_class: dict[str, float] = {}
     track_crash_ema: dict[str, float] = {}
-    history: list[dict] = []
     last_phase = cur_phase_init
     t0 = time.time()
 
@@ -1574,15 +1523,6 @@ def train_single_variant(var_key: str, args):
                         lap_times.append(lt)
                         track_stats[tid]["laps"].append(lt)
                         class_stats[cid]["laps"].append(lt)
-                        key = (tid, cid)
-                        if key not in best_laps_track_class or lt < best_laps_track_class[key]:
-                            best_laps_track_class[key] = lt
-                        if cid not in best_laps_class or lt < best_laps_class[cid][0]:
-                            best_laps_class[cid] = (lt, tid)
-
-                    if cid not in peak_speed_class or spd > peak_speed_class[cid]:
-                        peak_speed_class[cid] = spd
-
             with torch.no_grad():
                 next_obs_proc = obs_rms.normalize(raw_obs) if obs_rms is not None else raw_obs
                 next_obs_t = torch.tensor(next_obs_proc, dtype=torch.float32, device=device)
@@ -1687,35 +1627,13 @@ def train_single_variant(var_key: str, args):
             elapsed_total = time.time() - t0
             sps = int(batch_size * update / max(1e-3, elapsed_total))
 
-            per_track_summary = {}
-            for tid, ts in track_stats.items():
-                n = len(ts["speeds"])
-                w_cr_1k = 1000.0 * ts["wallCrashes"] / max(1, n)
-                if adaptive_tracks and n >= 30:
-                    prev_ema = track_crash_ema.get(tid, w_cr_1k)
-                    track_crash_ema[tid] = 0.80 * prev_ema + 0.20 * w_cr_1k
-                per_track_summary[tid] = {
-                    "avgSpeed": round(float(np.mean(ts["speeds"])), 1),
-                    "bestLap": round(float(min(ts["laps"])), 2) if ts["laps"] else None,
-                    "offTrackPct": round(100.0 * ts["off"] / max(1, n), 1),
-                    "crashesPer1k": round(1000.0 * ts["crashes"] / max(1, n), 2),
-                    "carCrashesPer1k": round(1000.0 * ts["carCrashes"] / max(1, n), 2),
-                    "wallCrashesPer1k": round(w_cr_1k, 2),
-                    "samples": n,
-                }
-
-            per_class_summary = {}
-            for cid, cs in class_stats.items():
-                n = len(cs["speeds"])
-                per_class_summary[cid] = {
-                    "avgSpeed": round(float(np.mean(cs["speeds"])), 1),
-                    "maxSpeed": round(float(np.max(cs["speeds"])), 1),
-                    "offTrackPct": round(100.0 * cs["off"] / max(1, n), 1),
-                    "crashesPer1k": round(1000.0 * cs["crashes"] / max(1, n), 2),
-                    "carCrashesPer1k": round(1000.0 * cs["carCrashes"] / max(1, n), 2),
-                    "wallCrashesPer1k": round(1000.0 * cs["wallCrashes"] / max(1, n), 2),
-                    "samples": n,
-                }
+            if adaptive_tracks:
+                for tid, ts in track_stats.items():
+                    n = len(ts["speeds"])
+                    if n >= 30:
+                        w_cr_1k = 1000.0 * ts["wallCrashes"] / max(1, n)
+                        prev_ema = track_crash_ema.get(tid, w_cr_1k)
+                        track_crash_ema[tid] = 0.80 * prev_ema + 0.20 * w_cr_1k
 
             if checkpoint_metric == "composite":
                 # Rewards clean survival + fast pace rather than suicidal straight-line crashes or ghost-overlap abuse
@@ -1729,37 +1647,6 @@ def train_single_variant(var_key: str, args):
                 )
             else:
                 cur_score = mean_rew
-
-            record = {
-                "variant": var_name,
-                "curriculumPhase": cur_phase,
-                "trafficMix": traffic_mix,
-                "update": update,
-                "totalUpdates": args.updates,
-                "meanRew": round(mean_rew, 4),
-                "checkpointScore": round(cur_score, 4),
-                "meanSpeed": round(mean_spd, 1),
-                "offTrackPct": round(off_pct, 1),
-                "carCrashesPer1k": round(car_crashes_1k, 2),
-                "wallCrashesPer1k": round(wall_crashes_1k, 2),
-                "ghostOverlapsPer1k": round(ghost_overlaps_1k, 2),
-                "lapsCompleted": len(lap_times),
-                "explainedVar": round(explained_var, 3),
-                "approxKl": round(approx_kl_val, 4),
-                "clipFrac": round(clip_frac_avg, 3),
-                "std": round(cur_std_avg, 3),
-                "lr": cur_actor_lr,
-                "criticLr": cur_critic_lr,
-                "sps": sps,
-                "tracks": per_track_summary,
-                "classes": per_class_summary,
-            }
-            history.append(record)
-            with open(metrics_path, "a", encoding="utf-8") as mf:
-                mf.write(json.dumps(record) + "\n")
-
-            if update == 1 or update % 2 == 0:
-                write_dashboard_data(data_js_path, var_name, history, best_laps_track_class, best_laps_class, peak_speed_class)
 
             saved_tag = ""
             nominal_min = max(15, critic_warmup_updates + 1)
@@ -1872,8 +1759,6 @@ def main():
     parser.add_argument("--max-std-end", type=float, default=None, help="Override exploration std floor")
     parser.add_argument("--weights", default=None, help="Override target weights JSON path")
     parser.add_argument("--backup", default=None, help="Override backup weights JSON path")
-    parser.add_argument("--metrics", default=None, help="Override metrics JSONL path")
-    parser.add_argument("--data-js", default=None, help="Override dashboard JS path")
     parser.add_argument("--pool-dir", default=None, help="Override selfplay snapshot directory")
     parser.add_argument("--curriculum", action="store_true", default=None, help="Enable curriculum training")
     parser.add_argument("--no-curriculum", action="store_false", dest="curriculum", help="Disable curriculum training")
