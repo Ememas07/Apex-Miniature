@@ -728,6 +728,38 @@ export function RaceMenuModal({
                 </>
               )}
 
+              {/* Start Procedure (Standing vs Rolling) */}
+              {!isSolo && (
+                <div>
+                  <div className="text-xs font-semibold text-slate-300 mb-1.5">Start Procedure</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {([
+                      { id: 'standing', label: 'Standing Start' },
+                      { id: 'rolling', label: 'Rolling Start' },
+                    ] as const).map((opt) => {
+                      const active = (config.startType ?? 'standing') === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          data-testid={`btn-start-${opt.id}`}
+                          onClick={() => onUpdateConfig({ startType: opt.id })}
+                          className={`py-1.5 px-2.5 rounded text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
+                            active
+                              ? opt.id === 'rolling'
+                                ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                                : 'bg-[#1f2838] border-red-500 text-white'
+                              : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Weather & Qualifying Row */}
               <div className="grid grid-cols-2 gap-2">
                 <button

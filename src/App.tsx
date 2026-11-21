@@ -56,6 +56,7 @@ const INITIAL_CONFIG: RaceConfig = {
   aiBotCount: 11,
   noAi: false,
   sessionMode: 'race',
+  startType: 'standing',
 };
 
 export default function App() {

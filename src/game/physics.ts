@@ -10,6 +10,7 @@ import {
   LiveryConfig,
   PitServiceAction,
   PitStrategy,
+  RaceStartType,
   TireCompound,
 } from './types';
 
@@ -277,6 +278,83 @@ export function computeClassGripProfile(
   }
 }
 
+export function getRollingFormationSpeedMs(cars: ReadonlyArray<{ carSpec: CarSpec }>): number {
+  if (cars.length === 0) return 28;
+  let minTopSpeed = Infinity;
+  for (let i = 0; i < cars.length; i++) {
+    const ts = cars[i].carSpec.attributes.topSpeed;
+    if (ts < minTopSpeed) minTopSpeed = ts;
+  }
+  if (!Number.isFinite(minTopSpeed)) return 28;
+  // ~34% of slowest class top speed, clamped to authentic 72–115 km/h (20–32 m/s) rolling pace
+  return Math.max(20, Math.min(32, minTopSpeed * 0.34));
+}
+
+export function computeRollingFormationControl(
+  car: CarSimState,
+  compiledTrack: CompiledTrack,
+  allCars: ReadonlyArray<CarSimState>,
+  formationSpeedMs: number,
+  targetLaneLat?: number,
+): ControlInput {
+  const trackLen = Math.max(100, compiledTrack.totalLength);
+  const lookAheadDist = Math.max(18, Math.min(34, formationSpeedMs * 0.9));
+  const spNow = sampleTrackAtT(compiledTrack, car.trackT);
+  const spAhead = sampleTrackAtT(compiledTrack, (car.trackT + lookAheadDist / trackLen) % 1);
+  const halfW = (spNow.width ?? compiledTrack.spec.trackWidth) * 0.5;
+
+  const desiredLat =
+    targetLaneLat !== undefined
+      ? Math.max(-halfW * 0.65, Math.min(halfW * 0.65, targetLaneLat))
+      : Math.max(-halfW * 0.55, Math.min(halfW * 0.55, car.lateralOffset));
+  const latErr = desiredLat - car.lateralOffset;
+
+  const trackHeading = Math.atan2(spAhead.tx, spAhead.tz);
+  let headingErr = trackHeading - car.heading;
+  while (headingErr > Math.PI) headingErr -= Math.PI * 2;
+  while (headingErr < -Math.PI) headingErr += Math.PI * 2;
+
+  const steer = Math.max(
+    -1,
+    Math.min(1, headingErr * 2.1 + (latErr / Math.max(3, halfW)) * 0.85),
+  );
+
+  // Check nearest car directly ahead in the same lane to maintain crisp 2x2 spacing
+  let effectiveTargetSpeed = formationSpeedMs;
+  for (let i = 0; i < allCars.length; i++) {
+    const other = allCars[i];
+    if (other.id === car.id) continue;
+    let dt = other.trackT - car.trackT;
+    if (dt > 0.5) dt -= 1;
+    if (dt < -0.5) dt += 1;
+    const relLong = dt * trackLen;
+    if (relLong > 0.5 && relLong < 12.0 && Math.abs(other.lateralOffset - car.lateralOffset) < 2.2) {
+      // Gently match or trim speed if closing within 9.5m of the car directly ahead in our column
+      if (relLong < 9.5) {
+        effectiveTargetSpeed = Math.min(effectiveTargetSpeed, Math.max(12, other.speed - (9.5 - relLong) * 0.7));
+      }
+    }
+  }
+
+  // Respect sharp final-corner curvature so rolling formation never slides off before S/F
+  const spFar = sampleTrackAtT(compiledTrack, (car.trackT + 48 / trackLen) % 1);
+  const absCurv = Math.max(Math.abs(spNow.curvature ?? 0), Math.abs(spAhead.curvature ?? 0), Math.abs(spFar.curvature ?? 0));
+  if (absCurv > 0.015) {
+    effectiveTargetSpeed = Math.min(effectiveTargetSpeed, Math.max(16, 34 - absCurv * 320));
+  }
+
+  const speedDiff = effectiveTargetSpeed - car.speed;
+  const throttle = speedDiff > -0.4 ? Math.max(0, Math.min(0.85, 0.22 + speedDiff * 0.14)) : 0;
+  const brake = speedDiff < -1.5 ? Math.max(0, Math.min(0.75, (-speedDiff - 1.5) * 0.12)) : 0;
+
+  return {
+    steer,
+    throttle,
+    brake,
+    specialPressed: false,
+  };
+}
+
 export function createCarSimState(params: {
   id: string;
   name: string;
@@ -291,18 +369,27 @@ export function createCarSimState(params: {
   aiPaceMultiplier?: number;
   transmissionMode?: 'auto' | 'manual';
   bopEnabled?: boolean;
+  startType?: RaceStartType;
+  rollingSpeed?: number;
 }): CarSimState {
   const bopEnabled = params.bopEnabled ?? true;
   const bop = bopEnabled ? getCarBoP(params.carId) : { topSpeedMult: 1.0, gripMult: 1.0, downforceMult: 1.0, brakingMult: 1.0 };
   const carSpec = getCarById(params.carId);
   const row = Math.floor(params.gridSlot / 2);
   const col = params.gridSlot % 2;
-  // Authentic staggered 2-by-2 starting grid spacing (~7.5m per row / ~3.75m stagger)
-  const rowSpacing = 7.5;
-  const colStagger = 3.75;
-  const baseStartOffset = 12.0; // 12m behind start/finish line for Pole Position
-  const distBehindStartLine = baseStartOffset + row * rowSpacing + col * colStagger;
+  const isRolling = params.startType === 'rolling';
   const trackLength = Math.max(100, params.compiledTrack.totalLength);
+
+  // Authentic staggered 2-by-2 starting grid spacing (wider & further back for rolling starts)
+  const rowSpacing = isRolling ? 10.5 : 7.5;
+  const colStagger = isRolling ? 2.2 : 3.75;
+  const baseStartOffset = isRolling
+    ? Math.min(130.0, Math.max(45.0, trackLength * 0.13))
+    : 12.0;
+  const rawDistBehind = baseStartOffset + row * rowSpacing + col * colStagger;
+  const distBehindStartLine = isRolling
+    ? Math.min(rawDistBehind, trackLength * 0.44)
+    : rawDistBehind;
   const deltaT = distBehindStartLine / trackLength;
   const startT = (((1.0 - deltaT) % 1) + 1) % 1;
   const sp = sampleTrackAtT(params.compiledTrack, startT);
@@ -312,6 +399,7 @@ export function createCarSimState(params: {
   const x = sp.x + sp.nx * lat;
   const z = sp.z + sp.nz * lat;
   const heading = Math.atan2(sp.tx, sp.tz);
+  const initSpeed = isRolling ? Math.max(14, params.rollingSpeed ?? 26) : 0;
 
   return {
     id: params.id,
@@ -324,15 +412,15 @@ export function createCarSimState(params: {
     x,
     y: sp.y,
     z,
-    vx: 0,
-    vz: 0,
+    vx: Math.sin(heading) * initSpeed,
+    vz: Math.cos(heading) * initSpeed,
     heading,
-    speed: 0,
+    speed: initSpeed,
     steerAngle: 0,
     lap: 1,
     trackT: startT,
     prevTrackT: startT,
-    totalDistance: -distBehindStartLine, // exact meters remaining to S/F line on lap 1
+    totalDistance: isRolling ? startT - 1 : -distBehindStartLine, // negative until S/F crossing on lap 1
     lateralOffset: lat,
     currentLapTime: 0,
     bestLapTime: null,
@@ -1620,7 +1708,7 @@ export function stepCarPhysics(
     car.lap = Math.max(1, car.lap - 1);
   }
 
-  car.totalDistance = car.totalDistance < 0 && car.prevTrackT > 0.85 && car.trackT > 0.5
+  car.totalDistance = car.totalDistance < 0 && car.prevTrackT > 0.5 && car.trackT > 0.5
     ? car.trackT - 1
     : (car.lap - 1) + car.trackT;
 
@@ -2436,10 +2524,20 @@ export function computeAIControl(
       Math.abs(car.aiTargetOffset - leadCar.lateralOffset) >= CAR_WIDTH * 1.45 &&
       Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.45;
 
+    // Straight-line bump-drafting: when aligned behind a same-class car at high speed on a clear straight
+    // with low closing speed, stay tucked in the tow and bump-draft instead of timidly lifting at 14m.
+    const canBumpDraftStraight =
+      maxBrakeRatio < 0.30 &&
+      Math.abs(currentSample.curvature) < 0.008 &&
+      car.speed > 35 &&
+      leadCar.speed > 30 &&
+      closingSpeed < 6.5 &&
+      leadCar.carSpec.classId === car.carSpec.classId;
+
     // Only apply collision braking when actually overlapping our lane or dangerously close without open passing space
     const immediateDanger = hasLateralOverlap && (!pullingOutToPass || leadDs < 14.0);
 
-    if (immediateDanger) {
+    if (immediateDanger && !canBumpDraftStraight) {
       const gap = Math.max(0.5, leadDs - 4.2);
       const desiredFollowSpeed =
         leadDs < 10.0
@@ -2458,6 +2556,9 @@ export function computeAIControl(
       } else if (leadDs < 14.0) {
         avoidThrottleCap = Math.min(avoidThrottleCap, 0.5);
       }
+    } else if (immediateDanger && canBumpDraftStraight && leadDs < 6.0 && closingSpeed > 4.2) {
+      // Gentle match so bump-draft contact stays below damage threshold (< 4.2 m/s closing speed)
+      avoidThrottleCap = 0.72;
     }
   }
 

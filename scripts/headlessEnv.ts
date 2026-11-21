@@ -17,6 +17,7 @@ import type { PolicyObsConfig, PolicyWeights } from '../src/game/aiNeuralPolicy'
 const { createCarSimState, resolveCarCollisions, resolveWallContact, stepCarPhysics } = await import('../src/game/physics');
 const {
   buildObservationVector,
+  decodePolicyWeightsBinary,
   evaluateNeuralPolicy,
   validatePolicyWeights,
 } = await import('../src/game/aiNeuralPolicy');
@@ -50,6 +51,9 @@ export interface RewardWeights {
   cornerSurvivalBonus?: number;
   cleanOvertakeBonus?: number;
   ghostOverlapPenalty?: number;
+  bumpDraftBonus?: number;
+  launchAccelBonus?: number;
+  alternateLineOvertakeBonus?: number;
 }
 
 export interface TrafficMix {
@@ -65,6 +69,10 @@ export interface EnvOptions {
   trackWeights: Record<string, number>;
   spawnGhostSeconds: number;
   enableCarPhysicsCollisions: boolean;
+  startScenarioRatio: number;
+  rollingStartRatio: number;
+  maxEpisodeSteps: number;
+  multiLineTrafficRatio: number;
 }
 
 const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
@@ -92,6 +100,9 @@ const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
   cornerSurvivalBonus: 0.0,
   cleanOvertakeBonus: 0.0,
   ghostOverlapPenalty: 0.0,
+  bumpDraftBonus: 0.0,
+  launchAccelBonus: 0.0,
+  alternateLineOvertakeBonus: 0.0,
 };
 
 const DEFAULT_TRAFFIC_MIX: TrafficMix = {
@@ -107,6 +118,10 @@ const DEFAULT_ENV_OPTIONS: EnvOptions = {
   trackWeights: {},
   spawnGhostSeconds: 0.0,
   enableCarPhysicsCollisions: false,
+  startScenarioRatio: 0.0,
+  rollingStartRatio: 0.45,
+  maxEpisodeSteps: 0,
+  multiLineTrafficRatio: 0.0,
 };
 
 interface TrafficBot {
@@ -190,15 +205,22 @@ function parsePolicyWeights(raw: any): MlpWeights | null {
   return null;
 }
 
+function loadPolicyFile(filePath: string): MlpWeights | null {
+  if (!fs.existsSync(filePath)) return null;
+  if (filePath.endsWith('.bin')) {
+    const buf = fs.readFileSync(filePath);
+    return decodePolicyWeightsBinary(buf);
+  }
+  return parsePolicyWeights(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+}
+
 function refreshPolicyPool(): void {
   const loaded: MlpWeights[] = [];
 
-  // 1. Always try to load the latest active weights
+  // 1. Always try to load the latest active weights (.bin or .json)
   try {
-    if (fs.existsSync(activeWeightsPath)) {
-      const parsed = parsePolicyWeights(JSON.parse(fs.readFileSync(activeWeightsPath, 'utf8')));
-      if (parsed) loaded.push(parsed);
-    }
+    const parsed = loadPolicyFile(activeWeightsPath);
+    if (parsed) loaded.push(parsed);
   } catch {
     // Ignore transient read errors if trainPPO.py is mid-write
   }
@@ -208,12 +230,12 @@ function refreshPolicyPool(): void {
     if (fs.existsSync(activePoolDir)) {
       const files = fs
         .readdirSync(activePoolDir)
-        .filter((f) => f.endsWith('.json'))
+        .filter((f) => f.endsWith('.json') || f.endsWith('.bin'))
         .sort()
         .slice(-6);
       for (const file of files) {
         try {
-          const parsed = parsePolicyWeights(JSON.parse(fs.readFileSync(path.join(activePoolDir, file), 'utf8')));
+          const parsed = loadPolicyFile(path.join(activePoolDir, file));
           if (parsed) loaded.push(parsed);
         } catch {
           // Skip unreadable snapshot
@@ -308,6 +330,18 @@ function applyConfigPatch(msg: Record<string, any>, resetDefaults: boolean): voi
     }
     if (typeof eo.enableCarPhysicsCollisions === 'boolean') {
       envOptions.enableCarPhysicsCollisions = eo.enableCarPhysicsCollisions;
+    }
+    if (typeof eo.startScenarioRatio === 'number' && Number.isFinite(eo.startScenarioRatio)) {
+      envOptions.startScenarioRatio = Math.max(0, Math.min(1.0, eo.startScenarioRatio));
+    }
+    if (typeof eo.rollingStartRatio === 'number' && Number.isFinite(eo.rollingStartRatio)) {
+      envOptions.rollingStartRatio = Math.max(0, Math.min(1.0, eo.rollingStartRatio));
+    }
+    if (typeof eo.maxEpisodeSteps === 'number' && Number.isFinite(eo.maxEpisodeSteps)) {
+      envOptions.maxEpisodeSteps = Math.max(0, Math.round(eo.maxEpisodeSteps));
+    }
+    if (typeof eo.multiLineTrafficRatio === 'number' && Number.isFinite(eo.multiLineTrafficRatio)) {
+      envOptions.multiLineTrafficRatio = Math.max(0, Math.min(1.0, eo.multiLineTrafficRatio));
     }
   }
 
@@ -556,19 +590,57 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
   const cId = cPool[Math.floor(Math.random() * cPool.length)];
   const track = getCompiledTrack(tId);
 
-  // Determine traffic conditions
+  // Determine scenario: dedicated 2x2 grid start (standing or rolling), multi-line pack, tight pack, or standard
+  const isStartScenario =
+    randomStart && envOptions.startScenarioRatio > 0 && Math.random() < envOptions.startScenarioRatio;
   const roll = Math.random();
-  const isTraffic = randomStart && roll >= trafficMix.soloRatio;
-  const isTightPack = isTraffic && Math.random() < envOptions.tightPackRatio;
+  const isTraffic = randomStart && !isStartScenario && roll >= trafficMix.soloRatio;
+  const isMultiLinePack =
+    isTraffic && envOptions.multiLineTrafficRatio > 0 && Math.random() < envOptions.multiLineTrafficRatio;
+  const isTightPack = isTraffic && !isMultiLinePack && Math.random() < envOptions.tightPackRatio;
 
   let startT: number;
   let latRatio: number;
   let initSpeed: number;
+  let isRollingGridStart = false;
+  let gridEgoSlot = 0;
+  let gridTotalCars = 0;
 
   if (!randomStart) {
     startT = 0;
     latRatio = 0;
     initSpeed = 0;
+  } else if (isStartScenario) {
+    // Authentic staggered 2x2 starting grid (standing start from 0 m/s OR rolling start formation)
+    isRollingGridStart = Math.random() < envOptions.rollingStartRatio;
+    gridTotalCars = 8 + Math.floor(Math.random() * 5); // 8..12 cars on grid
+    gridEgoSlot = Math.floor(Math.random() * gridTotalCars);
+    const trackLen = Math.max(200, track.totalLength);
+    const row = Math.floor(gridEgoSlot / 2);
+    const col = gridEgoSlot % 2;
+    const rowSpacing = isRollingGridStart ? 10.5 : 7.5;
+    const colStagger = isRollingGridStart ? 2.2 : 3.75;
+    const baseOffset = isRollingGridStart ? Math.min(130, Math.max(45, trackLen * 0.13)) : 12.0;
+    const distBehind = Math.min(baseOffset + row * rowSpacing + col * colStagger, trackLen * 0.44);
+    startT = (((1.0 - distBehind / trackLen) % 1) + 1) % 1;
+    const halfW = track.spec.trackWidth * 0.5;
+    const gridLat = Math.min(2.8, Math.max(1.8, halfW * 0.38)) / Math.max(1, halfW);
+    latRatio = (col === 0 ? -1 : 1) * gridLat;
+    if (isRollingGridStart) {
+      const carTopMs = getCarTopSpeedMs(cId);
+      initSpeed = Math.max(20, Math.min(34, carTopMs * (0.30 + Math.random() * 0.12)));
+    } else {
+      initSpeed = 0;
+    }
+  } else if (isMultiLinePack) {
+    // V9 multi-line racecraft scenario: varied straightaway draft trains & 2-wide corner battles
+    const spawnOnStraight = Math.random() < 0.5;
+    startT = spawnOnStraight ? Math.random() : getSharpCornerStartT(track, false);
+    latRatio = (Math.random() - 0.5) * 1.15; // full track width (-0.575..+0.575)
+    const carTopMs = getCarTopSpeedMs(cId);
+    initSpeed = spawnOnStraight
+      ? Math.max(36, Math.min(carTopMs * 0.88, carTopMs * (0.55 + Math.random() * 0.30)))
+      : Math.max(20, Math.min(44, 22 + Math.random() * 20));
   } else if (isTightPack) {
     // Tight Grid Pack / T1 Funnel scenario (~180-260m before sharp corner)
     startT = getSharpCornerStartT(track, false);
@@ -599,7 +671,70 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
   const car = spawnCarAt(track, cId, 'rl_agent', startT, latRatio, initSpeed);
   const traffic: TrafficBot[] = [];
 
-  if (isTightPack) {
+  if (isStartScenario) {
+    // Populate all other 2x2 grid slots authentically (standing at 0 m/s or rolling at matched formation speed)
+    const trackLen = Math.max(200, track.totalLength);
+    const halfW = track.spec.trackWidth * 0.5;
+    const gridLat = Math.min(2.8, Math.max(1.8, halfW * 0.38)) / Math.max(1, halfW);
+    const rowSpacing = isRollingGridStart ? 10.5 : 7.5;
+    const colStagger = isRollingGridStart ? 2.2 : 3.75;
+    const baseOffset = isRollingGridStart ? Math.min(130, Math.max(45, trackLen * 0.13)) : 12.0;
+
+    for (let slotIdx = 0; slotIdx < gridTotalCars; slotIdx++) {
+      if (slotIdx === gridEgoSlot) continue;
+      const row = Math.floor(slotIdx / 2);
+      const col = slotIdx % 2;
+      const distBehind = Math.min(baseOffset + row * rowSpacing + col * colStagger, trackLen * 0.44);
+      const botT = (((1.0 - distBehind / trackLen) % 1) + 1) % 1;
+      const laneRatio = (col === 0 ? -1 : 1) * gridLat;
+      const botCarId = Math.random() < 0.7 ? cId : cPool[Math.floor(Math.random() * cPool.length)];
+      const botSpeed = isRollingGridStart ? Math.max(18, initSpeed + (Math.random() - 0.5) * 1.5) : 0;
+      const botCar = spawnCarAt(track, botCarId, `grid_bot_${slotIdx}`, botT, laneRatio, botSpeed);
+      let dtSigned = botT - startT;
+      if (dtSigned > 0.5) dtSigned -= 1;
+      if (dtSigned < -0.5) dtSigned += 1;
+      const signedDist = dtSigned * trackLen;
+
+      // Mix neural selfplay (once pool is warm) with realistic scripted launchers that accelerate cleanly from 0
+      const useNeural = policyPool.length > 0 && Math.random() < 0.45;
+      if (useNeural) {
+        const policy = policyPool[Math.floor(Math.random() * policyPool.length)];
+        const paceScale = 0.90 + Math.random() * 0.10;
+        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale, prevSignedDist: signedDist });
+      } else {
+        const paceScale = 0.80 + Math.random() * 0.22;
+        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale, prevSignedDist: signedDist });
+      }
+    }
+  } else if (isMultiLinePack) {
+    // 5-6 rivals holding distinct racing lines (inside defense, center draft lead, outside sweep, flanking cars)
+    const numRivals = 5 + (Math.random() < 0.5 ? 1 : 0);
+    const laneChoices = [-0.62, -0.32, 0.0, 0.32, 0.62];
+    const offsets = [-14, 7, 15, 26, 40, 58];
+    for (let k = 0; k < numRivals; k++) {
+      const longOffset = offsets[k] + (Math.random() - 0.5) * 5;
+      const tOffset = longOffset / Math.max(200, track.totalLength);
+      // Put one same-class draft lead directly ahead on the first slot to practice bump-draft & slingshot!
+      const laneRatio =
+        k === 1
+          ? Math.max(-0.6, Math.min(0.6, latRatio + (Math.random() - 0.5) * 0.12))
+          : laneChoices[(k + Math.floor(Math.random() * laneChoices.length)) % laneChoices.length];
+      const botCarId = k <= 2 ? cId : cPool[Math.floor(Math.random() * cPool.length)];
+      const botSpeed = Math.max(16, initSpeed + (k === 1 ? -2.0 + Math.random() * 2.5 : (Math.random() - 0.5) * 6.0));
+      let botT = (startT + tOffset) % 1;
+      if (botT < 0) botT += 1;
+      const botCar = spawnCarAt(track, botCarId, `multiline_bot_${k}`, botT, laneRatio, botSpeed);
+      const useNeural = policyPool.length > 0 && Math.random() < 0.55;
+      if (useNeural) {
+        const policy = policyPool[Math.floor(Math.random() * policyPool.length)];
+        const paceScale = 0.90 + Math.random() * 0.10;
+        traffic.push({ car: botCar, mode: 'neural', policy, targetLaneRatio: laneRatio, paceScale, prevSignedDist: longOffset });
+      } else {
+        const paceScale = 0.74 + Math.random() * 0.24;
+        traffic.push({ car: botCar, mode: 'scripted', policy: null, targetLaneRatio: laneRatio, paceScale, prevSignedDist: longOffset });
+      }
+    }
+  } else if (isTightPack) {
     // Spawn 4-5 rivals tightly staggered ahead/beside (+8m to +45m longitudinal, across both left and right lanes)
     const numRivals = 4 + (Math.random() < 0.5 ? 1 : 0);
     for (let k = 0; k < numRivals; k++) {
@@ -656,11 +791,11 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
 
   const allCars = [car, ...traffic.map((t) => t.car)];
 
-  // Opt-in spawn ghosting: tight packs always get full ghost window to prevent launch gridlock;
+  // Opt-in spawn ghosting: start scenarios & tight packs get full ghost window to prevent launch gridlock;
   // spaced traffic mixes ghosted and immediately-solid starts so policy never assumes permanent ghosting.
   let spawnGhostDuration = 0;
   if (traffic.length > 0 && envOptions.spawnGhostSeconds > 0) {
-    if (isTightPack) {
+    if (isStartScenario || isTightPack) {
       spawnGhostDuration = envOptions.spawnGhostSeconds;
     } else if (Math.random() < 0.5) {
       spawnGhostDuration = envOptions.spawnGhostSeconds * 0.5;
@@ -710,17 +845,33 @@ let slots: EnvSlot[] = [];
 let cfgTracks: string[] | undefined;
 let cfgCars: string[] | undefined;
 
-const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+const USE_BINARY_IPC = process.argv.includes('--binary-ipc');
 
-rl.on('line', (line) => {
-  if (!line.trim()) return;
-  const msg = JSON.parse(line);
+function writeBinaryFrame(msgType: number, payload: Buffer): void {
+  const hdr = Buffer.allocUnsafe(8);
+  hdr.writeUInt32LE(msgType, 0);
+  hdr.writeUInt32LE(payload.length, 4);
+  process.stdout.write(hdr);
+  if (payload.length > 0) {
+    process.stdout.write(payload);
+  }
+}
 
+function sendJsonResponse(obj: unknown): void {
+  const str = JSON.stringify(obj);
+  if (USE_BINARY_IPC) {
+    writeBinaryFrame(1, Buffer.from(str, 'utf8'));
+  } else {
+    process.stdout.write(str + '\n');
+  }
+}
+
+function handleMessage(msg: any): void {
   if (msg.cmd === 'catalog') {
     const tracks = TRACKS.map((t: any) => ({ id: t.id, name: t.name }));
     const baseCars = CARS.map((c: any) => ({ id: c.id, name: c.name, classId: c.classId }));
     const selectableCars = getAllSelectableCars().map((c: any) => ({ id: c.id, name: c.name, classId: c.classId }));
-    process.stdout.write(JSON.stringify({ tracks, baseCars, selectableCars }) + '\n');
+    sendJsonResponse({ tracks, baseCars, selectableCars });
     return;
   }
 
@@ -920,7 +1071,7 @@ rl.on('line', (line) => {
       });
     }
 
-    process.stdout.write(JSON.stringify({ results }) + '\n');
+    sendJsonResponse({ results });
     return;
   }
 
@@ -936,14 +1087,14 @@ rl.on('line', (line) => {
       const n: number = msg.numEnvs ?? 32;
       slots = Array.from({ length: n }, () => resetSlot(cfgTracks, cfgCars, true));
     }
-    process.stdout.write(JSON.stringify({ obs: slots.map(getObs), poolSize: policyPool.length }) + '\n');
+    sendJsonResponse({ obs: slots.map(getObs), poolSize: policyPool.length });
     return;
   }
 
   if (msg.cmd === 'config') {
     applyConfigPatch(msg, false);
     refreshPolicyPool();
-    process.stdout.write(JSON.stringify({ ok: true, poolSize: policyPool.length }) + '\n');
+    sendJsonResponse({ ok: true, poolSize: policyPool.length });
     return;
   }
 
@@ -951,7 +1102,31 @@ rl.on('line', (line) => {
     if (msg.trafficMix || msg.rewardWeights || msg.envOptions || msg.obsConfig) {
       applyConfigPatch(msg, false);
     }
-    const actions: number[][] = msg.actions;
+    const stepRes = runStepBatch(msg.actions);
+    sendJsonResponse(stepRes);
+  }
+}
+
+function runStepBatch(actions: number[][] | Float32Array): {
+  obs: number[][];
+  rewards: number[];
+  dones: boolean[];
+  truncated: boolean[];
+  finalObs: (number[] | null)[];
+  info: Array<{
+    trackId: string;
+    carId: string;
+    carClass: string;
+    speed: number;
+    lapTime: number | null;
+    offTrack: boolean;
+    crashed: boolean;
+    carCrash: boolean;
+    wallCrash: boolean;
+    stalled?: boolean;
+    ghostOverlap?: boolean;
+  }>;
+} {
     const obsOut: number[][] = [];
     const rewardsOut: number[] = [];
     const donesOut: boolean[] = [];
@@ -974,13 +1149,16 @@ rl.on('line', (line) => {
     const POLICY_DT = 1 / 30;
     const SUBSTEPS = 4;
     const SUB_DT = POLICY_DT / SUBSTEPS;
+    const isFlatActions = actions instanceof Float32Array;
 
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
-      const act = actions[i];
-      const steer = Math.max(-1, Math.min(1, act[0]));
-      const rawThrottle = Math.max(-1, Math.min(1, act[1]));
-      const rawBrake = Math.max(-1, Math.min(1, act[2]));
+      const a0 = isFlatActions ? actions[i * 3] : (actions as number[][])[i][0];
+      const a1 = isFlatActions ? actions[i * 3 + 1] : (actions as number[][])[i][1];
+      const a2 = isFlatActions ? actions[i * 3 + 2] : (actions as number[][])[i][2];
+      const steer = Math.max(-1, Math.min(1, a0));
+      const rawThrottle = Math.max(-1, Math.min(1, a1));
+      const rawBrake = Math.max(-1, Math.min(1, a2));
       const throttle = (rawThrottle + 1) * 0.5;
       const brake = (rawBrake + 1) * 0.5;
 
@@ -1089,11 +1267,26 @@ rl.on('line', (line) => {
       let overtakeBonusSum = 0;
       const ttcWeight = rewardWeights.ttcPenalty ?? 0;
       const overtakeWeight = rewardWeights.cleanOvertakeBonus ?? 0;
+      const altLineOvertakeWeight = rewardWeights.alternateLineOvertakeBonus ?? 0;
       const ghostOverlapWeight = rewardWeights.ghostOverlapPenalty ?? 0;
+      const bumpDraftWeight = rewardWeights.bumpDraftBonus ?? 0;
       const headingX = Math.sin(slot.car.heading);
       const headingZ = Math.cos(slot.car.heading);
       const egoGhost = slot.car.spawnGhostTimer ?? 0;
       const maxGhostDur = Math.max(0.5, slot.spawnGhostDuration || envOptions.spawnGhostSeconds || 2.0);
+      let bumpDraftBonusSum = 0;
+
+      // Pre-check straightaway eligibility for legal bump-drafting (aligned nose-to-tail at high speed)
+      const spAhead65 =
+        bumpDraftWeight > 0
+          ? sampleTrackAtT(slot.track, (slot.car.trackT + 65 / Math.max(200, slot.track.totalLength)) % 1)
+          : null;
+      const onBumpDraftStraight =
+        bumpDraftWeight > 0 &&
+        slot.car.speed > 36.0 &&
+        Math.abs(sp.curvature ?? 0) < 0.008 &&
+        Math.abs(spAhead65?.curvature ?? 0) < 0.012 &&
+        !isPastKerb;
 
       for (let b = 0; b < slot.traffic.length; b++) {
         const bot = slot.traffic[b];
@@ -1103,11 +1296,37 @@ rl.on('line', (line) => {
         const dx = other.x - slot.car.x;
         const dz = other.z - slot.car.z;
         const distSq = dx * dx + dz * dz;
+        const aheadDist = dx * headingX + dz * headingZ;
+        const closingSpeed = slot.car.speed - other.speed;
+
+        // Check if ego is tucked cleanly behind a same-class car on a straightaway (bump-draft cone)
+        let isCleanStraightDraft = false;
+        if (
+          onBumpDraftStraight &&
+          aheadDist > 1.5 &&
+          aheadDist < 18.0 &&
+          other.carSpec.classId === slot.car.carSpec.classId &&
+          other.speed > 32.0 &&
+          Math.abs(other.lateralOffset - slot.car.lateralOffset) < 1.9 &&
+          closingSpeed < 4.8 &&
+          closingSpeed > -6.0
+        ) {
+          const otherHeadingDot = headingX * Math.sin(other.heading) + headingZ * Math.cos(other.heading);
+          if (otherHeadingDot > 0.95) {
+            isCleanStraightDraft = true;
+          }
+        }
+
         if (distSq < 6.25) {
           if (!pairGhosted) {
-            // Within 2.5m center-to-center (solid cars) = physical collision
-            carContact = true;
-            break;
+            // Allow gentle nose-to-tail bump drafting on clear straights (matches resolveCarCollisions isBumpDraft)
+            if (isCleanStraightDraft && closingSpeed < 4.5 && Math.abs(other.lateralOffset - slot.car.lateralOffset) < 1.35) {
+              bumpDraftBonusSum += bumpDraftWeight * 2.0;
+            } else {
+              // Within 2.5m center-to-center (solid cars) = physical collision
+              carContact = true;
+              break;
+            }
           } else {
             // Non-terminal during spawn ghosting to avoid pack gridlock, but apply an escalating
             // overlap penalty as ghosting nears expiry so the policy peels into clean air before turning solid.
@@ -1119,22 +1338,21 @@ rl.on('line', (line) => {
             ghostOverlapPenaltySum += basePenalty * escalation;
             closeProximityPenalty += 3.5 * rewardWeights.closeProximity;
           }
+        } else if (isCleanStraightDraft && aheadDist < 15.0) {
+          // Reward holding a close straightaway tow instead of timidly braking 10-15m behind
+          bumpDraftBonusSum += bumpDraftWeight;
         } else if (distSq < 36.0) {
           // Soft warning zone (2.5m..6.0m) stays active even while ghosted to guide clean lane selection
           const dist = Math.sqrt(distSq);
           closeProximityPenalty += (6.0 - dist) * rewardWeights.closeProximity;
         }
 
-        // Forward-cone Time-To-Collision (TTC) closing penalty within 14m (active during ghosting too)
-        if (ttcWeight > 0 && distSq < 196.0) {
-          const aheadDist = dx * headingX + dz * headingZ;
+        // Forward-cone Time-To-Collision (TTC) closing penalty within 14m (suppressed during clean straight bump-draft)
+        if (ttcWeight > 0 && distSq < 196.0 && !isCleanStraightDraft) {
           if (aheadDist > 0) {
             const dist = Math.sqrt(distSq);
-            if (dist < 14.0) {
-              const closingSpeed = slot.car.speed - other.speed;
-              if (closingSpeed > 1.5) {
-                ttcPenaltySum += ttcWeight * (closingSpeed / Math.max(2.0, dist));
-              }
+            if (dist < 14.0 && closingSpeed > 1.5) {
+              ttcPenaltySum += ttcWeight * (closingSpeed / Math.max(2.0, dist));
             }
           }
         }
@@ -1155,6 +1373,9 @@ rl.on('line', (line) => {
             !isPastKerb
           ) {
             overtakeBonusSum += overtakeWeight;
+            if (altLineOvertakeWeight > 0 && Math.abs(slot.car.lateralOffset) > Math.max(1.6, halfW * 0.25)) {
+              overtakeBonusSum += altLineOvertakeWeight;
+            }
           }
           bot.prevSignedDist = signedDist;
         }
@@ -1166,7 +1387,22 @@ rl.on('line', (line) => {
         ghostOverlapPenaltySum -
         ttcPenaltySum -
         wallScrapePenalty +
-        overtakeBonusSum;
+        overtakeBonusSum +
+        bumpDraftBonusSum;
+
+      // Opt-in launch acceleration bonus during first 4 seconds (120 steps) for the Starts specialist
+      const launchBonus = rewardWeights.launchAccelBonus ?? 0;
+      if (
+        launchBonus > 0 &&
+        slot.stepsInEpisode <= 120 &&
+        !isPastKerb &&
+        !wallContact &&
+        !carContact &&
+        forwardMeters > 0
+      ) {
+        const accelGain = Math.max(0, slot.car.speed - slot.prevSpeed);
+        reward += launchBonus * (accelGain * 1.5 + Math.min(1.0, slot.car.speed / 30.0) * 0.4);
+      }
 
       // Opt-in corner survival bonus for cleanly navigating high-curvature corners on track
       const cornerSurvBonus = rewardWeights.cornerSurvivalBonus ?? 0;
@@ -1251,8 +1487,11 @@ rl.on('line', (line) => {
         }
       }
 
-      // Scale episode cap by track length (~2.2x a 90 km/h lap, min 6000 steps) so long tracks like Le Mans can finish 2 crossings
-      const maxSteps = Math.max(6000, Math.ceil((slot.track.totalLength / 25) * 30 * 2.2));
+      // Scale episode cap by track length (or fixed cap when envOptions.maxEpisodeSteps > 0, e.g. Starts training)
+      const maxSteps =
+        envOptions.maxEpisodeSteps > 0
+          ? envOptions.maxEpisodeSteps
+          : Math.max(6000, Math.ceil((slot.track.totalLength / 25) * 30 * 2.2));
       const maxScrapes = rewardWeights.maxWallScrapes ?? 6;
 
       // Terminal crash conditions
@@ -1263,12 +1502,13 @@ rl.on('line', (line) => {
         slot.wallScrapes >= maxScrapes;
 
       const stallSpeedThreshold = rewardWeights.stallStopSpeed ?? 2.0;
-      if (slot.stepsInEpisode > 180 && slot.car.speed < stallSpeedThreshold) {
+      const stallGraceSteps = envOptions.startScenarioRatio > 0.5 ? 45 : 180;
+      if (slot.stepsInEpisode > stallGraceSteps && slot.car.speed < stallSpeedThreshold) {
         slot.consecutiveStallSteps++;
       } else {
         slot.consecutiveStallSteps = 0;
       }
-      const isStalled = slot.consecutiveStallSteps >= 60;
+      const isStalled = slot.consecutiveStallSteps >= (envOptions.startScenarioRatio > 0.5 ? 30 : 60);
 
       if (carContact) {
         reward -= rewardWeights.carCrash;
@@ -1324,15 +1564,109 @@ rl.on('line', (line) => {
       finalObsOut.push(finalObs);
     }
 
-    process.stdout.write(
-      JSON.stringify({
-        obs: obsOut,
-        rewards: rewardsOut,
-        dones: donesOut,
-        truncated: truncatedOut,
-        finalObs: finalObsOut,
-        info: infoOut,
-      }) + '\n',
-    );
+    return {
+      obs: obsOut,
+      rewards: rewardsOut,
+      dones: donesOut,
+      truncated: truncatedOut,
+      finalObs: finalObsOut,
+      info: infoOut,
+    };
+}
+
+function encodeBinaryStepResponse(res: ReturnType<typeof runStepBatch>): Buffer {
+  const n = res.obs.length;
+  const OBS_DIM = 43;
+  const finalObsPairs: Array<{ idx: number; obs: number[] }> = [];
+  for (let i = 0; i < n; i++) {
+    const fo = res.finalObs[i];
+    if (fo) finalObsPairs.push({ idx: i, obs: fo });
   }
-});
+  const infoBytes = Buffer.from(JSON.stringify(res.info), 'utf8');
+  const totalLen =
+    4 + // numEnvs
+    n * OBS_DIM * 4 + // obs float32
+    n * 4 + // rewards float32
+    n + // dones uint8
+    n + // truncated uint8
+    4 + // finalObsCount
+    finalObsPairs.length * (4 + OBS_DIM * 4) +
+    4 + // infoJsonLen
+    infoBytes.length;
+
+  const buf = Buffer.allocUnsafe(totalLen);
+  let off = 0;
+  buf.writeUInt32LE(n, off);
+  off += 4;
+  for (let i = 0; i < n; i++) {
+    const o = res.obs[i];
+    for (let j = 0; j < OBS_DIM; j++) {
+      buf.writeFloatLE(o[j], off);
+      off += 4;
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    buf.writeFloatLE(res.rewards[i], off);
+    off += 4;
+  }
+  for (let i = 0; i < n; i++) {
+    buf[off++] = res.dones[i] ? 1 : 0;
+  }
+  for (let i = 0; i < n; i++) {
+    buf[off++] = res.truncated[i] ? 1 : 0;
+  }
+  buf.writeUInt32LE(finalObsPairs.length, off);
+  off += 4;
+  for (let k = 0; k < finalObsPairs.length; k++) {
+    const pair = finalObsPairs[k];
+    buf.writeUInt32LE(pair.idx, off);
+    off += 4;
+    for (let j = 0; j < OBS_DIM; j++) {
+      buf.writeFloatLE(pair.obs[j], off);
+      off += 4;
+    }
+  }
+  buf.writeUInt32LE(infoBytes.length, off);
+  off += 4;
+  infoBytes.copy(buf, off);
+  return buf;
+}
+
+if (USE_BINARY_IPC) {
+  let rxBuf: Buffer = Buffer.alloc(0);
+  process.stdin.on('data', (chunk: Buffer) => {
+    rxBuf = rxBuf.length === 0 ? chunk : Buffer.concat([rxBuf, chunk]);
+    while (rxBuf.length >= 8) {
+      const msgType = rxBuf.readUInt32LE(0);
+      const payloadLen = rxBuf.readUInt32LE(4);
+      if (rxBuf.length < 8 + payloadLen) break;
+      const payload = rxBuf.subarray(8, 8 + payloadLen);
+      rxBuf = rxBuf.subarray(8 + payloadLen);
+
+      if (msgType === 1) {
+        const msg = JSON.parse(payload.toString('utf8'));
+        handleMessage(msg);
+      } else if (msgType === 2) {
+        // Binary step request: [uint32 numEnvs][uint32 patchLen][patchJson][float32 actions (N*3)]
+        const numEnvs = payload.readUInt32LE(0);
+        const patchLen = payload.readUInt32LE(4);
+        if (patchLen > 0) {
+          const patch = JSON.parse(payload.subarray(8, 8 + patchLen).toString('utf8'));
+          applyConfigPatch(patch, false);
+        }
+        const actOff = 8 + patchLen;
+        const actBytes = payload.subarray(actOff, actOff + numEnvs * 3 * 4);
+        const aligned = Buffer.from(actBytes);
+        const actionsF32 = new Float32Array(aligned.buffer, aligned.byteOffset, numEnvs * 3);
+        const res = runStepBatch(actionsF32);
+        writeBinaryFrame(3, encodeBinaryStepResponse(res));
+      }
+    }
+  });
+} else {
+  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  rl.on('line', (line) => {
+    if (!line.trim()) return;
+    handleMessage(JSON.parse(line));
+  });
+}

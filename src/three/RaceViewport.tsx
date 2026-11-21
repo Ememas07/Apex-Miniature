@@ -11,8 +11,10 @@ import { computeNeuralAIControl } from '../game/aiNeuralPolicy';
 import {
   CarSimState,
   computeRoadSurfaceTilt,
+  computeRollingFormationControl,
   computeStandings,
   createCarSimState,
+  getRollingFormationSpeedMs,
   requestOnTrackPitStop,
   resolveCarCollisions,
   SPEED_KMH_FACTOR,
@@ -28,6 +30,7 @@ import {
   PitServiceAction,
   PitStrategy,
   RaceConfig,
+  RaceStartType,
   RoomPeer,
   SpectatorCameraMode,
   TireCompound,
@@ -156,6 +159,11 @@ export function RaceViewport(props: RaceViewportProps) {
     carRigs: Map<string, BuiltCarRig>;
     carNametags: Map<string, CarNametagHandle>;
     countdown: number;
+    activeStartType: RaceStartType;
+    rollingFormationSpeed: number;
+    rollingFormationLanes: Map<string, number>;
+    raceElapsed: number;
+    greenFlagFlash: number;
     trackWetness: number;
     rainTimer: number;
     trauma: number;
@@ -304,6 +312,11 @@ export function RaceViewport(props: RaceViewportProps) {
       carRigs: new Map<string, BuiltCarRig>(),
       carNametags: new Map<string, CarNametagHandle>(),
       countdown: 3.0,
+      activeStartType: 'standing' as RaceStartType,
+      rollingFormationSpeed: 28,
+      rollingFormationLanes: new Map<string, number>(),
+      raceElapsed: 0,
+      greenFlagFlash: 0,
       trackWetness: 0,
       rainTimer: 0,
       trauma: 0,
@@ -523,6 +536,15 @@ export function RaceViewport(props: RaceViewportProps) {
 
       const aiPaceMult = 1.0 * (cfg.aiDifficulty === 'Rookie' ? 0.84 : cfg.aiDifficulty === 'Amateur' ? 0.92 : cfg.aiDifficulty === 'Pro' ? 1.0 : 1.07);
 
+      const useRollingStart = !isQuali && !isPractice && !isTitle && cfg.startType === 'rolling';
+      const formationPoolSpecs = [
+        ...(!isTitle && !isAiRace ? [{ carSpec: playerSpec }] : []),
+        ...sortedPool.map((carSpec) => ({ carSpec })),
+      ];
+      const formationSpeedMs = getRollingFormationSpeedMs(formationPoolSpecs);
+      const gridStartType: RaceStartType = useRollingStart ? 'rolling' : 'standing';
+      sim.rollingFormationLanes.clear();
+
       let peerCursor = 0;
       let aiCursor = 0;
       for (let slot = 0; slot < totalGrid; slot++) {
@@ -536,6 +558,8 @@ export function RaceViewport(props: RaceViewportProps) {
             gridSlot: isQuali || isPractice ? 0 : slot,
             compiledTrack: compiled,
             compound: cfg.startingCompound,
+            startType: gridStartType,
+            rollingSpeed: formationSpeedMs,
           });
           if (isQuali || isPractice) {
             // Flying hotlap start: place just before final corner at clean rolling speed
@@ -549,22 +573,25 @@ export function RaceViewport(props: RaceViewportProps) {
             pCar.speed = isQuali ? 38 : 34;
             pCar.totalDistance = -0.12;
           }
+          sim.rollingFormationLanes.set(pCar.id, pCar.lateralOffset);
           newCars.push(pCar);
         } else if (peerCursor < peers.length && currentPhase !== 'title' && !isQuali && !isPractice) {
           const peer = peers[peerCursor++];
-          newCars.push(
-            createCarSimState({
-              id: peer.peerId,
-              name: peer.name,
-              isPlayer: false,
-              isHumanPeer: true,
-              carId: peer.carId,
-              livery: peer.livery,
-              gridSlot: slot,
-              compiledTrack: compiled,
-              compound: cfg.startingCompound,
-            }),
-          );
+          const peerCar = createCarSimState({
+            id: peer.peerId,
+            name: peer.name,
+            isPlayer: false,
+            isHumanPeer: true,
+            carId: peer.carId,
+            livery: peer.livery,
+            gridSlot: slot,
+            compiledTrack: compiled,
+            compound: cfg.startingCompound,
+            startType: gridStartType,
+            rollingSpeed: formationSpeedMs,
+          });
+          sim.rollingFormationLanes.set(peerCar.id, peerCar.lateralOffset);
+          newCars.push(peerCar);
         } else {
           // Fill remaining grid slots with AI Bots across active classes
           const pick = sortedPool[(aiCursor * 3 + slot) % sortedPool.length];
@@ -598,6 +625,8 @@ export function RaceViewport(props: RaceViewportProps) {
             compound: cfg.weather === 'dynamic-rain' && aiCursor % 3 === 0 ? 'wet' : 'medium',
             personality,
             aiPaceMultiplier: aiPaceMult * jitter,
+            startType: gridStartType,
+            rollingSpeed: formationSpeedMs,
           });
           if (currentPhase === 'title') {
             // Spread title cars gracefully around the track for a live world showcase!
@@ -614,15 +643,17 @@ export function RaceViewport(props: RaceViewportProps) {
             bot.lap = 1;
             bot.totalDistance = t;
           }
+          sim.rollingFormationLanes.set(bot.id, bot.lateralOffset);
           newCars.push(bot);
           aiCursor++;
         }
       }
 
-      // Brief spawn ghosting on multi-car standing launches prevents gridlock & reverse-into-wall pileups
+      // Brief spawn ghosting on multi-car launches prevents gridlock & pileups (longer on rolling to cover formation)
       if (newCars.length > 1 && !isQuali && !isPractice && currentPhase !== 'title') {
+        const ghostSec = useRollingStart ? 5.5 : 2.5;
         for (const c of newCars) {
-          c.spawnGhostTimer = 2.5;
+          c.spawnGhostTimer = ghostSec;
         }
       }
 
@@ -660,7 +691,16 @@ export function RaceViewport(props: RaceViewportProps) {
       }
 
       const isAutostart = typeof window !== 'undefined' && window.location.search.includes('autostart=1');
-      sim.countdown = currentPhase === 'playing' && !isPractice && !isAutostart ? 2.0 : 0;
+      sim.activeStartType = gridStartType;
+      sim.rollingFormationSpeed = formationSpeedMs;
+      sim.raceElapsed = 0;
+      sim.greenFlagFlash = 0;
+      sim.countdown =
+        currentPhase === 'playing' && !isPractice && !isAutostart
+          ? useRollingStart
+            ? 3.2
+            : 2.0
+          : 0;
       sim.trackWetness = cfg.weather === 'dynamic-rain' && !isTitle ? 0.35 : 0;
       sim.rainTimer = 0;
       sim.trauma = 0;
@@ -1118,16 +1158,26 @@ export function RaceViewport(props: RaceViewportProps) {
             sim.audio.playBeep(520, 0.12);
           } else if (sim.countdown === 0 && prevCeil > 0) {
             sim.audio.playBeep(880, 0.28);
+            sim.greenFlagFlash = 1.4;
           }
+        } else if (sim.greenFlagFlash > 0) {
+          sim.greenFlagFlash = Math.max(0, sim.greenFlagFlash - dt);
         }
 
-        // Update gantry lights
+        // Update gantry lights (red buildup for standing start, amber formation pulse for rolling start)
         if (sim.trackScene) {
-          const litCount = sim.countdown > 0 ? Math.min(5, Math.max(1, Math.ceil(((2.0 - sim.countdown) / 2.0) * 5))) : 0;
+          const totalCountdown = sim.activeStartType === 'rolling' ? 3.2 : 2.0;
+          const litCount =
+            sim.countdown > 0
+              ? Math.min(5, Math.max(1, Math.ceil(((totalCountdown - sim.countdown) / totalCountdown) * 5)))
+              : 0;
           sim.trackScene.startLightMats.forEach((m, idx) => {
             if (sim.countdown <= 0) {
               m.emissive.setHex(0x22c55e);
               m.emissiveIntensity = now % 3000 < 1500 ? 0.5 : 0;
+            } else if (sim.activeStartType === 'rolling') {
+              m.emissive.setHex(0xf59e0b);
+              m.emissiveIntensity = idx < litCount ? 2.0 : 0.15;
             } else {
               m.emissive.setHex(0xef4444);
               m.emissiveIntensity = idx < litCount ? 2.2 : 0.05;
@@ -1211,6 +1261,11 @@ export function RaceViewport(props: RaceViewportProps) {
           touchIn.specialPressed;
 
         if (sim.countdown <= 0) {
+          sim.raceElapsed += dt;
+          const startCtx =
+            !isQuali && !isPractice
+              ? { raceElapsed: sim.raceElapsed, startType: sim.activeStartType }
+              : undefined;
           for (let i = 0; i < sim.cars.length; i++) {
             const c = sim.cars[i];
             if (c.isPlayer) {
@@ -1252,7 +1307,15 @@ export function RaceViewport(props: RaceViewportProps) {
                 c.specialActive = pkt.specialActive;
               }
             } else {
-              const aiIn = computeNeuralAIControl(c, sim.compiledTrack, sim.cars, dt, sim.trackWetness, p.raceConfig.aiDifficulty);
+              const aiIn = computeNeuralAIControl(
+                c,
+                sim.compiledTrack,
+                sim.cars,
+                dt,
+                sim.trackWetness,
+                p.raceConfig.aiDifficulty,
+                startCtx,
+              );
               stepCarPhysics(c, aiIn, sim.compiledTrack, dt, {
                 trackWetness: sim.trackWetness,
                 totalLaps: p.raceConfig.totalLaps,
@@ -1275,10 +1338,55 @@ export function RaceViewport(props: RaceViewportProps) {
             }
           }
         } else {
-          // Discard buffered toggle triggers during starting-lights countdown
+          // Discard buffered toggle triggers during starting-lights / rolling-formation countdown
           sim.specialJustPressed = false;
-          if (playerCar) {
-            // Grid staging / neutral launch revving during starting-lights countdown
+          if (sim.activeStartType === 'rolling') {
+            // Rolling Start: advance the entire 2x2 grid at controlled formation speed until GREEN FLAG
+            for (let i = 0; i < sim.cars.length; i++) {
+              const c = sim.cars[i];
+              if (c.isHumanPeer) {
+                const pkt = p.mpClient.peerTelemetry.get(c.id);
+                if (pkt) {
+                  c.x += (pkt.x - c.x) * Math.min(1, dt * 15);
+                  c.y += (pkt.y - c.y) * Math.min(1, dt * 15);
+                  c.z += (pkt.z - c.z) * Math.min(1, dt * 15);
+                  c.heading = pkt.heading;
+                  c.speed = pkt.speed;
+                  c.steerAngle = pkt.steerAngle;
+                  c.lap = pkt.lap;
+                  c.trackT = pkt.trackT;
+                  c.totalDistance = pkt.totalDistance;
+                  c.specialActive = pkt.specialActive;
+                }
+                continue;
+              }
+              const laneLat = sim.rollingFormationLanes.get(c.id);
+              const formCtrl = computeRollingFormationControl(
+                c,
+                sim.compiledTrack,
+                sim.cars,
+                sim.rollingFormationSpeed,
+                laneLat,
+              );
+              const appliedInput = c.isPlayer
+                ? {
+                    // Allow subtle player weave in-lane while autopilot maintains clean formation pace
+                    steer: Math.max(-1, Math.min(1, formCtrl.steer * 0.78 + steer * 0.22)),
+                    throttle: formCtrl.throttle,
+                    brake: formCtrl.brake,
+                    specialPressed: false,
+                  }
+                : formCtrl;
+              stepCarPhysics(c, appliedInput, sim.compiledTrack, dt, {
+                trackWetness: sim.trackWetness,
+                totalLaps: p.raceConfig.totalLaps,
+                isQualifying: isQuali,
+                isPractice,
+                allCars: sim.cars,
+              });
+            }
+          } else if (playerCar) {
+            // Standing Start: grid staging / neutral launch revving during starting-lights countdown
             const targetGridRpm = throttle > 0.05 ? Math.min(1.0, 0.18 + throttle * 0.84) : 0.18;
             const rate = throttle > 0.05 ? 4.5 : 3.0;
             const nextRpm =
@@ -1583,8 +1691,8 @@ export function RaceViewport(props: RaceViewportProps) {
 
           // Engine audio synthesis (follows player or spectated AI car)
           const liveSpeedKmh = Math.round(focusCar.speed * SPEED_KMH_FACTOR);
-          if (!focusCar.isPlayer && sim.countdown > 0) {
-            // Silent/quiet grid before lights out in AI Race mode (prevents constant rev drone at start)
+          if (!focusCar.isPlayer && sim.countdown > 0 && sim.activeStartType !== 'rolling') {
+            // Silent/quiet grid before lights out on standing start in AI Race mode (prevents constant rev drone)
             sim.audio.updateEngine(0, 0, focusCar.carSpec.engineType, false);
           } else {
             const engineLoad = focusCar.isPlayer
@@ -1747,6 +1855,8 @@ export function RaceViewport(props: RaceViewportProps) {
         const snapshot: HudSnapshot = {
           phase: activePhase,
           countdown: sim.countdown,
+          startType: sim.activeStartType,
+          greenFlagFlash: sim.greenFlagFlash,
           speedKmh,
           gear: hudFocusCar.gear,
           rpmNormalized: hudFocusCar.rpmNormalized,

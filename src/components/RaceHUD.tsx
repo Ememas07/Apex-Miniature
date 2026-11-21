@@ -413,12 +413,32 @@ export function RaceHUD({
             )}
         </div>
 
-        {/* Top-Center: Start Lights Countdown OR Sleek Landscape Touch Telemetry Strip */}
+        {/* Top-Center: Start Lights Countdown, Green Flag Flash, OR Sleek Landscape Touch Telemetry Strip */}
         {hud.countdown > 0 ? (
-          <div className="bg-[#0b0e13]/95 border border-white/15 rounded-md px-6 py-3 short:px-3.5 short:py-1.5 text-center shadow-xl">
-            <div className="text-xs short:text-[9px] text-slate-400 uppercase tracking-widest">Formation Ready</div>
-            <div className="text-3xl short:text-xl font-display font-extrabold text-red-500 tabular-nums mt-0.5 leading-none">
+          <div
+            className={`bg-[#0b0e13]/95 border rounded-md px-6 py-3 short:px-3.5 short:py-1.5 text-center shadow-xl ${
+              hud.startType === 'rolling' ? 'border-amber-400/50' : 'border-white/15'
+            }`}
+          >
+            <div
+              className={`text-xs short:text-[9px] uppercase tracking-widest font-semibold ${
+                hud.startType === 'rolling' ? 'text-amber-300' : 'text-slate-400'
+              }`}
+            >
+              {hud.startType === 'rolling' ? 'Rolling Start · Hold Formation' : 'Standing Start · Ready'}
+            </div>
+            <div
+              className={`text-3xl short:text-xl font-display font-extrabold tabular-nums mt-0.5 leading-none ${
+                hud.startType === 'rolling' ? 'text-amber-400' : 'text-red-500'
+              }`}
+            >
               {Math.ceil(hud.countdown)}
+            </div>
+          </div>
+        ) : (hud.greenFlagFlash ?? 0) > 0 ? (
+          <div className="bg-emerald-950/90 border border-emerald-400/60 rounded-md px-6 py-2.5 short:px-3.5 short:py-1 text-center shadow-xl">
+            <div className="text-lg short:text-sm font-display font-extrabold text-emerald-300 tracking-widest uppercase leading-none">
+              GREEN FLAG!
             </div>
           </div>
         ) : touchControlsActive && !isAiRace ? (

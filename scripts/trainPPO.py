@@ -13,6 +13,7 @@ import json
 import math
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -408,6 +409,148 @@ VARIANTS = {
             "ttcPenalty": 0.45,
         },
     },
+    "v9": {
+        "name": "v9_apex_master",
+        "description": "All-in-One Master Driver: 3x128 ResMLP LN+ObsNorm, V7 technical lookahead, multi-line racecraft, straightaway bump-drafting, max pace & track discipline",
+        "hidden_dim": 128,
+        "num_hidden_layers": 3,
+        "layer_norm": True,
+        "residual": True,
+        "activation": "tanh",
+        "ortho_init": True,
+        "use_obs_norm": True,
+        "obs_config": OBS_CONFIG_V7_TECHNICAL,
+        "default_steps": 512,
+        "default_workers": 4,
+        "gamma": 0.997,
+        "gae_lambda": 0.96,
+        "actor_lr_start": 2.8e-4,
+        "critic_lr_start": 5e-4,
+        "lr_end": 1.5e-5,
+        "lr_schedule": "cosine",
+        "ent_start": 0.010,
+        "ent_end": 0.001,
+        "max_std_start": 0.45,
+        "max_std_end": 0.08,
+        "action_bound_coef": 0.02,
+        "vf_clip": 0.2,
+        "target_kl": 0.022,
+        "adaptive_tracks": True,
+        "checkpoint_metric": "composite",
+        "weights": os.path.join("src", "game", "aiPolicyWeights_v9.json"),
+        "backup": os.path.join("src", "game", "aiPolicyWeights_v9.best.json"),
+        "metrics": os.path.join("audit", "ppo_metrics_v9.jsonl"),
+        "data_js": os.path.join("audit", "ppo_data_v9.js"),
+        "pool_dir": os.path.join("audit", "selfplay_pool_v9"),
+        "curriculum": "v9_master_3phase",
+        "env_options": {
+            "brakingZoneSpawnRatio": 0.35,
+            "tightPackRatio": 0.25,
+            "multiLineTrafficRatio": 0.55,
+            "startScenarioRatio": 0.12,
+            "rollingStartRatio": 0.45,
+            "technicalTrackBoost": 2.5,
+            "spawnGhostSeconds": 1.8,
+            "enableCarPhysicsCollisions": True,
+        },
+        "rewards": {
+            "forwardProgress": 0.50,
+            "closeProximity": 0.11,
+            "minSpeedThreshold": 14.0,
+            "minSpeedPenalty": 0.10,
+            "floorSpeedThreshold": 7.5,
+            "floorSpeedPenalty": 0.40,
+            "offTrackBase": 1.6,
+            "offTrackSlope": 0.50,
+            "steerJerk": 0.09,
+            "throttleBrakeOverlap": 0.24,
+            "carCrash": 26.0,
+            "wallCrash": 30.0,
+            "wallScrapeBase": 1.4,
+            "wallScrapeDamageScale": 0.85,
+            "wallScrapeCap": 4.8,
+            "maxWallScrapes": 3,
+            "lapCompletionBonus": 24.0,
+            "cornerSurvivalBonus": 0.10,
+            "cleanOvertakeBonus": 4.5,
+            "alternateLineOvertakeBonus": 2.8,
+            "bumpDraftBonus": 0.14,
+            "ghostOverlapPenalty": 2.0,
+            "stallStopSpeed": 2.0,
+            "ttcPenalty": 0.42,
+        },
+    },
+    "starts": {
+        "name": "starts_grid_launch",
+        "description": "Dedicated Race Starts Specialist: 2x128 ResMLP LN+ObsNorm trained on 2x2 standing (0 m/s) & rolling formation starts into Turn 1",
+        "hidden_dim": 128,
+        "num_hidden_layers": 2,
+        "layer_norm": True,
+        "residual": True,
+        "activation": "tanh",
+        "ortho_init": True,
+        "use_obs_norm": True,
+        "obs_config": OBS_CONFIG_V5_DEFAULT,
+        "default_steps": 512,
+        "default_workers": 4,
+        "gamma": 0.992,
+        "gae_lambda": 0.95,
+        "actor_lr_start": 3e-4,
+        "critic_lr_start": 5e-4,
+        "lr_end": 2e-5,
+        "lr_schedule": "cosine",
+        "ent_start": 0.011,
+        "ent_end": 0.0015,
+        "max_std_start": 0.45,
+        "max_std_end": 0.10,
+        "action_bound_coef": 0.02,
+        "vf_clip": 0.2,
+        "target_kl": 0.025,
+        "adaptive_tracks": True,
+        "checkpoint_metric": "composite",
+        "weights": os.path.join("src", "game", "aiPolicyWeights_starts.json"),
+        "backup": os.path.join("src", "game", "aiPolicyWeights_starts.best.json"),
+        "metrics": os.path.join("audit", "ppo_metrics_starts.jsonl"),
+        "data_js": os.path.join("audit", "ppo_data_starts.js"),
+        "pool_dir": os.path.join("audit", "selfplay_pool_starts"),
+        "curriculum": False,
+        "traffic_mix": {"soloRatio": 0.05, "scriptedRatio": 0.55, "selfplayRatio": 0.40},
+        "env_options": {
+            "startScenarioRatio": 0.92,
+            "rollingStartRatio": 0.45,
+            "maxEpisodeSteps": 750,
+            "brakingZoneSpawnRatio": 0.0,
+            "tightPackRatio": 0.08,
+            "technicalTrackBoost": 1.6,
+            "spawnGhostSeconds": 2.0,
+            "enableCarPhysicsCollisions": True,
+        },
+        "rewards": {
+            "forwardProgress": 0.52,
+            "launchAccelBonus": 0.45,
+            "closeProximity": 0.12,
+            "minSpeedThreshold": 14.0,
+            "minSpeedPenalty": 0.14,
+            "floorSpeedThreshold": 6.0,
+            "floorSpeedPenalty": 0.45,
+            "offTrackBase": 1.5,
+            "offTrackSlope": 0.45,
+            "steerJerk": 0.10,
+            "throttleBrakeOverlap": 0.25,
+            "carCrash": 24.0,
+            "wallCrash": 26.0,
+            "wallScrapeBase": 1.2,
+            "wallScrapeDamageScale": 0.75,
+            "wallScrapeCap": 4.0,
+            "maxWallScrapes": 4,
+            "lapCompletionBonus": 10.0,
+            "cornerSurvivalBonus": 0.08,
+            "cleanOvertakeBonus": 3.0,
+            "ghostOverlapPenalty": 2.0,
+            "stallStopSpeed": 2.0,
+            "ttcPenalty": 0.45,
+        },
+    },
 }
 
 # Alias map for convenient variant naming
@@ -420,6 +563,8 @@ VARIANT_ALIASES = {
     "6": "v6", "v6": "v6", "v6_traffic_racecraft": "v6", "traffic": "v6", "racecraft": "v6",
     "7": "v7", "v7": "v7", "v7_wall_survival": "v7", "survival": "v7", "wall_survival": "v7",
     "8": "v8", "v8": "v8", "v8_flagship_adaptive": "v8", "flagship": "v8", "adaptive": "v8",
+    "9": "v9", "v9": "v9", "v9_apex_master": "v9", "master": "v9", "apex_master": "v9",
+    "starts": "starts", "start": "starts", "starts_grid_launch": "starts", "launch": "starts", "grid": "starts",
 }
 
 
@@ -731,6 +876,78 @@ def export_actor_to_json(
         os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
         shutil.copy2(path, backup_path)
 
+    # Also write compact ANB1 binary companion (.bin) (~4x smaller, zero JSON float-parsing overhead)
+    try:
+        bin_path = os.path.splitext(path)[0] + ".bin"
+        export_actor_to_bin(
+            model=model,
+            bin_path=bin_path,
+            metadata=meta_with_ts,
+            hidden_dim=hidden_dim,
+            obs_rms=obs_rms,
+            obs_config=obs_config,
+        )
+    except Exception:
+        pass
+
+
+def export_actor_to_bin(
+    model: ActorCritic,
+    bin_path: str,
+    metadata: dict,
+    hidden_dim: int,
+    obs_rms: RunningMeanStd | None = None,
+    obs_config: dict | None = None,
+):
+    """Exports policy weights into compact ANB1 binary format matching decodePolicyWeightsBinary()."""
+    layers = model.get_actor_linears()
+    norms = model.get_actor_norms()
+    has_ln = len(norms) > 0
+    has_obs_norm = obs_rms is not None
+    header = {
+        "version": 3,
+        "obsDim": OBS_DIM,
+        "hiddenDim": hidden_dim,
+        "actDim": ACT_DIM,
+        "numHiddenLayers": model.num_hidden_layers,
+        "activation": model.activation_name,
+        "residual": bool(model.use_residual),
+        "hasLn": has_ln,
+        "hasObsNorm": has_obs_norm,
+        "obsNormClip": float(obs_rms.clip) if obs_rms is not None else 10.0,
+        "obsConfig": obs_config,
+        "meta": metadata,
+    }
+    header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    pad_len = (-len(header_bytes)) % 4
+
+    tensors: list[np.ndarray] = []
+    if has_obs_norm and obs_rms is not None:
+        tensors.append(obs_rms.mean.astype("<f4", copy=False))
+        tensors.append(obs_rms.std().astype("<f4", copy=False))
+    for idx in range(model.num_hidden_layers):
+        lin = layers[idx]
+        tensors.append(lin.weight.detach().cpu().numpy().astype("<f4", copy=False).ravel())
+        tensors.append(lin.bias.detach().cpu().numpy().astype("<f4", copy=False).ravel())
+        if has_ln:
+            ln = norms[idx]
+            tensors.append(ln.weight.detach().cpu().numpy().astype("<f4", copy=False).ravel())
+            tensors.append(ln.bias.detach().cpu().numpy().astype("<f4", copy=False).ravel())
+    out_lin = layers[model.num_hidden_layers]
+    tensors.append(out_lin.weight.detach().cpu().numpy().astype("<f4", copy=False).ravel())
+    tensors.append(out_lin.bias.detach().cpu().numpy().astype("<f4", copy=False).ravel())
+
+    tmp_bin = bin_path + ".tmp"
+    with open(tmp_bin, "wb") as f:
+        f.write(b"ANB1")
+        f.write(struct.pack("<I", len(header_bytes)))
+        f.write(header_bytes)
+        if pad_len:
+            f.write(b"\x00" * pad_len)
+        for arr in tensors:
+            f.write(arr.tobytes())
+    os.replace(tmp_bin, bin_path)
+
 
 def save_selfplay_snapshot(
     model: ActorCritic,
@@ -878,6 +1095,65 @@ def compute_curriculum_state(
         eo["enableCarPhysicsCollisions"] = True
         return 3, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
 
+    if curriculum_mode == "v9_master_3phase":
+        p1_end = max(1, int(round(0.25 * total_updates)))
+        p2_end = max(p1_end + 1, int(round(0.60 * total_updates)))
+        if update <= p1_end:
+            # Phase 1: Technical Track Survival & Pace Foundation (85% solo / 15% scripted, heavy braking zones)
+            rew = dict(base_rewards)
+            rew["forwardProgress"] = 0.46
+            rew["wallCrash"] = 32.0
+            rew["wallScrapeBase"] = 1.5
+            rew["cornerSurvivalBonus"] = 0.12
+            rew["bumpDraftBonus"] = 0.08
+            eo = dict(base_env_options or {})
+            eo["brakingZoneSpawnRatio"] = 0.42
+            eo["multiLineTrafficRatio"] = 0.30
+            eo["startScenarioRatio"] = 0.06
+            eo["spawnGhostSeconds"] = 2.0
+            eo["enableCarPhysicsCollisions"] = True
+            return 1, {"soloRatio": 0.85, "scriptedRatio": 0.15, "selfplayRatio": 0.0}, rew, eo
+        if update <= p2_end:
+            # Phase 2: Multi-Line Racecraft, Alternate Lines & Straightaway Bump-Drafting
+            ramp = max(0.0, min(1.0, (update - p1_end) / max(1, p2_end - p1_end)))
+            scripted = round(0.20 + 0.15 * ramp, 4)
+            selfplay = round(0.30 * ramp, 4)
+            solo = round(max(0.35, 1.0 - scripted - selfplay), 4)
+            rew = dict(base_rewards)
+            rew["forwardProgress"] = 0.52
+            rew["wallCrash"] = 30.0
+            rew["carCrash"] = 24.0
+            rew["cleanOvertakeBonus"] = 4.5
+            rew["alternateLineOvertakeBonus"] = 2.5
+            rew["bumpDraftBonus"] = 0.12
+            eo = dict(base_env_options or {})
+            eo["brakingZoneSpawnRatio"] = 0.30
+            eo["multiLineTrafficRatio"] = 0.55
+            eo["startScenarioRatio"] = 0.10
+            eo["spawnGhostSeconds"] = 1.9
+            eo["enableCarPhysicsCollisions"] = True
+            return 2, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
+        # Phase 3: Full All-Rounder Mastery (Dense Selfplay + Multi-Line Battles + Bump-Drafting + Max Pace)
+        ramp = max(0.0, min(1.0, (update - p2_end) / max(1, total_updates - p2_end)))
+        selfplay = round(0.30 + 0.20 * ramp, 4)
+        scripted = round(0.35 - 0.10 * ramp, 4)
+        solo = round(max(0.25, 1.0 - scripted - selfplay), 4)
+        rew = dict(base_rewards)
+        rew["forwardProgress"] = 0.52
+        rew["wallCrash"] = 30.0
+        rew["carCrash"] = 26.0
+        rew["cleanOvertakeBonus"] = 5.0
+        rew["alternateLineOvertakeBonus"] = 3.0
+        rew["bumpDraftBonus"] = 0.14
+        rew["ghostOverlapPenalty"] = 2.2
+        eo = dict(base_env_options or {})
+        eo["brakingZoneSpawnRatio"] = 0.25
+        eo["multiLineTrafficRatio"] = 0.60
+        eo["startScenarioRatio"] = 0.15
+        eo["spawnGhostSeconds"] = 1.6
+        eo["enableCarPhysicsCollisions"] = True
+        return 3, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
+
     # Legacy v4 2-phase curriculum (preserved identically)
     phase1_frac = 0.60
     target_scripted = 0.35
@@ -899,23 +1175,53 @@ def compute_traffic_mix(update: int, total_updates: int, is_curriculum: bool) ->
     return phase, mix
 
 
-def spawn_env_worker():
+def spawn_env_worker(binary_ipc: bool = True):
     npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
+    cmd = [npx_cmd, "tsx", "scripts/headlessEnv.ts"]
+    if binary_ipc:
+        cmd.append("--binary-ipc")
     return subprocess.Popen(
-        [npx_cmd, "tsx", "scripts/headlessEnv.ts"],
+        cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        text=True,
-        bufsize=1,
+        text=not binary_ipc,
+        bufsize=0 if binary_ipc else 1,
     )
+
+
+def _read_exact(stream, n: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = n
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            raise RuntimeError("headlessEnv worker closed unexpectedly during binary IPC read")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks) if len(chunks) > 1 else chunks[0]
+
+
+def _write_bin_frame(stream, msg_type: int, payload: bytes) -> None:
+    stream.write(struct.pack("<II", msg_type, len(payload)))
+    if payload:
+        stream.write(payload)
+    stream.flush()
+
+
+def _read_bin_frame(stream) -> tuple[int, bytes]:
+    hdr = _read_exact(stream, 8)
+    msg_type, payload_len = struct.unpack("<II", hdr)
+    payload = _read_exact(stream, payload_len) if payload_len > 0 else b""
+    return msg_type, payload
 
 
 class VectorEnvPool:
     """Shards N parallel slots across W independent headlessEnv Node processes for multi-core CPU speed."""
 
-    def __init__(self, num_envs: int, num_workers: int = 1):
+    def __init__(self, num_envs: int, num_workers: int = 1, binary_ipc: bool = True):
         self.num_envs = num_envs
         self.num_workers = max(1, min(num_workers, num_envs))
+        self.binary_ipc = binary_ipc
         base = num_envs // self.num_workers
         rem = num_envs % self.num_workers
         self.slices: list[tuple[int, int]] = []
@@ -924,22 +1230,29 @@ class VectorEnvPool:
             cnt = base + (1 if w < rem else 0)
             self.slices.append((offset, offset + cnt))
             offset += cnt
-        self.workers = [spawn_env_worker() for _ in range(self.num_workers)]
+        self.workers = [spawn_env_worker(binary_ipc=binary_ipc) for _ in range(self.num_workers)]
 
     def init(self, init_payload_base: dict) -> np.ndarray:
         for w_idx, (s0, s1) in enumerate(self.slices):
             payload = dict(init_payload_base)
             payload["cmd"] = "init"
             payload["numEnvs"] = s1 - s0
-            self.workers[w_idx].stdin.write(json.dumps(payload) + "\n")
-            self.workers[w_idx].stdin.flush()
+            if self.binary_ipc:
+                _write_bin_frame(self.workers[w_idx].stdin, 1, json.dumps(payload).encode("utf-8"))
+            else:
+                self.workers[w_idx].stdin.write(json.dumps(payload) + "\n")
+                self.workers[w_idx].stdin.flush()
 
         obs_parts = []
         for w_idx in range(self.num_workers):
-            line = self.workers[w_idx].stdout.readline()
-            if not line:
-                raise RuntimeError(f"headlessEnv worker #{w_idx} closed unexpectedly on init")
-            resp = json.loads(line)
+            if self.binary_ipc:
+                _, raw = _read_bin_frame(self.workers[w_idx].stdout)
+                resp = json.loads(raw.decode("utf-8"))
+            else:
+                line = self.workers[w_idx].stdout.readline()
+                if not line:
+                    raise RuntimeError(f"headlessEnv worker #{w_idx} closed unexpectedly on init")
+                resp = json.loads(line)
             obs_parts.append(np.array(resp["obs"], dtype=np.float32))
         return np.concatenate(obs_parts, axis=0)
 
@@ -950,7 +1263,71 @@ class VectorEnvPool:
         reward_weights: dict | None = None,
         env_options: dict | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list, list]:
-        # Fan out writes to all workers before reading so Node processes execute in parallel
+        if self.binary_ipc:
+            patch_dict: dict = {}
+            if traffic_mix is not None:
+                patch_dict["trafficMix"] = traffic_mix
+            if reward_weights is not None:
+                patch_dict["rewardWeights"] = reward_weights
+            if env_options is not None:
+                patch_dict["envOptions"] = env_options
+            patch_bytes = json.dumps(patch_dict, separators=(",", ":")).encode("utf-8") if patch_dict else b""
+            actions_f32 = np.ascontiguousarray(actions_clipped, dtype="<f4")
+
+            for w_idx, (s0, s1) in enumerate(self.slices):
+                n_w = s1 - s0
+                act_bytes = actions_f32[s0:s1].tobytes()
+                req_payload = struct.pack("<II", n_w, len(patch_bytes)) + patch_bytes + act_bytes
+                _write_bin_frame(self.workers[w_idx].stdin, 2, req_payload)
+
+            obs_parts, rew_parts, done_parts, trunc_parts = [], [], [], []
+            final_obs_all: list = []
+            infos_all: list = []
+            for w_idx, (s0, s1) in enumerate(self.slices):
+                _, raw = _read_bin_frame(self.workers[w_idx].stdout)
+                mv = memoryview(raw)
+                off = 0
+                (n_w,) = struct.unpack_from("<I", mv, off)
+                off += 4
+                obs_len = n_w * OBS_DIM * 4
+                obs_arr = np.frombuffer(mv[off:off + obs_len], dtype="<f4").reshape(n_w, OBS_DIM).copy()
+                off += obs_len
+                rew_len = n_w * 4
+                rew_arr = np.frombuffer(mv[off:off + rew_len], dtype="<f4").copy()
+                off += rew_len
+                done_arr = np.frombuffer(mv[off:off + n_w], dtype=np.uint8).astype(np.float32)
+                off += n_w
+                trunc_arr = np.frombuffer(mv[off:off + n_w], dtype=np.uint8).astype(np.float32)
+                off += n_w
+                (fobs_count,) = struct.unpack_from("<I", mv, off)
+                off += 4
+                fobs_w: list = [None] * n_w
+                for _ in range(fobs_count):
+                    (env_idx,) = struct.unpack_from("<I", mv, off)
+                    off += 4
+                    fobs_w[env_idx] = np.frombuffer(mv[off:off + OBS_DIM * 4], dtype="<f4").copy()
+                    off += OBS_DIM * 4
+                (info_len,) = struct.unpack_from("<I", mv, off)
+                off += 4
+                info_list = json.loads(bytes(mv[off:off + info_len]).decode("utf-8"))
+
+                obs_parts.append(obs_arr)
+                rew_parts.append(rew_arr)
+                done_parts.append(done_arr)
+                trunc_parts.append(trunc_arr)
+                final_obs_all.extend(fobs_w)
+                infos_all.extend(info_list)
+
+            return (
+                np.concatenate(obs_parts, axis=0),
+                np.concatenate(rew_parts, axis=0),
+                np.concatenate(done_parts, axis=0),
+                np.concatenate(trunc_parts, axis=0),
+                final_obs_all,
+                infos_all,
+            )
+
+        # Legacy JSON-lines transport fallback
         for w_idx, (s0, s1) in enumerate(self.slices):
             req: dict = {"cmd": "step", "actions": actions_clipped[s0:s1].tolist()}
             if traffic_mix is not None:
@@ -1159,7 +1536,8 @@ def train_single_variant(var_key: str, args):
     active_rewards = init_rew_patch if init_rew_patch is not None else reward_weights
     active_env_options = init_eo_patch if init_eo_patch is not None else base_env_options
 
-    pool = VectorEnvPool(args.envs, num_workers=num_workers)
+    use_binary_ipc = not getattr(args, "no_binary_ipc", False)
+    pool = VectorEnvPool(args.envs, num_workers=num_workers, binary_ipc=use_binary_ipc)
     init_payload: dict = {
         "tracks": args.tracks,
         "cars": args.cars,
@@ -1618,11 +1996,11 @@ def train_single_variant(var_key: str, args):
 
 def main():
     parser = argparse.ArgumentParser(description="Apex Miniature: Unified Reinforcement Learning Policy Trainer (PPO)")
-    parser.add_argument("--variant", "-v", default="v1", help="Policy variant: v1..v8, all (v1..v4), all58 (v5..v8), or all8 (v1..v8)")
+    parser.add_argument("--variant", "-v", default="v1", help="Policy variant: v1..v9, starts, all (v1..v4), all58 (v5..v8), or all8 (v1..v8)")
     parser.add_argument("--all", action="store_true", help="Sequentially train legacy policy variants (v1..v4)")
     parser.add_argument("--envs", type=int, default=32, help="Number of parallel env slots (default: 32)")
-    parser.add_argument("--workers", type=int, default=None, help="Number of headlessEnv OS worker processes (default: 1 for v1..v4, 4 for v5..v8)")
-    parser.add_argument("--steps", type=int, default=None, help="Rollout steps per env before PPO update (default: 256 for v1..v4, 512 for v5..v8)")
+    parser.add_argument("--workers", type=int, default=None, help="Number of headlessEnv OS worker processes (default: 1 for v1..v4, 4 for v5..v9/starts)")
+    parser.add_argument("--steps", type=int, default=None, help="Rollout steps per env before PPO update (default: 256 for v1..v4, 512 for v5..v9/starts)")
     parser.add_argument("--updates", type=int, default=1000, help="Total PPO updates (default: 1000)")
     parser.add_argument("--tracks", nargs="*", default=None, help="Optional subset of track IDs for targeted fine-tuning")
     parser.add_argument("--cars", nargs="*", default=None, help="Optional subset of car IDs for targeted fine-tuning")
@@ -1642,6 +2020,7 @@ def main():
     parser.add_argument("--pool-dir", default=None, help="Override selfplay snapshot directory")
     parser.add_argument("--curriculum", action="store_true", default=None, help="Enable curriculum training")
     parser.add_argument("--no-curriculum", action="store_false", dest="curriculum", help="Disable curriculum training")
+    parser.add_argument("--no-binary-ipc", action="store_true", help="Disable binary IPC transport and use legacy JSON-lines pipes")
     parser.add_argument("--device", default="auto", help="Compute device for PPO model: auto, cpu, cuda, or cuda:<idx> (default: auto)")
     args = parser.parse_args()
 

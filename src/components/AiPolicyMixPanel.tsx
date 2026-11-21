@@ -8,6 +8,7 @@ import {
   getActiveAiPolicyMix,
   getAiPolicyVariants,
   getNormalizedPolicyMix,
+  getStartPolicyStatus,
   selectSingleAiPolicyVariant,
   setActiveAiPolicyMix,
   subscribeAiPolicyMix,
@@ -19,6 +20,7 @@ interface AiPolicyMixPanelProps {
 
 export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
   const variants = useMemo(() => getAiPolicyVariants(), []);
+  const startPolicy = useMemo(() => getStartPolicyStatus(), []);
   const [mix, setMix] = useState<AiPolicyMixWeights>(() => getActiveAiPolicyMix());
   const [expanded, setExpanded] = useState(!compact);
 
@@ -98,7 +100,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
             </button>
             <button
               type="button"
-              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 0, v7: 40, v8: 60 })}
+              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 0, v7: 40, v8: 60, v9: 0 })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-emerald-500/35 text-[11px] font-semibold text-emerald-300 cursor-pointer whitespace-nowrap"
               title="60% v8 Flagship + 40% v7 Survival (Best all-rounder)"
             >
@@ -106,7 +108,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
             </button>
             <button
               type="button"
-              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 15, v7: 35, v8: 50 })}
+              onClick={() => setActiveAiPolicyMix({ v5: 0, v6: 15, v7: 35, v8: 50, v9: 0 })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-sky-500/35 text-[11px] font-semibold text-sky-300 cursor-pointer whitespace-nowrap"
               title="50% v8 + 35% v7 + 15% v6 (Wheel-to-wheel racecraft)"
             >
@@ -114,7 +116,7 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
             </button>
             <button
               type="button"
-              onClick={() => setActiveAiPolicyMix({ v5: 15, v6: 0, v7: 20, v8: 65 })}
+              onClick={() => setActiveAiPolicyMix({ v5: 15, v6: 0, v7: 20, v8: 65, v9: 0 })}
               className="px-2 py-1 rounded bg-[#18202f] hover:bg-[#232f45] border border-amber-500/35 text-[11px] font-semibold text-amber-300 cursor-pointer whitespace-nowrap"
               title="65% v8 + 20% v7 + 15% v5 (Maximum pace)"
             >
@@ -219,6 +221,18 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
                 </div>
               );
             })}
+          </div>
+          {/* Always-Active Race Start Policy Indicator */}
+          <div className="rounded px-2.5 py-1.5 border border-emerald-500/25 bg-[#0d161b] flex items-center justify-between gap-2 text-[11px]">
+            <div className="min-w-0">
+              <span className="font-semibold text-emerald-300">Starts Policy</span>
+              <span className="text-slate-400"> · Always active on standing &amp; rolling starts</span>
+            </div>
+            <span className="font-telemetry text-[10px] text-emerald-200 whitespace-nowrap">
+              {startPolicy.loaded
+                ? `Trained Neural${startPolicy.hiddenDim ? ` · ${startPolicy.hiddenDim}h` : ''}`
+                : 'Auto Launch Assist'}
+            </span>
           </div>
         </div>
       )}

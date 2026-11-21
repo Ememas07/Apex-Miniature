@@ -10,7 +10,7 @@ import {
   ControlInput,
 } from './physics';
 import { CompiledTrack, sampleTrackAtT } from './tracks';
-import { AIDifficulty } from './types';
+import { AIDifficulty, RaceStartType } from './types';
 
 export interface PolicyObsNorm {
   mean: number[];
@@ -55,13 +55,15 @@ export type AiPolicyVariantId =
   | 'v5'
   | 'v6'
   | 'v7'
-  | 'v8';
+  | 'v8'
+  | 'v9';
 
 export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = [
   'v5',
   'v6',
   'v7',
   'v8',
+  'v9',
 ] as const;
 
 export type AiPolicyMixWeights = Record<AiPolicyVariantId, number>;
@@ -78,14 +80,22 @@ export interface AiPolicyVariantInfo {
   meta: Record<string, unknown> | null;
 }
 
+export interface StartPolicyStatus {
+  loaded: boolean;
+  source: 'neural' | 'launch-assist';
+  hiddenDim: number | null;
+  meta: Record<string, unknown> | null;
+}
+
 export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
   v5: 0,
   v6: 0,
   v7: 0,
   v8: 100,
+  v9: 0,
 };
 
-const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v2';
+const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v3';
 
 function isFiniteNumberVector(arr: unknown, expectedLength: number): arr is number[] {
   if (!Array.isArray(arr) || arr.length !== expectedLength) return false;
@@ -231,14 +241,38 @@ const VARIANT_META: Record<
     shortLabel: 'v8 Flag.',
     description: '3x128 ResMLP 3-phase adaptive curriculum all-track flagship driver',
   },
+  v9: {
+    label: 'v9 Apex Master',
+    shortLabel: 'v9 Master',
+    description: '3x128 ResMLP all-in-one: multi-line traffic, bump-drafting, max pace & track discipline',
+  },
 };
 
+function loadOptionalViteJson(pattern: 'v9' | 'starts'): unknown | null {
+  try {
+    const metaAny = import.meta as unknown as {
+      glob?: (path: string, opts: { eager: boolean; import: string }) => Record<string, unknown>;
+    };
+    if (typeof metaAny?.glob !== 'function') return null;
+    const mods =
+      pattern === 'v9'
+        ? metaAny.glob('./aiPolicyWeights_v9.json', { eager: true, import: 'default' })
+        : metaAny.glob('./aiPolicyWeights_starts.json', { eager: true, import: 'default' });
+    const values = Object.values(mods);
+    return values.length > 0 ? values[0] : null;
+  } catch {
+    return null;
+  }
+}
+
 const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
+  const v9Raw = loadOptionalViteJson('v9');
   const weightsById: Record<AiPolicyVariantId, PolicyWeights | null> = {
     v5: validatePolicyWeights(aiPolicyWeightsV5Raw),
     v6: validatePolicyWeights(aiPolicyWeightsV6Raw),
     v7: validatePolicyWeights(aiPolicyWeightsV7Raw),
     v8: validatePolicyWeights(aiPolicyWeightsV8Raw),
+    v9: v9Raw ? validatePolicyWeights(v9Raw) : null,
   };
   const out = {} as Record<AiPolicyVariantId, AiPolicyVariantInfo>;
   for (const id of AI_POLICY_VARIANT_IDS) {
@@ -255,6 +289,36 @@ const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
   }
   return out;
 })();
+
+let activeStartPolicyWeights: PolicyWeights | null = (() => {
+  const raw = loadOptionalViteJson('starts');
+  return raw ? validatePolicyWeights(raw) : null;
+})();
+
+export function getStartPolicyWeights(): PolicyWeights | null {
+  return activeStartPolicyWeights;
+}
+
+export function setStartPolicyWeights(weights: PolicyWeights | null): boolean {
+  if (weights === null) {
+    activeStartPolicyWeights = null;
+    return true;
+  }
+  const valid = validatePolicyWeights(weights);
+  if (!valid) return false;
+  activeStartPolicyWeights = valid;
+  return true;
+}
+
+export function getStartPolicyStatus(): StartPolicyStatus {
+  const w = activeStartPolicyWeights;
+  return {
+    loaded: Boolean(w),
+    source: w ? 'neural' : 'launch-assist',
+    hiddenDim: w ? (w.hiddenDim ?? w.w0.length) : null,
+    meta: w?.meta ?? null,
+  };
+}
 
 function readStoredMix(): AiPolicyMixWeights {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -317,6 +381,7 @@ export function selectSingleAiPolicyVariant(id: AiPolicyVariantId): void {
     v6: 0,
     v7: 0,
     v8: 0,
+    v9: 0,
   };
   mix[id] = 100;
   setActiveAiPolicyMix(mix);
@@ -343,8 +408,13 @@ export function getNormalizedPolicyMix(
     }
   }
   if (total <= 0 || candidates.length === 0) {
-    const fallback = POLICY_REGISTRY.v8.weights ?? POLICY_REGISTRY.v7.weights;
-    const fallbackId: AiPolicyVariantId = POLICY_REGISTRY.v8.weights ? 'v8' : 'v7';
+    const fallback =
+      POLICY_REGISTRY.v9.weights ?? POLICY_REGISTRY.v8.weights ?? POLICY_REGISTRY.v7.weights;
+    const fallbackId: AiPolicyVariantId = POLICY_REGISTRY.v9.weights
+      ? 'v9'
+      : POLICY_REGISTRY.v8.weights
+        ? 'v8'
+        : 'v7';
     return fallback ? [{ id: fallbackId, fraction: 1, weights: fallback }] : [];
   }
   return candidates.map((c) => ({
@@ -565,7 +635,309 @@ function getScratchBuffers(hiddenDim: number): {
   return entry;
 }
 
-function applyLayerNormInPlace(buf: Float32Array, dim: number, gamma: number[], beta: number[]): void {
+interface PackedPolicyWeights {
+  version: number;
+  obsDim: number;
+  hiddenDim: number;
+  actDim: number;
+  numHidden: 2 | 3;
+  useSilu: boolean;
+  useResidual: boolean;
+  useLinearOutput: boolean;
+  obsMean: Float32Array | null;
+  obsInvStd: Float32Array | null;
+  obsClip: number;
+  w0: Float32Array;
+  b0: Float32Array;
+  ln0Weight: Float32Array | null;
+  ln0Bias: Float32Array | null;
+  w1: Float32Array;
+  b1: Float32Array;
+  ln1Weight: Float32Array | null;
+  ln1Bias: Float32Array | null;
+  w2: Float32Array;
+  b2: Float32Array;
+  ln2Weight: Float32Array | null;
+  ln2Bias: Float32Array | null;
+  outW: Float32Array;
+  outB: Float32Array;
+}
+
+const PACKED_POLICY_CACHE = new WeakMap<PolicyWeights, PackedPolicyWeights | null>();
+
+function flattenMatrixToF32(mat: number[][], rows: number, cols: number): Float32Array {
+  const out = new Float32Array(rows * cols);
+  for (let i = 0; i < rows; i++) {
+    const row = mat[i];
+    const base = i * cols;
+    for (let j = 0; j < cols; j++) {
+      out[base + j] = row[j];
+    }
+  }
+  return out;
+}
+
+function packPolicyWeights(weights: PolicyWeights): PackedPolicyWeights | null {
+  if (PACKED_POLICY_CACHE.has(weights)) {
+    return PACKED_POLICY_CACHE.get(weights) ?? null;
+  }
+  const valid = validatePolicyWeights(weights);
+  if (!valid) {
+    PACKED_POLICY_CACHE.set(weights, null);
+    return null;
+  }
+
+  const obsDim = valid.obsDim;
+  const hiddenDim = valid.hiddenDim ?? valid.w0.length;
+  const actDim = valid.actDim ?? 3;
+  const numHidden: 2 | 3 = (valid.numHiddenLayers ?? (valid.w3 && valid.b3 ? 3 : 2)) === 3 ? 3 : 2;
+  const outWRaw = numHidden === 3 ? valid.w3! : valid.w2;
+  const outBRaw = numHidden === 3 ? valid.b3! : valid.b2;
+
+  let obsMean: Float32Array | null = null;
+  let obsInvStd: Float32Array | null = null;
+  let obsClip = 10.0;
+  if (valid.obsNorm) {
+    obsMean = new Float32Array(obsDim);
+    obsInvStd = new Float32Array(obsDim);
+    for (let j = 0; j < obsDim; j++) {
+      obsMean[j] = valid.obsNorm.mean[j];
+      obsInvStd[j] = 1.0 / valid.obsNorm.std[j];
+    }
+    obsClip = valid.obsNorm.clip ?? 10.0;
+  }
+
+  const packed: PackedPolicyWeights = {
+    version: valid.version ?? 1,
+    obsDim,
+    hiddenDim,
+    actDim,
+    numHidden,
+    useSilu: valid.activation === 'silu',
+    useResidual: Boolean(valid.residual),
+    useLinearOutput: (valid.version ?? 1) >= 2,
+    obsMean,
+    obsInvStd,
+    obsClip,
+    w0: flattenMatrixToF32(valid.w0, hiddenDim, obsDim),
+    b0: Float32Array.from(valid.b0),
+    ln0Weight: valid.ln0Weight ? Float32Array.from(valid.ln0Weight) : null,
+    ln0Bias: valid.ln0Bias ? Float32Array.from(valid.ln0Bias) : null,
+    w1: flattenMatrixToF32(valid.w1, hiddenDim, hiddenDim),
+    b1: Float32Array.from(valid.b1),
+    ln1Weight: valid.ln1Weight ? Float32Array.from(valid.ln1Weight) : null,
+    ln1Bias: valid.ln1Bias ? Float32Array.from(valid.ln1Bias) : null,
+    w2: numHidden === 3 ? flattenMatrixToF32(valid.w2, hiddenDim, hiddenDim) : new Float32Array(0),
+    b2: numHidden === 3 ? Float32Array.from(valid.b2) : new Float32Array(0),
+    ln2Weight: numHidden === 3 && valid.ln2Weight ? Float32Array.from(valid.ln2Weight) : null,
+    ln2Bias: numHidden === 3 && valid.ln2Bias ? Float32Array.from(valid.ln2Bias) : null,
+    outW: flattenMatrixToF32(outWRaw, actDim, hiddenDim),
+    outB: Float32Array.from(outBRaw),
+  };
+
+  PACKED_POLICY_CACHE.set(weights, packed);
+  return packed;
+}
+
+const ANB1_MAGIC = [0x41, 0x4e, 0x42, 0x31] as const; // 'ANB1'
+
+/**
+ * Encodes PolicyWeights into the compact ANB1 binary format (~3.5-4.5x smaller than JSON):
+ * [4B magic 'ANB1'][4B uint32 headerLen][UTF-8 JSON header][0-3B zero pad to 4B][little-endian Float32 tensors]
+ */
+export function encodePolicyWeightsBinary(weights: PolicyWeights): Uint8Array {
+  const valid = validatePolicyWeights(weights);
+  if (!valid) {
+    throw new Error('Cannot encode invalid PolicyWeights to ANB1 binary');
+  }
+  const hiddenDim = valid.hiddenDim ?? valid.w0.length;
+  const numHidden: 2 | 3 = (valid.numHiddenLayers ?? (valid.w3 && valid.b3 ? 3 : 2)) === 3 ? 3 : 2;
+  const hasLn = Boolean(valid.ln0Weight && valid.ln0Bias);
+  const hasObsNorm = Boolean(valid.obsNorm);
+
+  const headerObj = {
+    version: valid.version ?? 3,
+    obsDim: valid.obsDim,
+    hiddenDim,
+    actDim: valid.actDim ?? 3,
+    numHiddenLayers: numHidden,
+    activation: valid.activation ?? 'tanh',
+    residual: Boolean(valid.residual),
+    hasLn,
+    hasObsNorm,
+    obsNormClip: valid.obsNorm?.clip ?? 10.0,
+    obsConfig: valid.obsConfig,
+    meta: valid.meta,
+  };
+  const headerBytes = new TextEncoder().encode(JSON.stringify(headerObj));
+  const paddedHeaderLen = (headerBytes.length + 3) & ~3;
+
+  const chunks: Float32Array[] = [];
+  if (hasObsNorm && valid.obsNorm) {
+    chunks.push(Float32Array.from(valid.obsNorm.mean), Float32Array.from(valid.obsNorm.std));
+  }
+  chunks.push(flattenMatrixToF32(valid.w0, hiddenDim, valid.obsDim), Float32Array.from(valid.b0));
+  if (hasLn) {
+    chunks.push(Float32Array.from(valid.ln0Weight!), Float32Array.from(valid.ln0Bias!));
+  }
+  chunks.push(flattenMatrixToF32(valid.w1, hiddenDim, hiddenDim), Float32Array.from(valid.b1));
+  if (hasLn) {
+    chunks.push(Float32Array.from(valid.ln1Weight!), Float32Array.from(valid.ln1Bias!));
+  }
+  if (numHidden === 3) {
+    chunks.push(flattenMatrixToF32(valid.w2, hiddenDim, hiddenDim), Float32Array.from(valid.b2));
+    if (hasLn) {
+      chunks.push(Float32Array.from(valid.ln2Weight!), Float32Array.from(valid.ln2Bias!));
+    }
+    chunks.push(flattenMatrixToF32(valid.w3!, 3, hiddenDim), Float32Array.from(valid.b3!));
+  } else {
+    chunks.push(flattenMatrixToF32(valid.w2, 3, hiddenDim), Float32Array.from(valid.b2));
+  }
+
+  let totalFloats = 0;
+  for (const c of chunks) totalFloats += c.length;
+  const totalBytes = 8 + paddedHeaderLen + totalFloats * 4;
+  const out = new Uint8Array(totalBytes);
+  const view = new DataView(out.buffer);
+  out[0] = ANB1_MAGIC[0];
+  out[1] = ANB1_MAGIC[1];
+  out[2] = ANB1_MAGIC[2];
+  out[3] = ANB1_MAGIC[3];
+  view.setUint32(4, headerBytes.length, true);
+  out.set(headerBytes, 8);
+
+  let floatOffset = (8 + paddedHeaderLen) / 4;
+  const f32View = new Float32Array(out.buffer);
+  for (const c of chunks) {
+    f32View.set(c, floatOffset);
+    floatOffset += c.length;
+  }
+  return out;
+}
+
+/**
+ * Decodes an ANB1 binary weight buffer into validated PolicyWeights.
+ */
+export function decodePolicyWeightsBinary(input: ArrayBuffer | Uint8Array): PolicyWeights | null {
+  try {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    if (bytes.byteLength < 12) return null;
+    if (
+      bytes[0] !== ANB1_MAGIC[0] ||
+      bytes[1] !== ANB1_MAGIC[1] ||
+      bytes[2] !== ANB1_MAGIC[2] ||
+      bytes[3] !== ANB1_MAGIC[3]
+    ) {
+      return null;
+    }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const headerLen = view.getUint32(4, true);
+    const paddedHeaderLen = (headerLen + 3) & ~3;
+    const tensorStart = 8 + paddedHeaderLen;
+    if (tensorStart > bytes.byteLength) return null;
+
+    const headerStr = new TextDecoder().decode(bytes.subarray(8, 8 + headerLen));
+    const hdr = JSON.parse(headerStr) as {
+      version?: number;
+      obsDim: number;
+      hiddenDim: number;
+      actDim: number;
+      numHiddenLayers: 2 | 3;
+      activation?: 'tanh' | 'silu';
+      residual?: boolean;
+      hasLn?: boolean;
+      hasObsNorm?: boolean;
+      obsNormClip?: number;
+      obsConfig?: PolicyObsConfig;
+      meta?: Record<string, unknown>;
+    };
+
+    const obsDim = hdr.obsDim;
+    const hiddenDim = hdr.hiddenDim;
+    const actDim = hdr.actDim;
+    const numHidden = hdr.numHiddenLayers;
+    const tensorBytes = bytes.byteLength - tensorStart;
+    if (tensorBytes < 0 || tensorBytes % 4 !== 0) return null;
+
+    const alignedSlice = bytes.slice(tensorStart);
+    const floats = new Float32Array(alignedSlice.buffer);
+    let cursor = 0;
+
+    const readVec = (n: number): number[] => {
+      const res = new Array<number>(n);
+      for (let i = 0; i < n; i++) res[i] = floats[cursor + i];
+      cursor += n;
+      return res;
+    };
+    const readMat = (rows: number, cols: number): number[][] => {
+      const mat = new Array<number[]>(rows);
+      for (let r = 0; r < rows; r++) {
+        mat[r] = readVec(cols);
+      }
+      return mat;
+    };
+
+    const raw: Partial<PolicyWeights> = {
+      version: hdr.version ?? 3,
+      obsDim,
+      hiddenDim,
+      actDim,
+      numHiddenLayers: numHidden,
+      activation: hdr.activation ?? 'tanh',
+      residual: Boolean(hdr.residual),
+      obsConfig: hdr.obsConfig,
+      meta: hdr.meta,
+    };
+
+    if (hdr.hasObsNorm) {
+      raw.obsNorm = {
+        mean: readVec(obsDim),
+        std: readVec(obsDim),
+        clip: hdr.obsNormClip ?? 10.0,
+      };
+    }
+
+    raw.w0 = readMat(hiddenDim, obsDim);
+    raw.b0 = readVec(hiddenDim);
+    if (hdr.hasLn) {
+      raw.ln0Weight = readVec(hiddenDim);
+      raw.ln0Bias = readVec(hiddenDim);
+    }
+
+    raw.w1 = readMat(hiddenDim, hiddenDim);
+    raw.b1 = readVec(hiddenDim);
+    if (hdr.hasLn) {
+      raw.ln1Weight = readVec(hiddenDim);
+      raw.ln1Bias = readVec(hiddenDim);
+    }
+
+    if (numHidden === 3) {
+      raw.w2 = readMat(hiddenDim, hiddenDim);
+      raw.b2 = readVec(hiddenDim);
+      if (hdr.hasLn) {
+        raw.ln2Weight = readVec(hiddenDim);
+        raw.ln2Bias = readVec(hiddenDim);
+      }
+      raw.w3 = readMat(actDim, hiddenDim);
+      raw.b3 = readVec(actDim);
+    } else {
+      raw.w2 = readMat(actDim, hiddenDim);
+      raw.b2 = readVec(actDim);
+    }
+
+    if (cursor > floats.length) return null;
+    return validatePolicyWeights(raw);
+  } catch {
+    return null;
+  }
+}
+
+function applyLayerNormInPlace(
+  buf: Float32Array,
+  dim: number,
+  gamma: Float32Array,
+  beta: Float32Array,
+): void {
   let mean = 0;
   for (let i = 0; i < dim; i++) mean += buf[i];
   mean /= dim;
@@ -593,8 +965,35 @@ function applyActivationInPlace(buf: Float32Array, dim: number, useSilu: boolean
   }
 }
 
+function matVecAddBiasF32(
+  w: Float32Array,
+  b: Float32Array,
+  x: Float32Array,
+  out: Float32Array,
+  rows: number,
+  cols: number,
+): void {
+  const cols4 = cols & ~3;
+  for (let i = 0; i < rows; i++) {
+    let sum = b[i];
+    const base = i * cols;
+    let j = 0;
+    for (; j < cols4; j += 4) {
+      sum +=
+        w[base + j] * x[j] +
+        w[base + j + 1] * x[j + 1] +
+        w[base + j + 2] * x[j + 2] +
+        w[base + j + 3] * x[j + 3];
+    }
+    for (; j < cols; j++) {
+      sum += w[base + j] * x[j];
+    }
+    out[i] = sum;
+  }
+}
+
 /**
- * Runs forward inference on a 43-input neural driver policy.
+ * Runs forward inference on a 43-input neural driver policy using pre-packed contiguous Float32Array weights.
  * Seamlessly supports legacy v1/v2 [H, H] tanh MLPs as well as v3 extended models
  * (RunningMeanStd obsNorm, LayerNorm, SiLU/Tanh, residual skips, and 2- or 3-hidden-layer MLPs).
  */
@@ -602,46 +1001,22 @@ export function evaluateNeuralPolicy(
   obs: number[],
   weights: PolicyWeights = AI_POLICY_WEIGHTS,
 ): { steer: number; throttle: number; brake: number } | null {
-  const hiddenDim = weights?.hiddenDim ?? weights?.w0?.length ?? 64;
-  const numHidden = weights?.numHiddenLayers ?? (weights?.w3 && weights?.b3 ? 3 : 2);
-  const outW = numHidden === 3 ? weights?.w3 : weights?.w2;
-  const outB = numHidden === 3 ? weights?.b3 : weights?.b2;
+  if (!weights || !Array.isArray(obs) || obs.length !== 43) return null;
+  const packed = packPolicyWeights(weights);
+  if (!packed) return null;
 
-  if (
-    !weights ||
-    weights.obsDim !== 43 ||
-    (numHidden !== 2 && numHidden !== 3) ||
-    !Number.isInteger(hiddenDim) ||
-    hiddenDim <= 0 ||
-    !Array.isArray(weights.w0) ||
-    !Array.isArray(weights.b0) ||
-    !Array.isArray(weights.w1) ||
-    !Array.isArray(weights.b1) ||
-    !Array.isArray(weights.w2) ||
-    !Array.isArray(weights.b2) ||
-    !Array.isArray(outW) ||
-    !Array.isArray(outB) ||
-    weights.w0.length !== hiddenDim ||
-    weights.b0.length !== hiddenDim ||
-    weights.w1.length !== hiddenDim ||
-    weights.b1.length !== hiddenDim ||
-    (numHidden === 3 && (weights.w2.length !== hiddenDim || weights.b2.length !== hiddenDim)) ||
-    outW.length !== 3 ||
-    outB.length !== 3 ||
-    obs.length !== 43
-  ) {
-    return null;
-  }
-
+  const { hiddenDim, numHidden, useSilu, useResidual, useLinearOutput } = packed;
   const { xIn, h0, h1, h2 } = getScratchBuffers(hiddenDim);
-  const obsNorm = weights.obsNorm;
-  if (obsNorm) {
-    const clip = obsNorm.clip ?? 10.0;
+
+  if (packed.obsMean && packed.obsInvStd) {
+    const mean = packed.obsMean;
+    const invStd = packed.obsInvStd;
+    const clip = packed.obsClip;
     for (let j = 0; j < 43; j++) {
       const v = obs[j];
       if (!Number.isFinite(v)) return null;
-      const norm = (v - obsNorm.mean[j]) / obsNorm.std[j];
-      xIn[j] = Math.max(-clip, Math.min(clip, norm));
+      const norm = (v - mean[j]) * invStd[j];
+      xIn[j] = norm > clip ? clip : norm < -clip ? -clip : norm;
     }
   } else {
     for (let j = 0; j < 43; j++) {
@@ -651,42 +1026,17 @@ export function evaluateNeuralPolicy(
     }
   }
 
-  const useSilu = weights.activation === 'silu';
-  const useResidual = Boolean(weights.residual);
-
   // Layer 0: 43 -> hiddenDim
-  const w0 = weights.w0;
-  const b0 = weights.b0;
-  for (let i = 0; i < hiddenDim; i++) {
-    let sum = b0[i];
-    const row = w0[i];
-    if (!Array.isArray(row) || row.length !== 43 || !Number.isFinite(sum)) return null;
-    for (let j = 0; j < 43; j++) {
-      sum += row[j] * xIn[j];
-    }
-    if (!Number.isFinite(sum)) return null;
-    h0[i] = sum;
-  }
-  if (weights.ln0Weight && weights.ln0Bias) {
-    applyLayerNormInPlace(h0, hiddenDim, weights.ln0Weight, weights.ln0Bias);
+  matVecAddBiasF32(packed.w0, packed.b0, xIn, h0, hiddenDim, 43);
+  if (packed.ln0Weight && packed.ln0Bias) {
+    applyLayerNormInPlace(h0, hiddenDim, packed.ln0Weight, packed.ln0Bias);
   }
   applyActivationInPlace(h0, hiddenDim, useSilu);
 
   // Layer 1: hiddenDim -> hiddenDim
-  const w1 = weights.w1;
-  const b1 = weights.b1;
-  for (let i = 0; i < hiddenDim; i++) {
-    let sum = b1[i];
-    const row = w1[i];
-    if (!Array.isArray(row) || row.length !== hiddenDim || !Number.isFinite(sum)) return null;
-    for (let j = 0; j < hiddenDim; j++) {
-      sum += row[j] * h0[j];
-    }
-    if (!Number.isFinite(sum)) return null;
-    h1[i] = sum;
-  }
-  if (weights.ln1Weight && weights.ln1Bias) {
-    applyLayerNormInPlace(h1, hiddenDim, weights.ln1Weight, weights.ln1Bias);
+  matVecAddBiasF32(packed.w1, packed.b1, h0, h1, hiddenDim, hiddenDim);
+  if (packed.ln1Weight && packed.ln1Bias) {
+    applyLayerNormInPlace(h1, hiddenDim, packed.ln1Weight, packed.ln1Bias);
   }
   applyActivationInPlace(h1, hiddenDim, useSilu);
   if (useResidual) {
@@ -697,20 +1047,9 @@ export function evaluateNeuralPolicy(
 
   // Optional Layer 2 (when numHidden === 3): hiddenDim -> hiddenDim
   if (numHidden === 3) {
-    const w2 = weights.w2;
-    const b2 = weights.b2;
-    for (let i = 0; i < hiddenDim; i++) {
-      let sum = b2[i];
-      const row = w2[i];
-      if (!Array.isArray(row) || row.length !== hiddenDim || !Number.isFinite(sum)) return null;
-      for (let j = 0; j < hiddenDim; j++) {
-        sum += row[j] * h1[j];
-      }
-      if (!Number.isFinite(sum)) return null;
-      h2[i] = sum;
-    }
-    if (weights.ln2Weight && weights.ln2Bias) {
-      applyLayerNormInPlace(h2, hiddenDim, weights.ln2Weight, weights.ln2Bias);
+    matVecAddBiasF32(packed.w2, packed.b2, h1, h2, hiddenDim, hiddenDim);
+    if (packed.ln2Weight && packed.ln2Bias) {
+      applyLayerNormInPlace(h2, hiddenDim, packed.ln2Weight, packed.ln2Bias);
     }
     applyActivationInPlace(h2, hiddenDim, useSilu);
     if (useResidual) {
@@ -720,20 +1059,20 @@ export function evaluateNeuralPolicy(
   }
 
   // Output layer: hiddenDim -> 3 (linear clamped [-1, 1] for version >= 2; tanh fallback for version === 1)
-  const useLinearOutput = (weights.version ?? 1) >= 2;
+  const outW = packed.outW;
+  const outB = packed.outB;
   let out0 = 0;
   let out1 = 0;
   let out2 = 0;
   for (let i = 0; i < 3; i++) {
     let sum = outB[i];
-    const row = outW[i];
-    if (!Array.isArray(row) || row.length !== hiddenDim || !Number.isFinite(sum)) return null;
+    const base = i * hiddenDim;
     for (let j = 0; j < hiddenDim; j++) {
-      sum += row[j] * finalHidden[j];
+      sum += outW[base + j] * finalHidden[j];
     }
     if (!Number.isFinite(sum)) return null;
     const raw = useLinearOutput ? sum : Math.tanh(sum);
-    const clamped = Math.max(-1, Math.min(1, raw));
+    const clamped = raw > 1 ? 1 : raw < -1 ? -1 : raw;
     if (i === 0) out0 = clamped;
     else if (i === 1) out1 = clamped;
     else out2 = clamped;
@@ -788,10 +1127,149 @@ function getObsConfigKey(cfg?: PolicyObsConfig): string {
   return `${cfg.curvatureMode ?? 'clamp40'}|${cfg.curvatureScale ?? 14}|${lm}`;
 }
 
+export interface NeuralStartContext {
+  raceElapsed?: number;
+  startType?: RaceStartType;
+}
+
+/**
+ * Computes the [0..1] blend weight of the dedicated start policy during standing & rolling race starts.
+ * Smoothly crossfades to 0 once the car is past the initial launch window and up to racing speed.
+ */
+export function computeStartPhaseWeight(
+  car: Pick<CarSimState, 'speed' | 'totalDistance'>,
+  startContext?: NeuralStartContext,
+): number {
+  const raceElapsed = startContext?.raceElapsed;
+  const isRolling = startContext?.startType === 'rolling';
+
+  if (raceElapsed === undefined || !Number.isFinite(raceElapsed)) {
+    // Fallback standing-start protection even when caller doesn't pass raceElapsed:
+    // protects cars launching from near-standstill right around the starting grid.
+    if (car.totalDistance < 0.08 && car.speed < 18.0) {
+      if (car.speed <= 10.0) return 1.0;
+      return Math.max(0, Math.min(1, (18.0 - car.speed) / 8.0));
+    }
+    return 0;
+  }
+
+  if (raceElapsed < 0) return 1.0;
+
+  if (isRolling) {
+    // Rolling start: full start policy for 0..2.6s after green flag, smooth crossfade 2.6..4.2s
+    if (raceElapsed <= 2.6) return 1.0;
+    if (raceElapsed >= 4.2) return 0.0;
+    return (4.2 - raceElapsed) / 1.6;
+  }
+
+  // Standing start: hold full start policy while accelerating off the grid (0..2.8s or speed < 18 m/s),
+  // then smoothly hand off to the active V5-V9 race policy blend by 5.2-6.5s.
+  if (raceElapsed >= 6.5) return 0.0;
+  if (raceElapsed <= 2.8) return 1.0;
+  const timeFade = Math.max(0, Math.min(1, (5.0 - raceElapsed) / 2.2));
+  const speedFade = car.speed < 22.0 ? Math.max(0, Math.min(1, (22.0 - car.speed) / 10.0)) : 0;
+  // Cap any extended low-speed fade smoothly to 0 by 6.5s
+  const hardCap = Math.max(0, Math.min(1, (6.5 - raceElapsed) / 1.5));
+  return Math.max(timeFade, speedFade * hardCap);
+}
+
+/**
+ * Clean standing & rolling start launch controller used when trained `starts` neural weights
+ * are not yet present. Holds grid lanes cleanly with smooth lateral separation, full launch
+ * acceleration, and Turn-1 braking awareness.
+ */
+export function computeStartLaunchControl(
+  car: CarSimState,
+  compiledTrack: CompiledTrack,
+  allCars: CarSimState[],
+  heuristic: ControlInput,
+  startType: RaceStartType = 'standing',
+): { steer: number; throttle: number; brake: number } {
+  const trackLen = Math.max(100, compiledTrack.totalLength);
+  const lookAheadDist = Math.max(18, Math.min(44, 18 + car.speed * 0.55));
+  const spNow = sampleTrackAtT(compiledTrack, car.trackT);
+  const spAhead = sampleTrackAtT(compiledTrack, (car.trackT + lookAheadDist / trackLen) % 1);
+  const halfW = Math.max(3, (spNow.width ?? compiledTrack.spec.trackWidth) * 0.5);
+
+  // Hold current grid lane smoothly within safe track margins, nudging gently away from tight side/front traffic
+  let targetLat = Math.max(-halfW * 0.62, Math.min(halfW * 0.62, car.lateralOffset));
+  let blockedAheadThrottleCap = 1.0;
+  let blockedAheadBrake = 0.0;
+
+  for (let i = 0; i < allCars.length; i++) {
+    const other = allCars[i];
+    if (other.id === car.id || other.pitStopRemaining > 0) continue;
+
+    let dt = other.trackT - car.trackT;
+    if (dt > 0.5) dt -= 1;
+    if (dt < -0.5) dt += 1;
+    const relLong = dt * trackLen;
+    if (relLong < -6.5 || relLong > 22.0) continue;
+
+    const dLat = other.lateralOffset - car.lateralOffset;
+    const absDLat = Math.abs(dLat);
+
+    // Side-by-side separation: gently nudge away if closer than 2.7m laterally
+    if (Math.abs(relLong) < 6.0 && absDLat < 2.7) {
+      const pushDir = dLat >= 0 ? -1 : 1;
+      const strength = (2.7 - absDLat) * 0.55;
+      targetLat += pushDir * strength;
+    }
+
+    // Car directly ahead in our lane: pull cleanly toward the wider open side
+    if (relLong > 0.5 && relLong < 16.0 && absDLat < 2.4) {
+      const closing = car.speed - other.speed;
+      if (closing > 0.5 || relLong < 8.5) {
+        const spaceLeft = other.lateralOffset + halfW * 0.65;
+        const spaceRight = halfW * 0.65 - other.lateralOffset;
+        const passDir = spaceRight >= spaceLeft ? 1 : -1;
+        targetLat = other.lateralOffset + passDir * 2.85;
+      }
+      // Only modulate throttle/brake if genuinely closing fast right on a bumper (never dead-stop on grid!)
+      if (relLong < 6.5 && closing > 3.5 && (car.spawnGhostTimer ?? 0) <= 0.1) {
+        blockedAheadThrottleCap = Math.min(blockedAheadThrottleCap, 0.35);
+        blockedAheadBrake = Math.max(blockedAheadBrake, Math.min(0.65, (closing - 3.5) * 0.12));
+      }
+    }
+  }
+
+  targetLat = Math.max(-halfW * 0.68, Math.min(halfW * 0.68, targetLat));
+  const latErr = targetLat - car.lateralOffset;
+
+  const trackHeading = Math.atan2(spAhead.tx, spAhead.tz);
+  let headingErr = trackHeading - car.heading;
+  while (headingErr > Math.PI) headingErr -= Math.PI * 2;
+  while (headingErr < -Math.PI) headingErr += Math.PI * 2;
+
+  // stepCarPhysics: heading -= steer * rate -> positive headingErr (track bends left) needs steer < 0
+  // lateralOffset increases to the right (+nx), so positive latErr (need to move right) needs steer > 0
+  const steer = Math.max(
+    -0.85,
+    Math.min(0.85, -headingErr * 2.1 + (latErr / halfW) * 0.85),
+  );
+
+  // Clean full-traction launch acceleration while honoring heuristic Turn-1 braking zone
+  const launchThrottle = startType === 'standing' && car.speed < 8.0 ? 0.94 : 1.0;
+  const cornerBrakeActive = heuristic.brake > 0.12 && car.speed > 18.0;
+  const throttle = cornerBrakeActive
+    ? Math.min(launchThrottle, heuristic.throttle, blockedAheadThrottleCap)
+    : Math.min(launchThrottle, blockedAheadThrottleCap);
+  const brake = cornerBrakeActive
+    ? Math.max(heuristic.brake, blockedAheadBrake)
+    : blockedAheadBrake;
+
+  return {
+    steer,
+    throttle: Math.max(0, Math.min(1, throttle)),
+    brake: Math.max(0, Math.min(1, brake)),
+  };
+}
+
 /**
  * Computes AI control using the trained 43-input neural driver policy,
- * smoothly blending with the dynamic racing-line & apex solver and falling back cleanly to the heuristic
- * controller when boxing, in pit lane, or if weights fail validation.
+ * automatically engaging the dedicated Starts policy on standing/rolling starts with smooth handoff,
+ * supporting straight-line bump-drafting, and falling back cleanly to the heuristic controller
+ * when boxing, in pit lane, or if weights fail validation.
  */
 export function computeNeuralAIControl(
   car: CarSimState,
@@ -800,6 +1278,7 @@ export function computeNeuralAIControl(
   dt: number,
   trackWetness: number,
   difficulty?: AIDifficulty,
+  startContext?: NeuralStartContext,
 ): ControlInput {
   // Always evaluate heuristic control for race management, pit triggers, and safety bounds
   const heuristic = computeAIControl(car, compiledTrack, allCars, dt, trackWetness);
@@ -816,41 +1295,36 @@ export function computeNeuralAIControl(
   const entries = getNormalizedPolicyMix(activePolicyMix);
   if (entries.length === 0) return heuristic;
 
+  const obsCache = new Map<string, number[]>();
+  const getCachedObs = (obsConfig?: PolicyObsConfig): number[] => {
+    const key = getObsConfigKey(obsConfig);
+    let obs = obsCache.get(key);
+    if (!obs) {
+      obs = buildObservationVector(
+        car,
+        compiledTrack,
+        allCars,
+        prevSteer,
+        1.0,
+        car.bopMultipliers,
+        obsConfig,
+      );
+      obsCache.set(key, obs);
+    }
+    return obs;
+  };
+
   let policyOut: { steer: number; throttle: number; brake: number } | null = null;
   if (entries.length === 1) {
-    const obs = buildObservationVector(
-      car,
-      compiledTrack,
-      allCars,
-      prevSteer,
-      1.0,
-      car.bopMultipliers,
-      entries[0].weights.obsConfig,
-    );
-    policyOut = evaluateNeuralPolicy(obs, entries[0].weights);
+    policyOut = evaluateNeuralPolicy(getCachedObs(entries[0].weights.obsConfig), entries[0].weights);
   } else {
-    const obsCache = new Map<string, number[]>();
     let steer = 0;
     let throttle = 0;
     let brake = 0;
     let weightSum = 0;
     for (let i = 0; i < entries.length; i++) {
       const { fraction, weights } = entries[i];
-      const key = getObsConfigKey(weights.obsConfig);
-      let obs = obsCache.get(key);
-      if (!obs) {
-        obs = buildObservationVector(
-          car,
-          compiledTrack,
-          allCars,
-          prevSteer,
-          1.0,
-          car.bopMultipliers,
-          weights.obsConfig,
-        );
-        obsCache.set(key, obs);
-      }
-      const res = evaluateNeuralPolicy(obs, weights);
+      const res = evaluateNeuralPolicy(getCachedObs(weights.obsConfig), weights);
       if (!res) continue;
       steer += res.steer * fraction;
       throttle += res.throttle * fraction;
@@ -869,25 +1343,104 @@ export function computeNeuralAIControl(
     return heuristic;
   }
 
-  // Guardrail safety containment: only intervene when car genuinely leaves the track (> 1.05 halfW)
-  const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
-  const halfW = (currentSample.width ?? compiledTrack.spec.trackWidth) * 0.5;
-  const offTrackRatio = Math.abs(car.lateralOffset) / Math.max(1, halfW);
-
   let blendedSteer = policyOut.steer;
   let blendedThrottle = policyOut.throttle;
   let blendedBrake = policyOut.brake;
 
+  // Dedicated Start Policy (always active during standing & rolling race starts with smooth crossfade)
+  const startWeight = computeStartPhaseWeight(car, startContext);
+  if (startWeight > 0.001) {
+    let startOut: { steer: number; throttle: number; brake: number } | null = null;
+    if (activeStartPolicyWeights) {
+      startOut = evaluateNeuralPolicy(
+        getCachedObs(activeStartPolicyWeights.obsConfig),
+        activeStartPolicyWeights,
+      );
+      // Lightweight anti-stall floor on the first 2.5s of a standing launch even for early checkpoints
+      if (
+        startOut &&
+        startContext?.startType !== 'rolling' &&
+        (startContext?.raceElapsed ?? 0) < 2.5 &&
+        car.speed < 10.0 &&
+        startOut.throttle < 0.45
+      ) {
+        startOut = {
+          steer: startOut.steer,
+          throttle: Math.max(startOut.throttle, 0.82),
+          brake: 0,
+        };
+      }
+    }
+    if (!startOut) {
+      startOut = computeStartLaunchControl(
+        car,
+        compiledTrack,
+        allCars,
+        heuristic,
+        startContext?.startType ?? 'standing',
+      );
+    }
+    blendedSteer = startOut.steer * startWeight + blendedSteer * (1 - startWeight);
+    blendedThrottle = startOut.throttle * startWeight + blendedThrottle * (1 - startWeight);
+    blendedBrake = startOut.brake * startWeight + blendedBrake * (1 - startWeight);
+  }
+
+  // Guardrail safety containment & straight-line bump-drafting assist
+  const currentSample = sampleTrackAtT(compiledTrack, car.trackT);
+  const halfW = (currentSample.width ?? compiledTrack.spec.trackWidth) * 0.5;
+  const offTrackRatio = Math.abs(car.lateralOffset) / Math.max(1, halfW);
+
+  // Straight-line bump-drafting: prevent overly timid neural lifting/braking when tucked behind
+  // a car (including the player) at high speed on a clear straightaway.
+  if (startWeight < 0.5 && car.speed > 38.0 && heuristic.brake < 0.08 && offTrackRatio < 0.95) {
+    const trackLen = Math.max(100, compiledTrack.totalLength);
+    const aheadSample = sampleTrackAtT(compiledTrack, (car.trackT + 65 / trackLen) % 1);
+    const onClearStraight =
+      Math.abs(currentSample.curvature ?? 0) < 0.008 &&
+      Math.abs(aheadSample.curvature ?? 0) < 0.010;
+    if (onClearStraight) {
+      let draftLead: CarSimState | null = null;
+      let draftDist = 18.0;
+      for (let i = 0; i < allCars.length; i++) {
+        const other = allCars[i];
+        if (other.id === car.id || other.pitStopRemaining > 0) continue;
+        let dtTrack = other.trackT - car.trackT;
+        if (dtTrack > 0.5) dtTrack -= 1;
+        if (dtTrack < -0.5) dtTrack += 1;
+        const relLong = dtTrack * trackLen;
+        if (
+          relLong > 2.2 &&
+          relLong < draftDist &&
+          Math.abs(other.lateralOffset - car.lateralOffset) < 1.9 &&
+          other.carSpec.classId === car.carSpec.classId &&
+          other.speed > 34.0
+        ) {
+          draftDist = relLong;
+          draftLead = other;
+        }
+      }
+      if (draftLead) {
+        const closing = car.speed - draftLead.speed;
+        if (closing < 5.5) {
+          // Stay committed on throttle to bump-draft cleanly instead of lifting timidly at 10-15m
+          const minDraftThrottle = closing > 3.8 && draftDist < 6.0 ? 0.78 : 0.94;
+          blendedThrottle = Math.max(blendedThrottle, minDraftThrottle);
+          blendedBrake = 0;
+        }
+      }
+    }
+  }
+
   if (offTrackRatio > 1.05) {
     // Smoothly blend toward heuristic recovery over 1.05..1.25
     const blendWeight = Math.min(1.0, (offTrackRatio - 1.05) / 0.20);
-    blendedSteer = policyOut.steer * (1 - blendWeight) + heuristic.steer * blendWeight;
+    blendedSteer = blendedSteer * (1 - blendWeight) + heuristic.steer * blendWeight;
     blendedThrottle =
-      policyOut.throttle * (1 - blendWeight) +
-      Math.min(policyOut.throttle, heuristic.throttle) * blendWeight;
+      blendedThrottle * (1 - blendWeight) +
+      Math.min(blendedThrottle, heuristic.throttle) * blendWeight;
     blendedBrake =
-      policyOut.brake * (1 - blendWeight) +
-      Math.max(policyOut.brake, heuristic.brake) * blendWeight;
+      blendedBrake * (1 - blendWeight) +
+      Math.max(blendedBrake, heuristic.brake) * blendWeight;
   }
 
   // Apply post-inference difficulty pacing cleanly (Alien untouched at 1.0)

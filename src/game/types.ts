@@ -204,6 +204,8 @@ export interface PitStrategy {
 
 export type SinglePlayerSessionMode = 'race' | 'practice' | 'ai-race';
 
+export type RaceStartType = 'standing' | 'rolling';
+
 export type SpectatorCameraMode = 'spectate' | 'freecam';
 
 export interface RaceConfig {
@@ -222,6 +224,7 @@ export interface RaceConfig {
   aiDifficulty: AIDifficulty;
   roomCode?: string;
   sessionMode?: SinglePlayerSessionMode;
+  startType?: RaceStartType;
 }
 
 export interface DriverStandingsEntry {
@@ -255,6 +258,8 @@ export type GamePhase = 'title' | 'qualifying' | 'playing' | 'paused' | 'gameove
 export interface HudSnapshot {
   phase: GamePhase;
   countdown: number; // >0 before green flag
+  startType?: RaceStartType;
+  greenFlagFlash?: number; // >0 brief GREEN FLAG banner after start
   speedKmh: number;
   gear: number;
   rpmNormalized: number; // 0..1

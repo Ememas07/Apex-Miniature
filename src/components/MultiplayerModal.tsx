@@ -540,6 +540,21 @@ export function MultiplayerModal({
                     >
                       Quali: {config.qualifyingEnabled ? 'ON' : 'OFF'}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateConfig({
+                          startType: (config.startType ?? 'standing') === 'rolling' ? 'standing' : 'rolling',
+                        })
+                      }
+                      className={`col-span-2 py-1.5 px-2.5 rounded border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                        config.startType === 'rolling'
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                          : 'bg-[#151a24] border-white/15 text-slate-300'
+                      }`}
+                    >
+                      Start: {config.startType === 'rolling' ? 'Rolling Start' : 'Standing Start'}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -983,6 +998,21 @@ export function MultiplayerModal({
                             }`}
                           >
                             Quali: {config.qualifyingEnabled ? 'ON' : 'OFF'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateConfig({
+                                startType: (config.startType ?? 'standing') === 'rolling' ? 'standing' : 'rolling',
+                              })
+                            }
+                            className={`col-span-2 py-1 px-2 rounded border text-xs font-semibold cursor-pointer ${
+                              config.startType === 'rolling'
+                                ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                                : 'bg-[#151a24] border-white/15 text-slate-300'
+                            }`}
+                          >
+                            Start: {config.startType === 'rolling' ? 'Rolling' : 'Standing'}
                           </button>
                         </div>
                       </div>

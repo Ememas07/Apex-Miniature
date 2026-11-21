@@ -37,9 +37,11 @@ import {
   computeAIControl,
   computeClassGripProfile,
   computeRoadSurfaceTilt,
+  computeRollingFormationControl,
   computeStandings,
   createCarSimState,
   getCompoundModifiers,
+  getRollingFormationSpeedMs,
   requestOnTrackPitStop,
   resolveCarCollisions,
   resolveWallContact,
@@ -2545,7 +2547,7 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
   assert.equal(v10Car.specialActive, false);
 });
 
-test('AI Policy Variants & Validation Hardening: exposes only v5..v8, loads all 4, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
+test('AI Policy Variants & Validation Hardening: exposes v5..v9, loads v5..v8, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
   const {
     getAiPolicyVariants,
     evaluateNeuralPolicy,
@@ -2557,9 +2559,9 @@ test('AI Policy Variants & Validation Hardening: exposes only v5..v8, loads all 
   const variants = getAiPolicyVariants();
   assert.deepEqual(
     variants.map((v) => v.id),
-    ['v5', 'v6', 'v7', 'v8'],
+    ['v5', 'v6', 'v7', 'v8', 'v9'],
   );
-  for (const v of variants) {
+  for (const v of variants.filter((entry) => entry.id !== 'v9')) {
     assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
     assert.equal(v.obsDim, 43);
     assert.equal(v.hiddenDim, 128);
@@ -2647,6 +2649,166 @@ test('AI Policy Variants & Validation Hardening: exposes only v5..v8, loads all 
   const nanObs = [...obs];
   nanObs[3] = Number.NaN;
   assert.equal(evaluateNeuralPolicy(nanObs, validBase), null);
+});
+
+test('ANB1 Binary Weight Codec: round-trips 3-layer ResMLP+LN+ObsNorm weights with exact Float32 inference parity and ~3-4x size reduction', async () => {
+  const {
+    getAiPolicyVariants,
+    encodePolicyWeightsBinary,
+    decodePolicyWeightsBinary,
+    evaluateNeuralPolicy,
+  } = await import('./aiNeuralPolicy');
+
+  const v8 = getAiPolicyVariants().find((v) => v.id === 'v8')!.weights!;
+  const bin = encodePolicyWeightsBinary(v8);
+  assert.equal(String.fromCharCode(bin[0], bin[1], bin[2], bin[3]), 'ANB1');
+  const jsonBytes = Buffer.byteLength(JSON.stringify(v8), 'utf8');
+  assert.ok(bin.byteLength < jsonBytes * 0.45, `Expected ANB1 (${bin.byteLength}B) to be <45% of JSON (${jsonBytes}B)`);
+
+  const decoded = decodePolicyWeightsBinary(bin);
+  assert.ok(decoded !== null, 'Expected valid decoded ANB1 PolicyWeights');
+  assert.equal(decoded.numHiddenLayers, v8.numHiddenLayers);
+  assert.equal(decoded.hiddenDim, v8.hiddenDim);
+  assert.equal(decoded.obsDim, 43);
+
+  const obs = new Array(43).fill(0).map((_, i) => Math.sin(i * 0.37) * 0.4);
+  obs[0] = 0.55;
+  const origOut = evaluateNeuralPolicy(obs, v8)!;
+  const binOut = evaluateNeuralPolicy(obs, decoded)!;
+  assert.ok(Math.abs(origOut.steer - binOut.steer) < 1e-5, 'Steer mismatch after ANB1 round-trip');
+  assert.ok(Math.abs(origOut.throttle - binOut.throttle) < 1e-5, 'Throttle mismatch after ANB1 round-trip');
+  assert.ok(Math.abs(origOut.brake - binOut.brake) < 1e-5, 'Brake mismatch after ANB1 round-trip');
+
+  // Corrupted magic bytes must fail safely to null
+  const bad = new Uint8Array(bin);
+  bad[0] = 0x00;
+  assert.equal(decodePolicyWeightsBinary(bad), null);
+});
+
+test('Starts Policy & Standing Launch Guard: packed 2x2 grid launches cleanly at speed=0 without stalling or steering left, and hands off smoothly', async () => {
+  const {
+    computeNeuralAIControl,
+    computeStartPhaseWeight,
+    setStartPolicyWeights,
+    getStartPolicyStatus,
+  } = await import('./aiNeuralPolicy');
+
+  const spa = compileTrack(getTrackById('spa-francorchamps'), 720);
+  const grid = Array.from({ length: 8 }, (_, slot) =>
+    createCarSimState({
+      id: `ai-${slot}`,
+      name: `AI ${slot}`,
+      isPlayer: false,
+      carId: 'ferrari-499p',
+      livery: CARS[0].defaultLivery,
+      gridSlot: slot,
+      compiledTrack: spa,
+      compound: 'soft',
+      startType: 'standing',
+    }),
+  );
+
+  // Verify mid-pack car (slot 5) at speed=0 launches straight ahead with strong throttle and zero braking
+  const midCar = grid[5];
+  const launchIn = computeNeuralAIControl(midCar, spa, grid, 1 / 60, 0, 'Alien', {
+    raceElapsed: 0.2,
+    startType: 'standing',
+  });
+  assert.ok(launchIn.throttle >= 0.85, `Expected strong launch throttle, got ${launchIn.throttle}`);
+  assert.equal(launchIn.brake, 0, `Expected zero launch brake, got ${launchIn.brake}`);
+  assert.ok(Math.abs(launchIn.steer) < 0.45, `Expected clean straight launch steering, got ${launchIn.steer}`);
+
+  // Verify standing & rolling handoff curve fades cleanly from 1.0 -> 0.0
+  assert.equal(computeStartPhaseWeight({ speed: 0, totalDistance: -0.02 }, { raceElapsed: 0.5, startType: 'standing' }), 1.0);
+  assert.equal(computeStartPhaseWeight({ speed: 45, totalDistance: 0.15 }, { raceElapsed: 7.0, startType: 'standing' }), 0.0);
+  assert.equal(computeStartPhaseWeight({ speed: 28, totalDistance: -0.05 }, { raceElapsed: 1.0, startType: 'rolling' }), 1.0);
+  assert.equal(computeStartPhaseWeight({ speed: 55, totalDistance: 0.12 }, { raceElapsed: 5.0, startType: 'rolling' }), 0.0);
+
+  // Verify custom trained starts policy can be injected and cleared cleanly
+  assert.equal(getStartPolicyStatus().source, 'launch-assist');
+  setStartPolicyWeights(null);
+  assert.equal(getStartPolicyStatus().loaded, false);
+});
+
+test('Rolling Start & Bump-Drafting: rolling grid spawns in motion, stays Lap 1 across S/F, and straight-line tow stays on throttle', async () => {
+  const { computeNeuralAIControl } = await import('./aiNeuralPolicy');
+  const monza = compileTrack(getTrackById('monza'), 720);
+  const cars = Array.from({ length: 6 }, (_, slot) =>
+    createCarSimState({
+      id: `roll-${slot}`,
+      name: `Driver ${slot}`,
+      isPlayer: slot === 0,
+      carId: 'ferrari-499p',
+      livery: CARS[0].defaultLivery,
+      gridSlot: slot,
+      compiledTrack: monza,
+      compound: 'soft',
+      startType: 'rolling',
+      rollingSpeed: 28,
+    }),
+  );
+
+  const formSpeed = getRollingFormationSpeedMs(cars);
+  assert.ok(formSpeed >= 20 && formSpeed <= 32, `Expected formation speed in 20..32 m/s, got ${formSpeed}`);
+  for (const c of cars) {
+    assert.ok(c.speed >= 26, `Expected rolling car spawned in motion, got ${c.speed}`);
+    assert.ok(c.totalDistance < 0, `Expected pre-S/F negative totalDistance, got ${c.totalDistance}`);
+    assert.equal(c.lap, 1);
+  }
+
+  // Advance P1 under formation control across the S/F line and confirm lap remains 1 (not Lap 2!)
+  const lead = cars[0];
+  let crossed = false;
+  for (let step = 0; step < 480; step++) {
+    const ctrl = computeRollingFormationControl(lead, monza, cars, formSpeed, lead.lateralOffset);
+    stepCarPhysics(lead, ctrl, monza, 1 / 60, {
+      trackWetness: 0,
+      totalLaps: 5,
+      isQualifying: false,
+      allCars: cars,
+    });
+    if (lead.trackT < 0.1 && lead.totalDistance >= 0) {
+      crossed = true;
+      break;
+    }
+  }
+  assert.ok(crossed, 'Expected rolling start pole car to cross S/F line within 8 seconds');
+  assert.equal(lead.lap, 1, 'Crossing S/F line on initial rolling start must stay on Lap 1');
+  assert.ok(lead.totalDistance >= 0 && lead.totalDistance < 0.2);
+
+  // Straight-line bump-drafting: trailing car tucked 8m behind lead car at 55 m/s on Monza main straight stays on throttle
+  const spLead = sampleTrackAtT(monza, 0.04);
+  const spTrail = sampleTrackAtT(monza, 0.04 - 8 / monza.totalLength);
+  const draftLead = cars[0];
+  const draftTrail = cars[1];
+  draftLead.trackT = 0.04;
+  draftLead.prevTrackT = 0.04;
+  draftLead.x = spLead.x;
+  draftLead.z = spLead.z;
+  draftLead.lateralOffset = 0;
+  draftLead.heading = Math.atan2(spLead.tx, spLead.tz);
+  draftLead.speed = 54;
+  draftLead.vx = Math.sin(draftLead.heading) * 54;
+  draftLead.vz = Math.cos(draftLead.heading) * 54;
+  draftLead.totalDistance = 0.04;
+
+  draftTrail.trackT = 0.04 - 8 / monza.totalLength;
+  draftTrail.prevTrackT = draftTrail.trackT;
+  draftTrail.x = spTrail.x;
+  draftTrail.z = spTrail.z;
+  draftTrail.lateralOffset = 0;
+  draftTrail.heading = Math.atan2(spTrail.tx, spTrail.tz);
+  draftTrail.speed = 56;
+  draftTrail.vx = Math.sin(draftTrail.heading) * 56;
+  draftTrail.vz = Math.cos(draftTrail.heading) * 56;
+  draftTrail.totalDistance = draftTrail.trackT;
+
+  const draftIn = computeNeuralAIControl(draftTrail, monza, [draftLead, draftTrail], 1 / 60, 0, 'Alien', {
+    raceElapsed: 20,
+    startType: 'standing',
+  });
+  assert.ok(draftIn.throttle >= 0.85, `Expected committed bump-draft throttle on straight, got ${draftIn.throttle}`);
+  assert.equal(draftIn.brake, 0, `Expected zero brake during clean straight bump-draft, got ${draftIn.brake}`);
 });
 
 test('Spawn Ghosting: bypasses car-to-car collisions while timer active, ticks down, then resumes solid collisions', () => {
