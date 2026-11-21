@@ -113,22 +113,22 @@
 ## 4. AI Drivers, Neural Policy Pipeline & Racecraft
 
 ### 4.1 In-Race AI Intelligence & Racecraft
-- **Smarter Multi-Class Traffic Etiquette:** Teach neural + heuristic policies explicit class-differential behavior: faster prototypes project decisive dive/outside passes without braking behind GT3 cars on straights, while GT3/GT4 cars hold predictable lines and yield under blue flags.
-- **Authentic AI Pit Strategy & Weather Reactivity:** Currently AI compound choices are largely fixed at spawn (`compound: ... aiCursor % 3 === 0 ? 'wet' : 'medium'` in `RaceViewport.tsx`). Give AI full race-strategy logic:
-  - Pit when `tireWear` crosses cliff thresholds or fuel drops below 1.2 laps.
-  - React dynamically to `trackWetness` crossovers (pitting for `wet` tyres when rain intensifies, switching back to `soft`/`medium` as track dries).
-  - Execute undercut/overcut strategies based on traffic gaps and personality (`Tire-Saver` vs. `Late-Braker`).
-- **Driver Roster & Persistent AI Personalities:** Give AI drivers memorable names, nationalities, team pairings (2 cars per team sharing coordinated liveries), skill/aggression/consistency/wet-skill ratings, and championship rivalries.
-- **Human-Like Mistakes & Realism:** Occasional realistic brake lock-ups, slight apex misses under heavy defensive pressure, or grass dips — making battles feel alive rather than robotic, scaled by `AIDifficulty`.
-- **Defensive Racecraft (One-Move Rule):** Allow defending AI cars to cover the inside line approaching heavy braking zones when a rival is within ~18m behind, then open up cleanly on corner exit.
-- **Stuck / Crash Recovery Polish:** Ensure spun or wall-wedged AI cars execute clean 3-point reverse recoveries or ghost temporarily if blocked for >3s so they never cause permanent chicanes.
+- [x] **Smarter Multi-Class Traffic Etiquette:** Implemented explicit class-differential racecraft (`aiRacecraft.ts` + `physics.ts`): faster prototypes project decisive dive/outside passes without false straight-line braking behind GT3/GT4 traffic, while slower classes hold predictable lines and yield cleanly under blue flags.
+- [x] **Authentic AI On-Track Strategy & Weather Reactivity (No Pit Lanes):** Implemented `evaluateAiRaceStrategy()` for dynamic stationary on-track service (`aiPendingStop`):
+  - Services when `tireWear` crosses cliff thresholds or fuel drops below 1.2 laps.
+  - Reacts dynamically to `trackWetness` crossovers (switching to `wet` tyres as rain intensifies and back to slicks as the circuit dries, modulated by `wetSkill`).
+  - Executes undercut/overcut offsets based on dirty-air traffic and driver personality (`Tire-Saver` vs. `Late-Braker`), plus heavy damage repairs.
+- [x] **Driver Roster & Persistent AI Personalities:** Added a 24-driver, 12-team roster (`AI_DRIVER_ROSTER` in `aiRacecraft.ts`) with memorable names, nationalities, 2-car team pairings with coordinated liveries, skill/aggression/consistency/wet-skill ratings, and teammate/rival links surfaced in standings and results.
+- [x] **Human-Like Mistakes & Realism:** Added `stepHumanLikeMistake()` for occasional realistic lock-ups and slight apex misses under pressure, scaled by `AIDifficulty` and driver consistency (disabled cleanly during standing/rolling starts and straights).
+- [x] **Defensive Racecraft (One-Move Rule):** Added inside-line defensive cover approaching heavy braking zones when a same-class rival is within ~18m behind, opening cleanly on corner exit.
+- [x] **Stuck / Crash Recovery Polish + Turn-1 Kinematic Braking Guard:** Added `stepAiStuckRecovery()` (3-point reverse recovery after 1.35s wedged/spun and temporary anti-roadblock ghosting after >3s) plus a Turn-1 heavy-braking kinematic safety guard so neural AI never plows straight into Turn 1 on cold tires.
 
 ### 4.2 Neural Policy Pipeline & Tooling (`aiNeuralPolicy.ts` / `trainPPO.py`)
-- **Complete `starts` & `v9` Training & Ship Binary `.bin` Weights:** Migrate runtime browser loading from verbose JSON policy files to compact `ANB1` `.bin` payloads (already implemented in `encodePolicyWeightsBinary`/`decodePolicyWeightsBinary`) to slash bundle/load size by ~4×.
-- **Archive/Prune Legacy Weight Snapshots from `src/game/`:** There are currently ~20 `aiPolicyWeights*.json` files (`v1`–`v8`, `.best`, `.ppo`, `.pytorch`, `.safe_backup`) inside `src/game/`. Move unused training checkpoints to a `models/archive/` folder outside Vite's build tree and dynamically lazy-load active policy binaries on demand.
-- **In-Game AI Telemetry & Neural Visualizer (Debug/Pro Mode):** Add an optional overlay in AI Race / Practice showing a selected AI car's radar slots, lookahead curvature points, policy throttle/brake/steer output bars, and active `starts`→`v9` crossfade weight.
-- **Per-Personality Policy Blending:** Map each `AIPersonality` (`Late-Braker`, `Metronome`, `Tire-Saver`, `Traffic-Smart`) to distinct neural policy blend weights + aggression/braking offsets rather than purely heuristic modifiers.
-- **Behavioral Cloning Loop from `telemetryRecorder.ts`:** Add a one-click UI workflow in Practice/Results to review recorded clean laps (`HumanTelemetryRecorder`), filter out off-track laps, and export directly into a `datasets/` bundle ready for `trainPPO.py` warm-starting.
+- [x] **Unified `v1` / `v2` / `starts` Pipeline & Compact Binary `.bin` Weights:** Unified model slots (`v1` = current 59-dim Physics Master, `v2` = Section 4 Racecraft & Turn-1 Master, `starts` = Grid Launch Specialist) with `ANB1` `.bin` export & browser hot-loader (`loadPolicyWeightsFromBinaryUrl` synced to `public/models/policies/`).
+- [x] **Pruned Legacy Weight Snapshots & Training Scripts:** Removed obsolete `v1`–`v9` / `.best` / `.ppo` / `.safe_backup` checkpoints and consolidated tooling to 3 clean scripts (`scripts/trainPPO.py`, `scripts/benchAndAudit.py`, `scripts/objToLowPoly.mjs`).
+- [x] **In-Game AI Telemetry & Neural Visualizer (Debug/Pro Mode):** Added toggleable neural telemetry overlay in `RaceHUD.tsx` showing live steer/throttle/brake outputs, `starts`→race crossfade weight, 8 lookahead curvature probes, 4 proximity radar slots, active maneuver, and strategy intent.
+- [x] **Per-Personality Policy Blending:** Mapped each `AIPersonality` (`Late-Braker`, `Metronome`, `Tire-Saver`, `Traffic-Smart`) to distinct `v1`/`v2` neural blend weights + aggression/braking offsets with a live toggle in `AiPolicyMixPanel.tsx`.
+- [x] **Behavioral Cloning Loop from `telemetryRecorder.ts`:** Added in-session lap history, clean-only filtering, and one-click `.jsonl` BC dataset export in `PauseModal.tsx` & `ResultsModal.tsx`, wired directly into `trainPPO.py --bc-dataset`.
 
 ---
 
@@ -391,3 +391,9 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 | **P2 — Flagship** | **Public Multiplayer Lobby Browser, Live Spectator Join, Chat & Elo/Safety Rating** | High | High | `server.ts`, `multiplayer.ts`, `MultiplayerModal.tsx` |
 | **P2 — Flagship** | **Studio 2.0: Decal Layer Editor (Livery), Elevation Graph & Prop Painter (Track), glTF/LOD Pipeline** | High | High | `LiveryStudioModal.tsx`, `TrackStudioModal.tsx`, `objCarLoader.ts` |
 | **P3 — Polish** | **AI Race Engineer / Team Manager Mode, Scenario Challenges, PWA Offline Install & Refactoring** | Medium–High | Medium–High | `physics.ts`, `carBuilder.ts`, `RaceViewport.tsx` |
+| **P4 — Finale** | **Hand-Made (AI-Made) Custom 3D Car Models across flagship classes (procedural/crafted bespoke geometry)** | Very High | High | `carBuilder.ts`, `models/` |
+
+---
+
+## 15. Final Capstone TODO (At the Very End)
+- [ ] **Hand-Made (AI-Made) Custom 3D Car Models:** Build bespoke, handcrafted procedural/AI-authored 3D car meshes for flagship classes (F1, Hypercar/GTP, LMP2, GT3, GT4, Formula E, Supercars) with crisp proportions, aero detailing, clean wheel wells, cockpit halos/windscreens, and optimized triangle budgets — scheduled as the final milestone once all core gameplay, graphics, audio, and UI sections are complete.

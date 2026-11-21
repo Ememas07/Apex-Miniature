@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
-Apex Miniature — Deterministic PPO Benchmark & Evaluation Matrix
-Evaluates trained AI policy weights across every track and car independently.
+Apex Miniature — Unified AI Benchmark & Audit Suite
+Evaluates trained AI policy weights (v1, v2, starts) deterministically across all
+tracks and cars, saves raw JSON metrics, and generates a condensed Markdown audit report.
+
+Usage:
+  python -u scripts/benchAndAudit.py --variant v1
+  python -u scripts/benchAndAudit.py --variant v2
+  python -u scripts/benchAndAudit.py --all
+  python -u scripts/benchAndAudit.py --variant v2 --tracks spa-francorchamps monza monaco --cars ferrari-499p porsche-911-gt3-r
+  python -u scripts/benchAndAudit.py --variant v2 --baseline audit/bench_results/latest_v1.json
 """
 
 import argparse
@@ -99,7 +107,6 @@ def summarize_results(weight_path: str, results: list[dict]):
         "totalStalls": total_stalls,
     }
 
-    # Per-class summary
     per_class = {}
     class_groups = {}
     for r in results:
@@ -119,7 +126,6 @@ def summarize_results(weight_path: str, results: list[dict]):
             "stalls": sum(r.get("stalls", 0) for r in c_list),
         }
 
-    # Per-track summary
     per_track = {}
     track_groups = {}
     for r in results:
@@ -139,7 +145,6 @@ def summarize_results(weight_path: str, results: list[dict]):
             "stalls": sum(r.get("stalls", 0) for r in t_list),
         }
 
-    # Top 10 worst pairs
     worst_pairs = sorted(
         results,
         key=lambda r: (
@@ -157,97 +162,151 @@ def summarize_results(weight_path: str, results: list[dict]):
 
 def print_summary_table(summary: dict, per_class: dict, per_track: dict, worst_pairs: list[dict]):
     print("\n" + "=" * 88)
-    print("                     APEX MINIATURE — PPO POLICY EVALUATION")
+    print("                     APEX MINIATURE — AI BENCHMARK & AUDIT")
     print("=" * 88)
     print(f"Weights File:        {summary.get('weightPath')}")
     print(f"Total Pairs Tested:  {summary.get('totalPairs')}")
-    print(f"Clean Laps Finished: {summary.get('cleanCompleted')} / {summary.get('totalPairs')} ({summary.get('completionRatePct')}%)")
+    print(
+        f"Clean Laps Finished: {summary.get('cleanCompleted')} / {summary.get('totalPairs')} "
+        f"({summary.get('completionRatePct')}%)"
+    )
     print(f"Average Speed:       {summary.get('avgSpeedKmh')} km/h")
     print(f"Average Off-Track:   {summary.get('avgOffTrackPct')}%")
     print(f"Total Wall Crashes:  {summary.get('totalWallCrashes')}")
     print(f"Total Stalls:        {summary.get('totalStalls')}")
 
     print("\n" + "-" * 88)
-    print("                                TOP 10 WORST PAIRS")
+    print("                              PER-CLASS PERFORMANCE")
     print("-" * 88)
-    print(f" {'#':<2} {'Track':<18} {'Car':<24} {'Class':<14} {'Clean':<6} {'Crashes':<8} {'Stalls':<7} {'Off-Track'}")
+    print(
+        f" {'Class':<18} {'Pairs':<7} {'Clean (%)':<11} {'Avg km/h':<11} {'Off-Trk %':<11} {'Crashes':<9} {'Stalls'}"
+    )
+    print("-" * 88)
+    for c_cls, stats in per_class.items():
+        print(
+            f" {c_cls:<18} {stats['pairs']:<7} {stats['completionRatePct']:<11.1f} "
+            f"{stats['avgSpeedKmh']:<11.1f} {stats['avgOffTrackPct']:<11.1f} {stats['wallCrashes']:<9} {stats.get('stalls', 0)}"
+        )
+
+    print("\n" + "-" * 88)
+    print("                                TOP 10 WORST PAIRS")
     print("-" * 88)
     for idx, r in enumerate(worst_pairs, 1):
         clean_str = "YES" if r["completed"] else "NO"
         print(
-            f" {idx:<2} {r['trackId']:<18} {r['carId']:<24} {r['carClass']:<14} "
-            f"{clean_str:<6} {r['wallCrash']:<8} {r.get('stalls', 0):<7} {r['offTrackPct']:.1f}%"
-        )
-
-    print("\n" + "-" * 88)
-    print("                              PER-CLASS PERFORMANCE")
-    print("-" * 88)
-    print(f" {'Class':<18} {'Pairs':<7} {'Clean Laps (%)':<16} {'Avg Speed (km/h)':<18} {'Off-Track (%)':<15} {'Crashes':<9} {'Stalls'}")
-    print("-" * 88)
-    for c_cls, stats in per_class.items():
-        print(
-            f" {c_cls:<18} {stats['pairs']:<7} {stats['completionRatePct']:<16.1f} "
-            f"{stats['avgSpeedKmh']:<18.1f} {stats['avgOffTrackPct']:<15.1f} {stats['wallCrashes']:<9} {stats.get('stalls', 0)}"
-        )
-
-    print("\n" + "-" * 88)
-    print("                              PER-TRACK PERFORMANCE")
-    print("-" * 88)
-    print(f" {'Track':<18} {'Pairs':<7} {'Clean Laps (%)':<16} {'Avg Speed (km/h)':<18} {'Off-Track (%)':<15} {'Crashes':<9} {'Stalls'}")
-    print("-" * 88)
-    for t_id, stats in per_track.items():
-        print(
-            f" {t_id:<18} {stats['pairs']:<7} {stats['completionRatePct']:<16.1f} "
-            f"{stats['avgSpeedKmh']:<18.1f} {stats['avgOffTrackPct']:<15.1f} {stats['wallCrashes']:<9} {stats.get('stalls', 0)}"
+            f" {idx:<2} {r['trackId']:<18} {r['carId']:<24} {r['carClass']:<13} "
+            f"{clean_str:<5} cr={r['wallCrash']:<3} st={r.get('stalls', 0):<3} off={r['offTrackPct']:.1f}%"
         )
     print("=" * 88 + "\n")
 
 
-def save_reports(out_base: str, all_evaluations: list[dict]):
-    os.makedirs(os.path.dirname(os.path.abspath(out_base)), exist_ok=True)
-    json_path = out_base if out_base.endswith(".json") else f"{out_base}.json"
+def build_markdown_audit(all_evaluations: list[dict], baseline_summary: dict | None = None, top_outliers: int = 8) -> str:
+    lines = [
+        "# Apex Miniature — AI Benchmark & Audit Report",
+        f"_Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_",
+        "",
+        "## Overview",
+        "| Model | Pairs | Clean Laps | Avg Speed | Off-Track | Wall Crashes | Stalls |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for ev in all_evaluations:
+        s = ev["summary"]
+        name = os.path.basename(s.get("weightPath", "unknown"))
+        delta = ""
+        if baseline_summary:
+            d_comp = s.get("completionRatePct", 0) - baseline_summary.get("completionRatePct", 0)
+            d_spd = s.get("avgSpeedKmh", 0) - baseline_summary.get("avgSpeedKmh", 0)
+            delta = f" ({d_comp:+.1f}% clean, {d_spd:+.1f} km/h)"
+        lines.append(
+            f"| `{name}`{delta} | {s['totalPairs']} | {s['cleanCompleted']} ({s['completionRatePct']}%) | "
+            f"{s['avgSpeedKmh']} km/h | {s['avgOffTrackPct']}% | {s['totalWallCrashes']} | {s['totalStalls']} |"
+        )
 
-    # Save JSON report
-    report_json = {
-        "evaluatedAt": datetime.now(timezone.utc).isoformat(),
-        "evaluations": all_evaluations,
-    }
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(report_json, f, indent=2)
-    print(f"Saved evaluation JSON -> {json_path}")
+    for ev in all_evaluations:
+        s = ev["summary"]
+        name = os.path.basename(s.get("weightPath", "unknown"))
+        lines.extend([
+            "",
+            f"## {name} — Class Breakdown",
+            "| Class | Pairs | Clean % | Avg km/h | Off-Track % | Crashes | Stalls |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ])
+        for cls, st in ev["perClass"].items():
+            lines.append(
+                f"| {cls} | {st['pairs']} | {st['completionRatePct']}% | {st['avgSpeedKmh']} | "
+                f"{st['avgOffTrackPct']}% | {st['wallCrashes']} | {st['stalls']} |"
+            )
+
+        worst_tracks = sorted(
+            ev["perTrack"].items(),
+            key=lambda kv: (kv[1]["completionRatePct"], -kv[1]["wallCrashes"], -kv[1]["avgOffTrackPct"]),
+        )[:top_outliers]
+        lines.extend([
+            "",
+            f"### {name} — Lowest Completion / Outlier Tracks",
+            "| Track | Clean % | Avg km/h | Off-Track % | Crashes | Stalls |",
+            "|---|---:|---:|---:|---:|---:|",
+        ])
+        for tid, st in worst_tracks:
+            lines.append(
+                f"| `{tid}` | {st['completionRatePct']}% | {st['avgSpeedKmh']} | "
+                f"{st['avgOffTrackPct']}% | {st['wallCrashes']} | {st['stalls']} |"
+            )
+
+    return "\n".join(lines) + "\n"
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Apex Miniature: Deterministic All-Tracks & All-Cars PPO Benchmark")
-    parser.add_argument("--weights", default="src/game/aiPolicyWeights_v1.json", help="Path to policy weights JSON")
-    parser.add_argument("--all", action="store_true", help="Automatically loop over available v1-v9 checkpoints")
-    parser.add_argument("--variants", nargs="*", default=None, help="Optional subset of variants to evaluate (e.g. v5 v6 v7 v8 v9)")
+    parser = argparse.ArgumentParser(
+        description="Apex Miniature: Unified AI Benchmark & Markdown Audit Runner (v1 / v2 / starts)"
+    )
+    parser.add_argument(
+        "--variant",
+        "-v",
+        default=None,
+        help="Model slot to evaluate: v1, v2, or starts",
+    )
+    parser.add_argument("--weights", default=None, help="Explicit path to policy weights JSON or .bin")
+    parser.add_argument("--all", action="store_true", help="Benchmark all present unified models (v1, v2)")
     parser.add_argument("--envs", type=int, default=16, help="Parallel evaluation batch size")
-    parser.add_argument("--max-steps", type=int, default=6000, help="Max steps per episode (default 6000, 10000 on Le Mans)")
-    parser.add_argument("--all-liveries", action="store_true", help="Test all liveries/selectable cars instead of base models")
+    parser.add_argument("--max-steps", type=int, default=6000, help="Max steps per episode")
+    parser.add_argument("--all-liveries", action="store_true", help="Test all selectable liveries")
     parser.add_argument("--tracks", nargs="*", default=None, help="Optional subset of track IDs")
     parser.add_argument("--cars", nargs="*", default=None, help="Optional subset of car IDs")
-    parser.add_argument("--out", default="audit/eval_matrix.json", help="Output path (without extension or .json)")
+    parser.add_argument("--baseline", default=None, help="Optional baseline benchmark JSON for diff comparison")
+    parser.add_argument("--out", default=None, help="Output JSON path (default: audit/bench_results/<ts>.json)")
+    parser.add_argument("--md-out", default=None, help="Output Markdown audit path (default: audit/audit_result_<ts>.md)")
     args = parser.parse_args()
 
-    weight_candidates = []
-    if args.all or args.variants:
-        var_list = args.variants if args.variants else ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"]
-        for v in var_list:
-            tag = v if v.startswith("v") else f"v{v}"
-            candidate = f"src/game/aiPolicyWeights_{tag}.json"
-            if os.path.exists(candidate):
-                weight_candidates.append(candidate)
-            else:
-                alt = f"src/game/aiPolicyWeights_{tag}.best.json"
-                if os.path.exists(alt):
-                    weight_candidates.append(alt)
-        if not weight_candidates:
-            weight_candidates = [args.weights]
-    else:
+    weight_candidates: list[str] = []
+    if args.weights:
         weight_candidates = [args.weights]
+    elif args.all:
+        for slot in ["v1", "v2"]:
+            p = os.path.join("src", "game", f"aiPolicyWeights_{slot}.json")
+            if os.path.exists(p):
+                weight_candidates.append(p)
+    else:
+        slot = (args.variant or "v1").lower()
+        p = os.path.join("src", "game", f"aiPolicyWeights_{slot}.json")
+        weight_candidates = [p]
 
-    print(f"Launching headlessEnv worker for deterministic evaluation...")
+    weight_candidates = [w for w in weight_candidates if os.path.exists(w)]
+    if not weight_candidates:
+        print("Error: No trained weights found to benchmark. Run scripts/trainPPO.py first.")
+        sys.exit(1)
+
+    baseline_summary = None
+    if args.baseline and os.path.exists(args.baseline):
+        try:
+            with open(args.baseline, "r", encoding="utf-8") as bf:
+                bdata = json.load(bf)
+            if isinstance(bdata.get("evaluations"), list) and bdata["evaluations"]:
+                baseline_summary = bdata["evaluations"][0].get("summary")
+        except Exception:
+            pass
+
+    print("Launching headlessEnv worker for deterministic benchmark & audit...")
     worker = spawn_env_worker()
 
     try:
@@ -258,24 +317,18 @@ def main():
 
         eval_tracks = [t for t in all_tracks if (not args.tracks or t in args.tracks)]
         eval_cars = [c for c in all_cars if (not args.cars or c in args.cars)]
-
         pairs = [{"trackId": t, "carId": c} for t in eval_tracks for c in eval_cars]
 
-        print(f"Catalog loaded: {len(eval_tracks)} tracks × {len(eval_cars)} cars = {len(pairs)} pairs total.")
-        if len(pairs) == 0:
-            print("Error: No matching (track, car) pairs found.")
+        print(f"Catalog loaded: {len(eval_tracks)} tracks x {len(eval_cars)} cars = {len(pairs)} pairs.")
+        if not pairs:
+            print("Error: No matching (track, car) pairs.")
             return
 
         all_evaluations = []
         for w_path in weight_candidates:
-            if not os.path.exists(w_path):
-                print(f"Warning: Weights file '{w_path}' does not exist, skipping.")
-                continue
-
             results = run_evaluation(worker, w_path, pairs, args.envs, args.max_steps)
             summary, per_class, per_track, worst_pairs = summarize_results(w_path, results)
             print_summary_table(summary, per_class, per_track, worst_pairs)
-
             all_evaluations.append({
                 "summary": summary,
                 "perClass": per_class,
@@ -284,9 +337,24 @@ def main():
                 "results": results,
             })
 
-        if all_evaluations:
-            save_reports(args.out, all_evaluations)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        json_path = args.out or os.path.join("audit", "bench_results", f"bench_{ts}.json")
+        md_path = args.md_out or os.path.join("audit", f"audit_result_{ts}.md")
+        os.makedirs(os.path.dirname(os.path.abspath(json_path)), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(md_path)), exist_ok=True)
 
+        with open(json_path, "w", encoding="utf-8") as jf:
+            json.dump(
+                {"evaluatedAt": datetime.now(timezone.utc).isoformat(), "evaluations": all_evaluations},
+                jf,
+                indent=2,
+            )
+        md_text = build_markdown_audit(all_evaluations, baseline_summary=baseline_summary)
+        with open(md_path, "w", encoding="utf-8") as mf:
+            mf.write(md_text)
+
+        print(f"Saved JSON report     -> {json_path}")
+        print(f"Saved Markdown audit  -> {md_path}")
     finally:
         try:
             worker.terminate()

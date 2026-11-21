@@ -4,9 +4,11 @@ import { getErsModeProfile } from './raceSystems';
 import { CompiledTrack, computeTrackWallHalfWidth, projectOntoTrack, sampleTrackAtT } from './tracks';
 import tuningConfigRaw from './tuningConfig.json';
 import { getAiPaceOrderModifiers } from './scenarios';
+import { computeRacecraftOverlay } from './aiRacecraft';
 import {
   AbsLevel,
   AIDifficulty,
+  AiNeuralTelemetrySnapshot,
   AiPaceOrder,
   AIPersonality,
   CarClassId,
@@ -233,6 +235,24 @@ export interface CarSimState {
   eliminated?: boolean;
   aiPaceOrder?: AiPaceOrder;
   aiPendingStop?: { action: PitServiceAction; compound?: TireCompound } | null;
+  // Section 4: Driver Roster, Racecraft, One-Move Defense, Human-Like Mistakes & Recovery
+  aiDriverId?: string;
+  aiNationality?: string;
+  aiTeamName?: string;
+  aiRivalId?: string;
+  aiSkillRating?: number;
+  aiWetSkill?: number;
+  aiConsistency?: number;
+  aiReverseTimer?: number;
+  aiDefenseCommitted?: boolean;
+  aiDefenseLane?: number;
+  aiDefenseTimer?: number;
+  aiMistakeTimer?: number;
+  aiMistakeCooldown?: number;
+  aiMistakeType?: 'lockup' | 'wide-exit';
+  aiMistakeDir?: number;
+  aiStrategyIntent?: string | null;
+  aiLastTelemetry?: AiNeuralTelemetrySnapshot | null;
 }
 
 export function createInitialFourWheelTires(initialTemp = 72): FourWheelTireState {
@@ -442,6 +462,13 @@ export function createCarSimState(params: {
   damageLevel?: DamageLevel;
   absLevel?: AbsLevel;
   setup?: CarSetupConfig;
+  aiDriverId?: string;
+  aiNationality?: string;
+  aiTeamName?: string;
+  aiRivalId?: string;
+  aiSkillRating?: number;
+  aiWetSkill?: number;
+  aiConsistency?: number;
 }): CarSimState {
   const bopEnabled = params.bopEnabled ?? true;
   const carSpec = getCarById(params.carId);
@@ -579,6 +606,19 @@ export function createCarSimState(params: {
     sectorTimes: [null, null, null],
     bestSectorTimes: [null, null, null],
     lastLapSectorTimes: [null, null, null],
+    aiDriverId: params.aiDriverId,
+    aiNationality: params.aiNationality,
+    aiTeamName: params.aiTeamName,
+    aiRivalId: params.aiRivalId,
+    aiSkillRating: params.aiSkillRating,
+    aiWetSkill: params.aiWetSkill,
+    aiConsistency: params.aiConsistency,
+    aiReverseTimer: 0,
+    aiDefenseCommitted: false,
+    aiMistakeTimer: 0,
+    aiMistakeCooldown: 0,
+    aiStrategyIntent: null,
+    aiLastTelemetry: null,
   };
 }
 
@@ -3102,6 +3142,23 @@ export function computeAIControl(
     desiredOffset = car.aiTargetOffset;
   }
 
+  // Section 4.1: Multi-Class Traffic Projection, Blue-Flag Etiquette & One-Move Defensive Racecraft
+  const racecraftOverlay = computeRacecraftOverlay(
+    car,
+    compiledTrack,
+    allCars,
+    dt,
+    halfW,
+    minSafeLane,
+    maxSafeLane,
+  );
+  if (racecraftOverlay.overrideTargetOffset !== null) {
+    desiredOffset = racecraftOverlay.overrideTargetOffset;
+    if (racecraftOverlay.maneuver === 'overtaking') {
+      car.aiPassTimer = Math.max(car.aiPassTimer, 1.25);
+    }
+  }
+
   // Smooth lateral lane transition
   const hasLateralOverlapNow = leadCar ? Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.35 : false;
   const laneBlendRate = hasLateralOverlapNow ? 5.5 : (isBattlingTraffic ? 4.2 : 5.0);
@@ -3210,7 +3267,10 @@ export function computeAIControl(
       leadCar.carSpec.classId === car.carSpec.classId;
 
     // Only apply collision braking when actually overlapping our lane or dangerously close without open passing space
-    const immediateDanger = hasLateralOverlap && (!pullingOutToPass || leadDs < 14.0);
+    const immediateDanger =
+      hasLateralOverlap &&
+      (!pullingOutToPass || leadDs < 14.0) &&
+      !racecraftOverlay.suppressStraightBraking;
 
     if (immediateDanger && !canBumpDraftStraight) {
       const gap = Math.max(0.5, leadDs - 4.2);
@@ -3332,7 +3392,9 @@ export function computeAIControl(
   }
 
   // Blue Flag Multi-Class Yielding: slower cars cleanly open the racing line and ease slightly for faster approaching traffic
-  if (car.blueFlagActive && car.speed > 14 && Math.abs(car.lateralOffset) < halfW * 0.72) {
+  if (racecraftOverlay.throttleMultiplier < 0.999) {
+    throttle *= racecraftOverlay.throttleMultiplier;
+  } else if (car.blueFlagActive && car.speed > 14 && Math.abs(car.lateralOffset) < halfW * 0.72) {
     const yieldSide = car.lateralOffset >= 0 ? Math.min(maxSafeLane, halfW * 0.68) : Math.max(minSafeLane, -halfW * 0.68);
     car.aiTargetOffset += (yieldSide - car.aiTargetOffset) * Math.min(1, dt * 3.5);
     throttle *= 0.90;
@@ -3421,6 +3483,8 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
       carId: c.carSpec.id,
       classId: c.carSpec.classId,
       driverNumber: c.livery.driverNumber,
+      nationality: c.aiNationality,
+      teamName: c.aiTeamName,
       personality: c.personality,
       position: idx + 1,
       classPosition: classPos,

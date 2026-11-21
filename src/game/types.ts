@@ -372,6 +372,39 @@ export interface RaceConfig {
   dailyChallengeDate?: string;
 }
 
+export interface AiNeuralRadarSlot {
+  occupied: boolean;
+  relLongM: number;
+  relLatM: number;
+  relSpeedMs: number;
+  classDiff: number;
+}
+
+export interface AiNeuralTelemetrySnapshot {
+  carId: string;
+  driverName: string;
+  nationality?: string;
+  teamName?: string;
+  personality: AIPersonality;
+  policyBlendLabel: string;
+  startPolicyWeight: number;
+  steer: number;
+  throttle: number;
+  brake: number;
+  lookaheadCurvatures: number[];
+  radarSlots: AiNeuralRadarSlot[];
+  activeManeuver:
+    | 'racing'
+    | 'overtaking'
+    | 'defending'
+    | 'blue-flag'
+    | 'recovering'
+    | 'servicing'
+    | 'launch';
+  strategyIntent: string | null;
+  mistakeActive: boolean;
+}
+
 export interface DriverStandingsEntry {
   id: string;
   name: string;
@@ -380,6 +413,8 @@ export interface DriverStandingsEntry {
   carId: string;
   classId: CarClassId;
   driverNumber: string;
+  nationality?: string;
+  teamName?: string;
   personality?: AIPersonality;
   position: number;
   classPosition: number;
@@ -517,6 +552,7 @@ export interface HudSnapshot {
   aiPaceOrder?: AiPaceOrder;
   weekendStage?: WeekendStage;
   championshipRoundLabel?: string | null;
+  aiNeuralTelemetry?: AiNeuralTelemetrySnapshot | null;
 }
 
 export interface RoomPeer {

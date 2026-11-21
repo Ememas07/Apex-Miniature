@@ -3,7 +3,10 @@
 Apex Miniature — Unified Reinforcement Learning Policy Trainer (PPO)
 
 Trains neural driving policies across full circuits and multi-class car grids.
-Supports 4 specialized model variants (v1..v4) and custom parameter overrides.
+Unified 2-generation model architecture (+ dedicated starts specialist):
+  - v1     : 59-dim Advanced Physics Master (former V9.2 spec, 3x192 ResMLP+LN+ObsNorm)
+  - v2     : 59-dim Section 4 Racecraft & Turn-1 Master (3x192 ResMLP+LN+ObsNorm)
+  - starts : Dedicated Standing/Rolling Grid Launch & Turn-1 Braking Specialist (2x128 ResMLP)
 """
 
 import argparse
@@ -46,443 +49,8 @@ OBS_CONFIG_V7_TECHNICAL = {
 
 VARIANTS = {
     "v1": {
-        "name": "v1_clean_apex",
-        "description": "Safety, survival, anti-stall, higher off-track & wall crash penalties",
-        "hidden_dim": 64,
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v1.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v1.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v1.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v1.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v1"),
-        "curriculum": False,
-        "rewards": {
-            "forwardProgress": 0.45,
-            "closeProximity": 0.10,
-            "minSpeedThreshold": 15.0,
-            "minSpeedPenalty": 0.12,
-            "floorSpeedThreshold": 25.0 / 3.6,
-            "floorSpeedPenalty": 0.45,
-            "offTrackBase": 1.2,
-            "offTrackSlope": 0.40,
-            "steerJerk": 0.06,
-            "throttleBrakeOverlap": 0.15,
-            "carCrash": 8.5,
-            "wallCrash": 9.0,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.35,
-        },
-    },
-    "v2": {
-        "name": "v2_momentum",
-        "description": "Minimum speed preservation, jerk reduction, throttle/brake overlap penalty",
-        "hidden_dim": 64,
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v2.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v2.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v2.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v2.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v2"),
-        "curriculum": False,
-        "rewards": {
-            "forwardProgress": 0.50,
-            "closeProximity": 0.06,
-            "minSpeedThreshold": 18.0,
-            "minSpeedPenalty": 0.14,
-            "floorSpeedThreshold": 10.0,
-            "floorSpeedPenalty": 0.35,
-            "decelThreshold": 0.40,
-            "decelPenalty": 0.25,
-            "offTrackBase": 1.0,
-            "offTrackSlope": 0.30,
-            "steerJerk": 0.22,
-            "throttleBrakeOverlap": 0.30,
-            "carCrash": 4.5,
-            "wallCrash": 7.5,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.20,
-        },
-    },
-    "v3": {
-        "name": "v3_aggressive_pace",
-        "description": "128-hidden unit MLP, high apex speed, kerb-riding tolerance",
-        "hidden_dim": 128,
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v3.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v3.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v3.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v3.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v3"),
-        "curriculum": False,
-        "rewards": {
-            "forwardProgress": 0.60,
-            "closeProximity": 0.06,
-            "minSpeedThreshold": 15.0,
-            "minSpeedPenalty": 0.08,
-            "offTrackBase": 0.8,
-            "offTrackSlope": 0.22,
-            "steerJerk": 0.04,
-            "throttleBrakeOverlap": 0.15,
-            "carCrash": 4.5,
-            "wallCrash": 5.0,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.12,
-        },
-    },
-    "v4": {
-        "name": "v4_curriculum",
-        "description": "2-phase curriculum: 45-60% solo hotlap followed by traffic ramp",
-        "hidden_dim": 64,
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v4.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v4.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v4.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v4.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v4"),
-        "curriculum": True,
-        "rewards": {
-            "forwardProgress": 0.45,
-            "closeProximity": 0.06,
-            "minSpeedThreshold": 15.0,
-            "minSpeedPenalty": 0.08,
-            "offTrackBase": 1.0,
-            "offTrackSlope": 0.35,
-            "steerJerk": 0.06,
-            "throttleBrakeOverlap": 0.15,
-            "carCrash": 4.5,
-            "wallCrash": 5.0,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.18,
-        },
-    },
-    "v5": {
-        "name": "v5_hotlap_pace",
-        "description": "Hotlap & Pace Specialist: 2x128 LN+ObsNorm, 310m window curvature, solo braking-zone & lap-pace focus",
-        "hidden_dim": 128,
-        "num_hidden_layers": 2,
-        "layer_norm": True,
-        "residual": False,
-        "activation": "tanh",
-        "ortho_init": True,
-        "use_obs_norm": True,
-        "obs_config": OBS_CONFIG_V5_DEFAULT,
-        "default_steps": 512,
-        "default_workers": 4,
-        "gamma": 0.996,
-        "gae_lambda": 0.95,
-        "actor_lr_start": 3e-4,
-        "critic_lr_start": 5e-4,
-        "lr_end": 1.5e-5,
-        "lr_schedule": "cosine",
-        "ent_start": 0.008,
-        "ent_end": 0.0008,
-        "max_std_start": 0.45,
-        "max_std_end": 0.09,
-        "action_bound_coef": 0.02,
-        "vf_clip": 0.2,
-        "target_kl": 0.025,
-        "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v5.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v5.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v5.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v5.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v5"),
-        "curriculum": False,
-        "traffic_mix": {"soloRatio": 1.0, "scriptedRatio": 0.0, "selfplayRatio": 0.0},
-        "env_options": {
-            "brakingZoneSpawnRatio": 0.35,
-            "tightPackRatio": 0.0,
-            "technicalTrackBoost": 1.5,
-        },
-        "rewards": {
-            "forwardProgress": 0.58,
-            "closeProximity": 0.06,
-            "minSpeedThreshold": 14.0,
-            "minSpeedPenalty": 0.10,
-            "floorSpeedThreshold": 22.0 / 3.6,
-            "floorSpeedPenalty": 0.30,
-            "offTrackBase": 1.0,
-            "offTrackSlope": 0.35,
-            "steerJerk": 0.10,
-            "throttleBrakeOverlap": 0.25,
-            "carCrash": 15.0,
-            "wallCrash": 24.0,
-            "wallScrapeBase": 1.1,
-            "wallScrapeDamageScale": 0.7,
-            "wallScrapeCap": 4.0,
-            "maxWallScrapes": 4,
-            "lapCompletionBonus": 18.0,
-            "cornerSurvivalBonus": 0.04,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.0,
-        },
-    },
-    "v6": {
-        "name": "v6_traffic_racecraft",
-        "description": "Traffic & Racecraft Specialist: 2x128 LN+ObsNorm, TTC modulation, clean overtaking & T1 pack funnels",
-        "hidden_dim": 128,
-        "num_hidden_layers": 2,
-        "layer_norm": True,
-        "residual": False,
-        "activation": "tanh",
-        "ortho_init": True,
-        "use_obs_norm": True,
-        "obs_config": OBS_CONFIG_V5_DEFAULT,
-        "default_steps": 512,
-        "default_workers": 4,
-        "gamma": 0.995,
-        "gae_lambda": 0.95,
-        "actor_lr_start": 3e-4,
-        "critic_lr_start": 5e-4,
-        "lr_end": 2e-5,
-        "lr_schedule": "cosine",
-        "ent_start": 0.010,
-        "ent_end": 0.0015,
-        "max_std_start": 0.48,
-        "max_std_end": 0.11,
-        "action_bound_coef": 0.015,
-        "vf_clip": 0.2,
-        "target_kl": 0.025,
-        "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v6.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v6.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v6.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v6.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v6"),
-        "curriculum": "traffic_v6",
-        "env_options": {
-            "brakingZoneSpawnRatio": 0.25,
-            "tightPackRatio": 0.45,
-            "technicalTrackBoost": 1.5,
-            "spawnGhostSeconds": 2.2,
-            "enableCarPhysicsCollisions": True,
-        },
-        "rewards": {
-            "forwardProgress": 0.48,
-            "closeProximity": 0.14,
-            "minSpeedThreshold": 14.0,
-            "minSpeedPenalty": 0.10,
-            "floorSpeedThreshold": 7.0,
-            "floorSpeedPenalty": 0.30,
-            "offTrackBase": 1.2,
-            "offTrackSlope": 0.38,
-            "steerJerk": 0.08,
-            "throttleBrakeOverlap": 0.22,
-            "carCrash": 22.0,
-            "wallCrash": 20.0,
-            "wallScrapeBase": 0.9,
-            "wallScrapeDamageScale": 0.65,
-            "wallScrapeCap": 3.5,
-            "maxWallScrapes": 4,
-            "lapCompletionBonus": 14.0,
-            "cleanOvertakeBonus": 4.0,
-            "ghostOverlapPenalty": 1.8,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.55,
-        },
-    },
-    "v7": {
-        "name": "v7_wall_survival",
-        "description": "Wall Survival & Technical Track Specialist: 2x128 ResMLP LN+ObsNorm, adaptive hard-track & braking-zone focus",
-        "hidden_dim": 128,
-        "num_hidden_layers": 2,
-        "layer_norm": True,
-        "residual": True,
-        "activation": "tanh",
-        "ortho_init": True,
-        "use_obs_norm": True,
-        "obs_config": OBS_CONFIG_V7_TECHNICAL,
-        "default_steps": 512,
-        "default_workers": 4,
-        "gamma": 0.997,
-        "gae_lambda": 0.96,
-        "actor_lr_start": 2.5e-4,
-        "critic_lr_start": 5e-4,
-        "lr_end": 1.5e-5,
-        "lr_schedule": "cosine",
-        "ent_start": 0.009,
-        "ent_end": 0.001,
-        "max_std_start": 0.45,
-        "max_std_end": 0.09,
-        "action_bound_coef": 0.02,
-        "vf_clip": 0.2,
-        "target_kl": 0.02,
-        "adaptive_tracks": True,
-        "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v7.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v7.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v7.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v7.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v7"),
-        "curriculum": False,
-        "traffic_mix": {"soloRatio": 0.85, "scriptedRatio": 0.15, "selfplayRatio": 0.0},
-        "env_options": {
-            "brakingZoneSpawnRatio": 0.50,
-            "tightPackRatio": 0.20,
-            "technicalTrackBoost": 3.0,
-            "spawnGhostSeconds": 1.8,
-            "enableCarPhysicsCollisions": True,
-        },
-        "rewards": {
-            "forwardProgress": 0.40,
-            "closeProximity": 0.10,
-            "minSpeedThreshold": 13.0,
-            "minSpeedPenalty": 0.10,
-            "floorSpeedThreshold": 7.5,
-            "floorSpeedPenalty": 0.45,
-            "offTrackBase": 1.8,
-            "offTrackSlope": 0.55,
-            "steerJerk": 0.10,
-            "throttleBrakeOverlap": 0.25,
-            "carCrash": 20.0,
-            "wallCrash": 35.0,
-            "wallScrapeBase": 1.6,
-            "wallScrapeDamageScale": 0.9,
-            "wallScrapeCap": 5.0,
-            "maxWallScrapes": 3,
-            "lapCompletionBonus": 22.0,
-            "cornerSurvivalBonus": 0.12,
-            "ghostOverlapPenalty": 1.2,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.35,
-        },
-    },
-    "v8": {
-        "name": "v8_flagship_adaptive",
-        "description": "Flagship Adaptive All-Rounder: 3x128 ResMLP LN+ObsNorm, 3-phase survival->pace->racecraft + adaptive track weights",
-        "hidden_dim": 128,
-        "num_hidden_layers": 3,
-        "layer_norm": True,
-        "residual": True,
-        "activation": "tanh",
-        "ortho_init": True,
-        "use_obs_norm": True,
-        "obs_config": OBS_CONFIG_V5_DEFAULT,
-        "default_steps": 512,
-        "default_workers": 4,
-        "gamma": 0.996,
-        "gae_lambda": 0.95,
-        "actor_lr_start": 3e-4,
-        "critic_lr_start": 5e-4,
-        "lr_end": 1.5e-5,
-        "lr_schedule": "cosine",
-        "ent_start": 0.010,
-        "ent_end": 0.001,
-        "max_std_start": 0.45,
-        "max_std_end": 0.09,
-        "action_bound_coef": 0.02,
-        "vf_clip": 0.2,
-        "target_kl": 0.025,
-        "adaptive_tracks": True,
-        "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v8.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v8.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v8.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v8.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v8"),
-        "curriculum": "adaptive_3phase",
-        "env_options": {
-            "brakingZoneSpawnRatio": 0.45,
-            "tightPackRatio": 0.35,
-            "technicalTrackBoost": 2.2,
-            "spawnGhostSeconds": 2.0,
-            "enableCarPhysicsCollisions": True,
-        },
-        "rewards": {
-            "forwardProgress": 0.46,
-            "closeProximity": 0.12,
-            "minSpeedThreshold": 14.0,
-            "minSpeedPenalty": 0.10,
-            "floorSpeedThreshold": 7.0,
-            "floorSpeedPenalty": 0.35,
-            "offTrackBase": 1.4,
-            "offTrackSlope": 0.45,
-            "steerJerk": 0.09,
-            "throttleBrakeOverlap": 0.24,
-            "carCrash": 22.0,
-            "wallCrash": 28.0,
-            "wallScrapeBase": 1.3,
-            "wallScrapeDamageScale": 0.8,
-            "wallScrapeCap": 4.5,
-            "maxWallScrapes": 4,
-            "lapCompletionBonus": 20.0,
-            "cornerSurvivalBonus": 0.08,
-            "cleanOvertakeBonus": 3.5,
-            "ghostOverlapPenalty": 1.6,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.45,
-        },
-    },
-    "v9": {
-        "name": "v9_apex_master",
-        "description": "All-in-One Master Driver: 3x128 ResMLP LN+ObsNorm, V7 technical lookahead, multi-line racecraft, straightaway bump-drafting, max pace & track discipline",
-        "hidden_dim": 128,
-        "num_hidden_layers": 3,
-        "layer_norm": True,
-        "residual": True,
-        "activation": "tanh",
-        "ortho_init": True,
-        "use_obs_norm": True,
-        "obs_config": OBS_CONFIG_V7_TECHNICAL,
-        "default_steps": 512,
-        "default_workers": 4,
-        "gamma": 0.997,
-        "gae_lambda": 0.96,
-        "actor_lr_start": 2.8e-4,
-        "critic_lr_start": 5e-4,
-        "lr_end": 1.5e-5,
-        "lr_schedule": "cosine",
-        "ent_start": 0.010,
-        "ent_end": 0.001,
-        "max_std_start": 0.45,
-        "max_std_end": 0.08,
-        "action_bound_coef": 0.02,
-        "vf_clip": 0.2,
-        "target_kl": 0.022,
-        "adaptive_tracks": True,
-        "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v9.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v9.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v9.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v9.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v9"),
-        "curriculum": "v9_master_3phase",
-        "env_options": {
-            "brakingZoneSpawnRatio": 0.35,
-            "tightPackRatio": 0.25,
-            "multiLineTrafficRatio": 0.55,
-            "startScenarioRatio": 0.12,
-            "rollingStartRatio": 0.45,
-            "technicalTrackBoost": 2.5,
-            "spawnGhostSeconds": 1.8,
-            "enableCarPhysicsCollisions": True,
-        },
-        "rewards": {
-            "forwardProgress": 0.50,
-            "closeProximity": 0.11,
-            "minSpeedThreshold": 14.0,
-            "minSpeedPenalty": 0.10,
-            "floorSpeedThreshold": 7.5,
-            "floorSpeedPenalty": 0.40,
-            "offTrackBase": 1.6,
-            "offTrackSlope": 0.50,
-            "steerJerk": 0.09,
-            "throttleBrakeOverlap": 0.24,
-            "carCrash": 26.0,
-            "wallCrash": 30.0,
-            "wallScrapeBase": 1.4,
-            "wallScrapeDamageScale": 0.85,
-            "wallScrapeCap": 4.8,
-            "maxWallScrapes": 3,
-            "lapCompletionBonus": 24.0,
-            "cornerSurvivalBonus": 0.10,
-            "cleanOvertakeBonus": 4.5,
-            "alternateLineOvertakeBonus": 2.8,
-            "bumpDraftBonus": 0.14,
-            "ghostOverlapPenalty": 2.0,
-            "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.42,
-        },
-    },
-    "v9_2": {
-        "name": "v9_2_physics_master",
-        "description": "Advanced Physics Master (v9_2): 59-dim obs (4-wheel tires, brakes/fade/lock-up, dirty air, wet/puddles, damage, crest load, blue flags), 3x192 ResMLP LN+ObsNorm, tuned for 9800X3D + RTX 4060",
+        "name": "v1_physics_master",
+        "description": "V1 Physics Master (former V9.2): 59-dim obs (4-wheel tires, brakes/fade/lock-up, dirty air, wet/puddles, damage, crest load, blue flags), 3x192 ResMLP LN+ObsNorm, tuned for Ryzen 9800X3D + RTX 4060",
         "obs_dim": 59,
         "hidden_dim": 192,
         "num_hidden_layers": 3,
@@ -492,8 +60,10 @@ VARIANTS = {
         "ortho_init": True,
         "use_obs_norm": True,
         "obs_config": OBS_CONFIG_V7_TECHNICAL,
+        "default_envs": 96,
         "default_steps": 512,
         "default_workers": 12,
+        "default_updates": 2500,
         "gamma": 0.997,
         "gae_lambda": 0.96,
         "actor_lr_start": 2.6e-4,
@@ -509,12 +79,12 @@ VARIANTS = {
         "target_kl": 0.022,
         "adaptive_tracks": True,
         "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v9_2.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_v9_2.best.json"),
-        "metrics": os.path.join("audit", "ppo_metrics_v9_2.jsonl"),
-        "data_js": os.path.join("audit", "ppo_data_v9_2.js"),
-        "pool_dir": os.path.join("audit", "selfplay_pool_v9_2"),
-        "curriculum": "v9_master_3phase",
+        "weights": os.path.join("src", "game", "aiPolicyWeights_v1.json"),
+        "backup": os.path.join("audit", "aiPolicyWeights_v1.best.json"),
+        "metrics": os.path.join("audit", "ppo_metrics_v1.jsonl"),
+        "data_js": os.path.join("audit", "ppo_data_v1.js"),
+        "pool_dir": os.path.join("audit", "selfplay_pool_v1"),
+        "curriculum": "v1_physics_3phase",
         "env_options": {
             "obsDim": 59,
             "advancedPhysicsRandomization": True,
@@ -558,9 +128,90 @@ VARIANTS = {
             "gravelPenalty": 0.85,
         },
     },
+    "v2": {
+        "name": "v2_racecraft_master",
+        "description": "V2 Section 4 Racecraft & Turn-1 Master: 59-dim obs, 3x192 ResMLP LN+ObsNorm, Turn-1 cold-tire braking discipline, multi-class traffic & blue-flag passing, defensive racecraft & wet crossovers",
+        "obs_dim": 59,
+        "hidden_dim": 192,
+        "num_hidden_layers": 3,
+        "layer_norm": True,
+        "residual": True,
+        "activation": "tanh",
+        "ortho_init": True,
+        "use_obs_norm": True,
+        "obs_config": OBS_CONFIG_V7_TECHNICAL,
+        "default_envs": 96,
+        "default_steps": 512,
+        "default_workers": 12,
+        "default_updates": 2500,
+        "gamma": 0.997,
+        "gae_lambda": 0.96,
+        "actor_lr_start": 2.4e-4,
+        "critic_lr_start": 4.6e-4,
+        "lr_end": 1.0e-5,
+        "lr_schedule": "cosine",
+        "ent_start": 0.0095,
+        "ent_end": 0.0009,
+        "max_std_start": 0.42,
+        "max_std_end": 0.075,
+        "action_bound_coef": 0.02,
+        "vf_clip": 0.2,
+        "target_kl": 0.020,
+        "adaptive_tracks": True,
+        "checkpoint_metric": "composite",
+        "weights": os.path.join("src", "game", "aiPolicyWeights_v2.json"),
+        "backup": os.path.join("audit", "aiPolicyWeights_v2.best.json"),
+        "metrics": os.path.join("audit", "ppo_metrics_v2.jsonl"),
+        "data_js": os.path.join("audit", "ppo_data_v2.js"),
+        "pool_dir": os.path.join("audit", "selfplay_pool_v2"),
+        "curriculum": "v2_racecraft_3phase",
+        "env_options": {
+            "obsDim": 59,
+            "advancedPhysicsRandomization": True,
+            "wetEpisodeRatio": 0.32,
+            "brakingZoneSpawnRatio": 0.42,
+            "tightPackRatio": 0.34,
+            "multiLineTrafficRatio": 0.65,
+            "startScenarioRatio": 0.24,
+            "rollingStartRatio": 0.40,
+            "technicalTrackBoost": 2.7,
+            "spawnGhostSeconds": 1.7,
+            "enableCarPhysicsCollisions": True,
+        },
+        "rewards": {
+            "forwardProgress": 0.52,
+            "closeProximity": 0.13,
+            "minSpeedThreshold": 14.0,
+            "minSpeedPenalty": 0.10,
+            "floorSpeedThreshold": 7.5,
+            "floorSpeedPenalty": 0.40,
+            "offTrackBase": 1.85,
+            "offTrackSlope": 0.58,
+            "steerJerk": 0.10,
+            "throttleBrakeOverlap": 0.28,
+            "carCrash": 29.0,
+            "wallCrash": 35.0,
+            "wallScrapeBase": 1.60,
+            "wallScrapeDamageScale": 0.95,
+            "wallScrapeCap": 5.2,
+            "maxWallScrapes": 3,
+            "lapCompletionBonus": 26.0,
+            "cornerSurvivalBonus": 0.13,
+            "cleanOvertakeBonus": 5.2,
+            "alternateLineOvertakeBonus": 3.4,
+            "bumpDraftBonus": 0.15,
+            "ghostOverlapPenalty": 2.2,
+            "stallStopSpeed": 2.0,
+            "ttcPenalty": 0.50,
+            "brakeLockupPenalty": 0.30,
+            "tireOverheatPenalty": 0.16,
+            "gravelPenalty": 0.95,
+        },
+    },
     "starts": {
         "name": "starts_grid_launch",
-        "description": "Dedicated Race Starts Specialist: 2x128 ResMLP LN+ObsNorm trained on 2x2 standing (0 m/s) & rolling formation starts into Turn 1",
+        "description": "Dedicated Race Starts Specialist: 2x128 ResMLP LN+ObsNorm trained on 2x2 standing (0 m/s) & rolling formation starts with clean Turn-1 braking survival",
+        "obs_dim": 43,
         "hidden_dim": 128,
         "num_hidden_layers": 2,
         "layer_norm": True,
@@ -569,8 +220,10 @@ VARIANTS = {
         "ortho_init": True,
         "use_obs_norm": True,
         "obs_config": OBS_CONFIG_V5_DEFAULT,
+        "default_envs": 48,
         "default_steps": 512,
-        "default_workers": 4,
+        "default_workers": 8,
+        "default_updates": 1200,
         "gamma": 0.992,
         "gae_lambda": 0.95,
         "actor_lr_start": 3e-4,
@@ -587,61 +240,54 @@ VARIANTS = {
         "adaptive_tracks": True,
         "checkpoint_metric": "composite",
         "weights": os.path.join("src", "game", "aiPolicyWeights_starts.json"),
-        "backup": os.path.join("src", "game", "aiPolicyWeights_starts.best.json"),
+        "backup": os.path.join("audit", "aiPolicyWeights_starts.best.json"),
         "metrics": os.path.join("audit", "ppo_metrics_starts.jsonl"),
         "data_js": os.path.join("audit", "ppo_data_starts.js"),
         "pool_dir": os.path.join("audit", "selfplay_pool_starts"),
         "curriculum": False,
         "traffic_mix": {"soloRatio": 0.05, "scriptedRatio": 0.55, "selfplayRatio": 0.40},
         "env_options": {
-            "startScenarioRatio": 0.92,
-            "rollingStartRatio": 0.45,
-            "maxEpisodeSteps": 750,
-            "brakingZoneSpawnRatio": 0.0,
-            "tightPackRatio": 0.08,
-            "technicalTrackBoost": 1.6,
-            "spawnGhostSeconds": 2.0,
+            "startScenarioRatio": 0.94,
+            "rollingStartRatio": 0.40,
+            "maxEpisodeSteps": 850,
+            "brakingZoneSpawnRatio": 0.06,
+            "tightPackRatio": 0.12,
+            "technicalTrackBoost": 1.8,
+            "spawnGhostSeconds": 1.8,
             "enableCarPhysicsCollisions": True,
         },
         "rewards": {
-            "forwardProgress": 0.52,
-            "launchAccelBonus": 0.45,
+            "forwardProgress": 0.50,
+            "launchAccelBonus": 0.42,
             "closeProximity": 0.12,
             "minSpeedThreshold": 14.0,
             "minSpeedPenalty": 0.14,
             "floorSpeedThreshold": 6.0,
             "floorSpeedPenalty": 0.45,
-            "offTrackBase": 1.5,
-            "offTrackSlope": 0.45,
+            "offTrackBase": 1.90,
+            "offTrackSlope": 0.55,
             "steerJerk": 0.10,
-            "throttleBrakeOverlap": 0.25,
-            "carCrash": 24.0,
-            "wallCrash": 26.0,
-            "wallScrapeBase": 1.2,
-            "wallScrapeDamageScale": 0.75,
-            "wallScrapeCap": 4.0,
-            "maxWallScrapes": 4,
-            "lapCompletionBonus": 10.0,
-            "cornerSurvivalBonus": 0.08,
-            "cleanOvertakeBonus": 3.0,
-            "ghostOverlapPenalty": 2.0,
+            "throttleBrakeOverlap": 0.28,
+            "carCrash": 28.0,
+            "wallCrash": 32.0,
+            "wallScrapeBase": 1.45,
+            "wallScrapeDamageScale": 0.85,
+            "wallScrapeCap": 4.8,
+            "maxWallScrapes": 3,
+            "lapCompletionBonus": 12.0,
+            "cornerSurvivalBonus": 0.14,
+            "cleanOvertakeBonus": 3.2,
+            "ghostOverlapPenalty": 2.2,
             "stallStopSpeed": 2.0,
-            "ttcPenalty": 0.45,
+            "ttcPenalty": 0.55,
         },
     },
 }
 
 # Alias map for convenient variant naming
 VARIANT_ALIASES = {
-    "1": "v1", "v1": "v1", "v1_clean_apex": "v1", "clean_apex": "v1",
-    "2": "v2", "v2": "v2", "v2_momentum": "v2", "momentum": "v2",
-    "3": "v3", "v3": "v3", "v3_aggressive_pace": "v3", "aggressive_pace": "v3",
-    "4": "v4", "v4": "v4", "v4_curriculum": "v4", "curriculum": "v4",
-    "5": "v5", "v5": "v5", "v5_hotlap_pace": "v5", "hotlap": "v5", "hotlap_pace": "v5",
-    "6": "v6", "v6": "v6", "v6_traffic_racecraft": "v6", "traffic": "v6", "racecraft": "v6",
-    "7": "v7", "v7": "v7", "v7_wall_survival": "v7", "survival": "v7", "wall_survival": "v7",
-    "8": "v8", "v8": "v8", "v8_flagship_adaptive": "v8", "flagship": "v8", "adaptive": "v8",
-    "9": "v9", "v9": "v9", "v9_apex_master": "v9", "master": "v9", "apex_master": "v9",
+    "1": "v1", "v1": "v1", "v1_physics_master": "v1", "v9_2": "v1", "physics": "v1",
+    "2": "v2", "v2": "v2", "v2_racecraft_master": "v2", "racecraft": "v2", "s4": "v2",
     "starts": "starts", "start": "starts", "starts_grid_launch": "starts", "launch": "starts", "grid": "starts",
 }
 
@@ -966,6 +612,12 @@ def export_actor_to_json(
             obs_rms=obs_rms,
             obs_config=obs_config,
         )
+        # Keep public/models/policies/ mirrored for runtime browser ANB1 hot-loading
+        norm_p = os.path.normpath(path).replace("\\", "/")
+        if norm_p.startswith("src/game/aiPolicyWeights_"):
+            public_dir = os.path.join("public", "models", "policies")
+            os.makedirs(public_dir, exist_ok=True)
+            shutil.copy2(bin_path, os.path.join(public_dir, os.path.basename(bin_path)))
     except Exception:
         pass
 
@@ -1111,75 +763,11 @@ def compute_curriculum_state(
         mix = dict(base_traffic_mix) if base_traffic_mix else {"soloRatio": 0.20, "scriptedRatio": 0.35, "selfplayRatio": 0.45}
         return 1, mix, None, None
 
-    if curriculum_mode == "traffic_v6":
-        phase1_end = max(1, int(round(0.20 * total_updates)))
-        if update <= phase1_end:
-            eo = dict(base_env_options or {})
-            eo["spawnGhostSeconds"] = 2.4
-            eo["enableCarPhysicsCollisions"] = True
-            return 1, {"soloRatio": 0.60, "scriptedRatio": 0.40, "selfplayRatio": 0.0}, None, eo
-        ramp = max(0.0, min(1.0, (update - phase1_end) / max(1, total_updates - phase1_end)))
-        scripted = round(0.40, 4)
-        selfplay = round(0.50 * ramp, 4)
-        solo = round(max(0.10, 1.0 - scripted - selfplay), 4)
-        # Re-normalize cleanly to sum to 1.0
-        scripted = round(max(0.0, 1.0 - solo - selfplay), 4)
-        eo = dict(base_env_options or {})
-        # Tighten spawn ghosting window in Phase 2 so policy establishes clean lanes early before turning solid
-        eo["spawnGhostSeconds"] = 1.8
-        eo["enableCarPhysicsCollisions"] = True
-        return 2, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, None, eo
-
-    if curriculum_mode == "adaptive_3phase":
-        p1_end = max(1, int(round(0.30 * total_updates)))
-        p2_end = max(p1_end + 1, int(round(0.65 * total_updates)))
-        if update <= p1_end:
-            # Phase 1: Survival & Heavy Braking Foundation (100% solo, heavy braking spawns)
-            rew = dict(base_rewards)
-            rew["forwardProgress"] = 0.42
-            rew["wallCrash"] = 30.0
-            rew["wallScrapeBase"] = 1.4
-            rew["cornerSurvivalBonus"] = 0.10
-            eo = dict(base_env_options or {})
-            eo["brakingZoneSpawnRatio"] = 0.45
-            eo["spawnGhostSeconds"] = 0.0
-            eo["enableCarPhysicsCollisions"] = False
-            return 1, {"soloRatio": 1.0, "scriptedRatio": 0.0, "selfplayRatio": 0.0}, rew, eo
-        if update <= p2_end:
-            # Phase 2: Hotlap Pace & Apex Commitment (90% solo / 10% scripted with gentle spawn ghosting)
-            rew = dict(base_rewards)
-            rew["forwardProgress"] = 0.54
-            rew["wallCrash"] = 26.0
-            rew["wallScrapeBase"] = 1.2
-            rew["cornerSurvivalBonus"] = 0.06
-            eo = dict(base_env_options or {})
-            eo["brakingZoneSpawnRatio"] = 0.30
-            eo["spawnGhostSeconds"] = 2.2
-            eo["enableCarPhysicsCollisions"] = True
-            return 2, {"soloRatio": 0.90, "scriptedRatio": 0.10, "selfplayRatio": 0.0}, rew, eo
-        # Phase 3: Full Traffic Racecraft Ramp (to 30% solo / 30% scripted / 40% selfplay, tighter 1.8s ghost window)
-        ramp = max(0.0, min(1.0, (update - p2_end) / max(1, total_updates - p2_end)))
-        scripted = round(0.10 + 0.20 * ramp, 4)
-        selfplay = round(0.40 * ramp, 4)
-        solo = round(max(0.30, 1.0 - scripted - selfplay), 4)
-        rew = dict(base_rewards)
-        rew["forwardProgress"] = 0.50
-        rew["wallCrash"] = 25.0
-        rew["carCrash"] = 22.0
-        rew["wallScrapeBase"] = 1.2
-        rew["cornerSurvivalBonus"] = 0.05
-        rew["ghostOverlapPenalty"] = 1.8
-        eo = dict(base_env_options or {})
-        eo["brakingZoneSpawnRatio"] = 0.25
-        eo["spawnGhostSeconds"] = 1.8
-        eo["enableCarPhysicsCollisions"] = True
-        return 3, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
-
-    if curriculum_mode == "v9_master_3phase":
+    if curriculum_mode in ("v1_physics_3phase", "v9_master_3phase"):
         p1_end = max(1, int(round(0.25 * total_updates)))
         p2_end = max(p1_end + 1, int(round(0.60 * total_updates)))
         if update <= p1_end:
-            # Phase 1: Technical Track Survival & Pace Foundation (85% solo / 15% scripted, heavy braking zones)
+            # Phase 1: Technical Track Survival & Physics Foundation (85% solo / 15% scripted, heavy braking zones)
             rew = dict(base_rewards)
             rew["forwardProgress"] = 0.46
             rew["wallCrash"] = 32.0
@@ -1189,7 +777,7 @@ def compute_curriculum_state(
             eo = dict(base_env_options or {})
             eo["brakingZoneSpawnRatio"] = 0.42
             eo["multiLineTrafficRatio"] = 0.30
-            eo["startScenarioRatio"] = 0.06
+            eo["startScenarioRatio"] = 0.08
             eo["spawnGhostSeconds"] = 2.0
             eo["enableCarPhysicsCollisions"] = True
             return 1, {"soloRatio": 0.85, "scriptedRatio": 0.15, "selfplayRatio": 0.0}, rew, eo
@@ -1209,42 +797,99 @@ def compute_curriculum_state(
             eo = dict(base_env_options or {})
             eo["brakingZoneSpawnRatio"] = 0.30
             eo["multiLineTrafficRatio"] = 0.55
-            eo["startScenarioRatio"] = 0.10
+            eo["startScenarioRatio"] = 0.12
             eo["spawnGhostSeconds"] = 1.9
             eo["enableCarPhysicsCollisions"] = True
             return 2, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
-        # Phase 3: Full All-Rounder Mastery (Dense Selfplay + Multi-Line Battles + Bump-Drafting + Max Pace)
+        # Phase 3: Full Physics Mastery (Dense Selfplay + Multi-Line Battles + Bump-Drafting + Max Pace)
         ramp = max(0.0, min(1.0, (update - p2_end) / max(1, total_updates - p2_end)))
         selfplay = round(0.30 + 0.20 * ramp, 4)
         scripted = round(0.35 - 0.10 * ramp, 4)
         solo = round(max(0.25, 1.0 - scripted - selfplay), 4)
         rew = dict(base_rewards)
         rew["forwardProgress"] = 0.52
-        rew["wallCrash"] = 30.0
+        rew["wallCrash"] = 32.0
         rew["carCrash"] = 26.0
         rew["cleanOvertakeBonus"] = 5.0
         rew["alternateLineOvertakeBonus"] = 3.0
         rew["bumpDraftBonus"] = 0.14
         rew["ghostOverlapPenalty"] = 2.2
         eo = dict(base_env_options or {})
-        eo["brakingZoneSpawnRatio"] = 0.25
+        eo["brakingZoneSpawnRatio"] = 0.28
         eo["multiLineTrafficRatio"] = 0.60
-        eo["startScenarioRatio"] = 0.15
+        eo["startScenarioRatio"] = 0.16
         eo["spawnGhostSeconds"] = 1.6
         eo["enableCarPhysicsCollisions"] = True
         return 3, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
 
-    # Legacy v4 2-phase curriculum (preserved identically)
-    phase1_frac = 0.60
-    target_scripted = 0.35
-    target_selfplay = 0.45
-    phase1_end = max(1, int(round(phase1_frac * total_updates)))
+    if curriculum_mode == "v2_racecraft_3phase":
+        p1_end = max(1, int(round(0.22 * total_updates)))
+        p2_end = max(p1_end + 1, int(round(0.58 * total_updates)))
+        if update <= p1_end:
+            # Phase 1: Turn-1 Cold-Tire Braking Discipline & Heavy-Braking Corner Survival
+            rew = dict(base_rewards)
+            rew["forwardProgress"] = 0.45
+            rew["wallCrash"] = 36.0
+            rew["offTrackBase"] = 1.95
+            rew["brakeLockupPenalty"] = 0.32
+            rew["cornerSurvivalBonus"] = 0.15
+            eo = dict(base_env_options or {})
+            eo["brakingZoneSpawnRatio"] = 0.48
+            eo["startScenarioRatio"] = 0.20
+            eo["multiLineTrafficRatio"] = 0.35
+            eo["spawnGhostSeconds"] = 1.9
+            eo["enableCarPhysicsCollisions"] = True
+            return 1, {"soloRatio": 0.72, "scriptedRatio": 0.28, "selfplayRatio": 0.0}, rew, eo
+        if update <= p2_end:
+            # Phase 2: Multi-Class Passing, Blue-Flag Traffic & Clean Alternate-Line Overtaking
+            ramp = max(0.0, min(1.0, (update - p1_end) / max(1, p2_end - p1_end)))
+            scripted = round(0.28 + 0.12 * ramp, 4)
+            selfplay = round(0.32 * ramp, 4)
+            solo = round(max(0.28, 1.0 - scripted - selfplay), 4)
+            rew = dict(base_rewards)
+            rew["forwardProgress"] = 0.52
+            rew["wallCrash"] = 34.0
+            rew["carCrash"] = 28.0
+            rew["cleanOvertakeBonus"] = 5.4
+            rew["alternateLineOvertakeBonus"] = 3.5
+            rew["ttcPenalty"] = 0.50
+            eo = dict(base_env_options or {})
+            eo["brakingZoneSpawnRatio"] = 0.38
+            eo["startScenarioRatio"] = 0.24
+            eo["multiLineTrafficRatio"] = 0.65
+            eo["tightPackRatio"] = 0.36
+            eo["spawnGhostSeconds"] = 1.7
+            eo["enableCarPhysicsCollisions"] = True
+            return 2, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
+        # Phase 3: Full Racecraft Mastery (Dense Self-Play Packs, Standing Starts -> Turn 1, Wet Crossovers)
+        ramp = max(0.0, min(1.0, (update - p2_end) / max(1, total_updates - p2_end)))
+        selfplay = round(0.34 + 0.22 * ramp, 4)
+        scripted = round(0.38 - 0.10 * ramp, 4)
+        solo = round(max(0.18, 1.0 - scripted - selfplay), 4)
+        rew = dict(base_rewards)
+        rew["forwardProgress"] = 0.53
+        rew["wallCrash"] = 35.0
+        rew["carCrash"] = 30.0
+        rew["cleanOvertakeBonus"] = 5.8
+        rew["alternateLineOvertakeBonus"] = 3.8
+        rew["bumpDraftBonus"] = 0.16
+        rew["ghostOverlapPenalty"] = 2.4
+        eo = dict(base_env_options or {})
+        eo["brakingZoneSpawnRatio"] = 0.32
+        eo["startScenarioRatio"] = 0.26
+        eo["multiLineTrafficRatio"] = 0.70
+        eo["tightPackRatio"] = 0.40
+        eo["spawnGhostSeconds"] = 1.5
+        eo["enableCarPhysicsCollisions"] = True
+        return 3, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
+
+    # Fallback 2-phase ramp
+    phase1_end = max(1, int(round(0.45 * total_updates)))
     if update <= phase1_end:
         return 1, {"soloRatio": 1.0, "scriptedRatio": 0.0, "selfplayRatio": 0.0}, None, None
-
     ramp = max(0.0, min(1.0, (update - phase1_end) / max(1, total_updates - phase1_end)))
-    scripted = round(target_scripted * ramp, 4)
-    selfplay = round(target_selfplay * ramp, 4)
+    scripted = round(0.35 * ramp, 4)
+    selfplay = round(0.45 * ramp, 4)
     solo = round(max(0.0, 1.0 - scripted - selfplay), 4)
     return 2, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, None, None
 
@@ -1499,6 +1144,105 @@ def schedule_value(start: float, end: float, progress: float, mode: str = "linea
     return start + p * (end - start)
 
 
+def run_bc_warmstart(
+    model: ActorCritic,
+    obs_rms: RunningMeanStd | None,
+    dataset_path: str,
+    obs_dim: int,
+    device: torch.device,
+    epochs: int = 12,
+    lr: float = 5e-4,
+) -> int:
+    """Supervised Behavioral Cloning warm-start from exported HumanTelemetryRecorder JSONL laps."""
+    if not dataset_path or not os.path.exists(dataset_path):
+        print(f"[BC] Dataset file not found: {dataset_path}")
+        return 0
+    obs_rows: list[np.ndarray] = []
+    act_rows: list[list[float]] = []
+    with open(dataset_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict) or rec.get("type") == "header":
+                continue
+            # Format A: TelemetryLapDemo exported by HumanTelemetryRecorder ({ samples: [[...obs, steer, thrAct, brkAct]] })
+            lap_samples = rec.get("samples")
+            if isinstance(lap_samples, list):
+                for row in lap_samples:
+                    if not isinstance(row, list) or len(row) < 46:
+                        continue
+                    raw_o = row[:-3]
+                    vec = np.zeros(obs_dim, dtype=np.float32)
+                    copy_n = min(obs_dim, len(raw_o))
+                    vec[:copy_n] = np.asarray(raw_o[:copy_n], dtype=np.float32)
+                    if not np.all(np.isfinite(vec)):
+                        continue
+                    act_rows.append([
+                        max(-1.0, min(1.0, float(row[-3]))),
+                        max(-1.0, min(1.0, float(row[-2]))),
+                        max(-1.0, min(1.0, float(row[-1]))),
+                    ])
+                    obs_rows.append(vec)
+                continue
+            # Format B: Per-frame JSONL record ({ obs: [...], steer, throttle, brake })
+            raw_obs = rec.get("obs")
+            if not isinstance(raw_obs, list) or len(raw_obs) < 43:
+                continue
+            vec = np.zeros(obs_dim, dtype=np.float32)
+            copy_n = min(obs_dim, len(raw_obs))
+            vec[:copy_n] = np.asarray(raw_obs[:copy_n], dtype=np.float32)
+            if not np.all(np.isfinite(vec)):
+                continue
+            steer = float(rec.get("steer", 0.0))
+            throttle = float(rec.get("throttle", 0.0))
+            brake = float(rec.get("brake", 0.0))
+            # Convert [0, 1] throttle/brake into tanh-space [-1, 1] targets matching actor mean output
+            act_rows.append([
+                max(-1.0, min(1.0, steer)),
+                max(-1.0, min(1.0, throttle * 2.0 - 1.0)),
+                max(-1.0, min(1.0, brake * 2.0 - 1.0)),
+            ])
+            obs_rows.append(vec)
+    if len(obs_rows) < 32:
+        print(f"[BC] Not enough valid frames ({len(obs_rows)}) in {dataset_path} — skipping BC warm-start.")
+        return 0
+
+    X = np.stack(obs_rows, axis=0)
+    Y = np.asarray(act_rows, dtype=np.float32)
+    if obs_rms is not None:
+        obs_rms.update(X)
+        X = obs_rms.normalize(X)
+
+    x_t = torch.from_numpy(X).to(device)
+    y_t = torch.from_numpy(Y).to(device)
+    opt = torch.optim.Adam(model.actor.parameters(), lr=lr, eps=1e-5)
+    batch_size = min(256, len(obs_rows))
+    model.train()
+    last_loss = 0.0
+    for ep in range(1, max(1, epochs) + 1):
+        perm = torch.randperm(x_t.shape[0], device=device)
+        ep_loss = 0.0
+        n_batches = 0
+        for start in range(0, x_t.shape[0], batch_size):
+            idx = perm[start : start + batch_size]
+            pred = model.actor(x_t[idx])
+            loss = torch.mean((pred - y_t[idx]) ** 2)
+            opt.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.actor.parameters(), 1.0)
+            opt.step()
+            ep_loss += float(loss.item())
+            n_batches += 1
+        last_loss = ep_loss / max(1, n_batches)
+    print(f"[BC] Warm-started actor on {len(obs_rows):,} human frames ({epochs} epochs) | Final MSE: {last_loss:.5f}")
+    return len(obs_rows)
+
+
 def train_single_variant(var_key: str, args):
     cfg = VARIANTS[var_key]
     var_name = cfg["name"]
@@ -1515,10 +1259,25 @@ def train_single_variant(var_key: str, args):
     adaptive_tracks = bool(cfg.get("adaptive_tracks", False))
     checkpoint_metric = str(cfg.get("checkpoint_metric", "mean_rew"))
 
-    steps_per_update = args.steps if args.steps is not None else int(cfg.get("default_steps", 256))
-    default_workers = int(cfg.get("default_workers", 1))
+    num_envs = args.envs if args.envs is not None else int(cfg.get("default_envs", 64))
+    steps_per_update = args.steps if args.steps is not None else int(cfg.get("default_steps", 512))
+    total_updates = 400 if getattr(args, "quick", False) else (
+        args.updates if args.updates is not None else int(cfg.get("default_updates", 2500))
+    )
+    default_workers = int(cfg.get("default_workers", 8))
     cpu_cap = max(1, os.cpu_count() or 1)
-    num_workers = args.workers if args.workers is not None else min(default_workers, args.envs, cpu_cap)
+    num_workers = args.workers if args.workers is not None else min(default_workers, num_envs, cpu_cap)
+    # Prevent PyTorch OpenMP thread oversubscription when running many Node worker processes
+    if num_workers >= 4:
+        os.environ.setdefault("OMP_NUM_THREADS", "2")
+        os.environ.setdefault("MKL_NUM_THREADS", "2")
+        try:
+            torch.set_num_threads(2)
+        except Exception:
+            pass
+    # Keep args.envs and args.updates synced for downstream references in this function
+    args.envs = num_envs
+    args.updates = total_updates
 
     weights_path = args.weights if args.weights else cfg["weights"]
     backup_weights_path = args.backup if args.backup else cfg["backup"]
@@ -1574,6 +1333,18 @@ def train_single_variant(var_key: str, args):
     else:
         from_scratch = True
         print(f"[{var_name}] Training from scratch -> {weights_path}")
+
+    if getattr(args, "bc_dataset", None):
+        bc_frames = run_bc_warmstart(
+            model,
+            obs_rms,
+            args.bc_dataset,
+            obs_dim,
+            device,
+            epochs=getattr(args, "bc_epochs", 12),
+        )
+        if bc_frames > 0:
+            from_scratch = False
 
     os.makedirs("audit", exist_ok=True)
     os.makedirs(pool_dir, exist_ok=True)
@@ -2079,16 +1850,19 @@ def train_single_variant(var_key: str, args):
 
 def main():
     parser = argparse.ArgumentParser(description="Apex Miniature: Unified Reinforcement Learning Policy Trainer (PPO)")
-    parser.add_argument("--variant", "-v", default="v1", help="Policy variant: v1..v9, starts, all (v1..v4), all58 (v5..v8), or all8 (v1..v8)")
-    parser.add_argument("--all", action="store_true", help="Sequentially train legacy policy variants (v1..v4)")
-    parser.add_argument("--envs", type=int, default=32, help="Number of parallel env slots (default: 32)")
-    parser.add_argument("--workers", type=int, default=None, help="Number of headlessEnv OS worker processes (default: 1 for v1..v4, 4 for v5..v9/starts)")
-    parser.add_argument("--steps", type=int, default=None, help="Rollout steps per env before PPO update (default: 256 for v1..v4, 512 for v5..v9/starts)")
-    parser.add_argument("--updates", type=int, default=1000, help="Total PPO updates (default: 1000)")
+    parser.add_argument("--variant", "-v", default="v1", help="Policy variant: v1 (Physics Master), v2 (Section 4 Racecraft Master), starts, or all (v1 + v2)")
+    parser.add_argument("--all", action="store_true", help="Sequentially train v1 and v2")
+    parser.add_argument("--envs", type=int, default=None, help="Number of parallel env slots (default: 96 for v1/v2, 48 for starts)")
+    parser.add_argument("--workers", type=int, default=None, help="Number of headlessEnv OS worker processes (default: 12 for v1/v2, 8 for starts)")
+    parser.add_argument("--steps", type=int, default=None, help="Rollout steps per env before PPO update (default: 512)")
+    parser.add_argument("--updates", type=int, default=None, help="Total PPO updates (default: 2500 for v1/v2, 1200 for starts)")
+    parser.add_argument("--quick", action="store_true", help="Quick smoke/validation run (400 updates)")
     parser.add_argument("--tracks", nargs="*", default=None, help="Optional subset of track IDs for targeted fine-tuning")
     parser.add_argument("--cars", nargs="*", default=None, help="Optional subset of car IDs for targeted fine-tuning")
     parser.add_argument("--scratch", action="store_true", help="Ignore existing weights and train from zero")
     parser.add_argument("--init-from", default=None, help="Optional weights JSON path to warm-start actor & obsNorm from")
+    parser.add_argument("--bc-dataset", default=None, help="Optional HumanTelemetryRecorder .jsonl file for Behavioral Cloning warm-start")
+    parser.add_argument("--bc-epochs", type=int, default=12, help="Number of supervised BC warm-start epochs (default: 12)")
     parser.add_argument("--reset-best", action="store_true", help="Allow overwriting checkpoint even if reward baseline changed")
     parser.add_argument("--no-reset-best", action="store_true", help="Disallow overwriting checkpoint if reward baseline changed")
     parser.add_argument("--actor-lr", type=float, default=None, help="Override starting actor learning rate")
@@ -2109,19 +1883,21 @@ def main():
 
     v_arg = args.variant.lower()
     if args.all or v_arg == "all":
-        selected_variants = ["v1", "v2", "v3", "v4"]
-    elif v_arg in ("all58", "v5-v8", "v5..v8"):
-        selected_variants = ["v5", "v6", "v7", "v8"]
-    elif v_arg in ("all8", "v1-v8", "v1..v8"):
-        selected_variants = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"]
+        selected_variants = ["v1", "v2"]
+    elif v_arg in ("all-with-starts", "everything"):
+        selected_variants = ["v1", "v2", "starts"]
     else:
         norm_key = VARIANT_ALIASES.get(v_arg, v_arg)
         if norm_key not in VARIANTS:
-            print(f"Unknown variant '{args.variant}'. Valid choices: {', '.join(VARIANTS.keys())}, all, all58, or all8.")
+            print(f"Unknown variant '{args.variant}'. Valid choices: v1, v2, starts, all, or all-with-starts.")
             sys.exit(1)
         selected_variants = [norm_key]
 
+    base_envs = args.envs
+    base_updates = args.updates
     for v_key in selected_variants:
+        args.envs = base_envs
+        args.updates = base_updates
         train_single_variant(v_key, args)
 
 

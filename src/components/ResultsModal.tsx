@@ -1,8 +1,10 @@
-import { Award, ChevronRight, Trophy } from 'lucide-react';
+import { useState } from 'react';
+import { Award, ChevronRight, Download, Trophy } from 'lucide-react';
 import { CAR_CLASSES, getCarById } from '../game/cars';
 import { ActiveChampionshipState } from '../game/championship';
 import { formatLapTime } from '../game/physics';
 import { computeTrackClassMedalTargets, evaluateMedal } from '../game/records';
+import { telemetryRecorder } from '../game/telemetryRecorder';
 import { getTrackById } from '../game/tracks';
 import { HudSnapshot, MedalTier, RaceConfig } from '../game/types';
 
@@ -31,6 +33,8 @@ export function ResultsModal({
   onRaceAgain,
   onReturnToTitle,
 }: ResultsModalProps) {
+  const [bcExportLabel, setBcExportLabel] = useState<string | null>(null);
+  const recordedCleanLaps = telemetryRecorder.getRecordedLaps().filter((l) => l.isClean);
   const isAiRace = snapshot.sessionMode === 'ai-race';
   const isElimination = snapshot.sessionMode === 'elimination';
   const focusRow = isAiRace
@@ -224,6 +228,11 @@ export function ResultsModal({
                     </td>
                     <td className="py-2.5 pr-3">
                       <span>{row.name}</span>
+                      {row.nationality && (
+                        <span className="ml-1.5 text-[9px] font-telemetry text-slate-400">
+                          [{row.nationality}]
+                        </span>
+                      )}
                       {row.eliminated && (
                         <span className="ml-1.5 px-1 py-0.5 rounded bg-orange-950 border border-orange-500/40 text-[9px] font-bold text-orange-300">
                           OUT
@@ -254,6 +263,22 @@ export function ResultsModal({
 
         {/* Footer Actions */}
         <div className="px-4 py-3 sm:px-6 sm:py-4 border-t border-white/10 flex flex-wrap items-center justify-end gap-2 sm:gap-3 bg-[#0d1118]">
+          {recordedCleanLaps.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const res = telemetryRecorder.downloadDatasetBundle({ cleanOnly: true });
+                if (res.lapCount > 0) {
+                  setBcExportLabel(`Exported ${res.lapCount} clean lap(s)`);
+                }
+              }}
+              className="mr-auto px-3 py-2 rounded bg-[#101c2c] hover:bg-[#172840] border border-sky-500/35 text-xs font-semibold text-sky-300 cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+              title="Export clean human laps as JSONL for scripts/trainPPO.py --bc-dataset"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {bcExportLabel ?? `Export ${recordedCleanLaps.length} BC Lap(s)`}
+            </button>
+          )}
           <a
             href="/"
             className="px-4 py-2.5 rounded bg-transparent hover:bg-sky-500/10 border border-sky-500/30 hover:border-sky-400 text-xs font-semibold text-sky-400 cursor-pointer flex items-center gap-1.5 transition-colors"

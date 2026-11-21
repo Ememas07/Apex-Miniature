@@ -2547,7 +2547,7 @@ test('Specials operate in toggle mode across classes: press ON, stays ON without
   assert.equal(v10Car.specialActive, false);
 });
 
-test('AI Policy Variants & Validation Hardening: exposes v5..v9_2, loads v5..v9 + starts, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
+test('AI Policy Variants & Validation Hardening: exposes unified v1/v2 + starts, validates v3 ResMLP+LN+ObsNorm, and rejects jagged/NaN weights', async () => {
   const {
     getAiPolicyVariants,
     evaluateNeuralPolicy,
@@ -2560,18 +2560,17 @@ test('AI Policy Variants & Validation Hardening: exposes v5..v9_2, loads v5..v9 
   const variants = getAiPolicyVariants();
   assert.deepEqual(
     variants.map((v) => v.id),
-    ['v5', 'v6', 'v7', 'v8', 'v9', 'v9_2'],
+    ['v1', 'v2'],
   );
-  for (const v of variants.filter((entry) => entry.id !== 'v9_2')) {
-    assert.equal(v.loaded, true, `Expected ${v.id} weights to be loaded and valid`);
-    assert.equal(v.obsDim, 43);
-    assert.equal(v.hiddenDim, 128);
-  }
+  const v1Entry = variants.find((v) => v.id === 'v1')!;
+  assert.equal(v1Entry.loaded, true, 'Expected v1 weights to be loaded and valid');
+  assert.ok(v1Entry.obsDim === 43 || v1Entry.obsDim === 59);
+  assert.ok(v1Entry.hiddenDim !== null && v1Entry.hiddenDim >= 128);
   assert.equal(getStartPolicyStatus().loaded, true, 'Expected starts policy to be loaded directly');
 
-  const obs = new Array(43).fill(0);
+  const obs = new Array(v1Entry.obsDim).fill(0);
   obs[0] = 0.5;
-  const blended = evaluateBlendedNeuralPolicy(obs, { v5: 15, v6: 15, v7: 30, v8: 40 });
+  const blended = evaluateBlendedNeuralPolicy(obs, { v1: 100, v2: 0 });
   assert.ok(blended !== null);
   assert.ok(Number.isFinite(blended.steer) && blended.steer >= -1 && blended.steer <= 1);
   assert.ok(Number.isFinite(blended.throttle) && blended.throttle >= 0 && blended.throttle <= 1);
@@ -2611,7 +2610,7 @@ test('AI Policy Variants & Validation Hardening: exposes v5..v9_2, loads v5..v9 
     },
   });
   assert.ok(v3Policy !== null, 'Expected valid v3 3-layer ResMLP+LN+ObsNorm policy');
-  const v3Out = evaluateNeuralPolicy(obs, v3Policy);
+  const v3Out = evaluateNeuralPolicy(obs.slice(0, 43), v3Policy);
   assert.ok(v3Out !== null);
   assert.ok(v3Out.throttle > 0.5 && v3Out.brake < 0.5, 'Expected positive throttle bias and low brake bias');
 
@@ -2632,10 +2631,10 @@ test('AI Policy Variants & Validation Hardening: exposes v5..v9_2, loads v5..v9 
   assert.ok(obsV3.every((v) => Number.isFinite(v)), 'Expected all v3 observations finite');
 
   // Jagged inner row length must be rejected
-  const validBase = variants.find((v) => v.id === 'v8')!.weights!;
+  const validBase = v1Entry.weights!;
   const jagged = {
     ...validBase,
-    w0: validBase.w0.map((row, idx) => (idx === 0 ? row.slice(0, 42) : row)),
+    w0: validBase.w0.map((row, idx) => (idx === 0 ? row.slice(0, validBase.obsDim - 1) : row)),
   };
   assert.equal(validatePolicyWeights(jagged), null);
   assert.equal(evaluateNeuralPolicy(obs, jagged as typeof validBase), null);
@@ -2653,7 +2652,9 @@ test('AI Policy Variants & Validation Hardening: exposes v5..v9_2, loads v5..v9 
   assert.equal(evaluateNeuralPolicy(nanObs, validBase), null);
 });
 
-test('ANB1 Binary Weight Codec: round-trips 3-layer ResMLP+LN+ObsNorm weights with exact Float32 inference parity and ~3-4x size reduction', async () => {
+test('ANB1 Binary Weight Codec: round-trips v1 ResMLP+LN+ObsNorm weights and decodes shipped v1.bin & starts.bin', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
   const {
     getAiPolicyVariants,
     encodePolicyWeightsBinary,
@@ -2661,25 +2662,31 @@ test('ANB1 Binary Weight Codec: round-trips 3-layer ResMLP+LN+ObsNorm weights wi
     evaluateNeuralPolicy,
   } = await import('./aiNeuralPolicy');
 
-  const v8 = getAiPolicyVariants().find((v) => v.id === 'v8')!.weights!;
-  const bin = encodePolicyWeightsBinary(v8);
+  const v1 = getAiPolicyVariants().find((v) => v.id === 'v1')!.weights!;
+  const bin = encodePolicyWeightsBinary(v1);
   assert.equal(String.fromCharCode(bin[0], bin[1], bin[2], bin[3]), 'ANB1');
-  const jsonBytes = Buffer.byteLength(JSON.stringify(v8), 'utf8');
+  const jsonBytes = Buffer.byteLength(JSON.stringify(v1), 'utf8');
   assert.ok(bin.byteLength < jsonBytes * 0.45, `Expected ANB1 (${bin.byteLength}B) to be <45% of JSON (${jsonBytes}B)`);
 
   const decoded = decodePolicyWeightsBinary(bin);
   assert.ok(decoded !== null, 'Expected valid decoded ANB1 PolicyWeights');
-  assert.equal(decoded.numHiddenLayers, v8.numHiddenLayers);
-  assert.equal(decoded.hiddenDim, v8.hiddenDim);
-  assert.equal(decoded.obsDim, 43);
+  assert.equal(decoded.numHiddenLayers, v1.numHiddenLayers);
+  assert.equal(decoded.hiddenDim, v1.hiddenDim);
+  assert.equal(decoded.obsDim, v1.obsDim);
 
-  const obs = new Array(43).fill(0).map((_, i) => Math.sin(i * 0.37) * 0.4);
+  const obs = new Array(v1.obsDim).fill(0).map((_, i) => Math.sin(i * 0.37) * 0.4);
   obs[0] = 0.55;
-  const origOut = evaluateNeuralPolicy(obs, v8)!;
+  const origOut = evaluateNeuralPolicy(obs, v1)!;
   const binOut = evaluateNeuralPolicy(obs, decoded)!;
   assert.ok(Math.abs(origOut.steer - binOut.steer) < 1e-5, 'Steer mismatch after ANB1 round-trip');
   assert.ok(Math.abs(origOut.throttle - binOut.throttle) < 1e-5, 'Throttle mismatch after ANB1 round-trip');
   assert.ok(Math.abs(origOut.brake - binOut.brake) < 1e-5, 'Brake mismatch after ANB1 round-trip');
+
+  // Verify shipped binary weights on disk decode cleanly
+  const v1BinDisk = new Uint8Array(fs.readFileSync(path.resolve('public/models/policies/aiPolicyWeights_v1.bin')));
+  const startsBinDisk = new Uint8Array(fs.readFileSync(path.resolve('public/models/policies/aiPolicyWeights_starts.bin')));
+  assert.ok(decodePolicyWeightsBinary(v1BinDisk) !== null, 'Expected public v1.bin to decode cleanly');
+  assert.ok(decodePolicyWeightsBinary(startsBinDisk) !== null, 'Expected public starts.bin to decode cleanly');
 
   // Corrupted magic bytes must fail safely to null
   const bad = new Uint8Array(bin);
@@ -3649,6 +3656,294 @@ test('Section 3 & On-Track Repair: on-track 3.0s repair (no pit lanes), Ghost/Re
   assert.equal(ko2.winnerCar?.id, 'c1');
 
   assert.ok(getAiPaceOrderModifiers('attack').paceMultiplier > getAiPaceOrderModifiers('conserve').paceMultiplier);
+});
+
+test('Section 4 AI Racecraft, On-Track Strategy, Turn-1 Braking Guard, FE-Only Attack Mode, Track/Class Setups & BC Export', async () => {
+  const {
+    AI_DRIVER_ROSTER,
+    assignAiRosterGrid,
+    evaluateAiRaceStrategy,
+    computeRacecraftOverlay,
+    stepHumanLikeMistake,
+    stepAiStuckRecovery,
+  } = await import('./aiRacecraft');
+  const { computeNeuralAIControl } = await import('./aiNeuralPolicy');
+  const { getDefaultTrackClassSetup, getTrackClassSetupLabel } = await import('./carSetup');
+  const { computeTrackSpecialZones, createRaceControlState, stepRaceControl } = await import('./raceSystems');
+  const { HumanTelemetryRecorder } = await import('./telemetryRecorder');
+
+  // 1) Driver Roster: 24 drivers in 12 coordinated 2-car teams with nationalities
+  assert.equal(AI_DRIVER_ROSTER.length, 24);
+  const gridAssignments = assignAiRosterGrid(10, 'Pro', 42);
+  assert.equal(gridAssignments.length, 10);
+  const uniqueTeams = new Set(gridAssignments.map((a) => a.profile.teamId));
+  assert.ok(uniqueTeams.size <= 6, 'Expected 2-car team pairings across assigned grid');
+  assert.ok(gridAssignments.every((a) => a.profile.nationality.length === 3));
+
+  const monza = compileTrack(getTrackById('monza'), 720);
+  const monaco = compileTrack(getTrackById('monaco'), 720);
+
+  // 2) Authentic AI On-Track Strategy (NO pit lanes): fuel, wet crossover, dry crossover, tire cliff & damage repair
+  const stratCar = createCarSimState({
+    id: 'ai-strat',
+    name: 'L. Rossi',
+    isPlayer: false,
+    carId: 'ferrari-499p',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monza,
+    compound: 'medium',
+  });
+  stratCar.lap = 3;
+  stratCar.fuel = 4; // critical fuel (<1.2 laps)
+  const fuelStop = evaluateAiRaceStrategy({
+    car: stratCar,
+    allCars: [stratCar],
+    trackWetness: 0,
+    remainingLaps: 7,
+    isTimedRace: false,
+    raceTimeRemainingSeconds: null,
+    damageLevel: 'realistic',
+  });
+  assert.equal(fuelStop?.action, 'fuel');
+
+  stratCar.fuel = 80;
+  stratCar.fuelLapsRemaining = 12;
+  const wetStop = evaluateAiRaceStrategy({
+    car: stratCar,
+    allCars: [stratCar],
+    trackWetness: 0.62,
+    remainingLaps: 7,
+    isTimedRace: false,
+    raceTimeRemainingSeconds: null,
+    damageLevel: 'realistic',
+  });
+  assert.equal(wetStop?.action, 'tyres');
+  assert.equal(wetStop?.compound, 'wet');
+
+  stratCar.compound = 'wet';
+  const dryStop = evaluateAiRaceStrategy({
+    car: stratCar,
+    allCars: [stratCar],
+    trackWetness: 0.05,
+    remainingLaps: 7,
+    isTimedRace: false,
+    raceTimeRemainingSeconds: null,
+    damageLevel: 'realistic',
+  });
+  assert.equal(dryStop?.action, 'tyres');
+  assert.ok(dryStop?.compound !== 'wet');
+
+  stratCar.compound = 'medium';
+  stratCar.aeroDamage = 65;
+  const repairStop = evaluateAiRaceStrategy({
+    car: stratCar,
+    allCars: [stratCar],
+    trackWetness: 0,
+    remainingLaps: 7,
+    isTimedRace: false,
+    raceTimeRemainingSeconds: null,
+    damageLevel: 'realistic',
+  });
+  assert.equal(repairStop?.action, 'repair');
+
+  // 3) Multi-class traffic projection & blue-flag yielding
+  const protoCar = createCarSimState({
+    id: 'proto-1',
+    name: 'Proto',
+    isPlayer: false,
+    carId: 'ferrari-499p',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  const gt3Car = createCarSimState({
+    id: 'gt3-1',
+    name: 'GT3',
+    isPlayer: false,
+    carId: 'porsche-911-gt3-r',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  protoCar.trackT = 0.05;
+  protoCar.speed = 72;
+  protoCar.lateralOffset = 0;
+  gt3Car.trackT = (0.05 + 22 / monza.totalLength) % 1;
+  gt3Car.speed = 54;
+  gt3Car.lateralOffset = -1.2;
+  gt3Car.blueFlagActive = true;
+
+  const protoOverlay = computeRacecraftOverlay(protoCar, monza, [protoCar, gt3Car], 1 / 60, 6.5, -5.5, 5.5);
+  assert.equal(protoOverlay.maneuver, 'overtaking');
+  assert.ok(protoOverlay.overrideTargetOffset !== null);
+  const gt3Overlay = computeRacecraftOverlay(gt3Car, monza, [protoCar, gt3Car], 1 / 60, 6.5, -5.5, 5.5);
+  assert.equal(gt3Overlay.maneuver, 'blue-flag');
+
+  // 4) Human-like mistakes disabled during race starts (raceElapsed < 8s)
+  const mistakeAtStart = stepHumanLikeMistake({
+    car: protoCar,
+    dt: 1 / 60,
+    difficulty: 'Rookie',
+    nearCurvature: 0.04,
+    brakeInput: 0.9,
+    underPressure: true,
+    raceElapsed: 3.0,
+  });
+  assert.equal(mistakeAtStart.active, false);
+
+  // 5) Stuck recovery: 3-point reverse after >1.35s wedged, ghosting after >3.0s
+  const stuckCar = createCarSimState({
+    id: 'ai-stuck',
+    name: 'Stuck',
+    isPlayer: false,
+    carId: 'porsche-911-gt3-r',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 2,
+    compiledTrack: monaco,
+    compound: 'soft',
+  });
+  stuckCar.speed = 0.2;
+  stuckCar.lateralOffset = 5.5;
+  stuckCar.heading += 1.6;
+  let rec = stepAiStuckRecovery(stuckCar, monaco, 1.5, true);
+  assert.equal(rec.active, true, 'Expected 3-point reverse recovery to engage after 1.5s wedged');
+  assert.equal(rec.ghosted, false);
+  rec = stepAiStuckRecovery(stuckCar, monaco, 2.0, true);
+  assert.equal(rec.ghosted, true, 'Expected anti-roadblock ghosting after >3.0s stuck');
+  assert.ok((stuckCar.spawnGhostTimer ?? 0) > 0);
+
+  // 6) Turn-1 kinematic braking guard: fast car charging into sharp Turn 1 must apply brakes instead of plowing
+  let sharpT = 0.1;
+  let maxCurv = 0;
+  for (let i = 0; i < 360; i++) {
+    const t = i / 360;
+    const s = sampleTrackAtT(monza, t);
+    if (Math.abs(s.curvature) > maxCurv) {
+      maxCurv = Math.abs(s.curvature);
+      sharpT = t;
+    }
+  }
+  const t1Car = createCarSimState({
+    id: 'ai-t1',
+    name: 'T1 Guard',
+    isPlayer: false,
+    carId: 'f1-26-mercedes',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  t1Car.trackT = (sharpT - 42 / monza.totalLength + 1) % 1;
+  t1Car.speed = 82;
+  const t1Ctrl = computeNeuralAIControl(t1Car, monza, [t1Car], 1 / 60, 0, 'Pro', {
+    raceElapsed: 6.5,
+  });
+  assert.ok(t1Ctrl.brake >= 0.45, `Expected Turn-1 braking guard to brake firmly (got brake=${t1Ctrl.brake.toFixed(2)})`);
+  assert.ok(t1Ctrl.throttle <= 0.35, `Expected Turn-1 braking guard to lift throttle (got throttle=${t1Ctrl.throttle.toFixed(2)})`);
+
+  // 7) Attack Mode must ONLY trigger for Formula E cars (never GT3/F1/GTP)
+  const feCar = createCarSimState({
+    id: 'fe-1',
+    name: 'FE Driver',
+    isPlayer: true,
+    carId: 'fe-porsche-99x',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  const nonFeCar = createCarSimState({
+    id: 'gt3-2',
+    name: 'GT3 Driver',
+    isPlayer: false,
+    carId: 'porsche-911-gt3-r',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  const zones = computeTrackSpecialZones(monza);
+  const az = zones.attackModeZone;
+  const azMidT = ((az.startT + az.endT) * 0.5) % 1;
+  const azSp = sampleTrackAtT(monza, azMidT);
+  const azHalfW = (azSp.width ?? monza.spec.trackWidth) * 0.5;
+  const azLat = az.side * ((az.lateralMinRatio + az.lateralMaxRatio) * 0.5) * azHalfW;
+  feCar.trackT = azMidT;
+  feCar.lateralOffset = azLat;
+  feCar.speed = 35;
+  nonFeCar.trackT = azMidT;
+  nonFeCar.lateralOffset = azLat;
+  nonFeCar.speed = 35;
+  const rcState = createRaceControlState();
+  stepRaceControl(rcState, [feCar, nonFeCar], monza, zones, 1 / 60, {
+    totalLaps: 5,
+    isRace: true,
+    safetyCarEnabled: false,
+  });
+  assert.equal(feCar.inAttackModeZone, true, 'Formula E car inside activation zone must detect Attack Mode');
+  assert.equal(nonFeCar.inAttackModeZone, false, 'Non-Formula E car must NEVER trigger Attack Mode');
+
+  // 8) Auto-loading per-track & per-class default setups for F1, GTP, LMP2, GT3
+  const f1Monza = getDefaultTrackClassSetup('f1-26-mercedes', 'monza');
+  const f1Monaco = getDefaultTrackClassSetup('f1-26-mercedes', 'monaco');
+  assert.ok(f1Monaco.frontWing > f1Monza.frontWing + 20, 'F1 Monaco setup must carry much higher front downforce than Monza');
+  assert.ok(f1Monaco.rearWing > f1Monza.rearWing + 20, 'F1 Monaco setup must carry much higher rear downforce than Monza');
+  const gtpSpa = getDefaultTrackClassSetup('ferrari-499p', 'spa-francorchamps');
+  const lmp2Sebring = getDefaultTrackClassSetup('oreca-07', 'sebring');
+  const gt3Monza = getDefaultTrackClassSetup('porsche-911-gt3-r', 'monza');
+  assert.ok(lmp2Sebring.suspensionStiffness < gtpSpa.suspensionStiffness, 'Sebring bumpy setup should run softer suspension');
+  assert.ok(gt3Monza.frontWing < 55 && gt3Monza.finalDrive > 0, 'GT3 Monza baseline should trim drag with taller final drive');
+  assert.ok(getTrackClassSetupLabel('ferrari-499p', 'monza').includes('GTP'));
+
+  // 9) HumanTelemetryRecorder session lap history & clean-only BC JSONL export
+  const recBc = new HumanTelemetryRecorder();
+  const playerBcCar = createCarSimState({
+    id: 'player-bc',
+    name: 'Player',
+    isPlayer: true,
+    carId: 'ferrari-499p',
+    livery: CARS[0].defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  playerBcCar.speed = 62;
+  playerBcCar.lap = 1;
+  // Simulate 160 clean samples (~5.3s) and cross S/F line
+  for (let i = 0; i < 165; i++) {
+    playerBcCar.trackT = 0.05 + (i / 165) * 0.85;
+    playerBcCar.currentLapTime = 20 + i * (1 / 30);
+    playerBcCar.lateralOffset = 0;
+    recBc.recordStep(playerBcCar, monza, [playerBcCar], { throttle: 1, brake: 0, steer: 0.05, specialPressed: false }, 1 / 30);
+  }
+  playerBcCar.trackT = 0.02;
+  playerBcCar.lap = 2;
+  recBc.recordStep(playerBcCar, monza, [playerBcCar], { throttle: 1, brake: 0, steer: 0, specialPressed: false }, 1 / 30);
+
+  // Second lap with off-track excursion
+  for (let i = 0; i < 165; i++) {
+    playerBcCar.trackT = 0.05 + (i / 165) * 0.85;
+    playerBcCar.currentLapTime = 20 + i * (1 / 30);
+    playerBcCar.lateralOffset = i === 50 ? 15 : 0; // off-track excursion
+    recBc.recordStep(playerBcCar, monza, [playerBcCar], { throttle: 0.8, brake: 0.1, steer: 0.2, specialPressed: false }, 1 / 30);
+  }
+  playerBcCar.trackT = 0.02;
+  playerBcCar.lap = 3;
+  playerBcCar.lateralOffset = 0;
+  recBc.recordStep(playerBcCar, monza, [playerBcCar], { throttle: 1, brake: 0, steer: 0, specialPressed: false }, 1 / 30);
+
+  const laps = recBc.getRecordedLaps();
+  assert.equal(laps.length, 2);
+  assert.equal(laps[0].isClean, true);
+  assert.equal(laps[1].isClean, false);
+  recBc.selectCleanLapsOnly();
+  const bundle = recBc.buildDatasetBundleJsonl();
+  assert.equal(bundle.lapCount, 1);
+  assert.ok(bundle.sampleCount >= 150);
+  assert.ok(bundle.jsonl.includes('"samples":'));
 });
 
 

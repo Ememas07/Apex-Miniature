@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { Volume2, VolumeX, ArrowLeft, Settings } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Volume2, VolumeX, ArrowLeft, Settings, Download } from 'lucide-react';
+import { formatLapTime } from '../game/physics';
+import { RecordedBcLap, telemetryRecorder } from '../game/telemetryRecorder';
 
 interface PauseModalProps {
   onResume: () => void;
@@ -22,6 +24,18 @@ export function PauseModal({
   isMuted: propMuted,
   onToggleMute,
 }: PauseModalProps) {
+  const [recordedLaps, setRecordedLaps] = useState<RecordedBcLap[]>(() =>
+    telemetryRecorder.getRecordedLaps(),
+  );
+  const [bcExportMsg, setBcExportMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRecordedLaps(telemetryRecorder.getRecordedLaps());
+    return telemetryRecorder.subscribe(() => {
+      setRecordedLaps(telemetryRecorder.getRecordedLaps());
+    });
+  }, []);
+
   const [volume, setVolume] = useState<number>(() => {
     if (propVolume !== undefined) return propVolume;
     try {
@@ -63,6 +77,8 @@ export function PauseModal({
     onToggleMute?.();
   };
 
+  const selectedCount = recordedLaps.filter((l) => l.included).length;
+
   return (
     <div
       data-testid="pause-modal"
@@ -89,7 +105,7 @@ export function PauseModal({
               )}
               Master Volume
             </span>
-            <span className="font-mono text-slate-400">
+            <span className="font-mono text-slate-400 tabular-nums">
               {effectiveMuted ? 'MUTED' : `${Math.round(effectiveVolume * 100)}%`}
             </span>
           </div>
@@ -122,6 +138,71 @@ export function PauseModal({
             </button>
           </div>
         </div>
+
+        {/* Behavioral Cloning Dataset Export (visible once laps are recorded) */}
+        {recordedLaps.length > 0 && (
+          <div
+            data-testid="bc-export-panel"
+            className="p-3 rounded-lg bg-[#0c121b] border border-sky-500/25 space-y-2"
+          >
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-sky-300">
+                AI Behavioral Cloning ({recordedLaps.length} laps)
+              </span>
+              <button
+                type="button"
+                onClick={() => telemetryRecorder.selectCleanLapsOnly()}
+                className="text-[10px] font-semibold text-slate-300 hover:text-white underline cursor-pointer whitespace-nowrap"
+              >
+                Clean Only
+              </button>
+            </div>
+            <div className="max-h-24 overflow-y-auto space-y-1 pr-0.5">
+              {recordedLaps.map((lap) => (
+                <label
+                  key={lap.id}
+                  className="flex items-center justify-between gap-2 text-[11px] bg-[#121926] px-2 py-1 rounded border border-white/5 cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={lap.included}
+                      onChange={() => telemetryRecorder.toggleLapIncluded(lap.id)}
+                      className="accent-sky-500 cursor-pointer"
+                    />
+                    <span className="font-telemetry text-white tabular-nums">
+                      L{lap.lapNumber} · {formatLapTime(lap.lapTime)}
+                    </span>
+                  </span>
+                  <span
+                    className={`text-[9px] font-bold uppercase ${
+                      lap.isClean ? 'text-emerald-400' : 'text-amber-400'
+                    }`}
+                  >
+                    {lap.isClean ? 'CLEAN' : 'OFF-TRK'}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <button
+              type="button"
+              disabled={selectedCount === 0}
+              onClick={() => {
+                const res = telemetryRecorder.downloadDatasetBundle();
+                if (res.lapCount > 0) {
+                  setBcExportMsg(`Exported ${res.lapCount} lap(s) (${res.sampleCount} frames)`);
+                }
+              }}
+              className="w-full py-1.5 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-[11px] font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export {selectedCount} Lap(s) JSONL for trainPPO.py
+            </button>
+            {bcExportMsg && (
+              <div className="text-[10px] text-emerald-400 text-center">{bcExportMsg}</div>
+            )}
+          </div>
+        )}
 
         <div className="space-y-2.5">
           <button
