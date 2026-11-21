@@ -3,9 +3,11 @@ import { computeSetupPhysicsModifiers, DEFAULT_CAR_SETUP, normalizeCarSetup, res
 import { getErsModeProfile } from './raceSystems';
 import { CompiledTrack, computeTrackWallHalfWidth, projectOntoTrack, sampleTrackAtT } from './tracks';
 import tuningConfigRaw from './tuningConfig.json';
+import { getAiPaceOrderModifiers } from './scenarios';
 import {
   AbsLevel,
   AIDifficulty,
+  AiPaceOrder,
   AIPersonality,
   CarClassId,
   CarSetupConfig,
@@ -228,6 +230,9 @@ export interface CarSimState {
   localWetness?: number;
   puddleIntensity?: number;
   trackRubber?: number;
+  eliminated?: boolean;
+  aiPaceOrder?: AiPaceOrder;
+  aiPendingStop?: { action: PitServiceAction; compound?: TireCompound } | null;
 }
 
 export function createInitialFourWheelTires(initialTemp = 72): FourWheelTireState {
@@ -1015,6 +1020,12 @@ export function computeDynamicAiPackPace(
  * Triggers or queues an on-track stationary pit service ('tyres' = 2.0s, 'fuel' = 4.0s)
  * whenever the player car is stopped on track (speed < 1.5 m/s).
  */
+export function getPitServiceDuration(action: PitServiceAction): number {
+  if (action === 'tyres') return 2.0;
+  if (action === 'repair') return 3.0;
+  return 4.0;
+}
+
 export function requestOnTrackPitStop(
   car: CarSimState,
   action: PitServiceAction,
@@ -1031,7 +1042,7 @@ export function requestOnTrackPitStop(
     };
   }
 
-  const duration = action === 'tyres' ? 2.0 : 4.0;
+  const duration = getPitServiceDuration(action);
 
   if (car.pitStopRemaining <= 0) {
     car.speed = 0;
@@ -1066,6 +1077,7 @@ export function stepCarPhysics(
     totalLaps: number;
     isQualifying: boolean;
     isPractice?: boolean;
+    isTimedFinish?: boolean;
     allCars: CarSimState[];
     bopEnabled?: boolean;
     localWetness?: number;
@@ -1123,6 +1135,9 @@ export function stepCarPhysics(
       } else if (completedTask === 'fuel') {
         car.fuel = 100;
         car.fuelLapsRemaining = Math.max(12, car.fuelLapsRemaining);
+      } else if (completedTask === 'repair') {
+        car.aeroDamage = 0;
+        car.damage = createInitialLocalizedDamage();
       } else {
         car.compound = car.pitStrategy.nextCompound;
         car.tireWear = 100;
@@ -1137,7 +1152,7 @@ export function stepCarPhysics(
       if (car.pitQueue.length > 0) {
         const nextTask = car.pitQueue.shift()!;
         car.pitActiveTask = nextTask;
-        car.pitStopRemaining = nextTask === 'tyres' ? 2.0 : 4.0;
+        car.pitStopRemaining = getPitServiceDuration(nextTask);
       } else {
         car.pitActiveTask = null;
         car.pitStopTotal = 0;
@@ -2269,7 +2284,10 @@ export function stepCarPhysics(
       if (opts.isQualifying) {
         car.totalTime = Math.max(0, car.totalTime - overshootSec);
         car.finished = true;
-      } else if (!(opts.isPractice && opts.totalLaps <= 0) && car.lap >= opts.totalLaps) {
+      } else if (opts.isTimedFinish) {
+        car.totalTime = Math.max(0, car.totalTime - overshootSec);
+        car.finished = true;
+      } else if (opts.totalLaps > 0 && car.lap >= opts.totalLaps) {
         car.totalTime = Math.max(0, car.totalTime - overshootSec);
         car.finished = true;
       } else {
@@ -3320,12 +3338,36 @@ export function computeAIControl(
     throttle *= 0.90;
   }
 
+  // AI Race Engineer pace orders (conserve / balanced / push / attack) & pending on-track service stop
+  if (car.aiPendingStop) {
+    // Pull smoothly toward right edge and brake to a stop to trigger on-track service (NO pit lane!)
+    const pullSide = Math.min(maxSafeLane, halfW * 0.72);
+    car.aiTargetOffset += (pullSide - car.aiTargetOffset) * Math.min(1, dt * 4.0);
+    throttle = 0;
+    brake = car.speed > 1.2 ? 0.85 : 1.0;
+    if (car.speed < 1.4) {
+      const ok = requestOnTrackPitStop(car, car.aiPendingStop.action, car.aiPendingStop.compound);
+      if (ok) car.aiPendingStop = null;
+    }
+  } else if (car.aiPaceOrder && car.aiPaceOrder !== 'balanced') {
+    const mod = getAiPaceOrderModifiers(car.aiPaceOrder);
+    if (mod.paceMultiplier < 1) {
+      throttle *= mod.paceMultiplier;
+    } else if (throttle > 0.6) {
+      throttle = Math.min(1, throttle * mod.paceMultiplier);
+    }
+  }
+
   return { throttle, brake, steer, specialPressed, specialJustPressed: specialPressed };
 }
 
 export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTrack): DriverStandingsEntry[] {
   const effectiveTime = (c: CarSimState) => c.totalTime + (c.postRacePenaltySeconds ?? 0);
   const sorted = [...cars].sort((a, b) => {
+    const aElim = Boolean(a.eliminated);
+    const bElim = Boolean(b.eliminated);
+    if (aElim !== bElim) return aElim ? 1 : -1;
+    if (aElim && bElim) return b.totalDistance - a.totalDistance;
     if (a.finished && !b.finished) return -1;
     if (!a.finished && b.finished) return 1;
     if (a.finished && b.finished) return effectiveTime(a) - effectiveTime(b);
@@ -3394,6 +3436,7 @@ export function computeStandings(cars: CarSimState[], compiledTrack: CompiledTra
       pitStops: c.pitStops,
       inPit: c.pitStopRemaining > 0,
       finished: c.finished,
+      eliminated: Boolean(c.eliminated),
       primaryColor: c.livery.primaryColor,
       secondaryColor: c.livery.secondaryColor,
     };

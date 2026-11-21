@@ -9,6 +9,7 @@ import {
   MapPin,
   Palette,
   Settings,
+  Trophy,
   Users,
   Volume2,
   Wrench,
@@ -21,7 +22,9 @@ interface TitleOverlayProps {
   visible?: boolean;
   raceConfig: RaceConfig;
   roomCode: string | null;
+  activeChampionshipLabel?: string | null;
   onOpenRace: () => void;
+  onOpenModesHub: () => void;
   onOpenHostAiRace: () => void;
   onOpenMultiplayer: () => void;
   onOpenCarsShowcase: () => void;
@@ -115,7 +118,9 @@ export function TitleOverlay({
   visible = true,
   raceConfig,
   roomCode,
+  activeChampionshipLabel,
   onOpenRace,
+  onOpenModesHub,
   onOpenHostAiRace,
   onOpenMultiplayer,
   onOpenCarsShowcase,
@@ -210,6 +215,23 @@ export function TitleOverlay({
                 <span>Race & Practice</span>
               </span>
               <ChevronRight className="w-4 h-4 opacity-85" />
+            </button>
+
+            <button
+              type="button"
+              data-testid="btn-open-modes-hub"
+              onClick={onOpenModesHub}
+              className="w-full px-4 py-2.5 short:px-3 short:py-1.5 rounded-md bg-[#161c2a]/78 hover:bg-[#1f283c]/92 border border-amber-400/45 hover:border-amber-300 text-amber-100 hover:text-white font-display font-bold text-xs sm:text-sm tracking-wide transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center justify-between gap-2"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="truncate">
+                  {activeChampionshipLabel
+                    ? `Modes · ${activeChampionshipLabel}`
+                    : 'Championships, Time Trial & Modes'}
+                </span>
+              </span>
+              <ChevronRight className="w-4 h-4 text-amber-300 shrink-0" />
             </button>
 
             <div className="grid grid-cols-2 gap-2">

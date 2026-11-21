@@ -3443,6 +3443,215 @@ test('Section 2 Physics & Garage: 4-wheel tires, brake lock-up without ABS, surf
   assert.ok(binDecoded !== null && binDecoded.obsDim === 59);
 });
 
+test('Section 3 & On-Track Repair: on-track 3.0s repair (no pit lanes), Ghost/Records/Daily Challenge, Championships, Scenarios, Elimination & AI Pace Orders', async () => {
+  const { requestOnTrackPitStop, applyLocalizedImpactDamage } = await import('./physics');
+  const {
+    computeTrackClassMedalTargets,
+    evaluateMedal,
+    computeLiveDeltaSeconds,
+    sampleRecordedGhostAtTime,
+    sampleTargetGhostAtTime,
+    getDailyHotlapChallenge,
+  } = await import('./records');
+  const {
+    CHAMPIONSHIP_PRESETS,
+    createChampionshipSeason,
+    recordChampionshipSessionResult,
+    computeConstructorStandings,
+    getCollectorRank,
+  } = await import('./championship');
+  const {
+    RACE_SCENARIOS,
+    LICENSE_TESTS,
+    buildRaceConfigPatchFromScenario,
+    evaluateScenarioResult,
+    createEliminationState,
+    stepEliminationState,
+    getAiPaceOrderModifiers,
+  } = await import('./scenarios');
+
+  // 1) On-Track Repair Service (3.0s, zero pit lanes)
+  const spa = compileTrack(getTrackById('spa-francorchamps'));
+  const repairCar = createCarSimState({
+    id: 'rep-1',
+    name: 'Repair Tester',
+    isPlayer: true,
+    carId: 'ferrari-499p',
+    livery: getCarById('ferrari-499p').defaultLivery,
+    gridSlot: 0,
+    compiledTrack: spa,
+    compound: 'soft',
+    damageLevel: 'realistic',
+  });
+  repairCar.speed = 0;
+  repairCar.vx = 0;
+  repairCar.vz = 0;
+  repairCar.aeroDamage = 48;
+  applyLocalizedImpactDamage(repairCar, 'front', 16, 20, 1);
+  assert.ok((repairCar.damage?.frontWing ?? 0) > 10);
+
+  const started = requestOnTrackPitStop(repairCar, 'repair');
+  assert.equal(started, true, 'Stopped car should accept on-track repair request');
+  assert.equal(repairCar.pitActiveTask, 'repair');
+  assert.equal(repairCar.pitStopRemaining, 3.0);
+
+  for (let i = 0; i < 200; i++) {
+    stepCarPhysics(
+      repairCar,
+      { throttle: 0, brake: 0, steer: 0, specialPressed: false },
+      spa,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 3, isQualifying: false, allCars: [repairCar] },
+    );
+  }
+  assert.equal(repairCar.pitStopRemaining, 0, '3.0s on-track repair should complete');
+  assert.equal(repairCar.aeroDamage, 0, 'On-track repair must restore aeroDamage to 0');
+  assert.equal(repairCar.damage?.frontWing ?? 0, 0, 'On-track repair must restore frontWing damage to 0');
+
+  // 2) Records, Medal Targets, Ghost Sampling, Live Delta & Deterministic Daily Hotlap
+  const f1Targets = computeTrackClassMedalTargets(spa.spec, CarClassId.F1_2026);
+  const gt4Targets = computeTrackClassMedalTargets(spa.spec, CarClassId.GT4);
+  assert.ok(f1Targets.alien < f1Targets.gold && f1Targets.gold < f1Targets.silver && f1Targets.silver < f1Targets.bronze);
+  assert.ok(gt4Targets.gold > f1Targets.gold, 'Slower GT4 class should have slower Gold target than F1 2026');
+  assert.equal(evaluateMedal(f1Targets.alien - 0.1, f1Targets), 'alien');
+  assert.equal(evaluateMedal(f1Targets.gold, f1Targets), 'gold');
+  assert.equal(evaluateMedal(f1Targets.bronze + 5, f1Targets), null);
+
+  const targetSample = sampleTargetGhostAtTime(spa, 90, 45);
+  assert.ok(Math.abs(targetSample.trackT - 0.5) < 0.01);
+  const ghostSamples = [
+    { time: 0, trackT: 0, x: 0, y: 0, z: 0, heading: 0, pitch: 0, roll: 0 },
+    { time: 20, trackT: 0.25, x: 10, y: 0, z: 10, heading: 0.2, pitch: 0, roll: 0 },
+    { time: 40, trackT: 0.5, x: 20, y: 0, z: 20, heading: 0.4, pitch: 0, roll: 0 },
+    { time: 60, trackT: 0.75, x: 30, y: 0, z: 30, heading: 0.6, pitch: 0, roll: 0 },
+    { time: 80, trackT: 1.0, x: 40, y: 0, z: 40, heading: 0.8, pitch: 0, roll: 0 },
+  ];
+  const sampled = sampleRecordedGhostAtTime(ghostSamples, 80, 30);
+  assert.ok(sampled !== null && Math.abs(sampled!.x - 15) < 0.1);
+  const delta = computeLiveDeltaSeconds({
+    currentTrackT: 0.5,
+    currentLapTime: 38.5,
+    referenceSamples: ghostSamples,
+    referenceLapTime: 80,
+  });
+  assert.ok(delta !== null && Math.abs(delta! - -1.5) < 0.01, `Expected -1.5s live delta, got ${delta}`);
+
+  const dailyA = getDailyHotlapChallenge('2026-11-21');
+  const dailyB = getDailyHotlapChallenge('2026-11-21');
+  assert.equal(dailyA.trackId, dailyB.trackId);
+  assert.equal(dailyA.carId, dailyB.carId);
+
+  // 3) Championship Full Weekend Flow, Points + Pole + Fastest Lap + Constructors Standings
+  const f1Series = CHAMPIONSHIP_PRESETS.find((p) => p.id === 'f1-world-championship')!;
+  let season = createChampionshipSeason({ series: f1Series, weekendFormat: 'full-weekend' });
+  assert.equal(season.currentStage, 'practice');
+
+  season = recordChampionshipSessionResult(season, { standings: [], stage: 'practice' }).nextState;
+  assert.equal(season.currentStage, 'qualifying');
+
+  const qualiRes = recordChampionshipSessionResult(season, { standings: [], stage: 'qualifying', qualiGridPos: 1 });
+  season = qualiRes.nextState;
+  assert.equal(qualiRes.playerPointsEarned, 1, 'Pole position should award +1 bonus point');
+  assert.equal(season.currentStage, 'sprint');
+
+  const mockStandings = [
+    {
+      id: 'player',
+      name: 'You',
+      isPlayer: true,
+      isHumanPeer: false,
+      carId: season.playerCarId,
+      classId: CarClassId.F1_2026,
+      driverNumber: '16',
+      position: 1,
+      classPosition: 1,
+      lap: 5,
+      progress: 1,
+      totalDistance: 5,
+      intervalToAhead: 0,
+      intervalToLeader: 0,
+      bestLapTime: 88.2,
+      lastLapTime: 88.5,
+      totalTime: 445,
+      pitStops: 0,
+      inPit: false,
+      finished: true,
+      primaryColor: '#dc2626',
+      secondaryColor: '#facc15',
+    },
+    {
+      id: 'ai-1',
+      name: 'Marco Rossi',
+      isPlayer: false,
+      isHumanPeer: false,
+      carId: 'f1-26-redbull',
+      classId: CarClassId.F1_2026,
+      driverNumber: '1',
+      position: 2,
+      classPosition: 2,
+      lap: 5,
+      progress: 1,
+      totalDistance: 4.95,
+      intervalToAhead: 3,
+      intervalToLeader: 3,
+      bestLapTime: 89.0,
+      lastLapTime: 89.4,
+      totalTime: 448,
+      pitStops: 0,
+      inPit: false,
+      finished: true,
+      primaryColor: '#1e3a8a',
+      secondaryColor: '#f59e0b',
+    },
+  ];
+  const sprintRes = recordChampionshipSessionResult(season, { standings: mockStandings, stage: 'sprint' });
+  season = sprintRes.nextState;
+  assert.equal(sprintRes.playerPointsEarned, 8, 'Sprint P1 should award 8 pts');
+  assert.equal(season.currentStage, 'feature');
+
+  const featureRes = recordChampionshipSessionResult(season, { standings: mockStandings, stage: 'feature' });
+  season = featureRes.nextState;
+  assert.equal(featureRes.playerPointsEarned, 26, 'Feature P1 (25) + Fastest Lap (1) = 26 pts');
+  assert.equal(season.currentRoundIndex, 1, 'Feature completion should advance to Round 2');
+  const constructors = computeConstructorStandings(season.driverStandings);
+  assert.ok(constructors.length >= 2 && constructors[0].points >= 35);
+  assert.equal(getCollectorRank(1500).title, 'Factory Works Ace');
+
+  // 4) Scenarios, Licenses, Elimination Knockout & AI Race Engineer Pace Orders
+  const scenPatch = buildRaceConfigPatchFromScenario(RACE_SCENARIOS[0]);
+  assert.equal(scenPatch.sessionMode, 'scenario');
+  assert.equal(scenPatch.startingGridPosition, 10);
+  const licPatch = buildRaceConfigPatchFromScenario(LICENSE_TESTS[0]);
+  assert.equal(licPatch.sessionMode, 'license');
+  assert.equal(licPatch.noAi, true);
+
+  const scenEval = evaluateScenarioResult(RACE_SCENARIOS[0], {
+    position: 1,
+    totalCars: 10,
+    warningCount: 0,
+    fuel: 80,
+    standings: mockStandings,
+  } as unknown as Parameters<typeof evaluateScenarioResult>[1]);
+  assert.equal(scenEval.passed, true);
+  assert.equal(scenEval.medal, 'gold');
+
+  const elimState = createEliminationState(true, 20);
+  const elimCars = [
+    { id: 'c1', name: 'Leader', totalDistance: 1.5, finished: false, eliminated: false },
+    { id: 'c2', name: 'Mid', totalDistance: 1.2, finished: false, eliminated: false },
+    { id: 'c3', name: 'Last', totalDistance: 0.9, finished: false, eliminated: false },
+  ];
+  const ko1 = stepEliminationState(elimState, elimCars, elimState.countdown + 0.1);
+  assert.equal(ko1.eliminatedCar?.id, 'c3');
+  assert.equal(ko1.winnerCar, null);
+  const ko2 = stepEliminationState(elimState, elimCars, elimState.countdown + 0.1);
+  assert.equal(ko2.eliminatedCar?.id, 'c2');
+  assert.equal(ko2.winnerCar?.id, 'c1');
+
+  assert.ok(getAiPaceOrderModifiers('attack').paceMultiplier > getAiPaceOrderModifiers('conserve').paceMultiplier);
+});
+
+
 
 
 

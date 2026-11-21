@@ -11,6 +11,7 @@ import {
   Search,
   Share2,
   Shuffle,
+  Star,
   Sun,
   Trash2,
   Upload,
@@ -36,6 +37,7 @@ import {
 } from '../game/customTracks';
 import { WEATHER_PRESETS } from '../game/raceSystems';
 import { generateRandomScenario } from '../game/randomScenario';
+import { loadFavorites, toggleFavoriteCar, toggleFavoriteTrack } from '../game/records';
 import {
   TRACKS,
   compileTrack,
@@ -48,6 +50,7 @@ import {
   AIDifficulty,
   CarClassId,
   DamageLevel,
+  GhostTargetMode,
   HeadlightTint,
   LiveryConfig,
   LiveryTemplate,
@@ -183,6 +186,7 @@ export function RaceMenuModal({
   const [importCodeInput, setImportCodeInput] = useState('');
   const [importErr, setImportErr] = useState<string | null>(null);
   const [copiedTrackId, setCopiedTrackId] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState(() => loadFavorites());
 
   const refreshCustomTracks = () => {
     setCustomTracks(getSavedCustomTracks());
@@ -287,6 +291,12 @@ export function RaceMenuModal({
       safetyCarEnabled: config.safetyCarEnabled ?? true,
       jumpStartEnabled: config.jumpStartEnabled ?? true,
       carSetup: config.carSetup,
+      raceDurationMinutes: config.raceDurationMinutes ?? 0,
+      ghostMode: config.ghostMode ?? 'off',
+      championshipId: undefined,
+      scenarioId: undefined,
+      licenseId: undefined,
+      dailyChallengeDate: undefined,
     };
 
     if (isAiRace) {
@@ -425,24 +435,54 @@ export function RaceMenuModal({
           <div className="relative h-56 sm:h-64 lg:h-64 xl:h-72 min-h-0 shrink-0 overflow-hidden bg-[#101520] border-b border-white/10">
             <GarageViewport carSpec={activeCar} livery={config.playerLivery} angle={angle} />
 
-            {/* Car Identity Overlay */}
-            <div className="absolute top-3.5 left-4 right-4 pointer-events-none">
-              <div className="flex items-center gap-2 text-xs text-slate-300">
-                <span
-                  className="px-1.5 py-0.5 text-[10px] font-display font-bold rounded-sm"
-                  style={{ backgroundColor: classMeta.plateColor, color: classMeta.badgeTextColor }}
-                >
-                  {classMeta.shortName}
-                </span>
-                <span>{activeCar.manufacturer}</span>
-                <span aria-hidden="true" className="text-slate-500">·</span>
-                <span className="font-telemetry text-slate-200">#{config.playerLivery.driverNumber}</span>
-                <span aria-hidden="true" className="text-slate-500">·</span>
-                <span className="tabular-nums text-slate-400">BoP {bopScore}</span>
+            {/* Car Identity Overlay + Favorite Car/Track Toggles */}
+            <div className="absolute top-3.5 left-4 right-4 flex items-start justify-between gap-2 pointer-events-none">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <span
+                    className="px-1.5 py-0.5 text-[10px] font-display font-bold rounded-sm"
+                    style={{ backgroundColor: classMeta.plateColor, color: classMeta.badgeTextColor }}
+                  >
+                    {classMeta.shortName}
+                  </span>
+                  <span>{activeCar.manufacturer}</span>
+                  <span aria-hidden="true" className="text-slate-500">·</span>
+                  <span className="font-telemetry text-slate-200">#{config.playerLivery.driverNumber}</span>
+                  <span aria-hidden="true" className="text-slate-500">·</span>
+                  <span className="tabular-nums text-slate-400">BoP {bopScore}</span>
+                </div>
+                <h3 className="mt-1 text-xl font-display font-extrabold text-white tracking-tight truncate">
+                  {activeCar.name}
+                </h3>
               </div>
-              <h3 className="mt-1 text-xl font-display font-extrabold text-white tracking-tight truncate">
-                {activeCar.name}
-              </h3>
+              <div className="flex items-center gap-1 pointer-events-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setFavorites(toggleFavoriteCar(activeCar.id))}
+                  title="Favorite Current Car"
+                  className={`px-2 py-1 rounded text-[10px] font-semibold border flex items-center gap-1 cursor-pointer ${
+                    favorites.cars.includes(activeCar.id)
+                      ? 'bg-amber-500/25 border-amber-400 text-amber-200'
+                      : 'bg-[#0c1017]/85 border-white/15 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Star className="w-3 h-3" />
+                  <span>Car</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFavorites(toggleFavoriteTrack(selectedTrack.id))}
+                  title="Favorite Current Track"
+                  className={`px-2 py-1 rounded text-[10px] font-semibold border flex items-center gap-1 cursor-pointer ${
+                    favorites.tracks.includes(selectedTrack.id)
+                      ? 'bg-amber-500/25 border-amber-400 text-amber-200'
+                      : 'bg-[#0c1017]/85 border-white/15 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Star className="w-3 h-3" />
+                  <span>Track</span>
+                </button>
+              </div>
             </div>
 
             {/* Camera Angle Controls */}
@@ -637,44 +677,122 @@ export function RaceMenuModal({
             </div>
 
             <div className="border-t border-white/10 pt-4 space-y-4">
-              {/* Session Length */}
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-2">
-                  {isSolo ? 'Practice Length' : 'Race Laps'}
-                </label>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {(isSolo
-                    ? [
-                        { label: 'Open', val: 0 },
-                        { label: '5', val: 5 },
-                        { label: '10', val: 10 },
-                        { label: '15', val: 15 },
-                        { label: '20', val: 20 },
-                      ]
-                    : [
-                        { label: '3', val: 3 },
-                        { label: '5', val: 5 },
-                        { label: '10', val: 10 },
-                        { label: '15', val: 15 },
-                        { label: '20', val: 20 },
-                      ]
-                  ).map((opt) => (
-                    <button
-                      key={opt.val}
-                      type="button"
-                      onClick={() => onUpdateConfig({ totalLaps: opt.val })}
-                      className={`py-1.5 rounded text-xs font-telemetry font-bold border transition-colors cursor-pointer ${
-                        config.totalLaps === opt.val
-                          ? isSolo
-                            ? 'bg-emerald-600/25 border-emerald-400 text-emerald-200'
-                            : 'bg-red-600 border-red-400 text-white'
-                          : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+              {/* Session Length (Laps or Timed Endurance) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300">
+                    {isSolo ? 'Practice Length' : (config.raceDurationMinutes ?? 0) > 0 ? 'Timed Endurance' : 'Race Laps'}
+                  </label>
+                  {!isSolo && (
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => onUpdateConfig({ raceDurationMinutes: 0 })}
+                        className={`px-2 py-0.5 rounded border cursor-pointer ${
+                          (config.raceDurationMinutes ?? 0) === 0
+                            ? 'bg-red-600/30 border-red-400 text-white'
+                            : 'bg-[#141923] border-white/10 text-slate-400'
+                        }`}
+                      >
+                        Laps
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onUpdateConfig({ raceDurationMinutes: 15, totalLaps: 99 })}
+                        className={`px-2 py-0.5 rounded border cursor-pointer ${
+                          (config.raceDurationMinutes ?? 0) > 0
+                            ? 'bg-emerald-600/30 border-emerald-400 text-emerald-200'
+                            : 'bg-[#141923] border-white/10 text-slate-400'
+                        }`}
+                      >
+                        Timed
+                      </button>
+                    </div>
+                  )}
                 </div>
+
+                {!isSolo && (config.raceDurationMinutes ?? 0) > 0 ? (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[5, 15, 30, 60].map((mins) => (
+                      <button
+                        key={mins}
+                        type="button"
+                        onClick={() => onUpdateConfig({ raceDurationMinutes: mins, totalLaps: 99 })}
+                        className={`py-1.5 rounded text-xs font-telemetry font-bold border transition-colors cursor-pointer ${
+                          config.raceDurationMinutes === mins
+                            ? 'bg-emerald-600/30 border-emerald-400 text-emerald-200'
+                            : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {mins}m
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {(isSolo
+                      ? [
+                          { label: 'Open', val: 0 },
+                          { label: '5', val: 5 },
+                          { label: '10', val: 10 },
+                          { label: '15', val: 15 },
+                          { label: '20', val: 20 },
+                        ]
+                      : [
+                          { label: '3', val: 3 },
+                          { label: '5', val: 5 },
+                          { label: '10', val: 10 },
+                          { label: '15', val: 15 },
+                          { label: '20', val: 20 },
+                        ]
+                    ).map((opt) => (
+                      <button
+                        key={opt.val}
+                        type="button"
+                        onClick={() => onUpdateConfig({ totalLaps: opt.val, raceDurationMinutes: 0 })}
+                        className={`py-1.5 rounded text-xs font-telemetry font-bold border transition-colors cursor-pointer ${
+                          config.totalLaps === opt.val
+                            ? isSolo
+                              ? 'bg-emerald-600/25 border-emerald-400 text-emerald-200'
+                              : 'bg-red-600 border-red-400 text-white'
+                            : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* 3D Translucent Ghost Option */}
+                {!isAiRace && (
+                  <div className="pt-1">
+                    <div className="text-[11px] text-slate-400 mb-1">3D Ghost Car</div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {(
+                        [
+                          { id: 'off', label: 'Off' },
+                          { id: 'personal-best', label: 'PB Ghost' },
+                          { id: 'gold', label: 'Gold' },
+                          { id: 'alien', label: 'Alien' },
+                        ] as Array<{ id: GhostTargetMode; label: string }>
+                      ).map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => onUpdateConfig({ ghostMode: g.id })}
+                          className={`py-1 rounded text-[10px] font-bold border cursor-pointer ${
+                            (config.ghostMode ?? 'off') === g.id
+                              ? 'bg-sky-600/25 border-sky-400 text-sky-200'
+                              : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {g.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* AI-specific Race Options (shown when AI >= 1) */}

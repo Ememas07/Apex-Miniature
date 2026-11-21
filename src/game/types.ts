@@ -297,13 +297,39 @@ export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffi
 
 export type CameraMode = 'orbit' | 'hood';
 
-export type PitServiceAction = 'tyres' | 'fuel';
+export type PitServiceAction = 'tyres' | 'fuel' | 'repair';
 
 export interface PitStrategy {
   nextCompound: TireCompound;
 }
 
-export type SinglePlayerSessionMode = 'race' | 'practice' | 'ai-race';
+export type SinglePlayerSessionMode =
+  | 'race'
+  | 'practice'
+  | 'ai-race'
+  | 'time-trial'
+  | 'elimination'
+  | 'scenario'
+  | 'license'
+  | 'championship';
+
+export type GhostTargetMode = 'off' | 'personal-best' | 'bronze' | 'silver' | 'gold' | 'alien';
+
+export type MedalTier = 'bronze' | 'silver' | 'gold' | 'alien';
+
+export type AiPaceOrder = 'conserve' | 'balanced' | 'push' | 'attack';
+
+export type WeekendStage = 'practice' | 'qualifying' | 'sprint' | 'feature';
+
+export interface ProximityCarIndicator {
+  id: string;
+  /** Relative lateral distance in meters (+right, -left in player car frame) */
+  dx: number;
+  /** Relative longitudinal distance in meters (+ahead, -behind in player car frame) */
+  dz: number;
+  classId: CarClassId;
+  isHumanPeer: boolean;
+}
 
 export type RaceStartType = 'standing' | 'rolling';
 
@@ -319,6 +345,8 @@ export interface RaceConfig {
   aiBotCount: number; // 0 to 23
   noAi: boolean; // quick toggle for No AI (Humans Only / Solo)
   totalLaps: number; // 0 = continuous practice, 1..20 race laps
+  /** Optional timed endurance duration in minutes (0 or undefined = lap-based) */
+  raceDurationMinutes?: number;
   weather: WeatherMode;
   weatherPreset?: WeatherPresetId;
   weatherTimeline?: WeatherForecastSegment[];
@@ -333,6 +361,15 @@ export interface RaceConfig {
   roomCode?: string;
   sessionMode?: SinglePlayerSessionMode;
   startType?: RaceStartType;
+  ghostMode?: GhostTargetMode;
+  eliminationIntervalSeconds?: number;
+  scenarioId?: string;
+  licenseId?: string;
+  startingGridPosition?: number;
+  startingFuelOverride?: number;
+  championshipId?: string;
+  weekendStage?: WeekendStage;
+  dailyChallengeDate?: string;
 }
 
 export interface DriverStandingsEntry {
@@ -358,6 +395,7 @@ export interface DriverStandingsEntry {
   pitStops: number;
   inPit: boolean;
   finished: boolean;
+  eliminated?: boolean;
   primaryColor: string;
   secondaryColor: string;
 }
@@ -383,6 +421,9 @@ export interface HudSnapshot {
   currentLapTime: number;
   bestLapTime: number | null;
   lastLapTime: number | null;
+  /** Live delta vs personal best / target ghost in seconds (negative = ahead/faster) */
+  liveDeltaSeconds?: number | null;
+  ghostLabel?: string | null;
   intervalAhead: number | null;
   intervalBehind: number | null;
   tireWear: number; // 100 down to 0
@@ -447,6 +488,7 @@ export interface HudSnapshot {
     isHumanPeer: boolean;
     isSafetyCar?: boolean;
   }>;
+  proximityCars?: ProximityCarIndicator[];
   qualiResultTime: number | null;
   qualiGridPos: number | null;
   sessionMode?: SinglePlayerSessionMode;
@@ -457,7 +499,24 @@ export interface HudSnapshot {
   currentSector?: 1 | 2 | 3;
   sectorTimes?: [number | null, number | null, number | null];
   bestSectorTimes?: [number | null, number | null, number | null];
+  sessionBestSectorTimes?: [number | null, number | null, number | null];
   lastLapSectorTimes?: [number | null, number | null, number | null];
+  // Section 3: Endurance timer, Elimination, Scenarios/Licenses, AI Race Engineer, Analytics
+  raceDurationSeconds?: number;
+  raceTimeRemaining?: number | null;
+  eliminationCountdown?: number | null;
+  eliminatedCarIds?: string[];
+  eliminated?: boolean;
+  scenarioTitle?: string | null;
+  scenarioObjective?: string | null;
+  topSpeedKmh?: number;
+  overtakesCount?: number;
+  cleanLapsCount?: number;
+  incidentsCount?: number;
+  managedAiCarId?: string | null;
+  aiPaceOrder?: AiPaceOrder;
+  weekendStage?: WeekendStage;
+  championshipRoundLabel?: string | null;
 }
 
 export interface RoomPeer {

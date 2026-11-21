@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CarSetupModal } from './components/CarSetupModal';
 import { CarsShowcaseModal } from './components/CarsShowcaseModal';
 import { LiveryStudioModal } from './components/LiveryStudioModal';
+import { ModesHubModal } from './components/ModesHubModal';
 import { MultiplayerModal } from './components/MultiplayerModal';
 import { PauseModal } from './components/PauseModal';
 import { RaceHUD } from './components/RaceHUD';
@@ -15,6 +16,13 @@ import { TracksShowcaseModal } from './components/TracksShowcaseModal';
 import { TrackStudioModal } from './components/TrackStudioModal';
 import { getSavedCarSetup } from './game/carSetup';
 import { CARS, getCarById, resolveCarSpecial } from './game/cars';
+import {
+  ActiveChampionshipState,
+  awardCareerSessionRewards,
+  loadActiveChampionship,
+  recordChampionshipSessionResult,
+  saveActiveChampionship,
+} from './game/championship';
 import { registerCustomTrackInMemory } from './game/customTracks';
 import {
   ConnectionMode,
@@ -23,6 +31,8 @@ import {
   MultiplayerClient,
 } from './game/multiplayer';
 import { formatLapTime } from './game/physics';
+import { loadLastRaceConfig, saveLastRaceConfig } from './game/records';
+import { evaluateScenarioResult, getScenarioById, saveChallengeMedal } from './game/scenarios';
 import { GameSettings, getGameSettings, subscribeGameSettings } from './game/settings';
 import { isTouchCapableDevice, shouldShowTouchControls } from './game/touchControls';
 import { getTrackById } from './game/tracks';
@@ -32,6 +42,7 @@ import {
   GamePhase,
   HudSnapshot,
   LiveryConfig,
+  MedalTier,
   PitServiceAction,
   PitStrategy,
   RaceConfig,
@@ -75,7 +86,8 @@ export default function App() {
   const [raceConfig, setRaceConfig] = useState<RaceConfig>(() => {
     const params = new URLSearchParams(window.location.search);
     const trackParam = params.get('track') || params.get('trackId');
-    return trackParam ? { ...INITIAL_CONFIG, trackId: trackParam } : INITIAL_CONFIG;
+    const restored = loadLastRaceConfig(INITIAL_CONFIG);
+    return trackParam ? { ...restored, trackId: trackParam } : restored;
   });
   const [runNonce, setRunNonce] = useState<number>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -83,6 +95,7 @@ export default function App() {
   });
 
   const [raceMenuOpen, setRaceMenuOpen] = useState(false);
+  const [modesHubOpen, setModesHubOpen] = useState(false);
   const [multiplayerOpen, setMultiplayerOpen] = useState(false);
   const [carsShowcaseOpen, setCarsShowcaseOpen] = useState(false);
   const [tracksShowcaseOpen, setTracksShowcaseOpen] = useState(false);
@@ -92,6 +105,19 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [carSetupOpen, setCarSetupOpen] = useState(false);
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
+  const [activeChampionship, setActiveChampionship] = useState<ActiveChampionshipState | null>(() =>
+    loadActiveChampionship(),
+  );
+  const [lastCareerReward, setLastCareerReward] = useState<{
+    creditsEarned: number;
+    repEarned: number;
+  } | null>(null);
+  const [lastScenarioResult, setLastScenarioResult] = useState<{
+    passed: boolean;
+    medal: MedalTier | null;
+    summary: string;
+  } | null>(null);
+  const [lastChampPoints, setLastChampPoints] = useState<number | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
     const cam = params.get('camera');
@@ -175,6 +201,18 @@ export default function App() {
     setRaceConfig((prev) => ({ ...prev, carSetup: saved }));
   }, [raceConfig.playerCarId, raceConfig.trackId]);
 
+  // Persist standard race preferences across sessions
+  useEffect(() => {
+    if (
+      !raceConfig.championshipId &&
+      !raceConfig.scenarioId &&
+      !raceConfig.licenseId &&
+      !raceConfig.dailyChallengeDate
+    ) {
+      saveLastRaceConfig(raceConfig);
+    }
+  }, [raceConfig]);
+
   // Subscribe to Multiplayer events
   useEffect(() => {
     const mp = mpClientRef.current!;
@@ -240,6 +278,7 @@ export default function App() {
     const targetPhase = useQuali ? 'qualifying' : 'playing';
     runWithScreenFade(() => {
       setRaceMenuOpen(false);
+      setModesHubOpen(false);
       setMultiplayerOpen(false);
       setCarsShowcaseOpen(false);
       setTracksShowcaseOpen(false);
@@ -248,6 +287,9 @@ export default function App() {
       setSoundStudioOpen(false);
       setFinalSnapshot(null);
       setQualiBanner(null);
+      setLastCareerReward(null);
+      setLastScenarioResult(null);
+      setLastChampPoints(null);
       setSpectatorCameraMode('spectate');
       setActivePrePausePhase(targetPhase);
       setRunNonce((n) => n + 1);
@@ -256,7 +298,7 @@ export default function App() {
   }, [raceConfig.qualifyingEnabled, raceConfig.sessionMode, room, runWithScreenFade]);
 
   const handleStartSinglePlayer = useCallback(
-    (patch: Partial<RaceConfig>) => {
+    (patch: Partial<RaceConfig>, forcePhase?: 'playing' | 'qualifying') => {
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
@@ -270,10 +312,11 @@ export default function App() {
         setMpError(null);
       }
       const useQuali = patch.sessionMode === 'race' && Boolean(patch.qualifyingEnabled);
-      const targetPhase = useQuali ? 'qualifying' : 'playing';
+      const targetPhase = forcePhase ?? (useQuali ? 'qualifying' : 'playing');
       runWithScreenFade(() => {
         setRaceConfig((prev) => ({ ...prev, ...patch }));
         setRaceMenuOpen(false);
+        setModesHubOpen(false);
         setMultiplayerOpen(false);
         setCarsShowcaseOpen(false);
         setTracksShowcaseOpen(false);
@@ -282,6 +325,9 @@ export default function App() {
         setSoundStudioOpen(false);
         setFinalSnapshot(null);
         setQualiBanner(null);
+        setLastCareerReward(null);
+        setLastScenarioResult(null);
+        setLastChampPoints(null);
         setSpectatorCameraMode('spectate');
         setActivePrePausePhase(targetPhase);
         setRunNonce((n) => n + 1);
@@ -291,9 +337,66 @@ export default function App() {
     [room, runWithScreenFade],
   );
 
+  const handleLaunchChampionshipStage = useCallback(
+    (champInput: ActiveChampionshipState, skipPractice = false) => {
+      let champ = champInput;
+      if (skipPractice && champ.currentStage === 'practice') {
+        champ = { ...champ, currentStage: 'qualifying' };
+        saveActiveChampionship(champ);
+        setActiveChampionship(champ);
+      }
+      const round = champ.rounds[champ.currentRoundIndex];
+      if (!round || champ.completed) return;
+      const car = getCarById(champ.playerCarId);
+      const isWet = round.weatherPreset !== 'clear-dry' && round.weatherPreset !== 'overcast';
+      const stage = champ.currentStage;
+      const isPractice = stage === 'practice';
+      const isQuali = stage === 'qualifying';
+      const isSprint = stage === 'sprint';
+      const stageLaps = isPractice
+        ? 2
+        : isSprint
+        ? Math.max(2, Math.round(round.laps * 0.5))
+        : round.laps;
+
+      handleStartSinglePlayer(
+        {
+          sessionMode: isPractice ? 'practice' : 'championship',
+          trackId: round.trackId,
+          customTrack: undefined,
+          playerCarId: car.id,
+          playerLivery:
+            raceConfig.playerCarId === car.id ? raceConfig.playerLivery : { ...car.defaultLivery },
+          activeClasses: [...champ.classes],
+          aiBotCount: isPractice ? 0 : Math.max(1, champ.gridSize - 1),
+          noAi: isPractice,
+          gridSize: isPractice ? 1 : champ.gridSize,
+          totalLaps: stageLaps,
+          raceDurationMinutes: stage === 'feature' ? round.raceDurationMinutes ?? 0 : 0,
+          weather: isWet ? 'dynamic-rain' : 'dry',
+          weatherPreset: round.weatherPreset,
+          startingCompound: isWet ? 'wet' : 'soft',
+          qualifyingEnabled: false,
+          aiDifficulty: champ.aiDifficulty,
+          startType: isPractice ? 'rolling' : 'standing',
+          championshipId: champ.id,
+          weekendStage: stage,
+          startingGridPosition:
+            !isPractice && !isQuali && champ.pendingGridPos ? champ.pendingGridPos : undefined,
+          scenarioId: undefined,
+          licenseId: undefined,
+          dailyChallengeDate: undefined,
+        },
+        isQuali ? 'qualifying' : 'playing',
+      );
+    },
+    [handleStartSinglePlayer, raceConfig.playerCarId, raceConfig.playerLivery],
+  );
+
   const handleReturnToTitle = useCallback(() => {
     runWithScreenFade(() => {
       setRaceMenuOpen(false);
+      setModesHubOpen(false);
       setMultiplayerOpen(false);
       setCarsShowcaseOpen(false);
       setTracksShowcaseOpen(false);
@@ -311,6 +414,7 @@ export default function App() {
       if (
         phase !== 'title' ||
         raceMenuOpen ||
+        modesHubOpen ||
         multiplayerOpen ||
         carsShowcaseOpen ||
         tracksShowcaseOpen ||
@@ -331,6 +435,7 @@ export default function App() {
   }, [
     phase,
     raceMenuOpen,
+    modesHubOpen,
     multiplayerOpen,
     carsShowcaseOpen,
     tracksShowcaseOpen,
@@ -364,23 +469,92 @@ export default function App() {
     setMuted((m) => !m);
   }, []);
 
-  const handleRaceFinish = useCallback((snapshot: HudSnapshot) => {
-    setFinalSnapshot(snapshot);
-    setPhase('gameover');
-  }, []);
+  const handleRaceFinish = useCallback(
+    (snapshot: HudSnapshot) => {
+      let earnedMedal: MedalTier | null = null;
+      const activeScenario = getScenarioById(raceConfig.scenarioId ?? raceConfig.licenseId);
+      if (activeScenario) {
+        const res = evaluateScenarioResult(activeScenario, snapshot);
+        setLastScenarioResult(res);
+        if (res.medal) {
+          saveChallengeMedal(activeScenario.id, res.medal);
+          earnedMedal = res.medal;
+        }
+      } else {
+        setLastScenarioResult(null);
+      }
 
-  const handleQualifyingFinish = useCallback((qualiTime: number, gridPos: number) => {
-    setQualiBanner({ time: qualiTime, gridPos });
-  }, []);
+      if (raceConfig.championshipId && activeChampionship) {
+        const stage = raceConfig.weekendStage ?? 'feature';
+        const { nextState, playerPointsEarned } = recordChampionshipSessionResult(activeChampionship, {
+          standings: snapshot.standings,
+          stage,
+        });
+        saveActiveChampionship(nextState);
+        setActiveChampionship(nextState);
+        setLastChampPoints(stage === 'practice' ? null : playerPointsEarned);
+      } else {
+        setLastChampPoints(null);
+      }
+
+      if (snapshot.sessionMode !== 'ai-race') {
+        const playerRow = snapshot.standings.find((s) => s.isPlayer);
+        const fastestLapRow = snapshot.standings.reduce<typeof playerRow | null>((best, r) => {
+          if (!r.bestLapTime) return best;
+          if (!best || !best.bestLapTime || r.bestLapTime < best.bestLapTime) return r;
+          return best;
+        }, null);
+        const reward = awardCareerSessionRewards({
+          position: playerRow?.position ?? snapshot.position,
+          totalCars: snapshot.totalCars,
+          cleanLaps: snapshot.cleanLapsCount ?? 0,
+          overtakes: snapshot.overtakesCount ?? 0,
+          hasFastestLap: Boolean(playerRow && fastestLapRow && playerRow.id === fastestLapRow.id),
+          medalEarned: earnedMedal,
+        });
+        setLastCareerReward({
+          creditsEarned: reward.creditsEarned,
+          repEarned: reward.repEarned,
+        });
+      } else {
+        setLastCareerReward(null);
+      }
+
+      setFinalSnapshot(snapshot);
+      setPhase('gameover');
+    },
+    [activeChampionship, raceConfig.championshipId, raceConfig.licenseId, raceConfig.scenarioId, raceConfig.weekendStage],
+  );
+
+  const handleQualifyingFinish = useCallback(
+    (qualiTime: number, gridPos: number) => {
+      if (raceConfig.championshipId && activeChampionship) {
+        const { nextState } = recordChampionshipSessionResult(activeChampionship, {
+          standings: [],
+          stage: 'qualifying',
+          qualiGridPos: gridPos,
+        });
+        saveActiveChampionship(nextState);
+        setActiveChampionship(nextState);
+      }
+      setQualiBanner({ time: qualiTime, gridPos });
+    },
+    [activeChampionship, raceConfig.championshipId],
+  );
 
   const handleLaunchRaceAfterQuali = useCallback(() => {
+    if (raceConfig.championshipId && activeChampionship) {
+      setQualiBanner(null);
+      handleLaunchChampionshipStage(activeChampionship, false);
+      return;
+    }
     runWithScreenFade(() => {
       setQualiBanner(null);
       setActivePrePausePhase('playing');
       setRunNonce((n) => n + 1);
       setPhase('playing');
     });
-  }, [runWithScreenFade]);
+  }, [activeChampionship, handleLaunchChampionshipStage, raceConfig.championshipId, runWithScreenFade]);
 
   const handleUpdateConfig = (patch: Partial<RaceConfig>) => {
     setRaceConfig((prev) => {
@@ -442,6 +616,7 @@ export default function App() {
   const titleVisible =
     phase === 'title' &&
     !raceMenuOpen &&
+    !modesHubOpen &&
     !multiplayerOpen &&
     !carsShowcaseOpen &&
     !tracksShowcaseOpen &&
@@ -493,15 +668,27 @@ export default function App() {
           visible={titleVisible}
           raceConfig={raceConfig}
           roomCode={room?.code ?? null}
+          activeChampionshipLabel={
+            activeChampionship && !activeChampionship.completed
+              ? `${activeChampionship.name} (R${activeChampionship.currentRoundIndex + 1}/${activeChampionship.rounds.length})`
+              : null
+          }
           onOpenRace={() => {
             setMultiplayerOpen(false);
+            setModesHubOpen(false);
             if (raceConfig.sessionMode === 'ai-race') {
               handleUpdateConfig({ sessionMode: 'race' });
             }
             setRaceMenuOpen(true);
           }}
+          onOpenModesHub={() => {
+            setRaceMenuOpen(false);
+            setMultiplayerOpen(false);
+            setModesHubOpen(true);
+          }}
           onOpenHostAiRace={() => {
             setMultiplayerOpen(false);
+            setModesHubOpen(false);
             handleUpdateConfig({
               sessionMode: 'ai-race',
               noAi: false,
@@ -512,6 +699,7 @@ export default function App() {
           }}
           onOpenMultiplayer={() => {
             setRaceMenuOpen(false);
+            setModesHubOpen(false);
             setMultiplayerOpen(true);
           }}
           onOpenCarsShowcase={() => setCarsShowcaseOpen(true)}
@@ -531,10 +719,25 @@ export default function App() {
           onUpdateConfig={handleUpdateConfig}
           onSelectCar={handleSelectCar}
           onChangeLivery={handleChangeLivery}
-          onStartRace={handleStartSinglePlayer}
+          onStartRace={(patch) => handleStartSinglePlayer(patch)}
           onOpenStudio={(trackToEdit) => handleOpenStudio(trackToEdit)}
           onOpenCarSetup={() => setCarSetupOpen(true)}
           onClose={() => setRaceMenuOpen(false)}
+        />
+      )}
+
+      {/* Championships, Time Trial, Daily Hotlap, Scenarios, Licenses, Elimination & Collector Career Hub */}
+      {modesHubOpen && (
+        <ModesHubModal
+          raceConfig={raceConfig}
+          activeChampionship={activeChampionship}
+          onUpdateChampionship={setActiveChampionship}
+          onLaunchChampionshipStage={handleLaunchChampionshipStage}
+          onStartModeSession={(patch) => handleStartSinglePlayer(patch)}
+          onApplyHeritageLivery={(liveryPatch) => {
+            handleChangeLivery({ ...raceConfig.playerLivery, ...liveryPatch });
+          }}
+          onClose={() => setModesHubOpen(false)}
         />
       )}
 
@@ -676,6 +879,11 @@ export default function App() {
             onReturnToTitle={handleReturnToTitle}
             onCycleErsMode={() => inRaceControlsRef.current?.cycleErsMode()}
             onAdjustBrakeBalance={(delta) => inRaceControlsRef.current?.adjustBrakeBalance(delta)}
+            onSetAiPaceOrder={(carId, order) => inRaceControlsRef.current?.setAiPaceOrder(carId, order)}
+            onSetAiErsMode={(carId, mode) => inRaceControlsRef.current?.setAiErsMode(carId, mode)}
+            onCallAiOnTrackService={(carId, action, compound) =>
+              inRaceControlsRef.current?.callAiOnTrackService(carId, action, compound)
+            }
           />
           <TouchControlsOverlay
             visible={touchControlsActive}
@@ -756,6 +964,16 @@ export default function App() {
         <ResultsModal
           snapshot={finalSnapshot}
           trackName={track.name}
+          raceConfig={raceConfig}
+          activeChampionship={activeChampionship}
+          championshipPointsEarned={lastChampPoints}
+          careerReward={lastCareerReward}
+          scenarioResult={lastScenarioResult}
+          onNextChampionshipRound={
+            activeChampionship && !activeChampionship.completed
+              ? () => handleLaunchChampionshipStage(activeChampionship, false)
+              : undefined
+          }
           onRaceAgain={handleStartSession}
           onReturnToTitle={handleReturnToTitle}
         />

@@ -10,6 +10,7 @@ import {
   Home,
   Navigation,
   Pause,
+  Shield,
   Volume2,
   VolumeX,
   Wrench,
@@ -18,7 +19,22 @@ import { CAR_CLASSES, getCarById, resolveCarSpecial } from '../game/cars';
 import { formatLapTime } from '../game/physics';
 import { compileTrack, getTrackById } from '../game/tracks';
 import { formatWeatherCondition } from '../game/raceSystems';
-import { HudSnapshot, PitServiceAction, PitStrategy, TireCompound, TrackSpec } from '../game/types';
+import {
+  AiPaceOrder,
+  ErsMode,
+  HudSnapshot,
+  PitServiceAction,
+  PitStrategy,
+  TireCompound,
+  TrackSpec,
+} from '../game/types';
+
+function formatClockMMSS(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds));
+  const mins = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+}
 
 interface RaceHUDProps {
   hud: HudSnapshot;
@@ -37,6 +53,9 @@ interface RaceHUDProps {
   onReturnToTitle: () => void;
   onCycleErsMode?: () => void;
   onAdjustBrakeBalance?: (delta: number) => void;
+  onSetAiPaceOrder?: (carId: string, order: AiPaceOrder) => void;
+  onSetAiErsMode?: (carId: string, mode: ErsMode) => void;
+  onCallAiOnTrackService?: (carId: string, action: PitServiceAction, compound?: TireCompound) => void;
   touchControlsActive?: boolean;
 }
 
@@ -57,11 +76,16 @@ export function RaceHUD({
   onReturnToTitle,
   onCycleErsMode,
   onAdjustBrakeBalance,
+  onSetAiPaceOrder,
+  onSetAiErsMode,
+  onCallAiOnTrackService,
   touchControlsActive = false,
 }: RaceHUDProps) {
   const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
+  const [aiServiceCompound, setAiServiceCompound] = useState<TireCompound>('soft');
   const track = customTrack || getTrackById(trackId);
   const isAiRace = hud.sessionMode === 'ai-race';
+  const isHotlapMode = hud.sessionMode === 'practice' || hud.sessionMode === 'time-trial';
   const spectatorMode = hud.spectatorCameraMode ?? 'spectate';
   const spectatedEntry = isAiRace
     ? hud.standings.find((s) => s.id === hud.spectatedCarId) ?? hud.standings[0] ?? null
@@ -100,7 +124,7 @@ export function RaceHUD({
     !isAiRace && hud.countdown <= 0 && (hud.isStoppedOnTrack || hud.pitStopRemaining > 0);
   const remainingTotal =
     hud.pitStopRemaining +
-    hud.pitQueue.reduce((acc, task) => acc + (task === 'tyres' ? 2.0 : 4.0), 0);
+    hud.pitQueue.reduce((acc, task) => acc + (task === 'tyres' ? 2.0 : task === 'repair' ? 3.0 : 4.0), 0);
   const pitProgressPct =
     hud.pitStopTotal > 0
       ? Math.max(0, Math.min(100, ((hud.pitStopTotal - remainingTotal) / hud.pitStopTotal) * 100))
@@ -277,12 +301,16 @@ export function RaceHUD({
                 </div>
               </div>
             </>
-          ) : hud.sessionMode === 'practice' ? (
+          ) : isHotlapMode ? (
             <>
               <div className="flex items-baseline justify-between gap-4">
                 <div className="flex items-center gap-2">
-                  <span className="text-xl font-display font-extrabold text-emerald-400 tracking-wide leading-none">
-                    PRACTICE
+                  <span
+                    className={`text-lg sm:text-xl font-display font-extrabold tracking-wide leading-none ${
+                      hud.sessionMode === 'time-trial' ? 'text-sky-400' : 'text-emerald-400'
+                    }`}
+                  >
+                    {hud.sessionMode === 'time-trial' ? 'TIME TRIAL' : 'PRACTICE'}
                   </span>
                   <span
                     className="px-1.5 py-0.5 text-[10px] font-display font-bold rounded-sm"
@@ -292,7 +320,9 @@ export function RaceHUD({
                   </span>
                 </div>
                 <div className="text-right">
-                  <span className="text-[11px] text-slate-400 block">SOLO HOTLAP</span>
+                  <span className="text-[10px] text-slate-400 block">
+                    {hud.ghostLabel ? hud.ghostLabel.toUpperCase() : 'SOLO HOTLAP'}
+                  </span>
                   <span className="font-display font-bold text-sm text-white tabular-nums">
                     {hud.totalLaps > 0 ? `LAP ${hud.lap} / ${hud.totalLaps}` : `LAP ${hud.lap}`}
                   </span>
@@ -322,13 +352,23 @@ export function RaceHUD({
                 {[0, 1, 2].map((idx) => {
                   const val = hud.sectorTimes?.[idx] ?? hud.lastLapSectorTimes?.[idx] ?? null;
                   const best = hud.bestSectorTimes?.[idx] ?? null;
-                  const isBest = val !== null && best !== null && Math.abs(val - best) < 0.005;
+                  const sessionBest = hud.sessionBestSectorTimes?.[idx] ?? null;
+                  const isPurple =
+                    val !== null && sessionBest !== null && Math.abs(val - sessionBest) < 0.005;
+                  const isGreen =
+                    !isPurple && val !== null && best !== null && Math.abs(val - best) < 0.005;
                   return (
                     <div key={idx} className="bg-[#131822] rounded px-1.5 py-1 text-center">
                       <div className="text-[10px] text-slate-400">S{idx + 1}</div>
                       <div
                         className={`font-telemetry font-semibold ${
-                          isBest ? 'text-emerald-400' : val !== null ? 'text-slate-100' : 'text-slate-500'
+                          isPurple
+                            ? 'text-fuchsia-400'
+                            : isGreen
+                            ? 'text-emerald-400'
+                            : val !== null
+                            ? 'text-amber-300'
+                            : 'text-slate-500'
                         }`}
                       >
                         {val !== null ? `${val.toFixed(2)}s` : '--'}
@@ -340,6 +380,11 @@ export function RaceHUD({
             </>
           ) : (
             <>
+              {(hud.championshipRoundLabel || hud.scenarioTitle) && (
+                <div className="mb-1 text-[10px] font-display font-bold uppercase tracking-wider text-amber-300 truncate">
+                  {hud.championshipRoundLabel ?? hud.scenarioTitle}
+                </div>
+              )}
               <div className="flex items-baseline justify-between gap-2 sm:gap-4 short:gap-2">
                 <div className="flex items-baseline gap-1.5 sm:gap-2 short:gap-1">
                   <span className="text-2xl sm:text-3xl short:text-base font-display font-extrabold text-white tabular-nums leading-none">
@@ -354,13 +399,35 @@ export function RaceHUD({
                   </span>
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-[10px] sm:text-[11px] short:hidden text-slate-400 block">
-                    {hud.phase === 'qualifying' ? 'QUALI' : 'LAP'}
-                  </span>
-                  <span className="font-display font-bold text-xs sm:text-sm short:text-[11px] text-white tabular-nums">
-                    <span className="hidden short:inline text-slate-400 font-normal mr-0.5">L</span>
-                    {hud.lap}/{hud.totalLaps}
-                  </span>
+                  {hud.raceTimeRemaining != null ? (
+                    <>
+                      <span className="text-[10px] sm:text-[11px] short:hidden text-emerald-300 block">
+                        TIME LEFT
+                      </span>
+                      <span className="font-telemetry font-bold text-xs sm:text-sm short:text-[11px] text-white tabular-nums">
+                        {formatClockMMSS(hud.raceTimeRemaining)}
+                      </span>
+                    </>
+                  ) : hud.eliminationCountdown != null ? (
+                    <>
+                      <span className="text-[10px] sm:text-[11px] short:hidden text-orange-400 block">
+                        NEXT KO
+                      </span>
+                      <span className="font-telemetry font-bold text-xs sm:text-sm short:text-[11px] text-orange-300 tabular-nums">
+                        {hud.eliminationCountdown.toFixed(1)}s
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[10px] sm:text-[11px] short:hidden text-slate-400 block">
+                        {hud.phase === 'qualifying' ? 'QUALI' : 'LAP'}
+                      </span>
+                      <span className="font-display font-bold text-xs sm:text-sm short:text-[11px] text-white tabular-nums">
+                        <span className="hidden short:inline text-slate-400 font-normal mr-0.5">L</span>
+                        {hud.lap}/{hud.totalLaps}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -386,6 +453,39 @@ export function RaceHUD({
                   <span className="font-telemetry text-emerald-400">{formatLapTime(hud.bestLapTime)}</span>
                 </div>
               </div>
+
+              {/* Compact Purple / Green / Yellow Sector Splits */}
+              {(hud.sectorTimes?.some((s) => s !== null) || hud.lastLapSectorTimes?.some((s) => s !== null)) && (
+                <div className="hidden sm:grid short:hidden mt-1.5 pt-1.5 border-t border-white/10 grid-cols-3 gap-1.5 text-[10px]">
+                  {[0, 1, 2].map((idx) => {
+                    const val = hud.sectorTimes?.[idx] ?? hud.lastLapSectorTimes?.[idx] ?? null;
+                    const best = hud.bestSectorTimes?.[idx] ?? null;
+                    const sessionBest = hud.sessionBestSectorTimes?.[idx] ?? null;
+                    const isPurple =
+                      val !== null && sessionBest !== null && Math.abs(val - sessionBest) < 0.005;
+                    const isGreen =
+                      !isPurple && val !== null && best !== null && Math.abs(val - best) < 0.005;
+                    return (
+                      <div key={idx} className="bg-[#131822] rounded px-1 py-0.5 text-center font-telemetry">
+                        <span className="text-slate-500 mr-1">S{idx + 1}</span>
+                        <span
+                          className={
+                            isPurple
+                              ? 'text-fuchsia-400 font-bold'
+                              : isGreen
+                              ? 'text-emerald-400 font-semibold'
+                              : val !== null
+                              ? 'text-amber-300'
+                              : 'text-slate-500'
+                          }
+                        >
+                          {val !== null ? val.toFixed(1) : '--'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
 
@@ -429,7 +529,12 @@ export function RaceHUD({
                 )}
                 {hud.pitStopRemaining > 0 && (
                   <div className="text-amber-300">
-                    {hud.pitActiveTask === 'fuel' ? 'REFUELING' : 'TYRE SERVICE'} {remainingTotal.toFixed(1)}s
+                    {hud.pitActiveTask === 'fuel'
+                      ? 'REFUELING'
+                      : hud.pitActiveTask === 'repair'
+                      ? 'REPAIRING DAMAGE'
+                      : 'TYRE SERVICE'}{' '}
+                    {remainingTotal.toFixed(1)}s
                   </div>
                 )}
                 {hud.penaltyTimeRemaining > 0 && hud.pitStopRemaining <= 0 && (
@@ -610,6 +715,46 @@ export function RaceHUD({
               RC: {hud.raceControlMessage}
             </div>
           )}
+
+          {/* Live Delta-to-Best / Ghost Delta Bar */}
+          {!isAiRace && hud.countdown <= 0 && hud.liveDeltaSeconds != null && (
+            <div
+              data-testid="hud-live-delta"
+              className="bg-[#0b0e13]/90 border border-white/15 rounded px-3 py-1 shadow-lg flex items-center gap-2.5 text-xs font-telemetry"
+            >
+              {hud.ghostLabel && (
+                <span className="text-[10px] text-slate-400 uppercase font-sans font-semibold">
+                  {hud.ghostLabel}
+                </span>
+              )}
+              <span
+                className={`font-bold tabular-nums ${
+                  hud.liveDeltaSeconds <= 0 ? 'text-emerald-400' : 'text-red-400'
+                }`}
+              >
+                {hud.liveDeltaSeconds <= 0 ? '' : '+'}
+                {hud.liveDeltaSeconds.toFixed(2)}s
+              </span>
+              <div className="w-16 h-1.5 bg-[#1a202c] rounded overflow-hidden relative">
+                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/30" />
+                <div
+                  className={`absolute top-0 bottom-0 ${
+                    hud.liveDeltaSeconds <= 0 ? 'bg-emerald-400 right-1/2' : 'bg-red-500 left-1/2'
+                  }`}
+                  style={{
+                    width: `${Math.min(50, Math.abs(hud.liveDeltaSeconds) * 20).toFixed(0)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Scenario / License Objective Chip */}
+          {hud.scenarioObjective && hud.countdown <= 0 && (
+            <div className="hidden sm:block bg-[#0b0e13]/88 border border-amber-400/35 rounded px-3 py-1 text-[10px] font-semibold text-amber-200 text-center">
+              Objective: {hud.scenarioObjective}
+            </div>
+          )}
         </div>
 
         {/* Top-Right Cluster: Compact Minimap & Utility Icon Buttons */}
@@ -759,16 +904,146 @@ export function RaceHUD({
             </div>
           )}
 
+          {/* AI Race Engineer / Director Panel (AI Race Spectate Mode — No Pit Lanes, On-Track Service Orders) */}
+          {isAiRace && spectatorMode !== 'freecam' && spectatedEntry && onSetAiPaceOrder && (
+            <div
+              data-testid="ai-director-panel"
+              className="hidden sm:block bg-[#0b0e13]/94 border border-amber-500/35 rounded-md p-3 pointer-events-auto space-y-2 w-72 shadow-xl"
+            >
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-display font-bold text-amber-300 uppercase tracking-wider">
+                  Race Engineer Radio
+                </span>
+                <span className="text-[10px] text-slate-400 truncate max-w-[120px]">
+                  {spectatedEntry.name}
+                </span>
+              </div>
+
+              <div>
+                <div className="text-[9px] text-slate-400 uppercase mb-1">Pace Order</div>
+                <div className="grid grid-cols-4 gap-1">
+                  {(['conserve', 'balanced', 'push', 'attack'] as AiPaceOrder[]).map((ord) => (
+                    <button
+                      key={ord}
+                      type="button"
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onSetAiPaceOrder(spectatedEntry.id, ord);
+                      }}
+                      className={`py-1 rounded text-[9px] font-bold uppercase border cursor-pointer ${
+                        (hud.aiPaceOrder ?? 'balanced') === ord
+                          ? 'bg-amber-600 border-amber-400 text-white'
+                          : 'bg-[#151a24] border-white/10 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {ord === 'conserve' ? 'Save' : ord}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {onSetAiErsMode && (
+                <div>
+                  <div className="text-[9px] text-slate-400 uppercase mb-1">ERS Deployment</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {(['harvest', 'balanced', 'overtake', 'quali'] as ErsMode[]).map((em) => (
+                      <button
+                        key={em}
+                        type="button"
+                        tabIndex={-1}
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onSetAiErsMode(spectatedEntry.id, em);
+                        }}
+                        className={`py-1 rounded text-[9px] font-bold uppercase border cursor-pointer ${
+                          (hud.ersMode ?? 'balanced') === em
+                            ? 'bg-sky-600 border-sky-400 text-white'
+                            : 'bg-[#151a24] border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {em === 'balanced' ? 'Bal' : em === 'overtake' ? 'Ovt' : em}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {onCallAiOnTrackService && (
+                <div className="space-y-1 pt-1 border-t border-white/10">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-400 uppercase">On-Track Service Call</span>
+                    <div className="flex gap-1">
+                      {(['soft', 'medium', 'hard', 'wet'] as TireCompound[]).map((cmp) => (
+                        <button
+                          key={cmp}
+                          type="button"
+                          tabIndex={-1}
+                          onClick={(e) => {
+                            e.currentTarget.blur();
+                            setAiServiceCompound(cmp);
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase border cursor-pointer ${
+                            aiServiceCompound === cmp
+                              ? 'bg-red-600 border-red-400 text-white'
+                              : 'bg-[#151a24] border-white/10 text-slate-400'
+                          }`}
+                        >
+                          {cmp[0]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onCallAiOnTrackService(spectatedEntry.id, 'tyres', aiServiceCompound);
+                      }}
+                      className="py-1 rounded text-[10px] font-bold bg-amber-600/25 hover:bg-amber-600/40 border border-amber-400/50 text-amber-200 cursor-pointer"
+                    >
+                      Tyres
+                    </button>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onCallAiOnTrackService(spectatedEntry.id, 'repair');
+                      }}
+                      className="py-1 rounded text-[10px] font-bold bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/50 text-emerald-200 cursor-pointer"
+                    >
+                      Repair
+                    </button>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onCallAiOnTrackService(spectatedEntry.id, 'fuel');
+                      }}
+                      className="py-1 rounded text-[10px] font-bold bg-sky-600/25 hover:bg-sky-600/40 border border-sky-400/50 text-sky-200 cursor-pointer"
+                    >
+                      Fuel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {showOnTrackPitPrompt && (
             <div
               data-testid="on-track-pit-prompt"
-              className={`bg-[#0b0e13]/95 border border-amber-500/50 rounded-md p-3 pointer-events-auto space-y-2.5 w-full max-w-[290px] sm:w-72 shadow-xl ${
+              className={`bg-[#0b0e13]/95 border border-amber-500/50 rounded-md p-3 pointer-events-auto space-y-2.5 w-full max-w-[310px] sm:w-80 shadow-xl ${
                 touchControlsActive ? 'mb-2' : ''
               }`}
             >
               <div className="flex items-center justify-between text-xs">
                 <span className="font-display font-bold text-amber-300 uppercase tracking-wide">
-                  On-Track Pit Crew
+                  On-Track Service Crew
                 </span>
                 <span className="text-[10px] text-slate-400 tabular-nums">
                   {hud.pitStopRemaining > 0
@@ -783,11 +1058,13 @@ export function RaceHUD({
                     <span className="text-white">
                       {hud.pitActiveTask === 'tyres'
                         ? `Fitting ${hud.pitStrategy.nextCompound.toUpperCase()} Tyres...`
+                        : hud.pitActiveTask === 'repair'
+                        ? 'Repairing Aero & Chassis...'
                         : 'Refueling to 100%...'}
                     </span>
                     {hud.pitQueue.length > 0 && (
                       <span className="text-amber-300">
-                        + {hud.pitQueue[0] === 'tyres' ? 'Tyres' : 'Fuel'} queued
+                        + {hud.pitQueue[0] === 'tyres' ? 'Tyres' : hud.pitQueue[0] === 'repair' ? 'Repair' : 'Fuel'} queued
                       </span>
                     )}
                   </div>
@@ -822,7 +1099,7 @@ export function RaceHUD({
                 ))}
               </div>
 
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-3 gap-1.5">
                 <button
                   type="button"
                   tabIndex={-1}
@@ -831,10 +1108,24 @@ export function RaceHUD({
                     e.currentTarget.blur();
                     onRequestPitStop('tyres', hud.pitStrategy.nextCompound);
                   }}
-                  className="min-h-[38px] py-2 px-2 rounded text-[11px] font-bold border border-amber-400/60 bg-amber-600/25 hover:bg-amber-600/40 text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                  className="min-h-[38px] py-1.5 px-1.5 rounded text-[10px] font-bold border border-amber-400/60 bg-amber-600/25 hover:bg-amber-600/40 text-amber-200 flex items-center justify-center gap-1 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap"
                 >
-                  <Wrench className="w-3.5 h-3.5" />
-                  <span>Tyres (2.0s)</span>
+                  <Wrench className="w-3 h-3 shrink-0" />
+                  <span>Tyres 2s</span>
+                </button>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  data-testid="btn-pit-repair"
+                  disabled={hud.pitActiveTask === 'repair' || hud.pitQueue.includes('repair')}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onRequestPitStop('repair');
+                  }}
+                  className="min-h-[38px] py-1.5 px-1.5 rounded text-[10px] font-bold border border-emerald-400/60 bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 flex items-center justify-center gap-1 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  <Shield className="w-3 h-3 shrink-0" />
+                  <span>Repair 3s</span>
                 </button>
                 <button
                   type="button"
@@ -844,10 +1135,10 @@ export function RaceHUD({
                     e.currentTarget.blur();
                     onRequestPitStop('fuel');
                   }}
-                  className="min-h-[38px] py-2 px-2 rounded text-[11px] font-bold border border-sky-400/60 bg-sky-600/25 hover:bg-sky-600/40 text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                  className="min-h-[38px] py-1.5 px-1.5 rounded text-[10px] font-bold border border-sky-400/60 bg-sky-600/25 hover:bg-sky-600/40 text-sky-200 flex items-center justify-center gap-1 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap"
                 >
-                  <Fuel className="w-3.5 h-3.5" />
-                  <span>Refuel (4.0s)</span>
+                  <Fuel className="w-3 h-3 shrink-0" />
+                  <span>Fuel 4s</span>
                 </button>
               </div>
             </div>
@@ -1184,6 +1475,71 @@ export function RaceHUD({
           </div>
         )}
       </div>
+
+      {/* Proximity Car Radar (auto-visible only when cars are within 18m) */}
+      {!isAiRace &&
+        hud.countdown <= 0 &&
+        hud.proximityCars &&
+        hud.proximityCars.length > 0 && (
+          <div
+            data-testid="hud-proximity-radar"
+            className="fixed left-1/2 -translate-x-1/2 bottom-5 sm:bottom-6 pointer-events-none"
+          >
+            {(() => {
+              const hasSideBySide = hud.proximityCars!.some(
+                (c) => Math.abs(c.dz) < 4.8 && Math.abs(c.dx) < 4.5,
+              );
+              const scale = 50 / 18; // 18m radius maps to 50px
+              return (
+                <svg
+                  viewBox="-60 -60 120 120"
+                  className="w-[112px] h-[112px]"
+                  aria-label="Proximity Car Radar"
+                >
+                  <circle
+                    cx="0"
+                    cy="0"
+                    r="54"
+                    fill="rgba(11,14,19,0.78)"
+                    stroke={hasSideBySide ? '#ef4444' : 'rgba(255,255,255,0.22)'}
+                    strokeWidth={hasSideBySide ? '2.5' : '1.2'}
+                  />
+                  <circle
+                    cx="0"
+                    cy="0"
+                    r="27"
+                    fill="none"
+                    stroke="rgba(255,255,255,0.12)"
+                    strokeDasharray="3 3"
+                  />
+                  <line x1="-52" y1="0" x2="52" y2="0" stroke="rgba(255,255,255,0.08)" />
+                  <line x1="0" y1="-52" x2="0" y2="52" stroke="rgba(255,255,255,0.08)" />
+                  {/* Player car box centered */}
+                  <rect x="-4.5" y="-8.5" width="9" height="17" rx="2" fill="#f8fafc" stroke="#ef4444" strokeWidth="1.2" />
+                  {/* Nearby rival cars */}
+                  {hud.proximityCars!.map((p) => {
+                    const cx = Math.max(-48, Math.min(48, p.dx * scale));
+                    const cy = Math.max(-48, Math.min(48, -p.dz * scale));
+                    const close = Math.hypot(p.dx, p.dz) < 6.5;
+                    return (
+                      <rect
+                        key={p.id}
+                        x={cx - 4.5}
+                        y={cy - 8}
+                        width="9"
+                        height="16"
+                        rx="2"
+                        fill={close ? '#ef4444' : CAR_CLASSES[p.classId].plateColor}
+                        stroke="#0b0e13"
+                        strokeWidth="1"
+                      />
+                    );
+                  })}
+                </svg>
+              );
+            })()}
+          </div>
+        )}
     </div>
   );
 }

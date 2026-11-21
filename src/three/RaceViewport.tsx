@@ -22,13 +22,16 @@ import {
 } from '../game/physics';
 import { compileTrack, getTrackById, sampleTrackAtT } from '../game/tracks';
 import {
+  AiPaceOrder,
   AIPersonality,
   CameraMode,
   CarClassId,
+  ErsMode,
   GamePhase,
   HudSnapshot,
   PitServiceAction,
   PitStrategy,
+  ProximityCarIndicator,
   RaceConfig,
   RaceStartType,
   RoomPeer,
@@ -60,6 +63,24 @@ import {
   WeatherSystemState,
 } from '../game/raceSystems';
 import { DEFAULT_CAR_SETUP, normalizeCarSetup } from '../game/carSetup';
+import {
+  computeLiveDeltaSeconds,
+  GhostSample,
+  loadGhostLap,
+  recordDailyChallengeLap,
+  resolveGhostTargetLapTime,
+  sampleRecordedGhostAtTime,
+  sampleTargetGhostAtTime,
+  saveGhostLap,
+  savePersonalRecordLap,
+  StoredGhostLap,
+} from '../game/records';
+import {
+  createEliminationState,
+  EliminationState,
+  getScenarioById,
+  stepEliminationState,
+} from '../game/scenarios';
 
 export interface SpectateControls {
   cycleCar: (dir: 1 | -1) => void;
@@ -71,6 +92,9 @@ export interface SpectateControls {
 export interface InRaceTelemetryControls {
   cycleErsMode: () => void;
   adjustBrakeBalance: (delta: number) => void;
+  setAiPaceOrder: (carId: string, order: AiPaceOrder) => void;
+  setAiErsMode: (carId: string, mode: ErsMode) => void;
+  callAiOnTrackService: (carId: string, action: PitServiceAction, compound?: TireCompound) => boolean;
 }
 
 interface RaceViewportProps {
@@ -238,6 +262,23 @@ export function RaceViewport(props: RaceViewportProps) {
     attractFocusPassedHalfway: boolean;
     attractTransitionState: 'idle' | 'fading-out' | 'holding' | 'fading-in';
     attractTransitionAt: number;
+    // Section 3: Ghost Car, Elimination, Endurance Timer & Analytics
+    elimination: EliminationState;
+    raceDurationSeconds: number;
+    timedFinalLapAnnounced: boolean;
+    ghostLap: StoredGhostLap | null;
+    ghostLabel: string | null;
+    ghostTargetTime: number | null;
+    ghostUseSamples: boolean;
+    currentLapGhostSamples: GhostSample[];
+    lastGhostSampleTime: number;
+    lastRecordedLapCount: number;
+    playerTopSpeedKmh: number;
+    overtakesCount: number;
+    cleanLapsCount: number;
+    incidentsCount: number;
+    prevPlayerRank: number | null;
+    lapStartWarnings: number;
     rebuildWorld: () => void;
   } | null>(null);
 
@@ -414,6 +455,38 @@ export function RaceViewport(props: RaceViewportProps) {
     safetyCarGroup.add(scLeftLight, scRightLight);
     scene.add(safetyCarGroup);
 
+    // Holographic Translucent 3D Ghost Car (Composite 6-part miniature silhouette)
+    const ghostCarGroup = new THREE.Group();
+    ghostCarGroup.visible = false;
+    const ghostShellMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+    });
+    const ghostWireMat = new THREE.MeshBasicMaterial({
+      color: 0x7dd3fc,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+    });
+    const ghostHullGeo = new THREE.BoxGeometry(1.94, 0.48, 4.55);
+    const ghostHull = new THREE.Mesh(ghostHullGeo, ghostShellMat);
+    ghostHull.position.set(0, 0.44, 0);
+    const ghostHullWire = new THREE.Mesh(ghostHullGeo, ghostWireMat);
+    ghostHullWire.position.set(0, 0.44, 0);
+    const ghostNose = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.28, 1.1), ghostShellMat);
+    ghostNose.position.set(0, 0.34, 2.3);
+    const ghostCanopy = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.42, 1.85), ghostShellMat);
+    ghostCanopy.position.set(0, 0.84, -0.1);
+    const ghostWing = new THREE.Mesh(new THREE.BoxGeometry(1.98, 0.12, 0.48), ghostShellMat);
+    ghostWing.position.set(0, 1.02, -2.02);
+    const ghostDiffuser = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.22, 0.32), ghostWireMat);
+    ghostDiffuser.position.set(0, 0.26, -2.22);
+    ghostCarGroup.add(ghostHull, ghostHullWire, ghostNose, ghostCanopy, ghostWing, ghostDiffuser);
+    scene.add(ghostCarGroup);
+
     const disposeGroupResources = (grp: THREE.Group) => {
       grp.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
@@ -566,6 +639,22 @@ export function RaceViewport(props: RaceViewportProps) {
       attractFocusPassedHalfway: false,
       attractTransitionState: 'idle' as 'idle' | 'fading-out' | 'holding' | 'fading-in',
       attractTransitionAt: 0,
+      elimination: createEliminationState(false, 30),
+      raceDurationSeconds: 0,
+      timedFinalLapAnnounced: false,
+      ghostLap: null as StoredGhostLap | null,
+      ghostLabel: null as string | null,
+      ghostTargetTime: null as number | null,
+      ghostUseSamples: false,
+      currentLapGhostSamples: [] as GhostSample[],
+      lastGhostSampleTime: -1,
+      lastRecordedLapCount: 1,
+      playerTopSpeedKmh: 0,
+      overtakesCount: 0,
+      cleanLapsCount: 0,
+      incidentsCount: 0,
+      prevPlayerRank: null as number | null,
+      lapStartWarnings: 0,
       rebuildWorld: () => {},
     };
 
@@ -637,6 +726,27 @@ export function RaceViewport(props: RaceViewportProps) {
     propsRef.current.onInRaceControlsReady?.({
       cycleErsMode: cyclePlayerErsMode,
       adjustBrakeBalance: adjustPlayerBrakeBalance,
+      setAiPaceOrder: (carId: string, order: AiPaceOrder) => {
+        const target = sim.cars.find((c) => c.id === carId && !c.isPlayer);
+        if (!target) return;
+        target.aiPaceOrder = order;
+        sim.audio.playBeep(order === 'attack' ? 760 : order === 'conserve' ? 440 : 580, 0.05);
+      },
+      setAiErsMode: (carId: string, mode: ErsMode) => {
+        const target = sim.cars.find((c) => c.id === carId && !c.isPlayer);
+        if (!target) return;
+        target.ersMode = mode;
+        sim.audio.playBeep(620, 0.05);
+      },
+      callAiOnTrackService: (carId: string, action: PitServiceAction, compound?: TireCompound) => {
+        const target = sim.cars.find((c) => c.id === carId && !c.isPlayer && !c.finished);
+        if (!target) return false;
+        target.aiPendingStop = { action, compound };
+        sim.raceControl.message = `RADIO TO ${target.name.toUpperCase()}: BOX ON-TRACK FOR ${action.toUpperCase()}`;
+        sim.raceControl.messageTimer = 3.2;
+        sim.audio.playBeep(680, 0.07);
+        return true;
+      },
     });
 
     propsRef.current.onSpectateControlsReady?.({
@@ -739,8 +849,12 @@ export function RaceViewport(props: RaceViewportProps) {
       sim.cars = [];
 
       const isQuali = currentPhase === 'qualifying';
-      const isPractice = currentPhase === 'playing' && cfg.sessionMode === 'practice';
+      const isTimeTrial = currentPhase === 'playing' && cfg.sessionMode === 'time-trial';
+      const isLicenseSolo = currentPhase === 'playing' && cfg.sessionMode === 'license' && (cfg.aiBotCount ?? 0) === 0;
+      const isPractice = currentPhase === 'playing' && (cfg.sessionMode === 'practice' || isTimeTrial);
+      const isSoloSession = isQuali || isPractice || isLicenseSolo;
       const isAiRace = currentPhase === 'playing' && cfg.sessionMode === 'ai-race';
+      const isElimination = currentPhase === 'playing' && cfg.sessionMode === 'elimination';
       const activeClasses = isTitle
         ? attract.classes
         : cfg.activeClasses.length > 0
@@ -757,13 +871,13 @@ export function RaceViewport(props: RaceViewportProps) {
       const newCars: CarSimState[] = [];
       const playerSpec = getCarById(cfg.playerCarId);
 
-      // Determine grid slot for player and peers (Practice & Qualifying are strictly solo local sessions; Host AI Race is all-AI)
+      // Determine grid slot for player and peers (Practice, Time Trial, Solo License & Qualifying are solo local sessions; Host AI Race is all-AI)
       const peers =
-        isQuali || isPractice || isAiRace
+        isSoloSession || isAiRace
           ? []
           : propsRef.current.roomPeers.filter((p) => p.peerId !== propsRef.current.mpClient.peerId);
       const aiCount =
-        isQuali || isPractice
+        isSoloSession
           ? 0
           : isAiRace
           ? Math.max(2, Math.min(24, cfg.aiBotCount ?? cfg.gridSize ?? 12))
@@ -773,7 +887,7 @@ export function RaceViewport(props: RaceViewportProps) {
           ? Math.max(0, Math.min(23, cfg.aiBotCount))
           : Math.max(0, cfg.gridSize - 1 - peers.length);
       const totalGrid =
-        isQuali || isPractice
+        isSoloSession
           ? 1
           : isTitle
           ? 10
@@ -781,17 +895,19 @@ export function RaceViewport(props: RaceViewportProps) {
           ? aiCount
           : Math.max(1, 1 + peers.length + aiCount);
       const playerSlot =
-        isQuali || isPractice
+        isSoloSession
           ? 0
           : isAiRace
           ? -1
+          : cfg.startingGridPosition !== undefined
+          ? Math.max(0, Math.min(totalGrid - 1, cfg.startingGridPosition - 1))
           : sim.qualiGridPos !== null
           ? Math.min(totalGrid - 1, sim.qualiGridPos - 1)
           : Math.min(totalGrid - 1, Math.floor(totalGrid * 0.45));
 
       const aiPaceMult = 1.0 * (cfg.aiDifficulty === 'Rookie' ? 0.84 : cfg.aiDifficulty === 'Amateur' ? 0.92 : cfg.aiDifficulty === 'Pro' ? 1.0 : 1.07);
 
-      const useRollingStart = !isQuali && !isPractice && !isTitle && cfg.startType === 'rolling';
+      const useRollingStart = !isSoloSession && !isTitle && cfg.startType === 'rolling';
       const formationPoolSpecs = [
         ...(!isTitle && !isAiRace ? [{ carSpec: playerSpec }] : []),
         ...sortedPool.map((carSpec) => ({ carSpec })),
@@ -810,7 +926,7 @@ export function RaceViewport(props: RaceViewportProps) {
             isPlayer: true,
             carId: playerSpec.id,
             livery: cfg.playerLivery,
-            gridSlot: isQuali || isPractice ? 0 : slot,
+            gridSlot: isSoloSession ? 0 : slot,
             compiledTrack: compiled,
             compound: cfg.startingCompound,
             startType: gridStartType,
@@ -819,7 +935,13 @@ export function RaceViewport(props: RaceViewportProps) {
             damageLevel: cfg.damageLevel ?? 'light',
             absLevel: cfg.absLevel ?? 'low',
           });
-          if (isQuali || isPractice) {
+          if (cfg.startingFuelOverride !== undefined && Number.isFinite(cfg.startingFuelOverride)) {
+            pCar.fuel = Math.max(5, Math.min(100, cfg.startingFuelOverride));
+            pCar.fuelLapsRemaining = Math.max(0.5, Number(((pCar.fuel / 100) * 14).toFixed(1)));
+          }
+          const useFlyingHotlapStart =
+            isQuali || isPractice || (isLicenseSolo && cfg.startType === 'rolling');
+          if (useFlyingHotlapStart) {
             // Flying hotlap start: place just before final corner at clean rolling speed
             const sp = sampleTrackAtT(compiled, 0.88);
             pCar.trackT = 0.88;
@@ -833,7 +955,7 @@ export function RaceViewport(props: RaceViewportProps) {
           }
           sim.rollingFormationLanes.set(pCar.id, pCar.lateralOffset);
           newCars.push(pCar);
-        } else if (peerCursor < peers.length && currentPhase !== 'title' && !isQuali && !isPractice) {
+        } else if (peerCursor < peers.length && currentPhase !== 'title' && !isSoloSession) {
           const peer = peers[peerCursor++];
           const peerCar = createCarSimState({
             id: peer.peerId,
@@ -959,8 +1081,9 @@ export function RaceViewport(props: RaceViewportProps) {
       sim.rollingFormationSpeed = formationSpeedMs;
       sim.raceElapsed = 0;
       sim.greenFlagFlash = 0;
+      const skipCountdownForSolo = isPractice || (isLicenseSolo && cfg.startType === 'rolling');
       sim.countdown =
-        currentPhase === 'playing' && !isPractice && !isAutostart
+        currentPhase === 'playing' && !skipCountdownForSolo && !isAutostart
           ? useRollingStart
             ? 3.2
             : 2.0
@@ -971,6 +1094,43 @@ export function RaceViewport(props: RaceViewportProps) {
       sim.finishEmitted = false;
       sim.spectatedCarId = newCars[0]?.id ?? null;
       sim.spectatorCameraMode = isAiRace ? (propsRef.current.spectatorCameraMode ?? 'spectate') : 'spectate';
+
+      // Initialize Section 3 systems (Elimination, Timed Endurance, Ghost Car, Analytics)
+      sim.elimination = createEliminationState(
+        isElimination && !isTitle,
+        cfg.eliminationIntervalSeconds ?? 30,
+      );
+      sim.raceDurationSeconds =
+        !isTitle && !isQuali && !isPractice && !isElimination && (cfg.raceDurationMinutes ?? 0) > 0
+          ? Math.round((cfg.raceDurationMinutes ?? 0) * 60)
+          : 0;
+      sim.timedFinalLapAnnounced = false;
+      sim.currentLapGhostSamples = [];
+      sim.lastGhostSampleTime = -1;
+      sim.lastRecordedLapCount = 1;
+      sim.playerTopSpeedKmh = 0;
+      sim.overtakesCount = 0;
+      sim.cleanLapsCount = 0;
+      sim.incidentsCount = 0;
+      sim.prevPlayerRank = null;
+      sim.lapStartWarnings = 0;
+
+      const desiredGhostMode =
+        isTitle || isAiRace
+          ? 'off'
+          : cfg.ghostMode ?? (isTimeTrial ? 'personal-best' : 'off');
+      const storedPbGhost = !isTitle ? loadGhostLap(trackSpec.id, playerSpec.id) : null;
+      const ghostResolved = resolveGhostTargetLapTime(
+        desiredGhostMode,
+        trackSpec,
+        playerSpec.classId,
+        storedPbGhost,
+      );
+      sim.ghostLap = storedPbGhost;
+      sim.ghostLabel = ghostResolved.label;
+      sim.ghostTargetTime = ghostResolved.targetTime;
+      sim.ghostUseSamples = ghostResolved.useRecordedSamples;
+      ghostCarGroup.visible = false;
 
       // Reset behavioral cloning telemetry recorder for playable sessions
       const playerAnchor = newCars.find((c) => c.isPlayer);
@@ -1575,12 +1735,46 @@ export function RaceViewport(props: RaceViewportProps) {
 
         if (sim.countdown <= 0) {
           sim.raceElapsed += dt;
-          const isRealRace = !isQuali && !isPractice && activePhase === 'playing';
+          const isPracticeMode = p.raceConfig.sessionMode === 'practice' || p.raceConfig.sessionMode === 'time-trial';
+          const isEliminationMode = p.raceConfig.sessionMode === 'elimination';
+          const isRealRace = !isQuali && !isPracticeMode && activePhase === 'playing';
+          const isTimedRace = sim.raceDurationSeconds > 0;
+          const raceTimeRemaining = isTimedRace
+            ? Math.max(0, sim.raceDurationSeconds - sim.raceElapsed)
+            : null;
+          const isTimedFinish = isTimedRace && raceTimeRemaining !== null && raceTimeRemaining <= 0;
+
+          if (isTimedFinish && !sim.timedFinalLapAnnounced) {
+            sim.timedFinalLapAnnounced = true;
+            sim.raceControl.message = 'ENDURANCE CLOCK EXPIRED — FINAL LAP TO CHECKERED FLAG!';
+            sim.raceControl.messageTimer = 5.0;
+          }
+
+          // Step Elimination / Knockout countdown
+          if (isEliminationMode && sim.elimination.active) {
+            const elimRes = stepEliminationState(sim.elimination, sim.cars, dt);
+            if (elimRes.eliminatedCar) {
+              sim.raceControl.message = `ELIMINATED: ${elimRes.eliminatedCar.name.toUpperCase()}!`;
+              sim.raceControl.messageTimer = 4.0;
+              sim.audio.playBeep(320, 0.22);
+            }
+            if (elimRes.winnerCar) {
+              sim.raceControl.message = `KNOCKOUT WINNER: ${elimRes.winnerCar.name.toUpperCase()}!`;
+              sim.raceControl.messageTimer = 5.0;
+            }
+          }
+
+          const effectiveTotalLaps =
+            isTimedRace || isEliminationMode ? 0 : p.raceConfig.totalLaps;
+
           stepRaceControl(sim.raceControl, sim.cars, sim.compiledTrack, sim.specialZones, dt, {
-            totalLaps: p.raceConfig.totalLaps,
+            totalLaps: effectiveTotalLaps > 0 ? effectiveTotalLaps : 99,
             isRace: isRealRace,
-            safetyCarEnabled: p.raceConfig.safetyCarEnabled !== false,
+            safetyCarEnabled: p.raceConfig.safetyCarEnabled !== false && !isEliminationMode,
           });
+          if (isTimedFinish) {
+            sim.raceControl.globalFlag = 'white';
+          }
 
           const scSpeedLimit =
             sim.raceControl.safetyCar.phase === 'sc' ||
@@ -1593,7 +1787,7 @@ export function RaceViewport(props: RaceViewportProps) {
           const absLvl = p.raceConfig.absLevel ?? 'low';
 
           const startCtx =
-            !isQuali && !isPractice
+            !isQuali && !isPracticeMode
               ? { raceElapsed: sim.raceElapsed, startType: sim.activeStartType }
               : undefined;
           for (let i = 0; i < sim.cars.length; i++) {
@@ -1628,14 +1822,87 @@ export function RaceViewport(props: RaceViewportProps) {
                   drsZoneEnforced: isRealRace,
                   damageLevel: dmgLvl,
                   absLevel: absLvl,
-                  totalLaps: p.raceConfig.totalLaps,
+                  totalLaps: effectiveTotalLaps,
                   isQualifying: isQuali,
-                  isPractice,
+                  isPractice: isPracticeMode,
+                  isTimedFinish,
                   allCars: sim.cars,
                 },
               );
               telemetryRecorder.recordStep(c, sim.compiledTrack, sim.cars, playerInput, dt);
               sim.specialJustPressed = false;
+
+              // Track top speed, ghost samples & lap completion PB persistence
+              const curKmh = c.speed * SPEED_KMH_FACTOR;
+              if (curKmh > sim.playerTopSpeedKmh) sim.playerTopSpeedKmh = curKmh;
+              if (
+                c.currentLapTime >= 0 &&
+                c.totalDistance >= 0 &&
+                (sim.lastGhostSampleTime < 0 || c.currentLapTime - sim.lastGhostSampleTime >= 0.1)
+              ) {
+                sim.lastGhostSampleTime = c.currentLapTime;
+                sim.currentLapGhostSamples.push({
+                  time: c.currentLapTime,
+                  trackT: c.trackT,
+                  x: c.x,
+                  y: c.y,
+                  z: c.z,
+                  heading: c.heading,
+                  pitch: c.pitch ?? 0,
+                  roll: c.roll ?? 0,
+                });
+              }
+
+              // Detect completed lap for PB records, Ghost saving & Daily Challenge
+              const completedLapDetected =
+                (c.lap > sim.lastRecordedLapCount || (c.finished && sim.lastRecordedLapCount <= c.lap && c.lastLapTime !== null)) &&
+                c.lastLapTime !== null &&
+                c.lastLapTime > 5;
+              if (completedLapDetected && c.lastLapTime !== null) {
+                const isCleanLap = c.warningCount <= sim.lapStartWarnings;
+                if (isCleanLap) sim.cleanLapsCount += 1;
+                sim.lapStartWarnings = c.warningCount;
+                sim.lastRecordedLapCount = c.lap + (c.finished ? 1 : 0);
+
+                const pbRes = savePersonalRecordLap({
+                  track: sim.compiledTrack.spec,
+                  carId: c.carSpec.id,
+                  classId: c.carSpec.classId,
+                  lapTime: c.lastLapTime,
+                  sectors: c.lastLapSectorTimes ?? [null, null, null],
+                  topSpeedKmh: sim.playerTopSpeedKmh,
+                  compound: c.compound,
+                });
+
+                if (pbRes.isNewBest && sim.currentLapGhostSamples.length >= 6) {
+                  const newGhost: StoredGhostLap = {
+                    trackId: sim.compiledTrack.spec.id,
+                    carId: c.carSpec.id,
+                    lapTime: c.lastLapTime,
+                    updatedAt: Date.now(),
+                    samples: sim.currentLapGhostSamples,
+                  };
+                  saveGhostLap(newGhost);
+                  sim.ghostLap = newGhost;
+                  if ((p.raceConfig.ghostMode ?? (p.raceConfig.sessionMode === 'time-trial' ? 'personal-best' : 'off')) === 'personal-best') {
+                    sim.ghostLabel = 'PB Ghost';
+                    sim.ghostTargetTime = newGhost.lapTime;
+                    sim.ghostUseSamples = true;
+                  }
+                }
+                if (p.raceConfig.dailyChallengeDate) {
+                  recordDailyChallengeLap(
+                    p.raceConfig.dailyChallengeDate,
+                    c.lastLapTime,
+                    sim.playerTopSpeedKmh,
+                  );
+                }
+                sim.currentLapGhostSamples = [];
+                sim.lastGhostSampleTime = -1;
+              } else if (c.currentLapTime < sim.lastGhostSampleTime - 1) {
+                sim.currentLapGhostSamples = [];
+                sim.lastGhostSampleTime = -1;
+              }
             } else if (c.isHumanPeer) {
               const pkt = p.mpClient.peerTelemetry.get(c.id);
               if (pkt) {
@@ -1657,6 +1924,29 @@ export function RaceViewport(props: RaceViewportProps) {
                 c.lateralOffset,
                 roadHalfW,
               );
+              // Autonomous AI weather/tire on-track service reactivity on longer races (NO pit lanes)
+              if (
+                isRealRace &&
+                !c.finished &&
+                !c.aiPendingStop &&
+                c.pitStopRemaining <= 0 &&
+                c.pitCooldown <= 0 &&
+                p.raceConfig.sessionMode !== 'ai-race' &&
+                (isTimedRace || effectiveTotalLaps >= 4) &&
+                c.lap >= 2 &&
+                (isTimedRace ? (raceTimeRemaining ?? 0) > 65 : effectiveTotalLaps - c.lap >= 1)
+              ) {
+                if (sim.trackWetness > 0.62 && c.compound !== 'wet') {
+                  c.aiPendingStop = { action: 'tyres', compound: 'wet' };
+                } else if (sim.trackWetness < 0.14 && c.compound === 'wet') {
+                  c.aiPendingStop = { action: 'tyres', compound: 'medium' };
+                } else if (c.tireWear < 13) {
+                  c.aiPendingStop = { action: 'tyres', compound: sim.trackWetness > 0.35 ? 'wet' : 'medium' };
+                } else if (c.fuel < 6) {
+                  c.aiPendingStop = { action: 'fuel' };
+                }
+              }
+
               const aiIn = computeNeuralAIControl(
                 c,
                 sim.compiledTrack,
@@ -1676,9 +1966,10 @@ export function RaceViewport(props: RaceViewportProps) {
                 drsZoneEnforced: isRealRace,
                 damageLevel: dmgLvl,
                 absLevel: 'low',
-                totalLaps: p.raceConfig.totalLaps,
+                totalLaps: effectiveTotalLaps,
                 isQualifying: isQuali,
-                isPractice,
+                isPractice: isPracticeMode,
+                isTimedFinish,
                 allCars: sim.cars,
               });
             }
@@ -1693,7 +1984,26 @@ export function RaceViewport(props: RaceViewportProps) {
             );
             if (playerImpact > 5) {
               sim.trauma = Math.min(1, sim.trauma + playerImpact * 0.045);
+              if (playerImpact > 10) sim.incidentsCount += 1;
             }
+          }
+
+          // Update 3D Translucent Ghost Car pose when active
+          if (playerCar && sim.ghostTargetTime && sim.ghostTargetTime > 5 && playerCar.totalDistance >= 0) {
+            const ghostPose =
+              sim.ghostUseSamples && sim.ghostLap && sim.ghostLap.samples.length >= 4
+                ? sampleRecordedGhostAtTime(sim.ghostLap.samples, sim.ghostLap.lapTime, playerCar.currentLapTime)
+                : sampleTargetGhostAtTime(sim.compiledTrack, sim.ghostTargetTime, playerCar.currentLapTime);
+            if (ghostPose) {
+              ghostCarGroup.visible = true;
+              ghostCarGroup.position.set(ghostPose.x, ghostPose.y + 0.04, ghostPose.z);
+              ghostCarGroup.rotation.order = 'YXZ';
+              ghostCarGroup.rotation.set(-ghostPose.pitch, ghostPose.heading, -ghostPose.roll);
+            } else {
+              ghostCarGroup.visible = false;
+            }
+          } else {
+            ghostCarGroup.visible = false;
           }
         } else {
           // Discard buffered toggle triggers during starting-lights / rolling-formation countdown
@@ -2405,6 +2715,68 @@ export function RaceViewport(props: RaceViewportProps) {
 
         const speedKmh = Math.round(hudFocusCar.speed * SPEED_KMH_FACTOR);
 
+        // Track overtakes cleanly for player analytics
+        if (playerCar && sim.countdown <= 0 && !isAiRaceHud) {
+          if (sim.prevPlayerRank !== null && focusStanding.position < sim.prevPlayerRank) {
+            sim.overtakesCount += sim.prevPlayerRank - focusStanding.position;
+          }
+          sim.prevPlayerRank = focusStanding.position;
+        }
+
+        // Overall session-best sector times across all cars (Purple sectors!)
+        const sessionBestSectors: [number | null, number | null, number | null] = [null, null, null];
+        for (let ci = 0; ci < sim.cars.length; ci++) {
+          const bs = sim.cars[ci].bestSectorTimes;
+          if (!bs) continue;
+          for (let s = 0; s < 3; s++) {
+            const v = bs[s];
+            if (v !== null && (sessionBestSectors[s] === null || v < sessionBestSectors[s]!)) {
+              sessionBestSectors[s] = v;
+            }
+          }
+        }
+
+        // Proximity Car Radar (relative dx/dz in focus car frame within 18m)
+        const proximityCars: ProximityCarIndicator[] = [];
+        if (!isAiRaceHud && playerCar) {
+          const sinH = Math.sin(playerCar.heading);
+          const cosH = Math.cos(playerCar.heading);
+          for (let ci = 0; ci < sim.cars.length; ci++) {
+            const other = sim.cars[ci];
+            if (other.id === playerCar.id || other.eliminated) continue;
+            const wx = other.x - playerCar.x;
+            const wz = other.z - playerCar.z;
+            if (wx * wx + wz * wz > 18 * 18) continue;
+            // Car forward is (sinH, cosH); car right is (-cosH, sinH)
+            const dz = wx * sinH + wz * cosH;
+            const dx = -wx * cosH + wz * sinH;
+            proximityCars.push({
+              id: other.id,
+              dx: Number(dx.toFixed(2)),
+              dz: Number(dz.toFixed(2)),
+              classId: other.carSpec.classId,
+              isHumanPeer: other.isHumanPeer,
+            });
+          }
+        }
+
+        // Live Delta-to-Best (negative = faster/ahead)
+        const liveDeltaSeconds =
+          !isAiRaceHud && playerCar && playerCar.totalDistance >= 0
+            ? computeLiveDeltaSeconds({
+                currentTrackT: playerCar.trackT,
+                currentLapTime: playerCar.currentLapTime,
+                referenceSamples: sim.ghostUseSamples ? sim.ghostLap?.samples : null,
+                referenceLapTime: sim.ghostTargetTime ?? playerCar.bestLapTime,
+              })
+            : null;
+
+        const activeScenario = getScenarioById(p.raceConfig.scenarioId ?? p.raceConfig.licenseId);
+        const raceTimeRemainingHud =
+          sim.raceDurationSeconds > 0
+            ? Math.max(0, sim.raceDurationSeconds - sim.raceElapsed)
+            : null;
+
         const snapshot: HudSnapshot = {
           phase: activePhase,
           countdown: sim.countdown,
@@ -2422,6 +2794,8 @@ export function RaceViewport(props: RaceViewportProps) {
           currentLapTime: hudFocusCar.currentLapTime,
           bestLapTime: hudFocusCar.bestLapTime,
           lastLapTime: hudFocusCar.lastLapTime,
+          liveDeltaSeconds,
+          ghostLabel: sim.ghostLabel,
           intervalAhead: pIdx > 0 ? focusStanding.intervalToAhead : null,
           intervalBehind: behind ? behind.intervalToAhead : null,
           tireWear: Math.round(hudFocusCar.tireWear),
@@ -2470,6 +2844,7 @@ export function RaceViewport(props: RaceViewportProps) {
                 ]
               : []),
           ],
+          proximityCars,
           qualiResultTime: sim.qualiTime,
           qualiGridPos: sim.qualiGridPos,
           sessionMode: p.raceConfig.sessionMode ?? 'race',
@@ -2480,6 +2855,7 @@ export function RaceViewport(props: RaceViewportProps) {
           currentSector: hudFocusCar.currentSector ?? 1,
           sectorTimes: hudFocusCar.sectorTimes ? [...hudFocusCar.sectorTimes] : [null, null, null],
           bestSectorTimes: hudFocusCar.bestSectorTimes ? [...hudFocusCar.bestSectorTimes] : [null, null, null],
+          sessionBestSectorTimes: sessionBestSectors,
           lastLapSectorTimes: hudFocusCar.lastLapSectorTimes ? [...hudFocusCar.lastLapSectorTimes] : [null, null, null],
           // Section 1.2: Race Control, Flags, Safety Car, Penalties & Standing Start
           raceFlag: sim.raceControl.globalFlag,
@@ -2528,14 +2904,31 @@ export function RaceViewport(props: RaceViewportProps) {
           crestLoadFactor: hudFocusCar.crestLoadFactor ?? 1,
           damage: hudFocusCar.damage ? { ...hudFocusCar.damage } : undefined,
           damageLevel: p.raceConfig.damageLevel ?? 'light',
+          // Section 3: Endurance, Elimination, Scenarios, AI Race Engineer & Analytics
+          raceDurationSeconds: sim.raceDurationSeconds,
+          raceTimeRemaining: raceTimeRemainingHud,
+          eliminationCountdown: sim.elimination.active ? Math.max(0, sim.elimination.countdown) : null,
+          eliminatedCarIds: sim.elimination.active ? Array.from(sim.elimination.eliminatedIds) : undefined,
+          eliminated: Boolean(hudFocusCar.eliminated),
+          scenarioTitle: activeScenario ? `${activeScenario.code}: ${activeScenario.title}` : null,
+          scenarioObjective: activeScenario ? activeScenario.objectiveLabel : null,
+          topSpeedKmh: Math.round(sim.playerTopSpeedKmh),
+          overtakesCount: sim.overtakesCount,
+          cleanLapsCount: sim.cleanLapsCount,
+          incidentsCount: sim.incidentsCount,
+          managedAiCarId: isAiRaceHud ? hudFocusCar.id : null,
+          aiPaceOrder: hudFocusCar.aiPaceOrder ?? 'balanced',
+          weekendStage: p.raceConfig.weekendStage,
         };
 
         p.onHudUpdate(snapshot);
 
-        // Check Qualifying, Player Race, or Host AI Race Completion
-        // In AI Race mode, wait until EVERY car on track has crossed the finish line so all final gaps are real.
+        // Check Qualifying, Player Race, Elimination, or Host AI Race Completion
+        const isElimHud = p.raceConfig.sessionMode === 'elimination';
         const shouldFinish = isAiRaceHud
           ? sim.cars.length > 0 && sim.cars.every((c) => c.finished)
+          : isElimHud
+          ? Boolean(playerCar?.finished || playerCar?.eliminated)
           : Boolean(playerCar?.finished);
         if (shouldFinish && !sim.finishEmitted) {
           sim.finishEmitted = true;
@@ -2595,6 +2988,8 @@ export function RaceViewport(props: RaceViewportProps) {
       }
       scene.remove(safetyCarGroup);
       disposeGroupResources(safetyCarGroup);
+      scene.remove(ghostCarGroup);
+      disposeGroupResources(ghostCarGroup);
       debrisGeo.dispose();
       debrisMat.dispose();
       smokeGeo.dispose();

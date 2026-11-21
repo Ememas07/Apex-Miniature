@@ -25,13 +25,9 @@
 
 ## 1. Core Gameplay, Race Rules & Motorsport Systems
 
-### 1.1 Physical Pit Lanes & Full Pit-Stop Experience
-- **Dedicated Pit Lane Geometry & Pit Entry/Exit Triggers:** Currently pit stops are triggered via on-track stop (`requestOnTrackPitStop` in `src/game/physics.ts`). Add physical pit-lane splines (using `TrackSpec.pitSide`), pit entry/exit blend lines, pit boxes, and pit wall barriers in `trackBuilder.ts`.
-- **Pit Speed Limiter & Speeding Penalties:** Enforce a 60–80 km/h pit lane limit with an optional manual limiter toggle (`L` / gamepad button) or automatic assist; speeding triggers a time penalty or drive-through.
-- **Aero & Mechanical Damage Repairs:** Add `'repair'` to `PitServiceAction` (currently only `'tyres' | 'fuel'`) so players can choose whether to spend extra seconds fixing `aeroDamage` or leave it to protect track position.
-- **Pre-Pit Strategy Presets & Multi-Stop Planner:** Allow queueing compound + target fuel load + damage repair *before* entering the pit lane via an in-race MFD (Multi-Function Display) so drivers don't have to stop first to pick options.
-- **Animated Pit Crew & Interactive Pit Minigame (Optional Arcade Mode):** Render pit crew silhouettes/jacks/wheel guns in the box; optionally add a timing-based release/jack prompt to shave 0.3–0.6s off pit time.
-- **Unsafe Release & Pit Traffic Avoidance:** Ghost cars slightly in pit stalls or enforce safe-release hold when another car is passing in the fast lane.
+### 1.1 Physical Pit Lanes & Full Pit-Stop Experience *(Skipped by Request — No Pit Lanes)*
+- **Intentionally Omitted (No Pit Lanes):** Physical pit lane splines, pit speed limiters, and pit boxes are skipped per user preference. All tyre, fuel, and damage services use the stationary on-track service mechanic (`requestOnTrackPitStop`).
+- [x] **Aero & Mechanical Damage Repairs (On-Track):** Added `'repair'` (`3.0s`) to `PitServiceAction` so players and Race-Engineered AI cars can repair `aeroDamage` and localized mechanical damage zones during an on-track service stop.
 
 ### 1.2 Authentic Flag Rules, Race Control & Penalties ✅
 - [x] **Full Flag System (Yellow, Local Yellow, Blue, Green, Black, White, Checkered):**
@@ -88,29 +84,29 @@
 
 ---
 
-## 3. Game Modes, Replayability & Progression
+## 3. Game Modes, Replayability & Progression ✅
 
-### 3.1 Single-Player Career & Championships
-- **Championship / Season Mode:**
-  - Multi-round calendars (e.g., *WEC Endurance Cup*, *IMSA WeatherTech Series*, *F1 World Championship*, *GT3 Sprint Cup*, *Formula E Street Tour*, or Custom Season Builder).
-  - Real motorsport points tables (25-18-15-12-10-8-6-4-2-1 + Fastest Lap bonus + Pole Position point), Drivers' & Constructors'/Teams' standings, and persistent multi-round save state.
-- **Custom Weekend Format:** Full race weekend flow: `Free Practice → Knockout Qualifying (Q1/Q2/Q3 or Superpole) → Sprint Race → Feature Race`.
-- **Timed Endurance Races:** Add time-based race durations (`15m`, `30m`, `60m`, `2.4h` accelerated 24-hour day/night cycle) in addition to fixed `totalLaps` (currently capped at 1–20 laps).
-- **Career Mode / Miniature Collector Progression (Optional Toggle):**
-  - Earn credits/reputation from clean racing, overtakes, podiums, and fastest laps.
-  - Unlock die-cast display shelves, rare heritage liveries, special helmets/banners, and championship invitations (keeping Sandbox/Free Play 100% unlocked for players who want immediate access).
+### 3.1 Single-Player Career & Championships ✅
+- [x] **Championship / Season Mode:**
+  - [x] Multi-round calendars (*WEC World Endurance Cup*, *IMSA WeatherTech Series*, *F1 2026 World Championship*, *GT3 European Sprint Cup*, *Formula E World Street Tour*, plus **Custom Season Builder**).
+  - [x] Real motorsport points tables (25-18-15-12-10-8-6-4-2-1 + Sprint points + Fastest Lap bonus + Pole Position point), Drivers' & Constructors'/Teams' standings, and persistent multi-round save state.
+- [x] **Custom Weekend Format:** Full race weekend flow: `Free Practice → Qualifying → Sprint Race → Feature Race` (with optional Skip Practice).
+- [x] **Timed Endurance Races:** Time-based race durations (`5m`, `15m`, `30m`, `60m`) in addition to fixed `totalLaps`, with autonomous AI on-track weather/tire service reactivity.
+- [x] **Career Mode / Miniature Collector Progression (Optional Toggle):**
+  - [x] Earn Credits (CR) and Reputation (REP) from finishes, clean laps, overtakes, fastest laps, and medals.
+  - [x] Unlock Collector Ranks and Heritage Collector Liveries while keeping Sandbox / Free Play 100% unlocked.
 
-### 3.2 Time Trial, Ghost Racing & Hotlap Leaderboards
-- **Ghost Car System:** Record and replay the player's own Personal Best lap as a translucent/wireframe 3D ghost car on track, plus optional **Class Target Ghosts** (Bronze / Silver / Gold / Alien medal times) for every circuit!
-- **Persistent Personal Records Matrix:** Save best lap times, best sector times, top speed, and compound used per `(trackId, carId)` and `(trackId, classId)` in `localStorage` (and optional backend/cloud leaderboard).
-- **Live Delta-to-Best Bar:** Real-time ±0.000s split bar (green = gaining, red = losing) interpolated along `trackT` against session best or personal best ghost.
-- **Daily / Weekly Hotlap Challenges:** Deterministic daily `(car, track, weather)` combo seeded by date with Bronze/Silver/Gold target times and shareable result cards.
+### 3.2 Time Trial, Ghost Racing & Hotlap Leaderboards ✅
+- [x] **Ghost Car System:** Record and replay the player's Personal Best lap as a translucent holographic 3D ghost car on track, plus **Class Target Ghosts** (Bronze / Silver / Gold / Alien medal times) for all 43 circuits × 10 classes.
+- [x] **Persistent Personal Records Matrix:** Auto-save best lap times, best sector times, top speed, compound, and earned medal per `(trackId, carId)` in `localStorage`.
+- [x] **Live Delta-to-Best Bar:** Real-time ±0.00s split bar (green = gaining, red = losing) interpolated along `trackT` against session best or personal best/target ghost.
+- [x] **Daily Hotlap Challenge:** Deterministic daily `(car, track, weather)` combo seeded by UTC date with Bronze/Silver/Gold/Alien targets and copyable share cards.
 
-### 3.3 Arcade, Scenario & Training Modes
-- **Race Scenarios / Driving Challenges:** Bite-sized scripted scenarios — e.g., *"Last-to-First in 3 Laps at Spa"*, *"Survive Sudden Downpour on Slicks"*, *"Multiclass Traffic Gauntlet at Le Mans Night"*, *"Fuel-Save Finish on 2% Fuel"*.
-- **License Tests / Driving School:** Short sector mastery drills (trail braking, chicane kerbs, wet-line control, slipstream timing, standing-start launch) teaching Apex Miniature's physics to new players.
-- **Elimination / Knockout Mode:** Every lap (or every 30s), the last-place car is eliminated until one winner remains.
-- **AI Director / Fantasy Manager Mode (Expanding `ai-race`):** Build on the existing `Host AI Race` spectator mode by letting players act as **Race Engineer** — calling pit stops, tire compounds, fuel targets, push/conserve pace orders, and ERS deployment for a chosen AI driver or 2-car team!
+### 3.3 Arcade, Scenario & Training Modes ✅
+- [x] **Race Scenarios / Driving Challenges:** 6 curated scripted scenarios (*Last-to-First Charge at Spa*, *Survive Sudden Downpour on Slicks*, *Multiclass Traffic Gauntlet at Le Mans*, *Fuel-Save Finish at Monza*, *Monaco Principality Street Sprint*, *Formula E Attack Mode Showdown*) with Bronze/Silver/Gold evaluation & persistence.
+- [x] **License Tests / Driving School:** 5 structured drills (`B-1` Standing Start & Chicane Braking, `B-2` Crest Unloading at Portimao, `A-1` Wet-Weather Control at Interlagos, `A-2` Slipstream & DRS Overtaking at Bahrain, `S-1` Superpole Master at Suzuka).
+- [x] **Elimination / Knockout Mode:** Configurable countdown (`20s / 30s / 45s`) eliminating the last-place car until one champion remains.
+- [x] **AI Director / Race Engineer Mode (Expanding `ai-race`):** Command any spectated AI car with live Pace Orders (`Save / Balanced / Push / Attack`), ERS Deployment (`Harvest / Bal / Ovt / Quali`), and On-Track Service calls (`Soft/Med/Hard/Wet Tyres`, `Repair`, `Fuel`) — with zero pit lanes!
 
 ---
 
@@ -227,13 +223,13 @@ Currently `CameraMode` supports `'orbit' | 'hood'` (plus `spectate` / `freecam` 
 ## 8. HUD, Telemetry, Track Awareness & Race Feedback
 
 ### 8.1 Situational Awareness & Wheel-to-Wheel Aids
-- **Proximity Car Radar (iRacing / ACC Style):** Compact circular/oval radar near bottom-center that fades in automatically whenever another car is within ~12m, showing exact relative lateral/longitudinal bounding boxes and class colors — essential for clean racing in Hood Cam!
+- [x] **Proximity Car Radar (iRacing / ACC Style):** Compact circular radar near bottom-center that appears automatically whenever another car is within 18m, showing exact relative lateral/longitudinal bounding boxes, class colors, and red danger ring when side-by-side.
 - **Directional Blind-Spot Arrows:** Subtle left/right/rear edge chevrons that turn amber (approaching) and red (alongside).
 - **Dynamic Racing Line & Braking Zone Guide (Toggleable Assist):** Project a 3D spline ribbon onto the track surface colored Green (throttle) → Yellow (lift/coast) → Red (brake), dynamically adapting to car speed, class braking power, and `trackWetness`.
 - **Upcoming Corner Callout Badge:** Minimalist corner direction + severity icon (`Left 3`, `Hairpin Right`, `Chicane`) plus distance-to-braking cue for unfamiliar circuits (with 43 tracks, this dramatically lowers the learning curve!).
 
 ### 8.2 Broadcast-Grade Telemetry & Strategy Displays
-- **Live Sector Timing & Purple/Green/Yellow Delta Indicators:** `HudSnapshot` already tracks `sectorTimes`, `bestSectorTimes`, and `lastLapSectorTimes` — surface them cleanly with official motorsport color coding (Purple = Overall Session Best, Green = Personal Best, Yellow = Slower) plus a live continuous lap delta bar.
+- [x] **Live Sector Timing & Purple/Green/Yellow Delta Indicators:** Official motorsport color coding (Purple = Overall Session Best, Green = Personal Best, Yellow = Slower) plus a live continuous lap delta bar.
 - **Multi-Class Relative Timing Box:** Add a toggleable iRacing-style **Relative Leaderboard** (showing the 3 cars directly ahead and 3 cars directly behind on *track position* in seconds, color-coded for same lap / lapped / lapping you) alongside the overall standings tower.
 - **In-Race Multi-Function Display (MFD):** Compact switchable corner widget (cycled with `Tab` / D-Pad) with pages for:
   1. **Pit Strategy** (pre-select next compound, fuel target, damage repair)
@@ -243,8 +239,7 @@ Currently `CameraMode` supports `'orbit' | 'hood'` (plus `spectate` / `freecam` 
 - **Live Input Telemetry Graph (Pedal Trace):** Optional tiny scrolling throttle (green) / brake (red) / steering trace widget — beloved by sim racers for improving trail-braking and throttle modulation.
 - **Expanded Post-Race Analytics (`ResultsModal.tsx`):**
   - Lap-by-lap position chart (race progression spaghetti graph)
-  - Lap time consistency chart & sector breakdown (Theoretical Best Lap = Best S1 + Best S2 + Best S3)
-  - Race stats: overtakes made, clean laps %, top speed trap (km/h), average pit time, distance driven, incidents count, and multi-class podium tabs.
+  - [x] Theoretical Best Lap (= Best S1 + Best S2 + Best S3) and race stats strip (overtakes made, clean laps, top speed trap km/h, incidents count, medals, and Championship/Career awards).
 
 ### 8.3 Customizable & Clean HUD
 - **HUD Presets & Layout Editor:** Let players toggle `Full Sim HUD`, `Minimal Broadcast`, `Immersive (No HUD)`, scale HUD size (`75%–125%`), toggle individual widgets (minimap, leaderboard, radar, delta, virtual mirror), and switch **Units (`KM/H` vs. `MPH`, `°C` vs. `°F`)**.
@@ -336,8 +331,8 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 
 ### 12.1 First-Time User Experience (FTUE) & Discoverability
 - **Interactive Controls Card & Pre-Race Briefing:** Show a compact, dismissible control overlay (auto-adapting to Keyboard / Xbox / PlayStation / Touch) on the grid before the first race, plus a brief explanation of the selected car's `ClassSpecialType` (e.g., *"Hold SPACE for Active Aero"* vs. *"Tap SPACE for ERS Overtake"*).
-- **Persist User Preferences Across Reloads:** Remember the user's last selected car, livery, track, race config, camera mode, and preferred classes in `localStorage` so returning players don't always reset to `INITIAL_CONFIG` (Ferrari 499P at Spa).
-- **Smart Car & Track Filtering + Favorites:** With 57 cars and 43 circuits, add search bars, favorites/bookmarks, "Recently Raced", "Surprise Me / Random Race" button (leveraging existing `randomScenario.ts`!), and side-by-side car stat comparison in `CarsShowcaseModal.tsx` and `TracksShowcaseModal.tsx`.
+- [x] **Persist User Preferences Across Reloads:** Automatically remembers the user's last selected car, livery, track, race config, and preferred classes in `localStorage`.
+- [x] **Favorite Cars & Tracks Persistence:** Bookmark favorite cars and circuits directly in Race Setup (`toggleFavoriteCar` / `toggleFavoriteTrack`), alongside search, filtering, and Random Scenario generation.
 
 ### 12.2 Visual & Interaction Polish
 - **Full Gamepad Menu Navigation:** Allow navigating Title Overlay, Race Menu, Pause, and Results screens completely with controller D-Pad / `A` / `B` without reaching for a mouse.
