@@ -710,13 +710,13 @@ export function stepRaceControl(
     const c = cars[i];
     if (c.finished || c.pitStopRemaining > 0) continue;
     const secIdx = getSectorIndexForT(c.trackT);
-    const isSpun = Math.abs(c.yawRate ?? 0) > 1.85 && c.speed > 5;
-    const isStoppedOnTrack = rc.elapsedRaceTime > 6.5 && c.speed < 2.8 && c.totalDistance > 0.02;
-    const isHeavyCrash = (c.lastWallImpact ?? 0) > 12.5 || (c.lastCollisionImpact ?? 0) > 11.5;
+    const isSpun = Math.abs(c.yawRate ?? 0) > 2.65 && c.speed > 7.5;
+    const isStoppedOnTrack = rc.elapsedRaceTime > 10.0 && c.speed < 1.6 && c.totalDistance > 0.03;
+    const isHeavyCrash = (c.lastWallImpact ?? 0) > 18.0 || (c.lastCollisionImpact ?? 0) > 16.0;
 
     if (isSpun || isStoppedOnTrack || isHeavyCrash) {
       sectorIncidentThisTick[secIdx] = true;
-      rc.sectorYellowTimers[secIdx] = Math.max(rc.sectorYellowTimers[secIdx], isHeavyCrash ? 6.0 : 4.0);
+      rc.sectorYellowTimers[secIdx] = Math.max(rc.sectorYellowTimers[secIdx], isHeavyCrash ? 4.2 : 2.5);
     }
     if (isHeavyCrash || isStoppedOnTrack) {
       stoppedOrHeavyCount += 1;
@@ -817,42 +817,42 @@ export function stepRaceControl(
       c.pitStopRemaining <= 0 &&
       !rc.yellowOvertakeCooldown.has(c.id)
     ) {
-      // Only penalize if overtaken car wasn't itself stopped/crawling (< 8 m/s)
+      // Only penalize if overtaken car is genuinely racing on-track at speed (> 18 m/s & inside track bounds)
       const passedCar = ordered[idx + 1];
-      if (passedCar && passedCar.speed > 10.0) {
-        rc.yellowOvertakeCooldown.set(c.id, 6.0);
+      if (passedCar && passedCar.speed > 18.0 && Math.abs(passedCar.lateralOffset) < halfW * 1.05) {
+        rc.yellowOvertakeCooldown.set(c.id, 10.0);
         c.warningCount += 1;
         c.penaltyReason = 'yellow-overtake';
         c.penaltyType = 'slow-down';
-        c.penaltyTimeRemaining = Math.min(2.5, Math.max(1.0, c.penaltyTimeRemaining + 1.2));
+        c.penaltyTimeRemaining = Math.min(1.2, Math.max(0.5, c.penaltyTimeRemaining + 0.6));
         if (c.isPlayer) {
-          setRaceControlMessage(rc, 'ILLEGAL OVERTAKE UNDER YELLOW — SLOW DOWN TO SERVE PENALTY', 4.0);
+          setRaceControlMessage(rc, 'YELLOW FLAG PASS — BRIEF LIFT TO CLEAR PENALTY', 3.0);
         }
       }
     }
     rc.prevRankByCarId.set(c.id, idx);
 
-    // VSC delta speed check (lenient +6 m/s grace)
+    // VSC delta speed check (generous +9 m/s grace, light +1.5s penalty)
     if (
       opts.isRace &&
       rc.safetyCar.phase === 'vsc' &&
-      rc.safetyCar.timer < 11.5 &&
-      c.speed > rc.safetyCar.speedLimitMs + 6.5 &&
+      rc.safetyCar.timer < 11.0 &&
+      c.speed > rc.safetyCar.speedLimitMs + 9.0 &&
       !c.finished
     ) {
       if (!rc.yellowOvertakeCooldown.has(c.id)) {
-        rc.yellowOvertakeCooldown.set(c.id, 5.0);
+        rc.yellowOvertakeCooldown.set(c.id, 8.0);
         c.penaltyReason = 'vsc-speeding';
         c.penaltyType = 'time-penalty';
-        c.postRacePenaltySeconds = (c.postRacePenaltySeconds ?? 0) + 3;
+        c.postRacePenaltySeconds = (c.postRacePenaltySeconds ?? 0) + 1.5;
         if (c.isPlayer) {
-          setRaceControlMessage(rc, 'VSC DELTA INFRINGEMENT — +3s TIME PENALTY', 3.5);
+          setRaceControlMessage(rc, 'VSC DELTA INFRINGEMENT — +1.5s TIME PENALTY', 3.0);
         }
       }
     }
 
-    // Black-and-White flag warning at 3 warnings
-    if (c.warningCount >= 3 && !c.blackAndWhiteFlagged) {
+    // Black-and-White flag warning at 5 warnings
+    if (c.warningCount >= 5 && !c.blackAndWhiteFlagged) {
       c.blackAndWhiteFlagged = true;
       if (c.isPlayer) {
         setRaceControlMessage(rc, 'BLACK & WHITE FLAG — FINAL TRACK LIMITS / CONDUCT WARNING', 4.0);
@@ -887,19 +887,22 @@ export function stepRaceControl(
     }
   }
 
-  // 6. DRS Detection/Activation & Formula E Attack Mode Zone
+  // 6. DRS Detection/Activation (STRICTLY F1 2021 ONLY) & Formula E Attack Mode Zone
   const drsAllowedGlobally =
     !isNeutralized && (opts.isRace ? (leader?.lap ?? 1) >= 2 : true);
 
   for (let i = 0; i < cars.length; i++) {
     const c = cars[i];
-    const inDrs = zones.drsZones.some((z) => isTInRange(c.trackT, z.activationStartT, z.activationEndT));
+    const isF121Car = c.carSpec.classId === CarClassId.F1_2021;
+    const inDrs =
+      isF121Car &&
+      zones.drsZones.some((z) => isTInRange(c.trackT, z.activationStartT, z.activationEndT));
     c.inDrsZone = inDrs;
 
-    if (!drsAllowedGlobally) {
+    if (!isF121Car || !drsAllowedGlobally) {
       c.drsEligible = false;
     } else if (!opts.isRace) {
-      // Practice / Qualifying: DRS allowed in any DRS zone
+      // Practice / Qualifying: F1 2021 DRS allowed in any DRS zone
       c.drsEligible = inDrs;
     } else {
       // Check if within <1.0s gap to any car ahead on track

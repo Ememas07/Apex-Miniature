@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { computeCameraFrame, DEFAULT_CHASE_CAMERA } from '../game/camera';
-import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from '../game/cars';
+import { CAR_CLASSES, carHasHybridErs, CARS, getCarById, resolveCarSpecial } from '../game/cars';
 import { GamepadController } from '../game/gamepad';
 import { getGameSettings, subscribeGameSettings } from '../game/settings';
 import { blendAllDrivingInputs, touchInputStore } from '../game/touchControls';
@@ -229,6 +229,8 @@ export function RaceViewport(props: RaceViewportProps) {
     zoneMarkersGroup: THREE.Group | null;
     keysPressed: Set<string>;
     specialJustPressed: boolean;
+    shiftUpJustPressed: boolean;
+    shiftDownJustPressed: boolean;
     worldVersion: number;
     chaseHeading: number;
     chaseLookYaw: number;
@@ -505,6 +507,7 @@ export function RaceViewport(props: RaceViewportProps) {
       compiled: ReturnType<typeof compileTrack>,
       zones: TrackSpecialZones,
       showAttackModeZone: boolean,
+      showDrsZones: boolean,
     ): THREE.Group => {
       const grp = new THREE.Group();
       const halfW = compiled.spec.trackWidth * 0.5;
@@ -542,23 +545,25 @@ export function RaceViewport(props: RaceViewportProps) {
         }
       }
 
-      // DRS Activation Start Line Markers (crisp motorsport emerald strip across track)
-      const drsLineGeo = new THREE.PlaneGeometry(halfW * 1.9, 0.55);
-      const drsLineMat = new THREE.MeshBasicMaterial({
-        color: 0x10b981,
-        transparent: true,
-        opacity: 0.72,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      for (const dz of zones.drsZones) {
-        const sp = sampleTrackAtT(compiled, dz.activationStartT);
-        const line = new THREE.Mesh(drsLineGeo, drsLineMat);
-        line.position.set(sp.x, sp.y + 0.05, sp.z);
-        line.rotation.order = 'YXZ';
-        line.rotation.y = Math.atan2(sp.tx, sp.tz);
-        line.rotation.x = -Math.PI / 2;
-        grp.add(line);
+      // DRS Activation Start Line Markers — STRICTLY F1 2021 ONLY
+      if (showDrsZones) {
+        const drsLineGeo = new THREE.PlaneGeometry(halfW * 1.9, 0.55);
+        const drsLineMat = new THREE.MeshBasicMaterial({
+          color: 0x10b981,
+          transparent: true,
+          opacity: 0.72,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        for (const dz of zones.drsZones) {
+          const sp = sampleTrackAtT(compiled, dz.activationStartT);
+          const line = new THREE.Mesh(drsLineGeo, drsLineMat);
+          line.position.set(sp.x, sp.y + 0.05, sp.z);
+          line.rotation.order = 'YXZ';
+          line.rotation.y = Math.atan2(sp.tx, sp.tz);
+          line.rotation.x = -Math.PI / 2;
+          grp.add(line);
+        }
       }
       return grp;
     };
@@ -612,6 +617,8 @@ export function RaceViewport(props: RaceViewportProps) {
       zoneMarkersGroup: null as THREE.Group | null,
       keysPressed,
       specialJustPressed: false,
+      shiftUpJustPressed: false,
+      shiftDownJustPressed: false,
       worldVersion: 0,
       chaseHeading: 0,
       chaseLookYaw: 0,
@@ -716,7 +723,7 @@ export function RaceViewport(props: RaceViewportProps) {
 
     const cyclePlayerErsMode = () => {
       const pCar = sim.cars.find((c) => c.isPlayer);
-      if (!pCar) return;
+      if (!pCar || !carHasHybridErs(pCar.carSpec)) return;
       pCar.ersMode = cycleErsMode(pCar.ersMode ?? 'balanced');
       sim.audio.playBeep(640, 0.05);
     };
@@ -741,7 +748,7 @@ export function RaceViewport(props: RaceViewportProps) {
       },
       setAiErsMode: (carId: string, mode: ErsMode) => {
         const target = sim.cars.find((c) => c.id === carId && !c.isPlayer);
-        if (!target) return;
+        if (!target || !carHasHybridErs(target.carSpec)) return;
         target.ersMode = mode;
         sim.audio.playBeep(620, 0.05);
       },
@@ -820,7 +827,10 @@ export function RaceViewport(props: RaceViewportProps) {
         const showFeAttackZone = isAiRaceMode
           ? cfg.activeClasses.includes(CarClassId.FORMULA_E)
           : getCarById(cfg.playerCarId).classId === CarClassId.FORMULA_E;
-        const zm = buildZoneMarkers(compiled, sim.specialZones, showFeAttackZone);
+        const showDrsZones = isAiRaceMode
+          ? cfg.activeClasses.includes(CarClassId.F1_2021)
+          : getCarById(cfg.playerCarId).classId === CarClassId.F1_2021;
+        const zm = buildZoneMarkers(compiled, sim.specialZones, showFeAttackZone, showDrsZones);
         sim.zoneMarkersGroup = zm;
         scene.add(zm);
       }
@@ -946,6 +956,7 @@ export function RaceViewport(props: RaceViewportProps) {
             setup: cfg.carSetup ?? getDefaultTrackClassSetup(playerSpec.id, compiled.spec.id),
             damageLevel: cfg.damageLevel ?? 'light',
             absLevel: cfg.absLevel ?? 'low',
+            transmissionMode: getGameSettings().transmissionMode,
           });
           if (cfg.startingFuelOverride !== undefined && Number.isFinite(cfg.startingFuelOverride)) {
             pCar.fuel = Math.max(5, Math.min(100, cfg.startingFuelOverride));
@@ -994,10 +1005,24 @@ export function RaceViewport(props: RaceViewportProps) {
           const profile = assignment.profile;
 
           const hasTeamPresets = Boolean(pick.liveries && pick.liveries.length > 0);
+          const randomPresetIdx = hasTeamPresets
+            ? Math.floor(Math.random() * pick.liveries!.length)
+            : 0;
           const baseLivery = hasTeamPresets
-            ? { ...pick.liveries![teamPairIdx % pick.liveries!.length].livery }
+            ? { ...pick.liveries![randomPresetIdx].livery }
             : { ...pick.defaultLivery };
           const aiLivery = assignment.applyCoordinatedLivery(baseLivery, hasTeamPresets);
+
+          const isWetStart =
+            sim.weatherSystem.trackWetness >= 0.28 || sim.weatherSystem.rainIntensity >= 0.35;
+          const defaultDryCompound: TireCompound =
+            cfg.totalLaps <= 3
+              ? 'soft'
+              : profile.personality === 'Tire-Saver'
+              ? 'hard'
+              : profile.personality === 'Dive-Bomber' || profile.personality === 'Late-Braker'
+              ? 'soft'
+              : 'medium';
 
           const bot = createCarSimState({
             id: `ai-${aiCursor}`,
@@ -1007,10 +1032,7 @@ export function RaceViewport(props: RaceViewportProps) {
             livery: aiLivery,
             gridSlot: slot,
             compiledTrack: compiled,
-            compound:
-              sim.weatherSystem.trackWetness > 0.34 || (cfg.weather === 'dynamic-rain' && aiCursor % 3 === 0)
-                ? 'wet'
-                : 'medium',
+            compound: isWetStart ? 'wet' : defaultDryCompound,
             personality: profile.personality,
             aiPaceMultiplier: assignment.paceMultiplier,
             aiDriverId: profile.id,
@@ -1018,6 +1040,7 @@ export function RaceViewport(props: RaceViewportProps) {
             aiTeamName: profile.teamName,
             aiRivalId: profile.rivalId,
             aiSkillRating: profile.skill,
+            aiAggression: profile.aggression,
             aiWetSkill: profile.wetSkill,
             aiConsistency: profile.consistency,
             setup: getDefaultTrackClassSetup(pick.id, compiled.spec.id),
@@ -1198,22 +1221,25 @@ export function RaceViewport(props: RaceViewportProps) {
     simRef.current = sim;
     rebuildWorld();
 
-    // Unified keyboard input listeners
+    let activeSettings = getGameSettings();
+
+    // Unified customizable keyboard input listeners
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) {
         return;
       }
       const code = e.code;
+      const kb = activeSettings.keybinds;
       const curPhase = propsRef.current.phase;
 
-      if (code === 'Escape' || code === 'KeyP') {
+      if (code === 'Escape' || code === kb.pause) {
         if (curPhase === 'playing' || curPhase === 'qualifying' || curPhase === 'paused') {
           e.preventDefault();
           propsRef.current.onTogglePause();
         }
         return;
       }
-      if (code === 'KeyC' && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
+      if (code === kb.camera && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
         if (propsRef.current.raceConfig.sessionMode === 'ai-race') {
           setSpectatorCameraMode(sim.spectatorCameraMode === 'spectate' ? 'freecam' : 'spectate');
         } else {
@@ -1226,25 +1252,25 @@ export function RaceViewport(props: RaceViewportProps) {
         return;
       }
       if (
-        (code === 'BracketLeft' || code === 'BracketRight') &&
+        (code === kb.brakeBiasDown || code === kb.brakeBiasUp) &&
         !e.repeat &&
         (curPhase === 'playing' || curPhase === 'qualifying') &&
         sim.cars.length > 0
       ) {
         if (propsRef.current.raceConfig.sessionMode === 'ai-race') {
-          const dir = code === 'BracketRight' ? 1 : -1;
+          const dir = code === kb.brakeBiasUp ? 1 : -1;
           const idx = sim.cars.findIndex((c) => c.id === sim.spectatedCarId);
           const nextIdx = idx < 0 ? 0 : (idx + dir + sim.cars.length) % sim.cars.length;
           const nextCar = sim.cars[nextIdx];
           sim.spectatedCarId = nextCar.id;
           resetGameplayCamera(nextCar, true);
         } else {
-          adjustPlayerBrakeBalance(code === 'BracketRight' ? 0.5 : -0.5);
+          adjustPlayerBrakeBalance(code === kb.brakeBiasUp ? 0.5 : -0.5);
         }
         return;
       }
       if (
-        code === 'KeyB' &&
+        code === kb.ersMode &&
         !e.repeat &&
         (curPhase === 'playing' || curPhase === 'qualifying') &&
         propsRef.current.raceConfig.sessionMode !== 'ai-race'
@@ -1252,7 +1278,7 @@ export function RaceViewport(props: RaceViewportProps) {
         cyclePlayerErsMode();
         return;
       }
-      if (code === 'KeyR' && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
+      if (code === kb.resetCamera && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
         if (!(propsRef.current.raceConfig.sessionMode === 'ai-race' && sim.spectatorCameraMode === 'freecam')) {
           const targetCar =
             sim.cars.find((c) => c.isPlayer) ??
@@ -1262,7 +1288,7 @@ export function RaceViewport(props: RaceViewportProps) {
         }
         return;
       }
-      if (code === 'KeyM' && !e.repeat) {
+      if (code === kb.mute && !e.repeat) {
         propsRef.current.onToggleMute();
         return;
       }
@@ -1272,7 +1298,14 @@ export function RaceViewport(props: RaceViewportProps) {
         if (exported) sim.audio.playBeep(880, 0.08);
         return;
       }
-      if ((code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyE') && !e.repeat) {
+      if (activeSettings.transmissionMode === 'manual' && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
+        if (code === kb.shiftUp) {
+          sim.shiftUpJustPressed = true;
+        } else if (code === kb.shiftDown) {
+          sim.shiftDownJustPressed = true;
+        }
+      }
+      if (code === kb.special && !e.repeat) {
         sim.specialJustPressed = true;
       }
 
@@ -1288,15 +1321,22 @@ export function RaceViewport(props: RaceViewportProps) {
     };
 
     const gamepadController = new GamepadController();
-    gamepadController.setEnabled(getGameSettings().controllerEnabled);
+    gamepadController.setEnabled(activeSettings.controllerEnabled);
     const unsubscribeGameSettings = subscribeGameSettings((next) => {
+      activeSettings = next;
       gamepadController.setEnabled(next.controllerEnabled);
+      const pCar = sim.cars.find((c) => c.isPlayer);
+      if (pCar) {
+        pCar.transmissionMode = next.transmissionMode;
+      }
     });
     gamepadController.attach(window);
 
     const clearKeys = () => {
       keysPressed.clear();
       sim.specialJustPressed = false;
+      sim.shiftUpJustPressed = false;
+      sim.shiftDownJustPressed = false;
       gamepadController.resetEdgeState();
       touchInputStore.reset();
     };
@@ -1680,12 +1720,16 @@ export function RaceViewport(props: RaceViewportProps) {
           rainMat.opacity = Math.min(0.65, 0.16 + sim.weatherSystem.rainIntensity * 0.48);
         }
 
-        // Read keyboard + gamepad (PS4/DualShock/Xbox/Mobile) + mobile touchpad controls
-        const kbThrottle = keysPressed.has('KeyW') || keysPressed.has('ArrowUp') ? 1 : 0;
-        const kbBrake = keysPressed.has('KeyS') || keysPressed.has('ArrowDown') ? 1 : 0;
+        // Read customizable keyboard + gamepad (PS4/DualShock/Xbox/Mobile) + mobile touchpad controls
+        const kb = activeSettings.keybinds;
+        const boundSet = new Set(Object.values(kb));
+        const kbThrottle =
+          keysPressed.has(kb.throttle) || (!boundSet.has('ArrowUp') && keysPressed.has('ArrowUp')) ? 1 : 0;
+        const kbBrake =
+          keysPressed.has(kb.brake) || (!boundSet.has('ArrowDown') && keysPressed.has('ArrowDown')) ? 1 : 0;
         const kbSteer =
-          (keysPressed.has('KeyD') || keysPressed.has('ArrowRight') ? 1 : 0) -
-          (keysPressed.has('KeyA') || keysPressed.has('ArrowLeft') ? 1 : 0);
+          (keysPressed.has(kb.steerRight) || (!boundSet.has('ArrowRight') && keysPressed.has('ArrowRight')) ? 1 : 0) -
+          (keysPressed.has(kb.steerLeft) || (!boundSet.has('ArrowLeft') && keysPressed.has('ArrowLeft')) ? 1 : 0);
 
         const gp = gamepadController.poll();
         const touchIn = touchInputStore.consumeFrame();
@@ -1693,7 +1737,7 @@ export function RaceViewport(props: RaceViewportProps) {
           sim.audio.init();
         }
 
-        // Controller utility buttons (Start/Options Pause, Y/Triangle Camera, Share/R3 Reset, L1/R1 Spectate)
+        // Controller utility buttons (Start/Options Pause, Y/Triangle Camera, Share/R3 Reset, L1/R1 Spectate or Manual Shift)
         if (gp.pauseJustPressed) {
           p.onTogglePause();
         }
@@ -1733,17 +1777,20 @@ export function RaceViewport(props: RaceViewportProps) {
           touchIn,
         );
 
-        // Edge-triggered special toggle from keyboard (Space/Shift/E), Gamepad Cross/A, or Touch Special button
+        // Edge-triggered special toggle & manual sequential shift edges
         const specialJustPressed =
           sim.specialJustPressed || gp.specialJustPressed || touchIn.specialJustPressed;
         const specialPressed =
           specialJustPressed ||
-          keysPressed.has('ShiftLeft') ||
-          keysPressed.has('ShiftRight') ||
-          keysPressed.has('KeyE') ||
-          keysPressed.has('Space') ||
+          keysPressed.has(kb.special) ||
           gp.specialPressed ||
           touchIn.specialPressed;
+        const shiftUp =
+          activeSettings.transmissionMode === 'manual' &&
+          (sim.shiftUpJustPressed || (p.raceConfig.sessionMode !== 'ai-race' && gp.rbJustPressed));
+        const shiftDown =
+          activeSettings.transmissionMode === 'manual' &&
+          (sim.shiftDownJustPressed || (p.raceConfig.sessionMode !== 'ai-race' && gp.lbJustPressed));
 
         if (sim.countdown <= 0) {
           sim.raceElapsed += dt;
@@ -1818,6 +1865,8 @@ export function RaceViewport(props: RaceViewportProps) {
                 steer,
                 specialPressed,
                 specialJustPressed,
+                shiftUp,
+                shiftDown,
               };
               stepCarPhysics(
                 c,
@@ -1843,6 +1892,8 @@ export function RaceViewport(props: RaceViewportProps) {
               );
               telemetryRecorder.recordStep(c, sim.compiledTrack, sim.cars, playerInput, dt);
               sim.specialJustPressed = false;
+              sim.shiftUpJustPressed = false;
+              sim.shiftDownJustPressed = false;
 
               // Track top speed, ghost samples & lap completion PB persistence
               const curKmh = c.speed * SPEED_KMH_FACTOR;
@@ -1963,6 +2014,10 @@ export function RaceViewport(props: RaceViewportProps) {
                   c.aiStrategyIntent = strat.reason;
                 }
               }
+
+              // Sync live local wetness & puddle intensity BEFORE 59-dim neural observation vector runs
+              c.localWetness = localW.localWetness;
+              c.puddleIntensity = localW.puddleIntensity;
 
               const aiIn = computeNeuralAIControl(
                 c,
@@ -2512,7 +2567,8 @@ export function RaceViewport(props: RaceViewportProps) {
             rig.rearWingFlap.visible = true;
             const wingBend = ((c.damage?.rearWing ?? 0) / 100) * 0.25;
             rig.rearWingFlap.rotation.z = wingBend;
-            if (resolveCarSpecial(c.carSpec).specialType === 'active-aero') {
+            const spType = resolveCarSpecial(c.carSpec).specialType;
+            if (spType === 'active-aero' || spType === 'drs') {
               const targetRear = c.specialActive ? 0.02 : 0.42;
               rig.rearWingFlap.rotation.x += (targetRear - rig.rearWingFlap.rotation.x) * Math.min(1, dt * 14);
             }
@@ -2908,7 +2964,10 @@ export function RaceViewport(props: RaceViewportProps) {
           launchStatus: sim.launchStatus,
           launchRpmSweetSpot: LAUNCH_RPM_SWEET_SPOT,
           // Section 1.3: Class-specific mechanics
+          hasErs: carHasHybridErs(hudFocusCar.carSpec),
+          ersBattery: Math.round(hudFocusCar.ersBattery ?? 0),
           ersMode: hudFocusCar.ersMode ?? 'balanced',
+          transmissionMode: hudFocusCar.transmissionMode ?? 'auto',
           drsEligible: Boolean(hudFocusCar.drsEligible),
           inDrsZone: Boolean(hudFocusCar.inDrsZone),
           inAttackModeZone: Boolean(hudFocusCar.inAttackModeZone),

@@ -1,4 +1,4 @@
-import { CAR_CLASSES, getCarById, resolveCarSpecial, getCarBoP, BoPMultipliers, getRealWorldCarDimensions } from './cars';
+import { CAR_CLASSES, carHasHybridErs, getCarById, resolveCarSpecial, getCarBoP, BoPMultipliers, getRealWorldCarDimensions } from './cars';
 import { computeSetupPhysicsModifiers, DEFAULT_CAR_SETUP, normalizeCarSetup, resolveEffectiveBoP } from './carSetup';
 import { getErsModeProfile } from './raceSystems';
 import { CompiledTrack, computeTrackWallHalfWidth, projectOntoTrack, sampleTrackAtT } from './tracks';
@@ -218,6 +218,7 @@ export interface CarSimState {
   absLevel?: AbsLevel;
   setup?: CarSetupConfig;
   ersMode?: ErsMode;
+  ersBattery: number; // 0..100 standalone hybrid battery (GTP hybrids, F1 26, F1 21 only)
   drsEligible?: boolean;
   inDrsZone?: boolean;
   inAttackModeZone?: boolean;
@@ -241,6 +242,7 @@ export interface CarSimState {
   aiTeamName?: string;
   aiRivalId?: string;
   aiSkillRating?: number;
+  aiAggression?: number;
   aiWetSkill?: number;
   aiConsistency?: number;
   aiReverseTimer?: number;
@@ -467,6 +469,7 @@ export function createCarSimState(params: {
   aiTeamName?: string;
   aiRivalId?: string;
   aiSkillRating?: number;
+  aiAggression?: number;
   aiWetSkill?: number;
   aiConsistency?: number;
 }): CarSimState {
@@ -551,6 +554,7 @@ export function createCarSimState(params: {
     absLevel: params.absLevel ?? 'low',
     setup: normalizedSetup,
     ersMode: 'balanced',
+    ersBattery: carHasHybridErs(carSpec) ? 100 : 0,
     drsEligible: false,
     inDrsZone: false,
     inAttackModeZone: false,
@@ -565,7 +569,7 @@ export function createCarSimState(params: {
     localWetness: 0,
     puddleIntensity: 0,
     trackRubber: 0.25,
-    specialCharge: 100,
+    specialCharge: resolveCarSpecial(carSpec).specialType === 'none' ? 0 : 100,
     specialActive: false,
     attackModeUsesRemaining: 2,
     attackModeTimer: 0,
@@ -611,6 +615,7 @@ export function createCarSimState(params: {
     aiTeamName: params.aiTeamName,
     aiRivalId: params.aiRivalId,
     aiSkillRating: params.aiSkillRating,
+    aiAggression: params.aiAggression,
     aiWetSkill: params.aiWetSkill,
     aiConsistency: params.aiConsistency,
     aiReverseTimer: 0,
@@ -631,26 +636,28 @@ export function getCompoundModifiers(compound: TireCompound, trackWetness: numbe
   switch (compound) {
     case 'soft':
       return {
-        grip: 1.08 * (1 - wetPenalty * 0.36),
+        grip: 1.08 * (1 - wetPenalty * 0.40),
         wearRate: 1.45,
         optimalTemp: 95,
       };
     case 'medium':
       return {
-        grip: 1.0 * (1 - wetPenalty * 0.30),
+        grip: 1.0 * (1 - wetPenalty * 0.34),
         wearRate: 1.0,
         optimalTemp: 88,
       };
     case 'hard':
       return {
-        grip: 0.94 * (1 - wetPenalty * 0.25),
+        grip: 0.94 * (1 - wetPenalty * 0.28),
         wearRate: 0.65,
         optimalTemp: 82,
       };
     case 'wet':
       return {
-        grip: 0.90 + wetPenalty * 0.17, // Shines in rain, slower/hotter on dry asphalt
-        wearRate: trackWetness < 0.2 ? 1.85 : 0.85,
+        // Realistically ~12-14% less grip in heavy rain than dry softs (0.94 vs 1.08),
+        // while massively outperforming slicks (0.65-0.68) in standing water.
+        grip: 0.86 + wetPenalty * 0.08,
+        wearRate: trackWetness < 0.2 ? 1.95 : 0.85,
         optimalTemp: 68,
       };
   }
@@ -1216,26 +1223,39 @@ export function stepCarPhysics(
   // Class / car-specific special toggle activation (press once ON, press again OFF, auto-OFF on depletion/expiry)
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
   const specialType = resolvedSpecial.specialType;
+  const hasHybridErs = carHasHybridErs(car.carSpec);
   const isSpecialTriggered = input.specialJustPressed ?? input.specialPressed;
 
   switch (specialType) {
-    case 'active-aero': {
+    case 'drs': {
+      // Strictly F1 2021 only: requires DRS zone (& <1s gap in races), auto-closes on braking or zone exit
       const drsAllowed = !opts.drsZoneEnforced || Boolean(car.drsEligible);
       if (isSpecialTriggered) {
         if (car.specialActive) {
           car.specialActive = false;
-        } else if (drsAllowed) {
+        } else if (drsAllowed && (car.inDrsZone || !opts.drsZoneEnforced)) {
           car.specialActive = true;
         }
       }
       if (car.specialActive && (input.brake > 0.35 || (opts.drsZoneEnforced && !car.inDrsZone))) {
-        // Braking or leaving DRS zone automatically closes low-drag wing back to high-downforce corner mode
         car.specialActive = false;
       }
+      car.specialCharge = car.drsEligible || !opts.drsZoneEnforced ? 100 : 0;
+      break;
+    }
+    case 'active-aero': {
+      // F1 2026 X-Mode straight-line active aero (NO DRS zone restriction; closes automatically under braking)
+      if (isSpecialTriggered) {
+        car.specialActive = !car.specialActive;
+      }
+      if (car.specialActive && input.brake > 0.35) {
+        car.specialActive = false;
+      }
+      car.specialCharge = 100;
       break;
     }
     case 'attack-mode': {
-      // 2 uses per race, 15s duration: toggle ON to deploy AWD boost, toggle again to deactivate/stow early
+      // Formula E ONLY: 2 uses per race, 15s duration AWD boost
       if (isSpecialTriggered) {
         if (car.specialActive) {
           car.specialActive = false;
@@ -1260,27 +1280,23 @@ export function stepCarPhysics(
     }
     case 'ers-overtake':
     case 'hybrid-deploy': {
-      // Toggle ON/OFF to deploy rechargeable battery for +15% acceleration; auto-OFF when depleted
+      // GTP Hybrid Overtake deploy: draws directly from the standalone ersBattery
       if (isSpecialTriggered) {
         if (car.specialActive) {
           car.specialActive = false;
-        } else if (car.specialCharge > 1) {
+        } else if (car.ersBattery > 2) {
           car.specialActive = true;
         }
       }
       if (car.specialActive) {
-        if (car.specialCharge > 0) {
-          car.specialCharge = Math.max(0, car.specialCharge - dt * 20);
+        if (car.ersBattery > 0) {
+          car.ersBattery = Math.max(0, car.ersBattery - dt * 18);
         }
-        if (car.specialCharge <= 0) {
+        if (car.ersBattery <= 0) {
           car.specialActive = false;
         }
       }
-      if (!car.specialActive) {
-        // Recharges under braking and lightly off-deployment
-        const rechargeRate = input.brake > 0.2 ? 22 : 3.5;
-        car.specialCharge = Math.min(100, car.specialCharge + dt * rechargeRate);
-      }
+      car.specialCharge = Math.round(car.ersBattery);
       break;
     }
     case 'v10-overboost':
@@ -1307,6 +1323,7 @@ export function stepCarPhysics(
     }
     default: {
       car.specialActive = false;
+      car.specialCharge = 0;
       break;
     }
   }
@@ -1493,43 +1510,58 @@ export function stepCarPhysics(
   const fuelWeightMassBonusKg = (car.fuel / 100) * (isFormula ? 65 : isGTP || isLMP2 ? 55 : 48);
   const effectiveMassKg = massKg - 32 + fuelWeightMassBonusKg;
 
-  // ERS Deployment Mode continuous modulation (Harvest / Balanced / Overtake / Quali)
-  const ersActiveEligible =
-    specialType === 'ers-overtake' || specialType === 'hybrid-deploy' || specialType === 'attack-mode';
+  // Standalone Hybrid ERS Battery & Deployment Mode (STRICTLY GTP hybrids, F1 2026, F1 2021 only)
   let ersModeSpeedBonus = 0;
   let ersModeAccelBonus = 0;
-  if (ersActiveEligible && car.ersMode && car.ersMode !== 'balanced') {
-    const ersProf = getErsModeProfile(car.ersMode);
-    if (ersProf.drainPerSec > 0) {
-      if (car.specialCharge > 4 && input.throttle > 0.25) {
-        ersModeSpeedBonus = ersProf.topSpeedBonus;
-        ersModeAccelBonus = ersProf.accelBonus;
-        car.specialCharge = Math.max(0, car.specialCharge - ersProf.drainPerSec * dt * input.throttle);
-      }
-    } else {
-      // Harvest mode: slightly less straight pull, faster battery regen
+  if (hasHybridErs) {
+    const mode = car.ersMode ?? 'balanced';
+    const ersProf = getErsModeProfile(mode);
+    // Kinetic MGU-K regeneration under braking (even while in balanced/overtake when braking hard)
+    if (input.brake > 0.18 && car.speed > 10) {
+      const regen = 18.0 * ersProf.harvestMult * input.brake * dt;
+      car.ersBattery = Math.min(100, car.ersBattery + regen);
+    }
+    if (mode === 'harvest') {
       ersModeSpeedBonus = ersProf.topSpeedBonus;
       ersModeAccelBonus = ersProf.accelBonus;
-      car.specialCharge = Math.min(100, car.specialCharge + Math.abs(ersProf.drainPerSec) * dt * (input.brake > 0.15 ? 1.6 : 0.7));
+      car.ersBattery = Math.min(100, car.ersBattery + Math.abs(ersProf.drainPerSec) * dt * (input.brake > 0.15 ? 1.5 : 0.85));
+    } else if (ersProf.drainPerSec > 0) {
+      if (car.ersBattery > 2 && input.throttle > 0.25) {
+        ersModeSpeedBonus = ersProf.topSpeedBonus;
+        ersModeAccelBonus = ersProf.accelBonus;
+        car.ersBattery = Math.max(0, car.ersBattery - ersProf.drainPerSec * dt * input.throttle);
+      } else if (input.throttle <= 0.15) {
+        car.ersBattery = Math.min(100, car.ersBattery + 3.0 * dt);
+      }
     }
+    if (specialType === 'ers-overtake' || specialType === 'hybrid-deploy') {
+      car.specialCharge = Math.round(car.ersBattery);
+    }
+  } else {
+    car.ersBattery = 0;
   }
 
   let specialSpeedMult = 1.0 + ersModeSpeedBonus;
   let specialAccelMult = (1.0 + ersModeAccelBonus) * setupMod.accelMult * engineDmgFactor;
   let specialGripMult = 1.0;
   if (car.specialActive) {
-    if (specialType === 'active-aero') {
-      // 2026 F1: +3.8% low-drag straight Vmax (350-355 km/h), -25% cornering grip
-      specialSpeedMult = 1.038;
+    if (specialType === 'drs') {
+      // F1 2021 DRS: low-drag rear wing flap (+3.6% Vmax, slight corner grip drop)
+      specialSpeedMult *= 1.036;
+      specialAccelMult *= 1.05;
+      specialGripMult = 0.86;
+    } else if (specialType === 'active-aero') {
+      // 2026 F1 X-Mode Active Aero: +3.8% low-drag straight Vmax (350-355 km/h), -25% cornering grip
+      specialSpeedMult *= 1.038;
       specialAccelMult *= 1.06;
       specialGripMult = 0.75;
     } else if (specialType === 'attack-mode') {
-      // Formula E: AWD launch & +15% power, +5.5% top speed (315-324 km/h)
+      // Formula E ONLY: AWD launch & +15% power, +5.5% top speed (315-324 km/h)
       specialSpeedMult = 1.055;
       specialAccelMult *= 1.18;
       specialGripMult = 1.08;
     } else if (specialType === 'ers-overtake' || specialType === 'hybrid-deploy') {
-      // 2021 F1 & Hypercar: +12% mid/high-speed pull, +2.0% Vmax
+      // Hypercar/GTP Hybrid Deploy: +12% mid/high-speed pull, +2.0% Vmax
       specialSpeedMult = 1.020 + ersModeSpeedBonus * 0.5;
       specialAccelMult *= 1.12;
     } else if (specialType === 'v10-overboost' || specialType === 'rich-fuel-overboost') {
@@ -1539,20 +1571,15 @@ export function stepCarPhysics(
     }
   }
 
-  // DRS boost for F1_2021 when DRS eligible + special active in DRS zone
-  if (isF121 && car.drsEligible && car.specialActive) {
-    specialSpeedMult *= 1.022;
-  }
-
   const slipstreamMult = 1.0 + 0.052 * slipstreamStrength;
 
   let penaltyCap = 1.0;
   if (car.penaltyTimeRemaining > 0) {
     if (input.throttle < 0.65 || input.brake > 0.1) {
-      car.penaltyTimeRemaining = Math.max(0, car.penaltyTimeRemaining - dt * 1.6);
+      car.penaltyTimeRemaining = Math.max(0, car.penaltyTimeRemaining - dt * 2.0);
     } else {
-      penaltyCap = 0.88;
-      car.penaltyTimeRemaining = Math.max(0, car.penaltyTimeRemaining - dt * 0.7);
+      penaltyCap = 0.94;
+      car.penaltyTimeRemaining = Math.max(0, car.penaltyTimeRemaining - dt * 0.9);
     }
     if (car.penaltyTimeRemaining <= 0) {
       car.penaltyTimeRemaining = 0;
@@ -3105,6 +3132,15 @@ export function computeAIControl(
     }
   }
 
+  // Wet-weather racing line: in damp/rainy conditions, shift off the slick rubbered inside apex
+  // onto higher-grip wet asphalt (~22% wider mid-corner) and keep clear of flooded outer kerbs
+  const effWet = Math.max(trackWetness, car.localWetness ?? 0);
+  if (effWet > 0.25 && Math.abs(currentSample.curvature) > 0.008) {
+    const wetBlend = Math.min(1, (effWet - 0.25) / 0.55);
+    const wetApexShift = -Math.sign(currentSample.curvature) * halfW * 0.24 * wetBlend;
+    dynamicRacingLine = dynamicRacingLine * (1 - 0.28 * wetBlend) + wetApexShift;
+  }
+
   dynamicRacingLine = Math.max(minSafeLane, Math.min(maxSafeLane, dynamicRacingLine));
   let desiredOffset = dynamicRacingLine;
 
@@ -3372,15 +3408,61 @@ export function computeAIControl(
     throttle = Math.min(throttle, 0.84);
   }
 
-  // Trigger Class / Car Special on straights when clear ahead (toggle semantics)
+  // Wet-weather corner-exit throttle modulation & slicks-in-rain caution
+  const aiWet = Math.max(trackWetness, car.localWetness ?? 0);
+  if (aiWet > 0.22) {
+    const wetSkill = car.aiWetSkill ?? 1.0;
+    const slickPenalty = car.compound !== 'wet' ? 1.0 + aiWet * 0.35 : 1.0;
+    if (Math.abs(steer) > 0.26 && brake < 0.1) {
+      const tractionCap = Math.max(0.58, 1.0 - aiWet * 0.24 * slickPenalty * (1.12 - (wetSkill - 0.9)));
+      throttle = Math.min(throttle, tractionCap);
+    }
+    if ((car.puddleIntensity ?? 0) > 0.25 && car.speed > 26) {
+      throttle = Math.min(throttle, 0.72);
+    }
+  }
+
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
   const onStraight = nearCurv < 0.01 && Math.abs(steer) < 0.18 && maxBrakeRatio < 0.5;
+
+  // Dynamic Hybrid ERS Mode management for AI cars (GTP hybrids, F1 2026, F1 2021)
+  if (carHasHybridErs(car.carSpec)) {
+    const batt = car.ersBattery ?? 0;
+    const isBattling = Boolean(leadCar || car.aiDefenseCommitted || car.aiPassTimer > 0);
+    if (batt < 18) {
+      car.ersMode = 'harvest';
+    } else if (batt > 32 && (isBattling || (onStraight && car.speed > 34 && batt > 58))) {
+      car.ersMode = isBattling && batt > 45 ? 'overtake' : 'balanced';
+    } else if (personality === 'Tire-Saver' && !isBattling && batt < 70) {
+      car.ersMode = 'harvest';
+    } else {
+      car.ersMode = 'balanced';
+    }
+  }
+
+  // Trigger Class / Car Special on straights when clear / eligible (toggle semantics)
   let specialPressed = false;
-  if (resolvedSpecial.specialType === 'active-aero') {
-    if (onStraight && !car.specialActive && car.speed > 26) specialPressed = true;
-    if (!onStraight && car.specialActive) specialPressed = true;
+  if (resolvedSpecial.specialType === 'drs') {
+    // F1 2021 DRS: open immediately when eligible on straights, close before braking
+    if (car.drsEligible && onStraight && !car.specialActive && car.speed > 26) {
+      specialPressed = true;
+    } else if ((!onStraight || brake > 0.2) && car.specialActive) {
+      specialPressed = true;
+    }
+  } else if (resolvedSpecial.specialType === 'active-aero') {
+    // F1 2026 X-Mode Active Aero: engage on all clear straights, stow into corners
+    if (onStraight && !car.specialActive && car.speed > 28) specialPressed = true;
+    if ((!onStraight || brake > 0.2) && car.specialActive) specialPressed = true;
   } else if (resolvedSpecial.specialType === 'attack-mode') {
+    // Formula E Attack Mode: deploy strategically on straights / overtakes
     if (onStraight && !car.specialActive && car.attackModeUsesRemaining > 0 && car.speed > 25) {
+      specialPressed = true;
+    }
+  } else if (resolvedSpecial.specialType === 'ers-overtake' || resolvedSpecial.specialType === 'hybrid-deploy') {
+    const batt = car.ersBattery ?? 0;
+    if (onStraight && !car.specialActive && batt > 42 && car.speed > 24 && (leadCar || batt > 68)) {
+      specialPressed = true;
+    } else if ((!onStraight || brake > 0.25 || batt < 15) && car.specialActive) {
       specialPressed = true;
     }
   } else if (resolvedSpecial.specialType !== 'none') {

@@ -15,6 +15,7 @@ export type BodySilhouette = 'prototype' | 'lmp2' | 'gt' | 'formula' | 'coupe' |
 
 export type ClassSpecialType =
   | 'none'
+  | 'drs'
   | 'active-aero'
   | 'attack-mode'
   | 'ers-overtake'
@@ -293,7 +294,13 @@ export type PenaltyType = 'slow-down' | 'time-penalty' | 'drive-through' | 'stop
 
 export type AIDifficulty = 'Rookie' | 'Amateur' | 'Pro' | 'Alien';
 
-export type AIPersonality = 'Late-Braker' | 'Metronome' | 'Tire-Saver' | 'Traffic-Smart';
+export type AIPersonality =
+  | 'Late-Braker'
+  | 'Metronome'
+  | 'Tire-Saver'
+  | 'Traffic-Smart'
+  | 'Dive-Bomber'
+  | 'Passive';
 
 export type CameraMode = 'orbit' | 'hood';
 
@@ -477,7 +484,10 @@ export interface HudSnapshot {
   damageLevel?: DamageLevel;
   specialCharge: number; // 0..100
   specialActive: boolean;
+  ersBattery?: number; // 0..100 standalone hybrid ERS battery (GTP, F1 26, F1 21 only)
+  hasErs?: boolean;
   ersMode?: ErsMode;
+  transmissionMode?: 'auto' | 'manual';
   drsEligible?: boolean;
   inDrsZone?: boolean;
   attackModeUsesRemaining?: number;

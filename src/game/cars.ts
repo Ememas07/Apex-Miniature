@@ -108,8 +108,8 @@ export const CAR_CLASSES: Record<CarClassId, CarClassMeta> = {
     badgeTextColor: '#0f172a',
     basePaceIndex: 1.18,
     forwardGears: 8,
-    specialType: 'ers-overtake',
-    specialLabel: 'ERS Overtake',
+    specialType: 'drs',
+    specialLabel: 'DRS',
     defaultHeadlightTint: 'crystal-white',
   },
   [CarClassId.F1_2005]: {
@@ -1466,6 +1466,21 @@ export function resolveCarSpecial(car: CarSpec): {
     specialType: car.specialTypeOverride ?? cls.specialType,
     specialLabel: car.specialLabelOverride ?? cls.specialLabel,
   };
+}
+
+/**
+ * Returns true ONLY for hybrid classes with a standalone ERS battery & deployment modes:
+ * WEC Hypercar/IMSA GTP (excluding non-hybrid rich-fuel-overboost LMH cars), F1 2026, and F1 2021.
+ */
+export function carHasHybridErs(car: CarSpec): boolean {
+  if (car.specialTypeOverride === 'rich-fuel-overboost' || car.specialTypeOverride === 'none') {
+    return false;
+  }
+  return (
+    car.classId === CarClassId.HYPERCAR_GTP ||
+    car.classId === CarClassId.F1_2026 ||
+    car.classId === CarClassId.F1_2021
+  );
 }
 
 export function validateDriverNumber(raw: string): string {

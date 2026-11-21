@@ -47,10 +47,10 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'm-bellini',
     rivalId: 'e-laurent',
     carNumber: '51',
-    personality: 'Late-Braker',
+    personality: 'Dive-Bomber',
     skill: 1.03,
-    aggression: 0.88,
-    consistency: 0.94,
+    aggression: 0.94,
+    consistency: 0.92,
     wetSkill: 1.02,
     primaryColor: '#c8102e',
     secondaryColor: '#facc15',
@@ -105,9 +105,9 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'e-laurent',
     rivalId: 'm-weber',
     carNumber: '35',
-    personality: 'Tire-Saver',
+    personality: 'Passive',
     skill: 0.97,
-    aggression: 0.52,
+    aggression: 0.28,
     consistency: 0.96,
     wetSkill: 1.01,
     primaryColor: '#0055a4',
@@ -144,10 +144,10 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'k-takahashi',
     rivalId: 'd-silva',
     carNumber: '8',
-    personality: 'Late-Braker',
+    personality: 'Dive-Bomber',
     skill: 0.98,
-    aggression: 0.86,
-    consistency: 0.90,
+    aggression: 0.92,
+    consistency: 0.89,
     wetSkill: 0.99,
     primaryColor: '#e2e8f0',
     secondaryColor: '#111827',
@@ -203,10 +203,10 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'o-hart',
     rivalId: 'h-vogel',
     carNumber: '4',
-    personality: 'Late-Braker',
+    personality: 'Dive-Bomber',
     skill: 1.02,
-    aggression: 0.85,
-    consistency: 0.92,
+    aggression: 0.91,
+    consistency: 0.91,
     wetSkill: 1.06,
     primaryColor: '#f97316',
     secondaryColor: '#0f172a',
@@ -222,9 +222,9 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'a-foster',
     rivalId: 's-lindqvist',
     carNumber: '81',
-    personality: 'Metronome',
+    personality: 'Passive',
     skill: 0.99,
-    aggression: 0.68,
+    aggression: 0.34,
     consistency: 0.96,
     wetSkill: 1.02,
     primaryColor: '#f97316',
@@ -437,9 +437,9 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'k-bouchard',
     rivalId: 'b-peeters',
     carNumber: '2',
-    personality: 'Late-Braker',
+    personality: 'Dive-Bomber',
     skill: 0.95,
-    aggression: 0.87,
+    aggression: 0.93,
     consistency: 0.88,
     wetSkill: 0.93,
     primaryColor: '#1d4ed8',
@@ -456,9 +456,9 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'j-mccall',
     rivalId: 'm-kovacs',
     carNumber: '18',
-    personality: 'Tire-Saver',
+    personality: 'Passive',
     skill: 0.93,
-    aggression: 0.55,
+    aggression: 0.30,
     consistency: 0.93,
     wetSkill: 0.97,
     primaryColor: '#1d4ed8',
@@ -495,9 +495,9 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'v-novak',
     rivalId: 'k-bouchard',
     carNumber: '92',
-    personality: 'Metronome',
+    personality: 'Passive',
     skill: 0.92,
-    aggression: 0.58,
+    aggression: 0.26,
     consistency: 0.95,
     wetSkill: 0.96,
     primaryColor: '#065f46',
@@ -517,18 +517,92 @@ export function getAiDriverProfile(id: string | undefined): AiDriverProfile | nu
   return AI_DRIVER_ROSTER.find((d) => d.id === id) ?? null;
 }
 
+const RANDOM_AI_LIVERY_PALETTES: readonly [string, string, string][] = [
+  ['#dc2626', '#facc15', '#111827'], // Crimson / Gold
+  ['#1d4ed8', '#f8fafc', '#ef4444'], // Works Blue / White / Red
+  ['#0f172a', '#22d3ee', '#f8fafc'], // Carbon / Cyan
+  ['#f97316', '#0f172a', '#38bdf8'], // Papaya / Navy
+  ['#065f46', '#a3e635', '#f8fafc'], // British Racing Green / Lime
+  ['#f8fafc', '#e11d48', '#111827'], // Championship White / Red
+  ['#6d28d9', '#f472b6', '#f8fafc'], // Violet / Magenta
+  ['#eab308', '#111827', '#ef4444'], // Solar Yellow / Black
+  ['#0284c7', '#facc15', '#0f172a'], // Cerulean / Gold
+  ['#334155', '#fb923c', '#f8fafc'], // Gunmetal / Tangerine
+  ['#991b1b', '#f8fafc', '#d4af37'], // Burgundy / Ivory / Gold
+  ['#14b8a6', '#0f172a', '#facc15'], // Teal / Carbon / Yellow
+  ['#be185d', '#f8fafc', '#38bdf8'], // Racing Pink / White / Sky
+  ['#1e293b', '#84cc16', '#f8fafc'], // Slate / Acid Green
+  ['#b45309', '#fef3c7', '#111827'], // Copper / Cream / Black
+  ['#0369a1', '#e0f2fe', '#f97316'], // Gulf-inspired Blue / Orange
+];
+
+const RANDOM_LIVERY_TEMPLATES: readonly LiveryConfig['template'][] = [
+  'racing-stripes',
+  'two-tone',
+  'geometric',
+  'heritage',
+];
+
+const RANDOM_RIM_FINISHES: readonly LiveryConfig['rimFinish'][] = [
+  'silver',
+  'gloss-black',
+  'gold-bronze',
+  'white',
+  'body-matched',
+];
+
+export function generateRandomAiLivery(
+  baseLivery: LiveryConfig,
+  driverNumber: string,
+  paletteHint?: [string, string, string],
+): LiveryConfig {
+  const palette =
+    paletteHint ??
+    RANDOM_AI_LIVERY_PALETTES[Math.floor(Math.random() * RANDOM_AI_LIVERY_PALETTES.length)];
+  const template =
+    RANDOM_LIVERY_TEMPLATES[Math.floor(Math.random() * RANDOM_LIVERY_TEMPLATES.length)];
+  const rimFinish =
+    RANDOM_RIM_FINISHES[Math.floor(Math.random() * RANDOM_RIM_FINISHES.length)];
+  const carbonHood = Math.random() < 0.35;
+  const carbonWing = Math.random() < 0.55;
+  return {
+    ...baseLivery,
+    primaryColor: palette[0],
+    secondaryColor: palette[1],
+    tertiaryColor: palette[2],
+    template,
+    rimFinish,
+    carbonHood,
+    carbonWing,
+    driverNumber,
+  };
+}
+
 /**
- * Assigns structured 2-car team pairings from AI_DRIVER_ROSTER with realistic pace spread
- * while preserving team livery coordination.
+ * Assigns shuffled AI Roster drivers with randomized liveries & realistic pace spread
+ * so every race features fresh liveries and varied driver personalities on the grid.
  */
 export function assignAiRosterGrid(
   count: number,
   difficulty: AIDifficulty,
   baseDifficultyMultiplier: number,
 ): AiRosterAssignment[] {
+  // Shuffle roster order per race so you meet different personalities & teams up front
+  const shuffledRoster = [...AI_DRIVER_ROSTER];
+  for (let i = shuffledRoster.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffledRoster[i], shuffledRoster[j]] = [shuffledRoster[j], shuffledRoster[i]];
+  }
+  const shuffledPalettes = [...RANDOM_AI_LIVERY_PALETTES];
+  for (let i = shuffledPalettes.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffledPalettes[i], shuffledPalettes[j]] = [shuffledPalettes[j], shuffledPalettes[i]];
+  }
+
   const result: AiRosterAssignment[] = [];
   for (let i = 0; i < count; i++) {
-    const profile = AI_DRIVER_ROSTER[i % AI_DRIVER_ROSTER.length];
+    const profile = shuffledRoster[i % shuffledRoster.length];
+    const palette = shuffledPalettes[i % shuffledPalettes.length];
     // Combine driver skill rating with difficulty spread (wider on Alien so field spreads naturally)
     const skillDelta = profile.skill - 0.98; // roughly -0.06 .. +0.06
     const spreadScale = difficulty === 'Alien' ? 1.15 : difficulty === 'Pro' ? 0.95 : 0.75;
@@ -536,23 +610,19 @@ export function assignAiRosterGrid(
       0.74,
       Math.min(1.06, baseDifficultyMultiplier * (1 + skillDelta * spreadScale)),
     );
+    const useCustomRandomLivery = Math.random() < 0.65;
     result.push({
       profile,
       paceMultiplier,
       applyCoordinatedLivery(baseLivery: LiveryConfig, hasTeamPresets: boolean): LiveryConfig {
-        if (hasTeamPresets) {
+        // Mix randomized authentic team presets (when available) with fully randomized custom motorsport liveries
+        if (hasTeamPresets && !useCustomRandomLivery) {
           return {
             ...baseLivery,
             driverNumber: profile.carNumber,
           };
         }
-        return {
-          ...baseLivery,
-          primaryColor: profile.primaryColor,
-          secondaryColor: profile.secondaryColor,
-          tertiaryColor: profile.tertiaryColor,
-          driverNumber: profile.carNumber,
-        };
+        return generateRandomAiLivery(baseLivery, profile.carNumber, palette);
       },
     });
   }
@@ -570,9 +640,21 @@ export interface PersonalityPolicyProfile {
   throttleSmoothness: number; // <1 smoother corner-exit throttle
   overtakeAggression: number; // >1 pulls out sooner / commits harder
   wetConfidence: number;
+  diveBombTendency: number; // 0..1 tendency to lunge down the inside under braking
+  yieldTendency: number; // 0..1 tendency to yield/let faster rival past without fighting
 }
 
 export const PERSONALITY_POLICY_PROFILES: Record<AIPersonality, PersonalityPolicyProfile> = {
+  'Dive-Bomber': {
+    mixWeights: { v1: 30, v2: 70 },
+    label: 'Dive-Bomber (Aggressive Lunge)',
+    brakeBias: 0.89,
+    throttleSmoothness: 1.03,
+    overtakeAggression: 1.32,
+    wetConfidence: 0.95,
+    diveBombTendency: 0.92,
+    yieldTendency: 0.05,
+  },
   'Late-Braker': {
     mixWeights: { v1: 35, v2: 65 },
     label: 'Late-Braker (v2 65% · v1 35%)',
@@ -580,6 +662,8 @@ export const PERSONALITY_POLICY_PROFILES: Record<AIPersonality, PersonalityPolic
     throttleSmoothness: 1.02,
     overtakeAggression: 1.18,
     wetConfidence: 0.96,
+    diveBombTendency: 0.62,
+    yieldTendency: 0.15,
   },
   Metronome: {
     mixWeights: { v1: 55, v2: 45 },
@@ -588,14 +672,18 @@ export const PERSONALITY_POLICY_PROFILES: Record<AIPersonality, PersonalityPolic
     throttleSmoothness: 0.98,
     overtakeAggression: 0.95,
     wetConfidence: 1.02,
+    diveBombTendency: 0.25,
+    yieldTendency: 0.35,
   },
   'Tire-Saver': {
     mixWeights: { v1: 70, v2: 30 },
     label: 'Tire-Saver (v1 70% · v2 30%)',
     brakeBias: 1.06,
     throttleSmoothness: 0.91,
-    overtakeAggression: 0.88,
+    overtakeAggression: 0.85,
     wetConfidence: 1.04,
+    diveBombTendency: 0.12,
+    yieldTendency: 0.58,
   },
   'Traffic-Smart': {
     mixWeights: { v1: 20, v2: 80 },
@@ -604,6 +692,18 @@ export const PERSONALITY_POLICY_PROFILES: Record<AIPersonality, PersonalityPolic
     throttleSmoothness: 0.97,
     overtakeAggression: 1.14,
     wetConfidence: 1.01,
+    diveBombTendency: 0.40,
+    yieldTendency: 0.25,
+  },
+  Passive: {
+    mixWeights: { v1: 75, v2: 25 },
+    label: 'Passive (Yields Cleanly)',
+    brakeBias: 1.08,
+    throttleSmoothness: 0.93,
+    overtakeAggression: 0.72,
+    wetConfidence: 0.98,
+    diveBombTendency: 0.04,
+    yieldTendency: 0.90,
   },
 };
 
@@ -820,7 +920,13 @@ export function computeRacecraftOverlay(
   let fasterClassBehind = false;
   let sameClassAttacker: CarSimState | null = null;
   let sameClassAttackerDs = Infinity;
+  let sameClassTargetAhead: CarSimState | null = null;
+  let sameClassTargetDs = Infinity;
   let hasSideBySide = false;
+
+  const pProfile = PERSONALITY_POLICY_PROFILES[car.personality ?? 'Metronome'];
+  const diveBombTendency = pProfile?.diveBombTendency ?? 0.25;
+  const yieldTendency = pProfile?.yieldTendency ?? 0.3;
 
   for (let i = 0; i < allCars.length; i++) {
     const other = allCars[i];
@@ -849,23 +955,34 @@ export function computeRacecraftOverlay(
       fasterClassBehind = true;
     }
 
-    // 3. Same-class rival attacking within 4..18m behind
+    // 3. Same-class rival attacking within 3..20m behind
     if (
       Math.abs(paceDiff) < 0.08 &&
-      ds < -4.2 &&
-      ds > -18.5 &&
+      ds < -3.0 &&
+      ds > -20.0 &&
       Math.abs(ds) < sameClassAttackerDs &&
       other.speed >= car.speed - 3.5
     ) {
       sameClassAttackerDs = Math.abs(ds);
       sameClassAttacker = other;
     }
+
+    // 4. Same-class rival ahead within 2.5..24m (dive-bomb candidate approaching corners)
+    if (
+      Math.abs(paceDiff) < 0.08 &&
+      ds > 2.5 &&
+      ds < 24.0 &&
+      ds < sameClassTargetDs &&
+      car.speed >= other.speed - 2.5
+    ) {
+      sameClassTargetDs = ds;
+      sameClassTargetAhead = other;
+    }
   }
 
   // Priority A: Blue-flag slower-class predictable yielding
   if ((car.blueFlagActive || fasterClassBehind) && car.speed > 12) {
     car.aiDefenseCommitted = false;
-    // Pick the predictable side we are already closer to (never cut across track in front of prototype)
     const yieldTarget =
       car.lateralOffset >= 0
         ? Math.min(maxSafeLane, halfW * 0.66)
@@ -889,7 +1006,6 @@ export function computeRacecraftOverlay(
     const leftRoom = Math.max(0, leftEdge - minSafeLane);
     const rightRoom = Math.max(0, maxSafeLane - rightEdge);
 
-    // On corner entry, prefer inside dive if enough room; otherwise choose wider side
     const insideDir = approachingCorner ? Math.sign(upcomingMaxSignedK) : 0;
     let passOffset: number;
     if (insideDir > 0 && rightRoom >= 0.75) {
@@ -918,20 +1034,75 @@ export function computeRacecraftOverlay(
     };
   }
 
-  // Priority C: Same-Class One-Move Defensive Racecraft approaching heavy braking zones
+  // Priority B2: Dive-Bomber / Late-Braker assertive inside lunge into braking zones!
+  if (
+    sameClassTargetAhead &&
+    approachingCorner &&
+    diveBombTendency >= 0.55 &&
+    !car.aiPendingStop &&
+    car.speed > 20.0
+  ) {
+    const insideSign = Math.sign(upcomingMaxSignedK); // +1 right corner inside, -1 left corner inside
+    const insideEdge = insideSign > 0 ? maxSafeLane : minSafeLane;
+    const clearance = carWidth * 1.25;
+    const insideRoom =
+      insideSign > 0
+        ? maxSafeLane - (sameClassTargetAhead.lateralOffset + clearance)
+        : (sameClassTargetAhead.lateralOffset - clearance) - minSafeLane;
+    if (insideRoom >= 0.45) {
+      const diveLane = Math.max(
+        minSafeLane,
+        Math.min(maxSafeLane, insideSign > 0 ? Math.max(sameClassTargetAhead.lateralOffset + clearance, insideEdge * 0.72) : Math.min(sameClassTargetAhead.lateralOffset - clearance, insideEdge * 0.72)),
+      );
+      car.aiPassTimer = Math.max(car.aiPassTimer, 1.8);
+      return {
+        overrideTargetOffset: diveLane,
+        suppressStraightBraking: sameClassTargetDs > 6.5 && Math.abs(diveLane - sameClassTargetAhead.lateralOffset) >= carWidth * 1.15,
+        throttleMultiplier: 1.0,
+        maneuver: 'overtaking',
+        underDefensivePressure: false,
+      };
+    }
+  }
+
+  // Priority C: Passive / Low-Aggression drivers cleanly yield & let faster attackers past without fighting!
+  if (
+    sameClassAttacker &&
+    yieldTendency >= 0.55 &&
+    !car.aiPendingStop &&
+    car.speed > 16.0
+  ) {
+    car.aiDefenseCommitted = false;
+    // Move politely away from the attacker's lane so they breeze past cleanly
+    const openSide = sameClassAttacker.lateralOffset >= car.lateralOffset ? -1 : 1;
+    const yieldLane = Math.max(
+      minSafeLane,
+      Math.min(maxSafeLane, openSide * halfW * 0.62),
+    );
+    const liftFactor = yieldTendency >= 0.8 ? 0.88 : 0.94;
+    return {
+      overrideTargetOffset: yieldLane,
+      suppressStraightBraking: false,
+      throttleMultiplier: liftFactor,
+      maneuver: 'blue-flag',
+      underDefensivePressure: false,
+    };
+  }
+
+  // Priority D: Same-Class One-Move Defensive Racecraft approaching heavy braking zones (non-passive drivers)
   if (
     sameClassAttacker &&
     !hasSideBySide &&
     approachingCorner &&
+    yieldTendency < 0.55 &&
     car.speed > 22.0 &&
     !car.aiPendingStop
   ) {
-    // Commit at most ONE defensive move toward the inside line of the upcoming corner
     if (!car.aiDefenseCommitted) {
-      const insideSign = Math.sign(upcomingMaxSignedK); // +1 right corner -> +nx inside, -1 left corner -> -nx inside
+      const insideSign = Math.sign(upcomingMaxSignedK);
       const defenseLane = Math.max(
         minSafeLane,
-        Math.min(maxSafeLane, insideSign * halfW * 0.52),
+        Math.min(maxSafeLane, insideSign * halfW * 0.56),
       );
       car.aiDefenseCommitted = true;
       car.aiDefenseLane = defenseLane;

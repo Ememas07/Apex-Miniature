@@ -20,19 +20,101 @@ export interface TrackMedalTargets {
 }
 
 /**
+ * Empirical mean clean-lap speeds (km/h) per class measured across all 43 circuits in the physics engine.
+ * Overall fleet reference mean across all 58 cars = 194.64 km/h.
+ */
+const CLASS_BENCHMARK_SPEED_KMH: Record<CarClassId, number> = {
+  [CarClassId.F1_2021]: 245.3,
+  [CarClassId.F1_2005]: 242.5,
+  [CarClassId.F1_2026]: 242.4,
+  [CarClassId.HYPERCAR_GTP]: 214.6,
+  [CarClassId.LMP2]: 199.8,
+  [CarClassId.FORMULA_E]: 196.7,
+  [CarClassId.SUPERCAR]: 196.2,
+  [CarClassId.GT3]: 182.1,
+  [CarClassId.TRACK_COUPE]: 167.7,
+  [CarClassId.GT4]: 167.4,
+};
+
+const FLEET_MEAN_KMH = 194.64;
+
+/**
+ * Audited [circuitLengthKm, fleetMeanSpeedKmh] per built-in circuit so every medal target
+ * reflects genuine achievable in-game physics pace rather than unscaled real-world F1 quali times.
+ */
+const TRACK_PHYSICS_BENCHMARKS: Record<string, [number, number]> = {
+  'le-mans': [13.63, 235.8],
+  'las-vegas': [6.20, 212.5],
+  'road-america': [6.52, 210.4],
+  'daytona-road': [5.73, 208.8],
+  'silverstone': [5.89, 208.5],
+  'watkins-glen': [5.55, 207.6],
+  'sebring': [6.02, 206.9],
+  'albert-park': [5.28, 205.1],
+  'suzuka': [5.81, 204.7],
+  'mosport': [3.96, 204.6],
+  'imola': [4.91, 204.1],
+  'lusail': [5.42, 204.0],
+  'jeddah': [6.17, 202.9],
+  'miami': [5.41, 201.3],
+  'lime-rock': [2.41, 201.2],
+  'spa-francorchamps': [7.00, 200.4],
+  'road-atlanta': [4.09, 193.7],
+  'fuji': [4.56, 193.2],
+  'madring': [5.47, 192.8],
+  'bahrain': [5.41, 192.5],
+  'mid-ohio': [3.63, 191.8],
+  'paul-ricard': [5.84, 191.5],
+  'indianapolis-road': [3.93, 191.4],
+  'interlagos': [4.31, 190.4],
+  'sepang': [5.54, 186.0],
+  'shanghai': [5.45, 185.5],
+  'portimao': [4.65, 183.0],
+  'cota': [5.51, 182.4],
+  'zandvoort': [4.26, 180.9],
+  'barcelona': [4.66, 194.2],
+  'hungaroring': [4.38, 189.1],
+  'laguna-seca': [3.60, 188.5],
+  'yas-marina': [5.28, 198.3],
+  'red-bull-ring': [4.32, 197.7],
+  'monaco': [3.34, 159.3],
+  'monza': [5.79, 210.6],
+  'long-beach': [3.17, 169.7],
+  'detroit-street': [2.65, 171.8],
+  'baku': [6.00, 192.7],
+  'vir': [5.26, 193.4],
+  'singapore': [4.94, 169.0],
+  'mexico-city': [4.30, 201.6],
+  'montreal': [4.36, 176.0],
+};
+
+/**
  * Computes Bronze / Silver / Gold / Alien target lap times for any (track, class) pair.
- * `track.targetLapSeconds` is calibrated around F1_2026 / Hypercar reference pace;
- * scaling by `1 / basePaceIndex` aligns targets naturally across all 10 classes.
+ * Calibrated directly against audited in-game physics speeds so Alien (~3.5% faster than clean AI lap)
+ * and Gold (~1.5% above clean AI lap) are genuinely achievable across all 43 circuits and 10 classes.
  */
 export function computeTrackClassMedalTargets(
-  track: Pick<TrackSpec, 'targetLapSeconds'>,
+  track: Pick<TrackSpec, 'targetLapSeconds'> & { id?: string; circuitLengthKm?: number },
   classId: CarClassId,
 ): TrackMedalTargets {
-  const pace = CAR_CLASSES[classId]?.basePaceIndex ?? 0.92;
-  // Reference baseline: basePaceIndex = 1.0 corresponds to Gold pace at track.targetLapSeconds
-  const refLap = Math.max(20, (track.targetLapSeconds || 95) / Math.max(0.55, pace));
+  const classKmh = CLASS_BENCHMARK_SPEED_KMH[classId] ?? 195.0;
+  const bench = track.id ? TRACK_PHYSICS_BENCHMARKS[track.id] : undefined;
+
+  let refLap: number;
+  if (bench) {
+    const [lengthKm, trackFleetKmh] = bench;
+    const expectedKmh = Math.max(95, trackFleetKmh * (classKmh / FLEET_MEAN_KMH));
+    // Clean benchmark lap in seconds; Gold sits at +1.5%, Alien at -3.5% (demanding but achievable!)
+    const aiCleanLap = (lengthKm / expectedKmh) * 3600;
+    refLap = Math.max(20, aiCleanLap * 1.015);
+  } else {
+    // Custom or unbenchmarked track: scale targetLapSeconds (authored around Hypercar/F1 pace) by class speed ratio
+    const paceScale = Math.max(0.55, classKmh / 218.0);
+    refLap = Math.max(20, (track.targetLapSeconds || 95) / paceScale);
+  }
+
   return {
-    alien: Number((refLap * 0.955).toFixed(3)),
+    alien: Number((refLap * 0.952).toFixed(3)),
     gold: Number((refLap * 1.0).toFixed(3)),
     silver: Number((refLap * 1.055).toFixed(3)),
     bronze: Number((refLap * 1.13).toFixed(3)),

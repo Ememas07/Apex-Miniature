@@ -1585,16 +1585,42 @@ export function computeNeuralAIControl(
   let blendedThrottle = policyOut.throttle;
   let blendedBrake = policyOut.brake;
 
-  // Apply subtle per-personality neural control profile (brake timing & exit smoothness)
-  if (personalityPolicyBlendingEnabled && car.personality) {
-    const pProf = PERSONALITY_POLICY_PROFILES[car.personality];
-    if (pProf) {
-      if (blendedBrake > 0.08 && blendedBrake < 0.85) {
-        blendedBrake = Math.max(0, Math.min(1, blendedBrake * pProf.brakeBias));
-      }
-      if (Math.abs(blendedSteer) > 0.35 && blendedBrake < 0.1 && car.tireWear < 75) {
-        blendedThrottle = Math.max(0, Math.min(1, blendedThrottle * pProf.throttleSmoothness));
-      }
+  // Apply per-personality neural control profile (brake timing, exit smoothness, Dive-Bomber vs Passive racecraft)
+  const pProf = car.personality ? PERSONALITY_POLICY_PROFILES[car.personality] : undefined;
+  if (personalityPolicyBlendingEnabled && pProf) {
+    if (blendedBrake > 0.08 && blendedBrake < 0.88) {
+      blendedBrake = Math.max(0, Math.min(1, blendedBrake * pProf.brakeBias));
+    }
+    if (Math.abs(blendedSteer) > 0.35 && blendedBrake < 0.1 && car.tireWear < 75) {
+      blendedThrottle = Math.max(0, Math.min(1, blendedThrottle * pProf.throttleSmoothness));
+    }
+  }
+
+  // Wet-weather driving adaptation for neural AI (smoother exit throttle, earlier wet braking, slicks-in-rain caution)
+  const effWet = Math.max(trackWetness, car.localWetness ?? 0);
+  if (effWet > 0.22) {
+    const wetSkill = car.aiWetSkill ?? 1.0;
+    const wetConf = pProf?.wetConfidence ?? 1.0;
+    const slicksInRain = car.compound !== 'wet';
+    const wetFactor = effWet * (slicksInRain ? 1.45 : 1.0) / Math.max(0.82, wetSkill * wetConf);
+    // Smoother corner-exit throttle to prevent wheelspin in rain & puddles
+    if (Math.abs(blendedSteer) > 0.24 && blendedBrake < 0.12) {
+      const exitCap = Math.max(0.56, 1.0 - wetFactor * 0.22);
+      blendedThrottle = Math.min(blendedThrottle, exitCap);
+    }
+    if ((car.puddleIntensity ?? 0) > 0.25 && car.speed > 26) {
+      blendedThrottle = Math.min(blendedThrottle, 0.72);
+    }
+    // Earlier braking safety in wet conditions (especially if caught on slicks before boxing)
+    if (car.speed > 20 && heuristic.brake > 0.26 && blendedBrake < heuristic.brake * (slicksInRain ? 0.96 : 0.86)) {
+      const wetBrakeAssist = Math.min(0.75, wetFactor * 0.45);
+      blendedBrake = Math.min(1, blendedBrake + (heuristic.brake - blendedBrake) * wetBrakeAssist);
+      blendedThrottle = Math.min(blendedThrottle, Math.max(0, 1 - blendedBrake * 1.5));
+    }
+    // Gently blend toward the wider off-rubber wet line from heuristic in heavy rain corners
+    if (effWet > 0.32 && Math.abs(blendedSteer) > 0.22) {
+      const wetLineBlend = Math.min(0.26, (effWet - 0.32) * 0.38);
+      blendedSteer = blendedSteer * (1 - wetLineBlend) + heuristic.steer * wetLineBlend;
     }
   }
 
@@ -1650,8 +1676,6 @@ export function computeNeuralAIControl(
   const offTrackRatio = Math.abs(car.lateralOffset) / Math.max(1, halfW);
 
   // Physics-Aware Turn-1 & Heavy Braking Kinematic Safety Guard:
-  // Prevents pre-physics-overhaul weights (and cold-tire Turn-1 approaches) from under-braking
-  // and plowing straight into Turn 1 walls/gravel, while leaving straightaways & bump-drafting untouched.
   const isTurn1Window = raceElapsed >= 0 && raceElapsed < 14.0;
   const brakeThreshold = isTurn1Window ? 0.28 : 0.44;
   if (car.speed > 18.0 && heuristic.brake > brakeThreshold && blendedBrake < heuristic.brake * 0.82) {
@@ -1661,7 +1685,6 @@ export function computeNeuralAIControl(
       : Math.min(0.88, (heuristic.brake - 0.38) * 1.35);
     blendedBrake = Math.min(1.0, blendedBrake + brakeDeficit * guardGain);
     blendedThrottle = Math.min(blendedThrottle, Math.max(0, 1 - blendedBrake * 1.6));
-    // Nudge steering toward apex when severely overspeeding into Turn 1
     if (heuristic.brake > 0.55) {
       const steerAssist = isTurn1Window ? 0.42 : 0.28;
       blendedSteer = blendedSteer * (1 - steerAssist) + heuristic.steer * steerAssist;
@@ -1700,7 +1723,6 @@ export function computeNeuralAIControl(
       if (draftLead) {
         const closing = car.speed - draftLead.speed;
         if (closing < 5.5) {
-          // Stay committed on throttle to bump-draft cleanly instead of lifting timidly at 10-15m
           const minDraftThrottle = closing > 3.8 && draftDist < 6.0 ? 0.78 : 0.94;
           blendedThrottle = Math.max(blendedThrottle, minDraftThrottle);
           blendedBrake = 0;
@@ -1709,12 +1731,40 @@ export function computeNeuralAIControl(
     }
   }
 
-  // One-move defensive / blue-flag lateral discipline assist on neural steering
-  if (car.aiDefenseCommitted && startWeight < 0.2 && offTrackRatio < 0.85) {
-    blendedSteer = blendedSteer * 0.70 + heuristic.steer * 0.30;
-  } else if (car.blueFlagActive && startWeight < 0.2 && offTrackRatio < 0.85) {
-    blendedSteer = blendedSteer * 0.65 + heuristic.steer * 0.35;
-    blendedThrottle *= 0.92;
+  // Wheel-to-wheel personality expression: Dive-Bombers lunge aggressively inside, Passive drivers yield cleanly!
+  if (startWeight < 0.2 && offTrackRatio < 0.85) {
+    if (car.aiDefenseCommitted) {
+      blendedSteer = blendedSteer * 0.68 + heuristic.steer * 0.32;
+    } else if (car.blueFlagActive) {
+      blendedSteer = blendedSteer * 0.62 + heuristic.steer * 0.38;
+      blendedThrottle *= 0.91;
+    } else if ((pProf?.diveBombTendency ?? 0) >= 0.55 && car.aiPassTimer > 0) {
+      // Aggressive Dive-Bomber / Late-Braker: commit hard to the inside passing lane & brake later
+      blendedSteer = blendedSteer * 0.58 + heuristic.steer * 0.42;
+      if (blendedBrake > 0.12 && blendedBrake < 0.85) {
+        blendedBrake *= 0.88;
+      }
+    } else if ((pProf?.yieldTendency ?? 0) >= 0.55) {
+      // Passive / easy-going driver: if a rival is attacking closely behind, drift politely off-line & lift slightly
+      const trackLen = Math.max(100, compiledTrack.totalLength);
+      let attackedClosely = false;
+      for (let i = 0; i < allCars.length; i++) {
+        const other = allCars[i];
+        if (other.id === car.id || other.pitStopRemaining > 0) continue;
+        let dtTrack = other.trackT - car.trackT;
+        if (dtTrack > 0.5) dtTrack -= 1;
+        if (dtTrack < -0.5) dtTrack += 1;
+        const relLong = dtTrack * trackLen;
+        if (relLong < -2.0 && relLong > -16.0 && other.speed >= car.speed - 2.5) {
+          attackedClosely = true;
+          break;
+        }
+      }
+      if (attackedClosely) {
+        blendedSteer = blendedSteer * 0.58 + heuristic.steer * 0.42;
+        blendedThrottle *= (pProf?.yieldTendency ?? 0.6) >= 0.8 ? 0.89 : 0.94;
+      }
+    }
   }
 
   // Section 4.1.4: Human-Like Mistakes (difficulty + pressure scaled; disabled on starts & straights)
