@@ -7,17 +7,22 @@ import {
   DEFAULT_POLICY_MIX,
   getActiveAiPolicyMix,
   getAiPolicyVariants,
+  getClassPolicyVariants,
   getNormalizedPolicyMix,
+  getPerClassPoliciesEnabled,
   getPersonalityPolicyBlendingEnabled,
   getStartPolicyMode,
   getStartPolicyStatus,
   selectSingleAiPolicyVariant,
   setActiveAiPolicyMix,
+  setPerClassPoliciesEnabled,
   setPersonalityPolicyBlendingEnabled,
   setStartPolicyMode,
   StartPolicyMode,
   subscribeAiPolicyMix,
+  subscribePerClassPolicies,
   subscribePersonalityPolicyBlending,
+  subscribePolicyRegistry,
   subscribeStartPolicyMode,
 } from '../game/aiNeuralPolicy';
 
@@ -26,10 +31,15 @@ interface AiPolicyMixPanelProps {
 }
 
 export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
-  const variants = useMemo(() => getAiPolicyVariants(), []);
-  const startPolicy = useMemo(() => getStartPolicyStatus(), []);
+  const [registryTick, setRegistryTick] = useState(0);
+  const variants = useMemo(() => getAiPolicyVariants(), [registryTick]);
+  const classPolicies = useMemo(() => getClassPolicyVariants(), [registryTick]);
+  const startPolicy = useMemo(() => getStartPolicyStatus(), [registryTick]);
   const [mix, setMix] = useState<AiPolicyMixWeights>(() => getActiveAiPolicyMix());
   const [startMode, setStartMode] = useState<StartPolicyMode>(() => getStartPolicyMode());
+  const [perClassEnabled, setPerClassEnabled] = useState<boolean>(() =>
+    getPerClassPoliciesEnabled(),
+  );
   const [personalityBlend, setPersonalityBlend] = useState<boolean>(() =>
     getPersonalityPolicyBlendingEnabled(),
   );
@@ -39,15 +49,23 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
     const u1 = subscribeAiPolicyMix((next) => setMix({ ...next }));
     const u2 = subscribeStartPolicyMode((next) => setStartMode(next));
     const u3 = subscribePersonalityPolicyBlending((next) => setPersonalityBlend(next));
+    const u4 = subscribePerClassPolicies((next) => setPerClassEnabled(next));
+    const u5 = subscribePolicyRegistry(() => setRegistryTick((t) => t + 1));
     return () => {
       u1();
       u2();
       u3();
+      u4();
+      u5();
     };
   }, []);
 
-  const normalized = useMemo(() => getNormalizedPolicyMix(mix), [mix]);
+  const normalized = useMemo(() => getNormalizedPolicyMix(mix), [mix, registryTick]);
   const loadedVariants = useMemo(() => variants.filter((v) => v.loaded), [variants]);
+  const loadedClassPolicies = useMemo(
+    () => classPolicies.filter((c) => c.loaded),
+    [classPolicies],
+  );
 
   const handleSliderChange = (id: AiPolicyVariantId, rawVal: number) => {
     const val = Number.isFinite(rawVal) ? Math.max(0, Math.min(100, Math.round(rawVal))) : 0;
@@ -70,13 +88,15 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
         <div className="flex items-center gap-2 min-w-0">
           <Cpu className="w-3.5 h-3.5 text-sky-400 shrink-0" />
           <span className="text-xs font-semibold text-slate-200 truncate">
-            AI Neural Policy (v1 / v2)
+            AI Neural Policy (ANB1 Binary)
           </span>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-[11px] font-telemetry text-sky-300 truncate max-w-[190px] tabular-nums">
-            {summaryText || 'v1 Phys 100%'}
+            {perClassEnabled && loadedClassPolicies.length > 0
+              ? `Per-Class (${loadedClassPolicies.length}/${classPolicies.length})`
+              : summaryText || 'v1 Gen 100%'}
           </span>
           {compact && (
             <button
@@ -93,7 +113,64 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
 
       {expanded && (
         <div className="space-y-3 pt-2 border-t border-white/10">
-          {/* Quick Single-Model & 50/50 Blend Presets */}
+          {/* Per-Class Dedicated ANB1 Binary Models */}
+          <div className="rounded px-2.5 py-2 border border-indigo-500/25 bg-[#0d1322] space-y-2 text-[11px]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className="font-semibold text-indigo-300">Per-Class Binary Models</span>
+                <span className="text-slate-400">
+                  {' '}
+                  · {loadedClassPolicies.length}/{classPolicies.length} classes loaded (ANB1 .bin)
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPerClassPoliciesEnabled(true)}
+                  className={`px-2 py-0.5 rounded border text-[10px] font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
+                    perClassEnabled
+                      ? 'bg-indigo-600 border-indigo-400 text-white'
+                      : 'bg-[#121c22] hover:bg-[#1a2830] border-white/10 text-slate-300'
+                  }`}
+                >
+                  Per-Class
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPerClassPoliciesEnabled(false)}
+                  className={`px-2 py-0.5 rounded border text-[10px] font-semibold cursor-pointer whitespace-nowrap shrink-0 ${
+                    !perClassEnabled
+                      ? 'bg-indigo-600 border-indigo-400 text-white'
+                      : 'bg-[#121c22] hover:bg-[#1a2830] border-white/10 text-slate-300'
+                  }`}
+                >
+                  Fallback Only
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {classPolicies.map((cp) => (
+                <span
+                  key={cp.classId}
+                  title={
+                    cp.loaded
+                      ? `${cp.filename} (${cp.hiddenDim}h · ${cp.obsDim}-obs · ${cp.pedalMode})`
+                      : `Untrained (${cp.filename}) — uses v1/v2 fallback`
+                  }
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-telemetry border ${
+                    cp.loaded
+                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                      : 'bg-white/5 border-white/10 text-slate-500'
+                  }`}
+                >
+                  {cp.classId}
+                  {cp.loaded && cp.pedalMode === 'signed' ? ' · 2P' : ''}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Quick Single-Model & 50/50 Blend Presets (Fallback Mix) */}
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"

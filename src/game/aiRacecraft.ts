@@ -47,7 +47,7 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'm-bellini',
     rivalId: 'e-laurent',
     carNumber: '51',
-    personality: 'Dive-Bomber',
+    personality: 'Average GTP Driver',
     skill: 1.03,
     aggression: 0.94,
     consistency: 0.92,
@@ -144,7 +144,7 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'k-takahashi',
     rivalId: 'd-silva',
     carNumber: '8',
-    personality: 'Dive-Bomber',
+    personality: 'Average GTP Driver',
     skill: 0.98,
     aggression: 0.92,
     consistency: 0.89,
@@ -203,7 +203,7 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'o-hart',
     rivalId: 'h-vogel',
     carNumber: '4',
-    personality: 'Dive-Bomber',
+    personality: 'Average GTP Driver',
     skill: 1.02,
     aggression: 0.91,
     consistency: 0.91,
@@ -437,7 +437,7 @@ export const AI_DRIVER_ROSTER: readonly AiDriverProfile[] = [
     teammateId: 'k-bouchard',
     rivalId: 'b-peeters',
     carNumber: '2',
-    personality: 'Dive-Bomber',
+    personality: 'Average GTP Driver',
     skill: 0.95,
     aggression: 0.93,
     consistency: 0.88,
@@ -645,9 +645,9 @@ export interface PersonalityPolicyProfile {
 }
 
 export const PERSONALITY_POLICY_PROFILES: Record<AIPersonality, PersonalityPolicyProfile> = {
-  'Dive-Bomber': {
+  'Average GTP Driver': {
     mixWeights: { v1: 30, v2: 70 },
-    label: 'Dive-Bomber (Aggressive Lunge)',
+    label: 'Average GTP Driver (Aggressive Lunge)',
     brakeBias: 0.89,
     throttleSmoothness: 1.03,
     overtakeAggression: 1.32,
@@ -1034,7 +1034,7 @@ export function computeRacecraftOverlay(
     };
   }
 
-  // Priority B2: Dive-Bomber / Late-Braker assertive inside lunge into braking zones!
+  // Priority B2: Average GTP Driver / Late-Braker assertive inside lunge into braking zones!
   if (
     sameClassTargetAhead &&
     approachingCorner &&

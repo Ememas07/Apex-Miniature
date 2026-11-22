@@ -11,6 +11,7 @@ Unified 2-generation model architecture (+ dedicated starts specialist):
 
 import argparse
 from collections import defaultdict
+import copy
 from datetime import datetime, timezone
 import json
 import math
@@ -29,6 +30,39 @@ from torch.distributions import Normal
 OBS_DIM = 43
 ACT_DIM = 3
 CLASS_ORDER = ["F1", "Hypercar", "LMP2", "GT3", "GT4", "Other"]
+CAR_CLASS_IDS = [
+    "HYPERCAR_GTP",
+    "LMP2",
+    "GT3",
+    "GT4",
+    "F1_2026",
+    "F1_2021",
+    "F1_2005",
+    "FORMULA_E",
+    "TRACK_COUPE",
+    "SUPERCAR",
+]
+CAR_CLASS_ALIASES = {
+    "gtp": "HYPERCAR_GTP",
+    "hypercar": "HYPERCAR_GTP",
+    "hypercar_gtp": "HYPERCAR_GTP",
+    "lmh": "HYPERCAR_GTP",
+    "lmdh": "HYPERCAR_GTP",
+    "lmp2": "LMP2",
+    "p2": "LMP2",
+    "gt3": "GT3",
+    "gt4": "GT4",
+    "f1": "F1_2026",
+    "f1_2026": "F1_2026",
+    "f1_2021": "F1_2021",
+    "f1_2005": "F1_2005",
+    "fe": "FORMULA_E",
+    "formula_e": "FORMULA_E",
+    "coupe": "TRACK_COUPE",
+    "track_coupe": "TRACK_COUPE",
+    "supercar": "SUPERCAR",
+}
+POLICIES_BIN_DIR = os.path.join("public", "models", "policies")
 SELFPLAY_SNAPSHOT_INTERVAL = 150
 SELFPLAY_POOL_MAX = 8
 
@@ -79,8 +113,8 @@ VARIANTS = {
         "target_kl": 0.022,
         "adaptive_tracks": True,
         "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v1.json"),
-        "backup": os.path.join("audit", "aiPolicyWeights_v1.best.json"),
+        "weights": os.path.join(POLICIES_BIN_DIR, "aiPolicyWeights_v1.bin"),
+        "backup": os.path.join("audit", "aiPolicyWeights_v1.best.bin"),
         "pool_dir": os.path.join("audit", "selfplay_pool_v1"),
         "curriculum": "v1_physics_3phase",
         "env_options": {
@@ -157,8 +191,8 @@ VARIANTS = {
         "target_kl": 0.020,
         "adaptive_tracks": True,
         "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_v2.json"),
-        "backup": os.path.join("audit", "aiPolicyWeights_v2.best.json"),
+        "weights": os.path.join(POLICIES_BIN_DIR, "aiPolicyWeights_v2.bin"),
+        "backup": os.path.join("audit", "aiPolicyWeights_v2.best.bin"),
         "pool_dir": os.path.join("audit", "selfplay_pool_v2"),
         "curriculum": "v2_racecraft_3phase",
         "env_options": {
@@ -235,8 +269,8 @@ VARIANTS = {
         "target_kl": 0.025,
         "adaptive_tracks": True,
         "checkpoint_metric": "composite",
-        "weights": os.path.join("src", "game", "aiPolicyWeights_starts.json"),
-        "backup": os.path.join("audit", "aiPolicyWeights_starts.best.json"),
+        "weights": os.path.join(POLICIES_BIN_DIR, "aiPolicyWeights_starts.bin"),
+        "backup": os.path.join("audit", "aiPolicyWeights_starts.best.bin"),
         "pool_dir": os.path.join("audit", "selfplay_pool_starts"),
         "curriculum": False,
         "traffic_mix": {"soloRatio": 0.05, "scriptedRatio": 0.55, "selfplayRatio": 0.40},
@@ -276,6 +310,94 @@ VARIANTS = {
             "ttcPenalty": 0.55,
         },
     },
+    "class_pace": {
+        "name": "class_pace_v4",
+        "description": "V4 Per-Class Full-Lap Pace Specialist (ANB1 .bin): signed zero-overlap longitudinal pedal, full-lap flying runs, anti-caution pace & straight-commitment rewards, sector-filtered BC + trial-and-error RL",
+        "obs_dim": 59,
+        "hidden_dim": 192,
+        "num_hidden_layers": 3,
+        "layer_norm": True,
+        "residual": True,
+        "activation": "tanh",
+        "ortho_init": True,
+        "use_obs_norm": True,
+        "pedal_mode": "signed",
+        "obs_config": OBS_CONFIG_V7_TECHNICAL,
+        "default_envs": 64,
+        "default_steps": 1024,
+        "default_workers": 12,
+        "default_updates": 1500,
+        "gamma": 0.996,
+        "gae_lambda": 0.96,
+        "actor_lr_start": 2.5e-4,
+        "critic_lr_start": 4.8e-4,
+        "lr_end": 1.5e-5,
+        "lr_schedule": "cosine",
+        "ent_start": 0.008,
+        "ent_end": 0.0008,
+        "max_std_start": 0.38,
+        "max_std_end": 0.06,
+        "action_bound_coef": 0.015,
+        "action_bound_margin": 1.25,
+        "vf_clip": 0.2,
+        "target_kl": 0.022,
+        "adaptive_tracks": True,
+        "checkpoint_metric": "pace",
+        "weights": os.path.join(POLICIES_BIN_DIR, "class_hypercar_gtp.bin"),
+        "backup": os.path.join("audit", "class_hypercar_gtp.best.bin"),
+        "pool_dir": os.path.join("audit", "selfplay_pool_class_hypercar_gtp"),
+        "curriculum": "class_full_lap_2phase",
+        "traffic_mix": {"soloRatio": 1.0, "scriptedRatio": 0.0, "selfplayRatio": 0.0},
+        "env_options": {
+            "obsDim": 59,
+            "pedalMode": "signed",
+            "fullLapMode": True,
+            "advancedPhysicsRandomization": False,
+            "wetEpisodeRatio": 0.0,
+            "brakingZoneSpawnRatio": 0.0,
+            "tightPackRatio": 0.0,
+            "multiLineTrafficRatio": 0.0,
+            "startScenarioRatio": 0.0,
+            "rollingStartRatio": 1.0,
+            "technicalTrackBoost": 0.0,
+            "spawnGhostSeconds": 1.8,
+            "enableCarPhysicsCollisions": True,
+        },
+        "rewards": {
+            "forwardProgress": 0.65,
+            "timeStepPenalty": 0.42,
+            "speedRatioBonus": 0.55,
+            "straightFullThrottleBonus": 0.22,
+            "straightBrakePenalty": 0.85,
+            "lapCompletionBonus": 18.0,
+            "lapPaceBonus": 45.0,
+            "cornerSurvivalBonus": 0.0,
+            "closeProximity": 0.06,
+            "minSpeedThreshold": 16.0,
+            "minSpeedPenalty": 0.14,
+            "floorSpeedThreshold": 8.0,
+            "floorSpeedPenalty": 0.40,
+            "offTrackBase": 0.35,
+            "offTrackSlope": 0.25,
+            "steerJerk": 0.05,
+            "throttleBrakeOverlap": 0.0,
+            "carCrash": 16.0,
+            "wallCrash": 12.0,
+            "wallScrapeBase": 0.65,
+            "wallScrapeDamageScale": 0.50,
+            "wallScrapeCap": 2.5,
+            "maxWallScrapes": 4,
+            "cleanOvertakeBonus": 4.2,
+            "alternateLineOvertakeBonus": 2.5,
+            "bumpDraftBonus": 0.16,
+            "ghostOverlapPenalty": 1.8,
+            "stallStopSpeed": 2.0,
+            "ttcPenalty": 0.25,
+            "brakeLockupPenalty": 0.08,
+            "tireOverheatPenalty": 0.06,
+            "gravelPenalty": 0.40,
+        },
+    },
 }
 
 # Alias map for convenient variant naming
@@ -283,6 +405,7 @@ VARIANT_ALIASES = {
     "1": "v1", "v1": "v1", "v1_physics_master": "v1", "v9_2": "v1", "physics": "v1",
     "2": "v2", "v2": "v2", "v2_racecraft_master": "v2", "racecraft": "v2", "s4": "v2",
     "starts": "starts", "start": "starts", "starts_grid_launch": "starts", "launch": "starts", "grid": "starts",
+    "class": "class_pace", "class_pace": "class_pace", "v4": "class_pace", "pace": "class_pace", "spa": "class_pace",
 }
 
 
@@ -414,6 +537,7 @@ class ActorCritic(nn.Module):
         residual: bool = False,
         activation: str = "tanh",
         ortho_init: bool = False,
+        pedal_mode: str = "independent",
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -421,6 +545,8 @@ class ActorCritic(nn.Module):
         self.use_layer_norm = layer_norm
         self.use_residual = residual
         self.activation_name = activation
+        self.pedal_mode = pedal_mode
+        self.active_act_dims = 2 if pedal_mode == "signed" else act_dim
         self.is_extended = (
             num_hidden_layers != 2
             or layer_norm
@@ -428,6 +554,8 @@ class ActorCritic(nn.Module):
             or activation != "tanh"
             or ortho_init
         )
+
+        init_bias = [0.0, 0.90, 0.0] if pedal_mode == "signed" else [0.0, 0.30, -0.50]
 
         if not self.is_extended:
             # Exact legacy v1..v4 architecture
@@ -446,7 +574,7 @@ class ActorCritic(nn.Module):
                 nn.Linear(hidden_dim, 1),
             )
         else:
-            # Start with mild forward-throttle / off-brake bias so step-1 rollouts accelerate cleanly
+            # Start with crisp full-throttle / zero-brake bias so step-1 rollouts attack corners flat
             self.actor = ResidualMLP(
                 in_dim=obs_dim,
                 hidden_dim=hidden_dim,
@@ -457,7 +585,7 @@ class ActorCritic(nn.Module):
                 activation=activation,
                 ortho_init=ortho_init,
                 out_gain=0.01,
-                init_out_bias=[0.0, 0.30, -0.50],
+                init_out_bias=init_bias,
             )
             self.critic = ResidualMLP(
                 in_dim=obs_dim,
@@ -485,16 +613,22 @@ class ActorCritic(nn.Module):
 
     def forward(self, obs: torch.Tensor):
         mean = self.actor(obs)
-        std = torch.exp(torch.clamp(self.log_std, -2.5, 0.2))
+        std = torch.exp(torch.clamp(self.log_std, -2.8, 0.2))
         value = self.critic(obs).squeeze(-1)
         return mean, std, value
 
     def get_action_and_value(self, obs: torch.Tensor, action: torch.Tensor | None = None):
         mean, std, value = self.forward(obs)
-        dist = Normal(mean, std)
+        d = self.active_act_dims
+        dist = Normal(mean[..., :d], std[:d])
         if action is None:
-            action = dist.sample()
-        log_prob = dist.log_prob(action).sum(dim=-1)
+            sampled = dist.sample()
+            if d < mean.shape[-1]:
+                pad = torch.zeros((*sampled.shape[:-1], mean.shape[-1] - d), device=sampled.device, dtype=sampled.dtype)
+                action = torch.cat([sampled, pad], dim=-1)
+            else:
+                action = sampled
+        log_prob = dist.log_prob(action[..., :d]).sum(dim=-1)
         entropy = dist.entropy().sum(dim=-1)
         return action, log_prob, entropy, value, mean
 
@@ -543,77 +677,123 @@ def load_actor_from_json(
         return False, -1e9
 
 
-def export_actor_to_json(
+def load_actor_from_bin(
+    model: ActorCritic,
+    bin_path: str,
+    hidden_dim: int,
+    obs_rms: RunningMeanStd | None = None,
+) -> tuple[bool, float]:
+    """Loads actor weights & RunningMeanStd directly from compact ANB1 binary (.bin) format."""
+    if not os.path.exists(bin_path):
+        return False, -1e9
+    try:
+        with open(bin_path, "rb") as f:
+            raw = f.read()
+        if len(raw) < 8 or raw[:4] != b"ANB1":
+            print(f"Invalid ANB1 magic in {bin_path}; skipping load.")
+            return False, -1e9
+        (header_len,) = struct.unpack_from("<I", raw, 4)
+        header_start = 8
+        header_end = header_start + header_len
+        header = json.loads(raw[header_start:header_end].decode("utf-8"))
+        pad_len = (-header_len) % 4
+        data_offset = header_end + pad_len
+
+        expected_obs_dim = int(model.get_actor_linears()[0].in_features)
+        h_obs_dim = int(header.get("obsDim", 0))
+        h_hidden_dim = int(header.get("hiddenDim", 0))
+        h_act_dim = int(header.get("actDim", 0))
+        h_layers = int(header.get("numHiddenLayers", 2))
+        h_has_ln = bool(header.get("hasLn", False))
+        h_has_obs_norm = bool(header.get("hasObsNorm", False))
+        h_pedal_mode = str(header.get("pedalMode", "independent"))
+
+        if h_obs_dim != expected_obs_dim or h_hidden_dim != hidden_dim or h_act_dim != ACT_DIM:
+            print(
+                f"Shape mismatch in {bin_path} (got obs={h_obs_dim}, hid={h_hidden_dim}, act={h_act_dim}; "
+                f"expected obs={expected_obs_dim}, hid={hidden_dim}, act={ACT_DIM}); starting from scratch."
+            )
+            return False, -1e9
+        if h_layers != model.num_hidden_layers or h_has_ln != (len(model.get_actor_norms()) > 0):
+            print(
+                f"Architecture mismatch in {bin_path} (layers={h_layers}, ln={h_has_ln} vs "
+                f"layers={model.num_hidden_layers}, ln={len(model.get_actor_norms()) > 0}); starting from scratch."
+            )
+            return False, -1e9
+        if h_pedal_mode != model.pedal_mode:
+            print(
+                f"Pedal-mode mismatch in {bin_path} (file={h_pedal_mode} vs model={model.pedal_mode}); "
+                f"starting from scratch."
+            )
+            return False, -1e9
+
+        floats = np.frombuffer(raw, dtype="<f4", offset=data_offset)
+        cursor = 0
+
+        def take(n: int) -> np.ndarray:
+            nonlocal cursor
+            end = cursor + n
+            if end > floats.size:
+                raise ValueError(f"ANB1 buffer underrun in {bin_path} (need {end}, have {floats.size})")
+            arr = floats[cursor:end]
+            cursor = end
+            return arr
+
+        if h_has_obs_norm:
+            mean_arr = take(h_obs_dim).astype(np.float64, copy=True)
+            std_arr = take(h_obs_dim).astype(np.float64, copy=True)
+            if obs_rms is not None:
+                obs_rms.mean = mean_arr
+                obs_rms.var = np.square(np.maximum(std_arr, 1e-6))
+                obs_rms.count = max(obs_rms.count, 10000.0)
+                obs_rms.clip = float(header.get("obsNormClip", obs_rms.clip))
+
+        layers = model.get_actor_linears()
+        norms = model.get_actor_norms()
+        with torch.no_grad():
+            in_dim = h_obs_dim
+            for idx in range(h_layers):
+                w = take(h_hidden_dim * in_dim).reshape(h_hidden_dim, in_dim)
+                b = take(h_hidden_dim)
+                layers[idx].weight.copy_(torch.from_numpy(w.copy()))
+                layers[idx].bias.copy_(torch.from_numpy(b.copy()))
+                if h_has_ln:
+                    ln_w = take(h_hidden_dim)
+                    ln_b = take(h_hidden_dim)
+                    norms[idx].weight.copy_(torch.from_numpy(ln_w.copy()))
+                    norms[idx].bias.copy_(torch.from_numpy(ln_b.copy()))
+                in_dim = h_hidden_dim
+
+            out_w = take(h_act_dim * h_hidden_dim).reshape(h_act_dim, h_hidden_dim)
+            out_b = take(h_act_dim)
+            layers[h_layers].weight.copy_(torch.from_numpy(out_w.copy()))
+            layers[h_layers].bias.copy_(torch.from_numpy(out_b.copy()))
+
+        meta = header.get("meta") if isinstance(header.get("meta"), dict) else {}
+        prev_best = float(meta.get("checkpointScore", meta.get("meanStepReward", -1e9)))
+        return True, prev_best
+    except Exception as e:
+        print(f"Error loading ANB1 binary {bin_path}: {e}")
+        return False, -1e9
+
+
+def load_actor_weights(
     model: ActorCritic,
     path: str,
-    metadata: dict,
-    variant_name: str,
     hidden_dim: int,
-    backup_path: str | None = None,
     obs_rms: RunningMeanStd | None = None,
-    obs_config: dict | None = None,
-):
-    layers = model.get_actor_linears()
-    norms = model.get_actor_norms()
-    meta_with_ts = dict(metadata)
-    meta_with_ts["variant"] = variant_name
-    meta_with_ts["savedAt"] = datetime.now(timezone.utc).isoformat()
-
-    is_v3 = model.is_extended or (obs_rms is not None) or (obs_config is not None)
-    obs_dim_export = int(layers[0].in_features)
-    payload: dict = {
-        "version": 3 if is_v3 else 2,
-        "obsDim": obs_dim_export,
-        "actDim": ACT_DIM,
-        "hiddenDim": hidden_dim,
-    }
-    for idx, lin in enumerate(layers):
-        payload[f"w{idx}"] = lin.weight.detach().cpu().tolist()
-        payload[f"b{idx}"] = lin.bias.detach().cpu().tolist()
-
-    if is_v3:
-        payload["numHiddenLayers"] = model.num_hidden_layers
-        payload["activation"] = model.activation_name
-        payload["residual"] = model.use_residual
-        for idx, ln in enumerate(norms):
-            payload[f"ln{idx}Weight"] = ln.weight.detach().cpu().tolist()
-            payload[f"ln{idx}Bias"] = ln.bias.detach().cpu().tolist()
-        if obs_rms is not None:
-            payload["obsNorm"] = obs_rms.to_dict()
-        if obs_config is not None:
-            payload["obsConfig"] = obs_config
-            meta_with_ts["obsConfig"] = obs_config
-
-    payload["meta"] = meta_with_ts
-
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f)
-    os.replace(tmp_path, path)
-    if backup_path:
-        os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
-        shutil.copy2(path, backup_path)
-
-    # Also write compact ANB1 binary companion (.bin) (~4x smaller, zero JSON float-parsing overhead)
-    try:
-        bin_path = os.path.splitext(path)[0] + ".bin"
-        export_actor_to_bin(
-            model=model,
-            bin_path=bin_path,
-            metadata=meta_with_ts,
-            hidden_dim=hidden_dim,
-            obs_rms=obs_rms,
-            obs_config=obs_config,
-        )
-        # Keep public/models/policies/ mirrored for runtime browser ANB1 hot-loading
-        norm_p = os.path.normpath(path).replace("\\", "/")
-        if norm_p.startswith("src/game/aiPolicyWeights_"):
-            public_dir = os.path.join("public", "models", "policies")
-            os.makedirs(public_dir, exist_ok=True)
-            shutil.copy2(bin_path, os.path.join(public_dir, os.path.basename(bin_path)))
-    except Exception:
-        pass
+) -> tuple[bool, float]:
+    """Unified weight loader: prefers compact ANB1 (.bin) files, with legacy JSON fallback if explicitly requested."""
+    if not path:
+        return False, -1e9
+    if path.endswith(".bin"):
+        return load_actor_from_bin(model, path, hidden_dim, obs_rms=obs_rms)
+    bin_alt = os.path.splitext(path)[0] + ".bin"
+    if os.path.exists(bin_alt):
+        return load_actor_from_bin(model, bin_alt, hidden_dim, obs_rms=obs_rms)
+    if path.endswith(".json") and os.path.exists(path):
+        return load_actor_from_json(model, path, hidden_dim, obs_rms=obs_rms)
+    return False, -1e9
 
 
 def export_actor_to_bin(
@@ -621,29 +801,45 @@ def export_actor_to_bin(
     bin_path: str,
     metadata: dict,
     hidden_dim: int,
+    backup_path: str | None = None,
     obs_rms: RunningMeanStd | None = None,
     obs_config: dict | None = None,
+    car_class: str | None = None,
 ):
-    """Exports policy weights into compact ANB1 binary format matching decodePolicyWeightsBinary()."""
+    """Exports policy weights directly into compact ANB1 binary format (v3 independent / v4 signed-pedal & per-class)."""
     layers = model.get_actor_linears()
     norms = model.get_actor_norms()
     has_ln = len(norms) > 0
     has_obs_norm = obs_rms is not None
     obs_dim_export = int(layers[0].in_features)
-    header = {
-        "version": 3,
+
+    meta_with_ts = dict(metadata)
+    meta_with_ts["savedAt"] = datetime.now(timezone.utc).isoformat()
+    meta_with_ts["pedalMode"] = model.pedal_mode
+    if car_class:
+        meta_with_ts["carClass"] = car_class
+    if obs_config is not None:
+        meta_with_ts["obsConfig"] = obs_config
+
+    is_v4 = (model.pedal_mode == "signed") or bool(car_class)
+    header: dict = {
+        "version": 4 if is_v4 else 3,
         "obsDim": obs_dim_export,
         "hiddenDim": hidden_dim,
         "actDim": ACT_DIM,
         "numHiddenLayers": model.num_hidden_layers,
         "activation": model.activation_name,
         "residual": bool(model.use_residual),
+        "pedalMode": model.pedal_mode,
         "hasLn": has_ln,
         "hasObsNorm": has_obs_norm,
         "obsNormClip": float(obs_rms.clip) if obs_rms is not None else 10.0,
         "obsConfig": obs_config,
-        "meta": metadata,
+        "meta": meta_with_ts,
     }
+    if car_class:
+        header["carClass"] = car_class
+
     header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
     pad_len = (-len(header_bytes)) % 4
 
@@ -663,6 +859,7 @@ def export_actor_to_bin(
     tensors.append(out_lin.weight.detach().cpu().numpy().astype("<f4", copy=False).ravel())
     tensors.append(out_lin.bias.detach().cpu().numpy().astype("<f4", copy=False).ravel())
 
+    os.makedirs(os.path.dirname(os.path.abspath(bin_path)), exist_ok=True)
     tmp_bin = bin_path + ".tmp"
     with open(tmp_bin, "wb") as f:
         f.write(b"ANB1")
@@ -674,6 +871,10 @@ def export_actor_to_bin(
             f.write(arr.tobytes())
     os.replace(tmp_bin, bin_path)
 
+    if backup_path:
+        os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
+        shutil.copy2(bin_path, backup_path)
+
 
 def save_selfplay_snapshot(
     model: ActorCritic,
@@ -684,22 +885,25 @@ def save_selfplay_snapshot(
     hidden_dim: int,
     obs_rms: RunningMeanStd | None = None,
     obs_config: dict | None = None,
+    car_class: str | None = None,
 ):
     os.makedirs(pool_dir, exist_ok=True)
     ts = int(time.time())
-    snap_name = f"snap_{ts}_u{update:05d}.json"
+    snap_name = f"snap_{ts}_u{update:05d}.bin"
     snap_path = os.path.join(pool_dir, snap_name)
-    export_actor_to_json(
+    meta = dict(metadata)
+    meta["variant"] = variant_name
+    export_actor_to_bin(
         model,
         snap_path,
-        metadata,
-        variant_name,
+        meta,
         hidden_dim,
         backup_path=None,
         obs_rms=obs_rms,
         obs_config=obs_config,
+        car_class=car_class,
     )
-    snaps = sorted(f for f in os.listdir(pool_dir) if f.endswith(".json"))
+    snaps = sorted(f for f in os.listdir(pool_dir) if f.endswith(".bin"))
     while len(snaps) > SELFPLAY_POOL_MAX:
         oldest = snaps.pop(0)
         try:
@@ -720,6 +924,32 @@ def compute_curriculum_state(
     if not curriculum_mode:
         mix = dict(base_traffic_mix) if base_traffic_mix else {"soloRatio": 0.20, "scriptedRatio": 0.35, "selfplayRatio": 0.45}
         return 1, mix, None, None
+
+    if curriculum_mode == "class_full_lap_2phase":
+        # Phase 1 (75%): Pure Full-Lap Solo Pace & Limit Finding (try corners flat, learn true braking markers!)
+        # Phase 2 (25%): Full-Lap Racecraft Layering (gentle multi-line self-play while keeping full-lap pace!)
+        p1_end = max(1, int(round(0.75 * total_updates)))
+        if update <= p1_end:
+            rew = dict(base_rewards)
+            eo = dict(base_env_options or {})
+            eo["fullLapMode"] = True
+            eo["brakingZoneSpawnRatio"] = 0.0
+            eo["startScenarioRatio"] = 0.0
+            eo["wetEpisodeRatio"] = 0.0
+            return 1, {"soloRatio": 1.0, "scriptedRatio": 0.0, "selfplayRatio": 0.0}, rew, eo
+        ramp = max(0.0, min(1.0, (update - p1_end) / max(1, total_updates - p1_end)))
+        selfplay = round(0.28 * ramp, 4)
+        scripted = round(0.12 * ramp, 4)
+        solo = round(max(0.55, 1.0 - scripted - selfplay), 4)
+        rew = dict(base_rewards)
+        rew["wallCrash"] = 15.0
+        rew["carCrash"] = 18.0
+        eo = dict(base_env_options or {})
+        eo["fullLapMode"] = True
+        eo["brakingZoneSpawnRatio"] = 0.0
+        eo["multiLineTrafficRatio"] = 0.45
+        eo["wetEpisodeRatio"] = round(0.10 * ramp, 3)
+        return 2, {"soloRatio": solo, "scriptedRatio": scripted, "selfplayRatio": selfplay}, rew, eo
 
     if curriculum_mode in ("v1_physics_3phase", "v9_master_3phase"):
         p1_end = max(1, int(round(0.25 * total_updates)))
@@ -1108,15 +1338,73 @@ def run_bc_warmstart(
     dataset_path: str,
     obs_dim: int,
     device: torch.device,
-    epochs: int = 12,
+    epochs: int = 18,
     lr: float = 5e-4,
+    pedal_mode: str = "signed",
+    obs_config: dict | None = None,
 ) -> int:
-    """Supervised Behavioral Cloning warm-start from exported HumanTelemetryRecorder JSONL laps."""
+    """
+    Sector-filtered Supervised Behavioral Cloning warm-start from HumanTelemetryRecorder .jsonl laps.
+    - Automatically strips wall-impact windows (sudden speed drop without braking), stalls, and deep off-tracks.
+    - Scores clean ~3s sectors by pace & full-throttle commitment and up-weights the fastest clean sectors.
+    - Aligns legacy 43-dim clamp40 telemetry to 59-dim window_tanh observations & signed zero-overlap pedals.
+    """
     if not dataset_path or not os.path.exists(dataset_path):
         print(f"[BC] Dataset file not found: {dataset_path}")
         return 0
+
+    use_window_tanh = bool(obs_config and obs_config.get("curvatureMode") == "window_tanh")
+    curv_scale = float(obs_config.get("curvatureScale", 14.0)) if obs_config else 14.0
+
     obs_rows: list[np.ndarray] = []
     act_rows: list[list[float]] = []
+    weights_rows: list[float] = []
+    total_raw_frames = 0
+    dropped_bad_frames = 0
+
+    def build_aligned_obs(raw_o: list[float], is_legacy_clamp40: bool) -> np.ndarray | None:
+        vec = np.zeros(obs_dim, dtype=np.float32)
+        copy_n = min(obs_dim, len(raw_o))
+        vec[:copy_n] = np.asarray(raw_o[:copy_n], dtype=np.float32)
+        if not np.all(np.isfinite(vec)):
+            return None
+        # Convert legacy 43-dim clamp40 curvature probes (indices 10,12,...,24) into window_tanh space
+        if is_legacy_clamp40 and use_window_tanh:
+            for k in range(8):
+                idx = 10 + k * 2
+                if idx < copy_n:
+                    raw_k = float(vec[idx]) / 40.0
+                    vec[idx] = float(math.tanh(raw_k * curv_scale))
+        # Nominal dry/warm-tire defaults for 59-dim channels when cloning from 43-dim human telemetry
+        if obs_dim == 59 and len(raw_o) == 43:
+            vec[43:47] = 0.95  # fresh tires
+            vec[47:49] = 0.0   # optimal front/rear temp (90C)
+            vec[49] = 0.25     # nominal brake temp
+            vec[50:55] = 0.0   # zero lockup/dirty air/crest/asphalt/damage
+            vec[55] = 0.0      # dry track
+            vec[56] = 1.0      # optimal rubber
+            vec[57:59] = 0.0   # no flags
+        return vec
+
+    def convert_action(steer: float, thr01: float, brk01: float) -> list[float]:
+        s = max(-1.0, min(1.0, float(steer)))
+        t = max(0.0, min(1.0, float(thr01)))
+        b = max(0.0, min(1.0, float(brk01)))
+        if pedal_mode == "signed":
+            # Crisp saturation targets: full throttle -> +1.02, full brake -> -1.02, zero overlap
+            if t >= 0.98 and b <= 0.02:
+                pedal = 1.02
+            elif b >= 0.98 and t <= 0.02:
+                pedal = -1.02
+            elif t > b:
+                pedal = 0.02 + t * 0.88
+            elif b > t:
+                pedal = -(0.02 + b * 0.88)
+            else:
+                pedal = 0.0
+            return [s, pedal, 0.0]
+        return [s, max(-1.0, min(1.0, t * 2.0 - 1.0)), max(-1.0, min(1.0, b * 2.0 - 1.0))]
+
     with open(dataset_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -1128,68 +1416,108 @@ def run_bc_warmstart(
                 continue
             if not isinstance(rec, dict) or rec.get("type") == "header":
                 continue
-            # Format A: TelemetryLapDemo exported by HumanTelemetryRecorder ({ samples: [[...obs, steer, thrAct, brkAct]] })
+
+            # Format A: TelemetryLapDemo ({ samples: [[...obs, steer, thrAct, brkAct]] })
             lap_samples = rec.get("samples")
-            if isinstance(lap_samples, list):
-                for row in lap_samples:
-                    if not isinstance(row, list) or len(row) < 46:
+            if isinstance(lap_samples, list) and len(lap_samples) > 0:
+                is_legacy_clamp40 = rec.get("obsConfig", {}).get("curvatureMode") != "window_tanh" and len(lap_samples[0]) <= 46
+                n = len(lap_samples)
+                total_raw_frames += n
+                speeds_kmh = [float(r[0]) * 360.0 if isinstance(r, list) and len(r) >= 46 else 0.0 for r in lap_samples]
+                lats = [abs(float(r[2])) if isinstance(r, list) and len(r) >= 46 else 9.9 for r in lap_samples]
+                thrs = [(float(r[-2]) + 1.0) * 0.5 if isinstance(r, list) and len(r) >= 46 else 0.0 for r in lap_samples]
+                brks = [(float(r[-1]) + 1.0) * 0.5 if isinstance(r, list) and len(r) >= 46 else 0.0 for r in lap_samples]
+
+                # Mask out wall impacts (sudden speed drop > 14 km/h without braking) +/- safety window
+                bad_mask = [False] * n
+                for i in range(n):
+                    if speeds_kmh[i] < 45.0 or lats[i] > 1.15:
+                        for j in range(max(0, i - 15), min(n, i + 25)):
+                            bad_mask[j] = True
+                    if i > 0 and (speeds_kmh[i - 1] - speeds_kmh[i]) > 14.0 and brks[i] < 0.35:
+                        for j in range(max(0, i - 45), min(n, i + 60)):
+                            bad_mask[j] = True
+
+                # Score ~3-second clean sectors (90 frames @ 30 Hz) to emphasize faster clean sectors
+                sector_len = 90
+                sector_scores: list[tuple[int, int, float]] = []
+                for start in range(0, n, sector_len):
+                    end = min(n, start + sector_len)
+                    clean_idx = [k for k in range(start, end) if not bad_mask[k]]
+                    if len(clean_idx) < 20:
                         continue
-                    raw_o = row[:-3]
-                    vec = np.zeros(obs_dim, dtype=np.float32)
-                    copy_n = min(obs_dim, len(raw_o))
-                    vec[:copy_n] = np.asarray(raw_o[:copy_n], dtype=np.float32)
-                    if not np.all(np.isfinite(vec)):
+                    avg_spd = sum(speeds_kmh[k] for k in clean_idx) / len(clean_idx)
+                    ft_ratio = sum(1 for k in clean_idx if thrs[k] >= 0.98) / len(clean_idx)
+                    score = avg_spd * (0.65 + 0.35 * ft_ratio)
+                    sector_scores.append((start, end, score))
+
+                scores_only = sorted(sc for _, _, sc in sector_scores)
+                p15 = scores_only[int(len(scores_only) * 0.15)] if len(scores_only) >= 5 else 0.0
+                p50 = scores_only[int(len(scores_only) * 0.50)] if len(scores_only) >= 5 else 0.0
+                p75 = scores_only[int(len(scores_only) * 0.75)] if len(scores_only) >= 5 else 0.0
+
+                for start, end, score in sector_scores:
+                    if len(scores_only) >= 5 and score < p15:
+                        dropped_bad_frames += (end - start)
                         continue
-                    act_rows.append([
-                        max(-1.0, min(1.0, float(row[-3]))),
-                        max(-1.0, min(1.0, float(row[-2]))),
-                        max(-1.0, min(1.0, float(row[-1]))),
-                    ])
-                    obs_rows.append(vec)
+                    sec_w = 1.8 if score >= p75 else (1.3 if score >= p50 else 0.85)
+                    for i in range(start, end):
+                        if bad_mask[i]:
+                            dropped_bad_frames += 1
+                            continue
+                        row = lap_samples[i]
+                        if not isinstance(row, list) or len(row) < 46:
+                            continue
+                        vec = build_aligned_obs(row[:-3], is_legacy_clamp40)
+                        if vec is None:
+                            continue
+                        obs_rows.append(vec)
+                        act_rows.append(convert_action(row[-3], thrs[i], brks[i]))
+                        weights_rows.append(sec_w)
                 continue
+
             # Format B: Per-frame JSONL record ({ obs: [...], steer, throttle, brake })
             raw_obs = rec.get("obs")
             if not isinstance(raw_obs, list) or len(raw_obs) < 43:
                 continue
-            vec = np.zeros(obs_dim, dtype=np.float32)
-            copy_n = min(obs_dim, len(raw_obs))
-            vec[:copy_n] = np.asarray(raw_obs[:copy_n], dtype=np.float32)
-            if not np.all(np.isfinite(vec)):
+            total_raw_frames += 1
+            vec = build_aligned_obs(raw_obs, len(raw_obs) == 43)
+            if vec is None:
                 continue
-            steer = float(rec.get("steer", 0.0))
-            throttle = float(rec.get("throttle", 0.0))
-            brake = float(rec.get("brake", 0.0))
-            # Convert [0, 1] throttle/brake into tanh-space [-1, 1] targets matching actor mean output
-            act_rows.append([
-                max(-1.0, min(1.0, steer)),
-                max(-1.0, min(1.0, throttle * 2.0 - 1.0)),
-                max(-1.0, min(1.0, brake * 2.0 - 1.0)),
-            ])
             obs_rows.append(vec)
+            act_rows.append(convert_action(rec.get("steer", 0.0), rec.get("throttle", 0.0), rec.get("brake", 0.0)))
+            weights_rows.append(1.0)
+
     if len(obs_rows) < 32:
         print(f"[BC] Not enough valid frames ({len(obs_rows)}) in {dataset_path} — skipping BC warm-start.")
         return 0
 
     X = np.stack(obs_rows, axis=0)
     Y = np.asarray(act_rows, dtype=np.float32)
+    W = np.asarray(weights_rows, dtype=np.float32)
+    W = W / max(1e-6, float(np.mean(W)))
     if obs_rms is not None:
         obs_rms.update(X)
         X = obs_rms.normalize(X)
 
     x_t = torch.from_numpy(X).to(device)
     y_t = torch.from_numpy(Y).to(device)
+    w_t = torch.from_numpy(W).to(device)
+    d = model.active_act_dims
     opt = torch.optim.Adam(model.actor.parameters(), lr=lr, eps=1e-5)
     batch_size = min(256, len(obs_rows))
     model.train()
     last_loss = 0.0
-    for ep in range(1, max(1, epochs) + 1):
+    for _ in range(1, max(1, epochs) + 1):
         perm = torch.randperm(x_t.shape[0], device=device)
         ep_loss = 0.0
         n_batches = 0
         for start in range(0, x_t.shape[0], batch_size):
             idx = perm[start : start + batch_size]
-            pred = model.actor(x_t[idx])
-            loss = torch.mean((pred - y_t[idx]) ** 2)
+            pred = model.actor(x_t[idx])[..., :d]
+            target = y_t[idx, :d]
+            per_sample = torch.mean((pred - target) ** 2, dim=-1)
+            loss = torch.mean(per_sample * w_t[idx])
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.actor.parameters(), 1.0)
@@ -1197,13 +1525,40 @@ def run_bc_warmstart(
             ep_loss += float(loss.item())
             n_batches += 1
         last_loss = ep_loss / max(1, n_batches)
-    print(f"[BC] Warm-started actor on {len(obs_rows):,} human frames ({epochs} epochs) | Final MSE: {last_loss:.5f}")
+    print(
+        f"[BC] Sector-filtered warm-start: kept {len(obs_rows):,}/{total_raw_frames:,} fast clean frames "
+        f"(filtered {dropped_bad_frames:,} wall-hit/off-track/slow frames) | {epochs} epochs | Final MSE: {last_loss:.5f}"
+    )
     return len(obs_rows)
+
+
+def resolve_class_cars(car_class: str) -> list[str]:
+    """Queries headlessEnv catalog to fetch all base car IDs belonging to a CarClassId."""
+    proc = spawn_env_worker(binary_ipc=False)
+    try:
+        proc.stdin.write((json.dumps({"cmd": "catalog"}) + "\n").encode("utf-8"))
+        proc.stdin.flush()
+        line = proc.stdout.readline().decode("utf-8")
+        data = json.loads(line)
+        return [c["id"] for c in data.get("baseCars", []) if str(c.get("classId", "")).upper() == car_class.upper()]
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            proc.kill()
 
 
 def train_single_variant(var_key: str, args):
     cfg = VARIANTS[var_key]
-    var_name = cfg["name"]
+    car_class: str | None = getattr(args, "car_class", None)
+    if car_class:
+        car_class = CAR_CLASS_ALIASES.get(car_class.lower(), car_class.upper())
+        if car_class not in CAR_CLASS_IDS:
+            print(f"Unknown --car-class '{car_class}'. Valid choices: {', '.join(CAR_CLASS_IDS)}")
+            sys.exit(1)
+
+    var_name = f"class_{car_class.lower()}" if car_class else cfg["name"]
     obs_dim = int(cfg.get("obs_dim", OBS_DIM))
     hidden_dim = args.hidden_dim if args.hidden_dim is not None else cfg["hidden_dim"]
     num_hidden_layers = int(cfg.get("num_hidden_layers", 2))
@@ -1212,8 +1567,9 @@ def train_single_variant(var_key: str, args):
     activation = str(cfg.get("activation", "tanh"))
     ortho_init = bool(cfg.get("ortho_init", False))
     use_obs_norm = bool(cfg.get("use_obs_norm", False))
+    pedal_mode = str(cfg.get("pedal_mode", "independent"))
     obs_config = cfg.get("obs_config", None)
-    base_env_options = dict(cfg.get("env_options", {})) if cfg.get("env_options") else None
+    base_env_options = dict(cfg.get("env_options", {})) if cfg.get("env_options") else {}
     adaptive_tracks = bool(cfg.get("adaptive_tracks", False))
     checkpoint_metric = str(cfg.get("checkpoint_metric", "mean_rew"))
 
@@ -1237,13 +1593,37 @@ def train_single_variant(var_key: str, args):
     args.envs = num_envs
     args.updates = total_updates
 
-    weights_path = args.weights if args.weights else cfg["weights"]
-    backup_weights_path = args.backup if args.backup else cfg["backup"]
-    pool_dir = args.pool_dir if args.pool_dir else cfg["pool_dir"]
+    if car_class:
+        slug = car_class.lower()
+        default_weights = os.path.join(POLICIES_BIN_DIR, f"class_{slug}.bin")
+        default_backup = os.path.join("audit", f"class_{slug}.best.bin")
+        default_pool = os.path.join("audit", f"selfplay_pool_class_{slug}")
+    else:
+        default_weights = cfg["weights"]
+        default_backup = cfg["backup"]
+        default_pool = cfg["pool_dir"]
+
+    weights_path = args.weights if args.weights else default_weights
+    if not weights_path.lower().endswith(".bin"):
+        weights_path = os.path.splitext(weights_path)[0] + ".bin"
+    backup_weights_path = args.backup if args.backup else default_backup
+    if backup_weights_path and not backup_weights_path.lower().endswith(".bin"):
+        backup_weights_path = os.path.splitext(backup_weights_path)[0] + ".bin"
+    pool_dir = args.pool_dir if args.pool_dir else default_pool
+
     curriculum_mode = args.curriculum if args.curriculum is not None else cfg["curriculum"]
+    if getattr(args, "solo_only", False):
+        curriculum_mode = False
     is_curriculum = bool(curriculum_mode)
     reward_weights = dict(cfg["rewards"])
-    base_traffic_mix = cfg.get("traffic_mix", None)
+    base_traffic_mix = {"soloRatio": 1.0, "scriptedRatio": 0.0, "selfplayRatio": 0.0} if getattr(args, "solo_only", False) else cfg.get("traffic_mix", None)
+
+    target_cars = args.cars
+    if car_class and not target_cars:
+        target_cars = resolve_class_cars(car_class)
+        if not target_cars:
+            print(f"[{var_name}] Error: No cars found for class {car_class}.")
+            sys.exit(1)
 
     device = resolve_device(getattr(args, "device", "auto"))
     dev_name_str = ""
@@ -1260,16 +1640,19 @@ def train_single_variant(var_key: str, args):
         arch_desc += "+Res"
     if use_obs_norm:
         arch_desc += "+ObsNorm"
+    arch_desc += f"+{pedal_mode}Pedal"
 
     print(f"\n{'='*70}")
-    print(f"[{var_name}] Launching PPO training on device: {device}{dev_name_str}")
+    print(f"[{var_name}] Launching ANB1 Binary PPO on device: {device}{dev_name_str}")
     print(f"[{var_name}] Envs: {args.envs} ({num_workers} worker(s)) | Steps: {steps_per_update} | Updates: {args.updates} | Arch: {arch_desc}")
-    print(f"[{var_name}] Target Weights: {weights_path}")
+    if car_class:
+        print(f"[{var_name}] Class: {car_class} ({len(target_cars or [])} car(s)) | Tracks: {args.tracks or 'ALL'}")
+    print(f"[{var_name}] Target ANB1 Binary: {weights_path}")
     print(f"{'='*70}")
 
     init_source_path = args.init_from if args.init_from else weights_path
     from_scratch = args.scratch or not os.path.exists(init_source_path)
-    init_log_std = -0.7 if from_scratch else -1.6
+    init_log_std = -0.8 if from_scratch else -1.6
     model = ActorCritic(
         obs_dim=obs_dim,
         act_dim=ACT_DIM,
@@ -1280,16 +1663,19 @@ def train_single_variant(var_key: str, args):
         residual=use_residual,
         activation=activation,
         ortho_init=ortho_init,
+        pedal_mode=pedal_mode,
     ).to(device)
     obs_rms = RunningMeanStd(obs_dim, clip=10.0) if use_obs_norm else None
 
-    loaded, prev_best = (False, -1e9) if from_scratch else load_actor_from_json(model, init_source_path, hidden_dim, obs_rms=obs_rms)
+    loaded, prev_best = (False, -1e9) if from_scratch else load_actor_weights(model, init_source_path, hidden_dim, obs_rms=obs_rms)
     if loaded:
         print(f"[{var_name}] Warm-started actor from {init_source_path} (previous best score: {prev_best:+.4f})")
     else:
         from_scratch = True
         print(f"[{var_name}] Training from scratch -> {weights_path}")
 
+    bc_ref_actor: nn.Module | None = None
+    bc_anchor_start = float(getattr(args, "bc_anchor_coef", 0.08))
     if getattr(args, "bc_dataset", None):
         bc_frames = run_bc_warmstart(
             model,
@@ -1297,14 +1683,32 @@ def train_single_variant(var_key: str, args):
             args.bc_dataset,
             obs_dim,
             device,
-            epochs=getattr(args, "bc_epochs", 12),
+            epochs=getattr(args, "bc_epochs", 18),
+            pedal_mode=pedal_mode,
+            obs_config=obs_config,
         )
         if bc_frames > 0:
             from_scratch = False
+            if bc_anchor_start > 0:
+                bc_ref_actor = copy.deepcopy(model.actor).eval()
+                for p in bc_ref_actor.parameters():
+                    p.requires_grad_(False)
+                print(f"[{var_name}] Decaying BC anchor enabled ({bc_anchor_start:.3f} -> 0.0 over first 25% of updates)")
+            # Immediately persist BC warm-start checkpoint so the model is testable even before RL finishes
+            export_actor_to_bin(
+                model,
+                weights_path,
+                {"source": f"{var_name}_bc_warmstart", "update": 0, "bcFrames": bc_frames},
+                hidden_dim,
+                backup_path=backup_weights_path,
+                obs_rms=obs_rms,
+                obs_config=obs_config,
+                car_class=car_class,
+            )
 
     os.makedirs("audit", exist_ok=True)
     os.makedirs(pool_dir, exist_ok=True)
-    if not any(f.endswith(".json") for f in os.listdir(pool_dir)):
+    if not any(f.endswith(".bin") for f in os.listdir(pool_dir)):
         save_selfplay_snapshot(
             model,
             pool_dir,
@@ -1314,21 +1718,23 @@ def train_single_variant(var_key: str, args):
             hidden_dim,
             obs_rms=obs_rms,
             obs_config=obs_config,
+            car_class=car_class,
         )
         print(f"[{var_name}] Seeded empty self-play pool in {pool_dir}")
 
     cfg_actor_lr = float(cfg.get("actor_lr_start", 3e-4))
     cfg_critic_lr = float(cfg.get("critic_lr_start", 3e-4))
     critic_lr_start = args.critic_lr if args.critic_lr else cfg_critic_lr
-    actor_lr_start = args.actor_lr if args.actor_lr else (cfg_actor_lr if from_scratch else min(cfg_actor_lr, 8e-5))
+    actor_lr_start = args.actor_lr if args.actor_lr else (cfg_actor_lr if from_scratch else min(cfg_actor_lr, 1.2e-4))
     lr_end = float(cfg.get("lr_end", 2e-5))
     critic_lr_end = max(lr_end, critic_lr_start * 0.08)
     lr_schedule = str(cfg.get("lr_schedule", "linear"))
-    ent_start = float(cfg.get("ent_start", 0.012)) if from_scratch else min(float(cfg.get("ent_start", 0.004)), 0.004)
-    ent_end = args.ent_end if args.ent_end is not None else float(cfg.get("ent_end", 0.0015))
-    max_std_start = float(cfg.get("max_std_start", 0.50)) if from_scratch else min(float(cfg.get("max_std_start", 0.20)), 0.20)
-    max_std_end = args.max_std_end if args.max_std_end is not None else float(cfg.get("max_std_end", 0.12))
+    ent_start = float(cfg.get("ent_start", 0.012)) if from_scratch else min(float(cfg.get("ent_start", 0.005)), 0.005)
+    ent_end = args.ent_end if args.ent_end is not None else float(cfg.get("ent_end", 0.001))
+    max_std_start = float(cfg.get("max_std_start", 0.50)) if from_scratch else min(float(cfg.get("max_std_start", 0.24)), 0.24)
+    max_std_end = args.max_std_end if args.max_std_end is not None else float(cfg.get("max_std_end", 0.08))
     action_bound_coef = float(cfg.get("action_bound_coef", 0.0))
+    action_bound_margin = float(cfg.get("action_bound_margin", 1.25 if pedal_mode == "signed" else 1.0))
     vf_clip = cfg.get("vf_clip", None)
     target_kl = cfg.get("target_kl", None)
 
@@ -1347,7 +1753,7 @@ def train_single_variant(var_key: str, args):
     pool = VectorEnvPool(args.envs, num_workers=num_workers, binary_ipc=use_binary_ipc, obs_dim=obs_dim)
     init_payload: dict = {
         "tracks": args.tracks,
-        "cars": args.cars,
+        "cars": target_cars,
         "rewardWeights": active_rewards,
         "trafficMix": initial_mix,
         "weightsPath": weights_path,
@@ -1366,10 +1772,10 @@ def train_single_variant(var_key: str, args):
     vf_coef = float(cfg.get("vf_coef", 0.5))
     epochs = int(cfg.get("epochs", 6))
     minibatch_size = max(1, (args.envs * steps_per_update) // 8)
-    critic_warmup_updates = 0 if from_scratch else 60
+    critic_warmup_updates = 0 if from_scratch else (20 if bc_ref_actor is not None else 45)
 
     use_reset_best = args.reset_best and not args.no_reset_best
-    best_score = -1e9 if (from_scratch or use_reset_best or args.init_from) else prev_best
+    best_score = -1e9 if (from_scratch or use_reset_best or args.init_from or getattr(args, "bc_dataset", None)) else prev_best
     track_crash_ema: dict[str, float] = {}
     last_phase = cur_phase_init
     t0 = time.time()
@@ -1391,6 +1797,7 @@ def train_single_variant(var_key: str, args):
                     hidden_dim,
                     obs_rms=obs_rms,
                     obs_config=obs_config,
+                    car_class=car_class,
                 )
                 best_score = -1e9
                 print(
@@ -1587,9 +1994,18 @@ def train_single_variant(var_key: str, args):
                         ent_loss = entropy.mean()
                         bound_loss = 0.0
                         if action_bound_coef > 0.0:
-                            bound_loss = action_bound_coef * torch.relu(new_mean.abs() - 1.0).pow(2).mean()
+                            d = model.active_act_dims
+                            bound_loss = action_bound_coef * torch.relu(new_mean[..., :d].abs() - action_bound_margin).pow(2).mean()
 
-                        loss = pg_loss + vf_coef * v_loss - cur_ent_coef * ent_loss + bound_loss
+                        bc_anchor_loss = 0.0
+                        if bc_ref_actor is not None and bc_anchor_start > 0.0 and progress < 0.25:
+                            cur_bc_coef = bc_anchor_start * (1.0 - progress / 0.25)
+                            with torch.no_grad():
+                                ref_mean = bc_ref_actor(b_obs[m_inds])
+                            d = model.active_act_dims
+                            bc_anchor_loss = cur_bc_coef * torch.mean((new_mean[..., :d] - ref_mean[..., :d]) ** 2)
+
+                        loss = pg_loss + vf_coef * v_loss - cur_ent_coef * ent_loss + bound_loss + bc_anchor_loss
 
                         optimizer.zero_grad()
                         loss.backward()
@@ -1635,7 +2051,17 @@ def train_single_variant(var_key: str, args):
                         prev_ema = track_crash_ema.get(tid, w_cr_1k)
                         track_crash_ema[tid] = 0.80 * prev_ema + 0.20 * w_cr_1k
 
-            if checkpoint_metric == "composite":
+            if checkpoint_metric == "pace":
+                # Pace-first composite: strongly rewards genuine speed & completed fast laps without penalizing limit exploration
+                cur_score = (
+                    mean_rew
+                    + 0.008 * mean_spd
+                    + 0.06 * min(12, len(lap_times))
+                    - 0.08 * wall_crashes_1k
+                    - 0.06 * car_crashes_1k
+                    - 0.008 * off_pct
+                )
+            elif checkpoint_metric == "composite":
                 # Rewards clean survival + fast pace rather than suicidal straight-line crashes or ghost-overlap abuse
                 cur_score = (
                     mean_rew
@@ -1653,10 +2079,11 @@ def train_single_variant(var_key: str, args):
             min_save_update = min(args.updates, max(1, critic_warmup_updates + 1)) if args.updates <= 15 else nominal_min
             if update >= min_save_update and cur_score > best_score:
                 best_score = cur_score
-                export_actor_to_json(
+                export_actor_to_bin(
                     model,
                     weights_path,
                     {
+                        "variant": var_name,
                         "source": f"{var_name}_scratch" if from_scratch else f"{var_name}_finetune",
                         "curriculumPhase": cur_phase,
                         "trafficMix": traffic_mix,
@@ -1664,16 +2091,17 @@ def train_single_variant(var_key: str, args):
                         "meanStepReward": round(mean_rew, 4),
                         "checkpointScore": round(cur_score, 4),
                         "meanSpeedKmh": round(mean_spd, 1),
+                        "bestLapSec": round(min(lap_times), 3) if lap_times else None,
                         "wallCrashesPer1k": round(wall_crashes_1k, 2),
                         "explainedVar": round(explained_var, 3),
                     },
-                    var_name,
                     hidden_dim,
                     backup_path=backup_weights_path,
                     obs_rms=obs_rms,
                     obs_config=obs_config,
+                    car_class=car_class,
                 )
-                saved_tag = " [SAVED]"
+                saved_tag = " [SAVED .bin]"
 
             if update % SELFPLAY_SNAPSHOT_INTERVAL == 0:
                 save_selfplay_snapshot(
@@ -1692,6 +2120,7 @@ def train_single_variant(var_key: str, args):
                     hidden_dim,
                     obs_rms=obs_rms,
                     obs_config=obs_config,
+                    car_class=car_class,
                 )
                 saved_tag += " [POOL]"
 
@@ -1736,20 +2165,23 @@ def train_single_variant(var_key: str, args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Apex Miniature: Unified Reinforcement Learning Policy Trainer (PPO)")
-    parser.add_argument("--variant", "-v", default="v1", help="Policy variant: v1 (Physics Master), v2 (Section 4 Racecraft Master), starts, or all (v1 + v2)")
-    parser.add_argument("--all", action="store_true", help="Sequentially train v1 and v2")
-    parser.add_argument("--envs", type=int, default=None, help="Number of parallel env slots (default: 96 for v1/v2, 48 for starts)")
-    parser.add_argument("--workers", type=int, default=None, help="Number of headlessEnv OS worker processes (default: 12 for v1/v2, 8 for starts)")
-    parser.add_argument("--steps", type=int, default=None, help="Rollout steps per env before PPO update (default: 512)")
-    parser.add_argument("--updates", type=int, default=None, help="Total PPO updates (default: 2500 for v1/v2, 1200 for starts)")
+    parser = argparse.ArgumentParser(description="Apex Miniature: Per-Class ANB1 Binary RL Policy Trainer (PPO)")
+    parser.add_argument("--variant", "-v", default="class_pace", help="Policy variant: class_pace (v4 per-class full-lap specialist, default), v1, v2, starts, or all")
+    parser.add_argument("--car-class", "-c", default=None, help="Train a dedicated per-class ANB1 .bin model (e.g. HYPERCAR_GTP, GT3, LMP2, GT4, F1_2026, F1_2021, F1_2005, FORMULA_E, TRACK_COUPE, SUPERCAR, or 'all')")
+    parser.add_argument("--solo-only", action="store_true", help="Keep 100% solo full-lap pace training (ideal for perfecting a single track like Spa first)")
+    parser.add_argument("--all", action="store_true", help="Sequentially train all selected targets")
+    parser.add_argument("--envs", type=int, default=None, help="Number of parallel env slots (default: 64 for class_pace, 96 for v1/v2, 48 for starts)")
+    parser.add_argument("--workers", type=int, default=None, help="Number of headlessEnv OS worker processes (default: 12)")
+    parser.add_argument("--steps", type=int, default=None, help="Rollout steps per env before PPO update (default: 1024 for full-lap class_pace, 512 for v1/v2)")
+    parser.add_argument("--updates", type=int, default=None, help="Total PPO updates (default: 1500 for class_pace, 2500 for v1/v2)")
     parser.add_argument("--quick", action="store_true", help="Quick smoke/validation run (400 updates)")
-    parser.add_argument("--tracks", nargs="*", default=None, help="Optional subset of track IDs for targeted fine-tuning")
+    parser.add_argument("--tracks", nargs="*", default=None, help="Optional subset of track IDs (e.g. --tracks spa-francorchamps)")
     parser.add_argument("--cars", nargs="*", default=None, help="Optional subset of car IDs for targeted fine-tuning")
     parser.add_argument("--scratch", action="store_true", help="Ignore existing weights and train from zero")
-    parser.add_argument("--init-from", default=None, help="Optional weights JSON path to warm-start actor & obsNorm from")
-    parser.add_argument("--bc-dataset", default=None, help="Optional HumanTelemetryRecorder .jsonl file for Behavioral Cloning warm-start")
-    parser.add_argument("--bc-epochs", type=int, default=12, help="Number of supervised BC warm-start epochs (default: 12)")
+    parser.add_argument("--init-from", default=None, help="Optional ANB1 .bin weights path to warm-start actor & obsNorm from (e.g. transfer Spa model to all tracks)")
+    parser.add_argument("--bc-dataset", default=None, help="Optional HumanTelemetryRecorder .jsonl file for sector-filtered Behavioral Cloning warm-start")
+    parser.add_argument("--bc-epochs", type=int, default=18, help="Number of supervised BC warm-start epochs (default: 18)")
+    parser.add_argument("--bc-anchor-coef", type=float, default=0.08, help="Initial BC anchor regularization weight decaying to 0 over first 25%% of updates (default: 0.08)")
     parser.add_argument("--reset-best", action="store_true", help="Allow overwriting checkpoint even if reward baseline changed")
     parser.add_argument("--no-reset-best", action="store_true", help="Disallow overwriting checkpoint if reward baseline changed")
     parser.add_argument("--actor-lr", type=float, default=None, help="Override starting actor learning rate")
@@ -1757,8 +2189,8 @@ def main():
     parser.add_argument("--hidden-dim", type=int, default=None, help="Override hidden units in actor and critic MLPs")
     parser.add_argument("--ent-end", type=float, default=None, help="Override floor entropy bonus coefficient")
     parser.add_argument("--max-std-end", type=float, default=None, help="Override exploration std floor")
-    parser.add_argument("--weights", default=None, help="Override target weights JSON path")
-    parser.add_argument("--backup", default=None, help="Override backup weights JSON path")
+    parser.add_argument("--weights", default=None, help="Override target ANB1 .bin weights path")
+    parser.add_argument("--backup", default=None, help="Override backup ANB1 .bin weights path")
     parser.add_argument("--pool-dir", default=None, help="Override selfplay snapshot directory")
     parser.add_argument("--curriculum", action="store_true", default=None, help="Enable curriculum training")
     parser.add_argument("--no-curriculum", action="store_false", dest="curriculum", help="Disable curriculum training")
@@ -1766,20 +2198,40 @@ def main():
     parser.add_argument("--device", default="auto", help="Compute device for PPO model: auto, cpu, cuda, or cuda:<idx> (default: auto)")
     args = parser.parse_args()
 
+    base_envs = args.envs
+    base_updates = args.updates
+
+    # Per-class training mode (--car-class HYPERCAR_GTP or --car-class all)
+    if args.car_class:
+        if args.car_class.lower() == "all":
+            for cls_id in CAR_CLASS_IDS:
+                args.car_class = cls_id
+                args.envs = base_envs
+                args.updates = base_updates
+                train_single_variant("class_pace", args)
+        else:
+            train_single_variant("class_pace", args)
+        return
+
     v_arg = args.variant.lower()
     if args.all or v_arg == "all":
         selected_variants = ["v1", "v2"]
+    elif v_arg in ("all-classes", "classes"):
+        for cls_id in CAR_CLASS_IDS:
+            args.car_class = cls_id
+            args.envs = base_envs
+            args.updates = base_updates
+            train_single_variant("class_pace", args)
+        return
     elif v_arg in ("all-with-starts", "everything"):
         selected_variants = ["v1", "v2", "starts"]
     else:
         norm_key = VARIANT_ALIASES.get(v_arg, v_arg)
         if norm_key not in VARIANTS:
-            print(f"Unknown variant '{args.variant}'. Valid choices: v1, v2, starts, all, or all-with-starts.")
+            print(f"Unknown variant '{args.variant}'. Valid choices: class_pace, v1, v2, starts, all, all-classes.")
             sys.exit(1)
         selected_variants = [norm_key]
 
-    base_envs = args.envs
-    base_updates = args.updates
     for v_key in selected_variants:
         args.envs = base_envs
         args.updates = base_updates

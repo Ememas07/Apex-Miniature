@@ -1,12 +1,21 @@
-import { buildObservationVector } from './aiNeuralPolicy';
+import { buildPhysicsAwareObservationVector, PolicyObsConfig } from './aiNeuralPolicy';
 import { CarSimState, ControlInput } from './physics';
 import { CompiledTrack, sampleTrackAtT } from './tracks';
 
+const TELEMETRY_OBS_CONFIG: PolicyObsConfig = {
+  lookaheadMeters: [8, 20, 38, 65, 105, 155, 225, 310],
+  curvatureMode: 'window_tanh',
+  curvatureScale: 14.0,
+};
+
 export interface TelemetryLapDemo {
   carId: string;
+  carClass?: string;
   trackId: string;
   lapTime: number;
-  samples: number[][]; // Each sample: [...obs43, steer, throttleAct, brakeAct] (46 floats)
+  obsDim?: number;
+  obsConfig?: PolicyObsConfig;
+  samples: number[][]; // Each sample: [...obs59, steer, throttleAct, brakeAct] (62 floats)
 }
 
 export interface RecordedBcLap {
@@ -155,8 +164,11 @@ export class HumanTelemetryRecorder {
         const roundedLap = Math.round(car.currentLapTime * 1000) / 1000;
         const demo: TelemetryLapDemo = {
           carId: car.carSpec.id,
+          carClass: car.carSpec.classId,
           trackId: compiledTrack.spec.id,
           lapTime: roundedLap,
+          obsDim: 59,
+          obsConfig: TELEMETRY_OBS_CONFIG,
           samples: [...this.currentLapBuffer],
         };
 
@@ -210,20 +222,21 @@ export class HumanTelemetryRecorder {
       this.sampleTimer -= this.sampleInterval;
 
       if (car.pitStopRemaining <= 0 && car.speed > 5.0) {
-        const obs43 = buildObservationVector(
+        const obs59 = buildPhysicsAwareObservationVector(
           car,
           compiledTrack,
           allCars,
           car.steerAngle,
           1.0, // Benchmark skill target for human demonstration
           car.bopMultipliers,
+          TELEMETRY_OBS_CONFIG,
         );
 
         const steer = Math.max(-1, Math.min(1, input.steer));
         const throttleAct = Math.max(-1, Math.min(1, input.throttle * 2 - 1));
         const brakeAct = Math.max(-1, Math.min(1, input.brake * 2 - 1));
 
-        this.currentLapBuffer.push([...obs43, steer, throttleAct, brakeAct]);
+        this.currentLapBuffer.push([...obs59, steer, throttleAct, brakeAct]);
       }
     }
 
