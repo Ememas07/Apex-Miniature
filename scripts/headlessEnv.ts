@@ -59,6 +59,11 @@ export interface RewardWeights {
   brakeLockupPenalty?: number;
   tireOverheatPenalty?: number;
   gravelPenalty?: number;
+  timeStepPenalty?: number;
+  speedRatioBonus?: number;
+  straightFullThrottleBonus?: number;
+  straightBrakePenalty?: number;
+  lapPaceBonus?: number;
 }
 
 export interface TrafficMix {
@@ -81,6 +86,8 @@ export interface EnvOptions {
   obsDim: 43 | 59;
   advancedPhysicsRandomization: boolean;
   wetEpisodeRatio: number;
+  pedalMode: 'independent' | 'signed';
+  fullLapMode: boolean;
 }
 
 const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
@@ -114,6 +121,11 @@ const DEFAULT_REWARD_WEIGHTS: RewardWeights = {
   brakeLockupPenalty: 0.0,
   tireOverheatPenalty: 0.0,
   gravelPenalty: 0.0,
+  timeStepPenalty: 0.0,
+  speedRatioBonus: 0.0,
+  straightFullThrottleBonus: 0.0,
+  straightBrakePenalty: 0.0,
+  lapPaceBonus: 0.0,
 };
 
 const DEFAULT_TRAFFIC_MIX: TrafficMix = {
@@ -136,6 +148,8 @@ const DEFAULT_ENV_OPTIONS: EnvOptions = {
   obsDim: 43,
   advancedPhysicsRandomization: false,
   wetEpisodeRatio: 0.0,
+  pedalMode: 'independent',
+  fullLapMode: false,
 };
 
 interface TrafficBot {
@@ -174,7 +188,7 @@ interface EnvSlot {
 
 const DEFAULT_CARS: string[] = CARS.map((c: any) => c.id);
 
-const WEIGHTS_PATH = path.resolve(process.cwd(), 'src/game/aiPolicyWeights.json');
+const WEIGHTS_PATH = path.resolve(process.cwd(), 'public/models/policies/aiPolicyWeights_v1.bin');
 const POOL_DIR = path.resolve(process.cwd(), 'audit/selfplay_pool');
 
 let rewardWeights: RewardWeights = { ...DEFAULT_REWARD_WEIGHTS };
@@ -369,6 +383,12 @@ function applyConfigPatch(msg: Record<string, any>, resetDefaults: boolean): voi
     }
     if (typeof eo.multiLineTrafficRatio === 'number' && Number.isFinite(eo.multiLineTrafficRatio)) {
       envOptions.multiLineTrafficRatio = Math.max(0, Math.min(1.0, eo.multiLineTrafficRatio));
+    }
+    if (eo.pedalMode === 'signed' || eo.pedalMode === 'independent') {
+      envOptions.pedalMode = eo.pedalMode;
+    }
+    if (typeof eo.fullLapMode === 'boolean') {
+      envOptions.fullLapMode = eo.fullLapMode;
     }
   }
 
@@ -690,6 +710,32 @@ function resetSlot(trackIds?: string[], carIds?: string[], randomStart = true): 
     latRatio = (Math.random() - 0.5) * 0.65;
     const carTopMs = getCarTopSpeedMs(cId);
     initSpeed = Math.max(25, Math.min(carTopMs * 0.92, carTopMs * (0.60 + Math.random() * 0.30)));
+  } else if (envOptions.fullLapMode) {
+    // Full-Lap Pace Training Mode: clean flying-lap starts on straight/low-curvature sections
+    // so the policy learns full-lap rhythm, flat-out commitment, braking markers & exit speed
+    // rather than reactive braking-zone snippets.
+    const carTopMs = getCarTopSpeedMs(cId);
+    const useStartFinish = Math.random() < 0.35;
+    if (useStartFinish) {
+      startT = 0.015 + Math.random() * 0.025;
+      latRatio = (Math.random() - 0.5) * 0.25;
+      initSpeed = Math.max(28, Math.min(carTopMs * 0.72, carTopMs * (0.50 + Math.random() * 0.22)));
+    } else {
+      // Pick a low-curvature point around the lap so every sector gets full-lap flying coverage
+      let bestT = Math.random();
+      for (let tries = 0; tries < 8; tries++) {
+        const candT = Math.random();
+        const s0 = sampleTrackAtT(track, candT);
+        const s1 = sampleTrackAtT(track, candT + 45 / Math.max(200, track.totalLength));
+        if (Math.abs(s0.curvature ?? 0) < 0.008 && Math.abs(s1.curvature ?? 0) < 0.012) {
+          bestT = candT;
+          break;
+        }
+      }
+      startT = bestT;
+      latRatio = (Math.random() - 0.5) * 0.35;
+      initSpeed = Math.max(30, Math.min(carTopMs * 0.75, carTopMs * (0.52 + Math.random() * 0.22)));
+    }
   } else {
     // Standing start vs rolling random track position
     const standingProb = envOptions.brakingZoneSpawnRatio > 0 ? 0.15 : 0.25;
@@ -967,7 +1013,7 @@ function handleMessage(msg: any): void {
       const pPath = path.resolve(process.cwd(), msg.weightsPath.trim());
       if (fs.existsSync(pPath)) {
         try {
-          policy = parsePolicyWeights(JSON.parse(fs.readFileSync(pPath, 'utf8')));
+          policy = loadPolicyFile(pPath);
         } catch (e: any) {
           console.error(`[eval_batch] Failed to parse weights from ${pPath}:`, e.message);
         }
@@ -993,7 +1039,11 @@ function handleMessage(msg: any): void {
       completed: boolean;
       bestLapTime: number | null;
       avgSpeedKmh: number;
+      maxSpeedKmh: number;
       offTrackPct: number;
+      fullThrottlePct: number;
+      pedalOverlapPct: number;
+      straightBrakePct: number;
       wallCrash: number;
       stalls?: number;
       steps: number;
@@ -1015,7 +1065,12 @@ function handleMessage(msg: any): void {
       );
 
       let totalSpeedMps = 0;
+      let maxSpeedMps = 0;
       let offTrackSteps = 0;
+      let fullThrottleSteps = 0;
+      let pedalOverlapSteps = 0;
+      let straightSteps = 0;
+      let straightBrakeSteps = 0;
       let wallCrashCount = 0;
       let prevDmg = car.aeroDamage;
       let distanceTraveledMeters = 0;
@@ -1109,6 +1164,21 @@ function handleMessage(msg: any): void {
           ctrl = { steer: 0, throttle: 0.5, brake: 0, specialPressed: false };
         }
 
+        if (car.speed > maxSpeedMps) maxSpeedMps = car.speed;
+        if (ctrl.throttle >= 0.99) fullThrottleSteps++;
+        if (ctrl.throttle > 0.02 && ctrl.brake > 0.02) pedalOverlapSteps++;
+        const ahead1 = sampleTrackAtT(track, car.trackT + 40 / Math.max(100, track.totalLength));
+        const ahead2 = sampleTrackAtT(track, car.trackT + 100 / Math.max(100, track.totalLength));
+        if (
+          car.speed > 32 &&
+          Math.abs(sp.curvature ?? 0) < 0.006 &&
+          Math.abs(ahead1.curvature ?? 0) < 0.008 &&
+          Math.abs(ahead2.curvature ?? 0) < 0.010
+        ) {
+          straightSteps++;
+          if (ctrl.brake > 0.02) straightBrakeSteps++;
+        }
+
         const stepPrevT = car.trackT;
         prevDmg = car.aeroDamage;
 
@@ -1158,7 +1228,11 @@ function handleMessage(msg: any): void {
         completed: isClean,
         bestLapTime: completedLapTime != null ? Number(completedLapTime.toFixed(2)) : null,
         avgSpeedKmh: Number(((totalSpeedMps / totalSteps) * 3.6).toFixed(1)),
+        maxSpeedKmh: Number((maxSpeedMps * 3.6).toFixed(1)),
         offTrackPct: Number(((offTrackSteps / totalSteps) * 100).toFixed(1)),
+        fullThrottlePct: Number(((fullThrottleSteps / totalSteps) * 100).toFixed(1)),
+        pedalOverlapPct: Number(((pedalOverlapSteps / totalSteps) * 100).toFixed(1)),
+        straightBrakePct: Number(((straightBrakeSteps / Math.max(1, straightSteps)) * 100).toFixed(1)),
         wallCrash: wallCrashCount > 0 ? wallCrashCount : (wallScrapeCount > 2 ? 1 : 0),
         stalls: stalled ? 1 : 0,
         steps: totalSteps,
@@ -1251,10 +1325,24 @@ function runStepBatch(actions: number[][] | Float32Array): {
       const a1 = isFlatActions ? actions[i * 3 + 1] : (actions as number[][])[i][1];
       const a2 = isFlatActions ? actions[i * 3 + 2] : (actions as number[][])[i][2];
       const steer = Math.max(-1, Math.min(1, a0));
-      const rawThrottle = Math.max(-1, Math.min(1, a1));
-      const rawBrake = Math.max(-1, Math.min(1, a2));
-      const throttle = (rawThrottle + 1) * 0.5;
-      const brake = (rawBrake + 1) * 0.5;
+      let throttle = 0;
+      let brake = 0;
+      if (envOptions.pedalMode === 'signed') {
+        // Signed longitudinal pedal (v4): exact parity with evaluateNeuralPolicy()
+        const pedal = Math.max(-1, Math.min(1, a1));
+        const DEADZONE = 0.02;
+        const SPAN = 0.88;
+        if (pedal > DEADZONE) {
+          throttle = Math.min(1, (pedal - DEADZONE) / SPAN);
+        } else if (pedal < -DEADZONE) {
+          brake = Math.min(1, (-pedal - DEADZONE) / SPAN);
+        }
+      } else {
+        const rawThrottle = Math.max(-1, Math.min(1, a1));
+        const rawBrake = Math.max(-1, Math.min(1, a2));
+        throttle = (rawThrottle + 1) * 0.5;
+        brake = (rawBrake + 1) * 0.5;
+      }
 
       const egoInput: ControlInput = {
         steer,
@@ -1574,7 +1662,39 @@ function runStepBatch(actions: number[][] | Float32Array): {
       reward -= rewardWeights.steerJerk * steerJerk * steerJerk;
       reward -= rewardWeights.throttleBrakeOverlap * (throttle * brake);
 
-      // Advanced physics reward shaping for v9_2 (brake lock-up, tire overheating, gravel excursion)
+      // Anti-caution pace shaping: time cost + super-linear speed reward + clear-straight full-throttle commitment
+      const timeCost = rewardWeights.timeStepPenalty ?? 0;
+      if (timeCost > 0) {
+        reward -= timeCost;
+      }
+      const speedRatioBonusW = rewardWeights.speedRatioBonus ?? 0;
+      if (speedRatioBonusW > 0 && !isPastKerb && !wallContact && forwardMeters > 0) {
+        const topMs = Math.max(40, getCarTopSpeedMs(slot.carId));
+        const ratio = Math.min(1.15, slot.car.speed / topMs);
+        reward += speedRatioBonusW * ratio * ratio;
+      }
+      const strThrW = rewardWeights.straightFullThrottleBonus ?? 0;
+      const strBrkW = rewardWeights.straightBrakePenalty ?? 0;
+      if ((strThrW > 0 || strBrkW > 0) && !isPastKerb && !wallContact && slot.car.speed > 20) {
+        const tLen = Math.max(200, slot.track.totalLength);
+        const sAhead50 = sampleTrackAtT(slot.track, slot.car.trackT + 50 / tLen);
+        const sAhead120 = sampleTrackAtT(slot.track, slot.car.trackT + 120 / tLen);
+        const clearStraight =
+          Math.abs(sp.curvature ?? 0) < 0.006 &&
+          Math.abs(sAhead50.curvature ?? 0) < 0.008 &&
+          Math.abs(sAhead120.curvature ?? 0) < 0.011 &&
+          closeProximityPenalty <= 0.001;
+        if (clearStraight) {
+          if (strThrW > 0 && throttle >= 0.98 && brake <= 0.005) {
+            reward += strThrW;
+          }
+          if (strBrkW > 0 && brake > 0.02) {
+            reward -= strBrkW * (0.4 + brake);
+          }
+        }
+      }
+
+      // Advanced physics reward shaping (brake lock-up, tire overheating, gravel excursion)
       const lockPen = rewardWeights.brakeLockupPenalty ?? 0;
       if (lockPen > 0 && (slot.car.brakeLockupIntensity ?? 0) > 0.15) {
         reward -= lockPen * (slot.car.brakeLockupIntensity ?? 0);
@@ -1599,8 +1719,15 @@ function runStepBatch(actions: number[][] | Float32Array): {
         slot.lapsCompleted++;
         const lapTime = slot.car.lastLapTime ?? 0;
         const lapBonus = rewardWeights.lapCompletionBonus ?? 0;
+        const lapPaceBonusW = rewardWeights.lapPaceBonus ?? 0;
         if (lapBonus > 0 && slot.wallScrapes <= 2) {
           reward += lapBonus;
+        }
+        if (lapPaceBonusW > 0 && lapTime >= 20 && slot.wallScrapes <= 2) {
+          const avgLapSpeedMs = slot.track.totalLength / lapTime;
+          const topMs = Math.max(40, getCarTopSpeedMs(slot.carId));
+          const paceRatio = Math.min(1.0, avgLapSpeedMs / (topMs * 0.78));
+          reward += lapPaceBonusW * paceRatio * paceRatio;
         }
         if (slot.lapsCompleted >= 2 && lapTime >= 20) {
           completedLapTime = lapTime;

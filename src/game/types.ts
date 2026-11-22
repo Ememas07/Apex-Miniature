@@ -299,7 +299,7 @@ export type AIPersonality =
   | 'Metronome'
   | 'Tire-Saver'
   | 'Traffic-Smart'
-  | 'Dive-Bomber'
+  | 'Average GTP Driver'
   | 'Passive';
 
 export type CameraMode = 'orbit' | 'hood';

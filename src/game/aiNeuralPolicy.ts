@@ -1,5 +1,3 @@
-import aiPolicyWeightsV1Raw from './aiPolicyWeights_v1.json';
-import aiPolicyWeightsStartsRaw from './aiPolicyWeights_starts.json';
 import { BoPMultipliers } from './cars';
 import {
   CarSimState,
@@ -8,7 +6,7 @@ import {
   ControlInput,
 } from './physics';
 import { CompiledTrack, sampleTrackAtT } from './tracks';
-import { AIDifficulty, AiNeuralTelemetrySnapshot, RaceStartType } from './types';
+import { AIDifficulty, AiNeuralTelemetrySnapshot, CarClassId, RaceStartType } from './types';
 import {
   buildAiNeuralTelemetrySnapshot,
   PERSONALITY_POLICY_PROFILES,
@@ -29,6 +27,8 @@ export interface PolicyObsConfig {
   curvatureScale?: number;
 }
 
+export type PolicyPedalMode = 'independent' | 'signed';
+
 export interface PolicyWeights {
   version?: number;
   obsDim: number;
@@ -37,6 +37,8 @@ export interface PolicyWeights {
   numHiddenLayers?: number;
   activation?: 'tanh' | 'silu';
   residual?: boolean;
+  pedalMode?: PolicyPedalMode;
+  carClass?: CarClassId | string;
   w0: number[][];
   b0: number[];
   w1: number[][];
@@ -59,6 +61,36 @@ export interface PolicyWeights {
 export type AiPolicyVariantId = 'v1' | 'v2';
 
 export const AI_POLICY_VARIANT_IDS: readonly AiPolicyVariantId[] = ['v1', 'v2'] as const;
+
+export const AI_POLICY_CLASS_IDS: readonly CarClassId[] = [
+  CarClassId.HYPERCAR_GTP,
+  CarClassId.LMP2,
+  CarClassId.GT3,
+  CarClassId.GT4,
+  CarClassId.F1_2026,
+  CarClassId.F1_2021,
+  CarClassId.F1_2005,
+  CarClassId.FORMULA_E,
+  CarClassId.TRACK_COUPE,
+  CarClassId.SUPERCAR,
+] as const;
+
+export interface AiClassPolicyInfo {
+  classId: CarClassId;
+  filename: string;
+  weights: PolicyWeights | null;
+  loaded: boolean;
+  hiddenDim: number | null;
+  obsDim: number | null;
+  pedalMode: PolicyPedalMode;
+  meta: Record<string, unknown> | null;
+}
+
+export function getClassPolicyFilename(classId: CarClassId | string): string {
+  return `class_${String(classId).toLowerCase()}.bin`;
+}
+
+const ANB1_MAGIC = [0x41, 0x4e, 0x42, 0x31] as const; // 'ANB1'
 
 export type AiPolicyMixWeights = Record<AiPolicyVariantId, number>;
 
@@ -93,6 +125,7 @@ export const DEFAULT_POLICY_MIX: AiPolicyMixWeights = {
 const POLICY_MIX_STORAGE_KEY = 'apex_ai_policy_mix_v5_unified';
 const START_POLICY_MODE_STORAGE_KEY = 'apex_ai_start_policy_mode_v1';
 const PERSONALITY_BLEND_STORAGE_KEY = 'apex_ai_personality_blend_v1';
+const PER_CLASS_POLICY_STORAGE_KEY = 'apex_ai_per_class_policy_v1';
 
 function isFiniteNumberVector(arr: unknown, expectedLength: number): arr is number[] {
   if (!Array.isArray(arr) || arr.length !== expectedLength) return false;
@@ -211,47 +244,75 @@ export function validatePolicyWeights(raw: unknown): PolicyWeights | null {
   };
 }
 
-export const AI_POLICY_WEIGHTS: PolicyWeights =
-  validatePolicyWeights(aiPolicyWeightsV1Raw) ??
-  (aiPolicyWeightsV1Raw as PolicyWeights);
-
 const VARIANT_META: Record<
   AiPolicyVariantId,
   { label: string; shortLabel: string; description: string }
 > = {
   v1: {
-    label: 'v1 Physics Master',
-    shortLabel: 'v1 Phys',
+    label: 'v1 General Fallback',
+    shortLabel: 'v1 Gen',
     description:
-      '59-input physics-aware ResMLP: 4-wheel tires, brakes/fade/lock-up, dirty air, wet/puddles, damage & setups',
+      '59-input multi-class ANB1 binary fallback policy used when a dedicated per-class model is not loaded',
   },
   v2: {
-    label: 'v2 Racecraft Master',
+    label: 'v2 Racecraft Fallback',
     shortLabel: 'v2 Craft',
     description:
-      'Section 4 AI model: Turn-1 braking discipline, multi-class traffic etiquette, one-move defense & strategy-aware ResMLP',
+      '59-input racecraft ANB1 binary fallback policy for multi-class traffic & Turn-1 discipline',
   },
 };
 
-function loadOptionalV2Json(): unknown | null {
+const POLICY_BINARY_BASE_URL = './models/policies/';
+
+function readBinaryPolicySyncNode(filename: string): PolicyWeights | null {
+  if (typeof window !== 'undefined') return null;
   try {
-    // Literal import.meta.glob is statically transformed by Vite (returns {} until v2 is trained).
-    // In Node/tsx environments where import.meta.glob does not exist, the try/catch safely returns null.
-    const mods = (import.meta as unknown as {
-      glob: (pattern: string, opts: { eager: boolean; import: string }) => Record<string, unknown>;
-    }).glob('./aiPolicyWeights_v2.json', { eager: true, import: 'default' });
-    const values = Object.values(mods);
-    return values.length > 0 ? values[0] : null;
+    const proc = (globalThis as unknown as {
+      process?: {
+        cwd?: () => string;
+        getBuiltinModule?: (id: string) => unknown;
+      };
+    }).process;
+    if (!proc?.getBuiltinModule || !proc?.cwd) return null;
+    const fsMod = proc.getBuiltinModule('node:fs') as {
+      existsSync: (p: string) => boolean;
+      readFileSync: (p: string) => Uint8Array;
+    } | undefined;
+    const pathMod = proc.getBuiltinModule('node:path') as {
+      resolve: (...parts: string[]) => string;
+    } | undefined;
+    if (!fsMod || !pathMod) return null;
+    const fullPath = pathMod.resolve(proc.cwd(), 'public', 'models', 'policies', filename);
+    if (!fsMod.existsSync(fullPath)) return null;
+    const raw = fsMod.readFileSync(fullPath);
+    return decodePolicyWeightsBinary(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength));
   } catch {
     return null;
   }
 }
 
+const registryListeners = new Set<() => void>();
+function notifyPolicyRegistryListeners(): void {
+  for (const listener of registryListeners) {
+    try {
+      listener();
+    } catch {
+      // ignore listener errors
+    }
+  }
+}
+
+export function subscribePolicyRegistry(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
 const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
-  const v2Raw = loadOptionalV2Json();
   const weightsById: Record<AiPolicyVariantId, PolicyWeights | null> = {
-    v1: validatePolicyWeights(aiPolicyWeightsV1Raw),
-    v2: v2Raw ? validatePolicyWeights(v2Raw) : null,
+    v1: readBinaryPolicySyncNode('aiPolicyWeights_v1.bin'),
+    v2: readBinaryPolicySyncNode('aiPolicyWeights_v2.bin'),
   };
   const out = {} as Record<AiPolicyVariantId, AiPolicyVariantInfo>;
   for (const id of AI_POLICY_VARIANT_IDS) {
@@ -263,16 +324,119 @@ const POLICY_REGISTRY: Record<AiPolicyVariantId, AiPolicyVariantInfo> = (() => {
       loaded: Boolean(w),
       hiddenDim: w ? w.hiddenDim ?? w.w0.length : null,
       obsDim: w ? w.obsDim : null,
-      binaryAvailable: id === 'v1' ? true : Boolean(w),
+      binaryAvailable: Boolean(w),
       meta: w?.meta ?? null,
     };
   }
   return out;
 })();
 
+const CLASS_POLICY_REGISTRY: Record<CarClassId, AiClassPolicyInfo> = (() => {
+  const out = {} as Record<CarClassId, AiClassPolicyInfo>;
+  for (const classId of AI_POLICY_CLASS_IDS) {
+    const filename = getClassPolicyFilename(classId);
+    const w = readBinaryPolicySyncNode(filename);
+    out[classId] = {
+      classId,
+      filename,
+      weights: w,
+      loaded: Boolean(w),
+      hiddenDim: w ? w.hiddenDim ?? w.w0.length : null,
+      obsDim: w ? w.obsDim : null,
+      pedalMode: w?.pedalMode ?? ((w?.version ?? 1) >= 4 ? 'signed' : 'independent'),
+      meta: w?.meta ?? null,
+    };
+  }
+  return out;
+})();
+
+export let AI_POLICY_WEIGHTS: PolicyWeights =
+  POLICY_REGISTRY.v1.weights ??
+  ({
+    version: 4,
+    obsDim: 59,
+    hiddenDim: 1,
+    actDim: 3,
+    numHiddenLayers: 2,
+    pedalMode: 'signed',
+    w0: [new Array(59).fill(0)],
+    b0: [0],
+    w1: [[0]],
+    b1: [0],
+    w2: [[0], [0], [0]],
+    b2: [0, 0.9, 0],
+  } as PolicyWeights);
+
+let activeStartPolicyWeights: PolicyWeights | null = readBinaryPolicySyncNode(
+  'aiPolicyWeights_starts.bin',
+);
+
+export function getClassPolicyVariants(): AiClassPolicyInfo[] {
+  return AI_POLICY_CLASS_IDS.map((classId) => CLASS_POLICY_REGISTRY[classId]);
+}
+
+export function getClassPolicyWeights(classId: CarClassId): PolicyWeights | null {
+  return CLASS_POLICY_REGISTRY[classId]?.weights ?? null;
+}
+
+export function setClassPolicyWeights(
+  classId: CarClassId,
+  weights: PolicyWeights | null,
+): boolean {
+  const filename = getClassPolicyFilename(classId);
+  if (weights === null) {
+    CLASS_POLICY_REGISTRY[classId] = {
+      classId,
+      filename,
+      weights: null,
+      loaded: false,
+      hiddenDim: null,
+      obsDim: null,
+      pedalMode: 'signed',
+      meta: null,
+    };
+    notifyPolicyRegistryListeners();
+    return true;
+  }
+  const valid = validatePolicyWeights(weights);
+  if (!valid) return false;
+  CLASS_POLICY_REGISTRY[classId] = {
+    classId,
+    filename,
+    weights: valid,
+    loaded: true,
+    hiddenDim: valid.hiddenDim ?? valid.w0.length,
+    obsDim: valid.obsDim,
+    pedalMode: valid.pedalMode ?? ((valid.version ?? 1) >= 4 ? 'signed' : 'independent'),
+    meta: valid.meta ?? null,
+  };
+  notifyPolicyRegistryListeners();
+  return true;
+}
+
+/**
+ * Loads a per-class compact ANB1 binary model (.bin) from a URL into CLASS_POLICY_REGISTRY.
+ */
+export async function loadClassPolicyFromBinaryUrl(
+  classId: CarClassId,
+  url: string,
+): Promise<boolean> {
+  if (typeof fetch !== 'function') return false;
+  try {
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res.ok) return false;
+    const buf = await res.arrayBuffer();
+    const decoded = decodePolicyWeightsBinary(buf);
+    if (!decoded) return false;
+    return setClassPolicyWeights(classId, decoded);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Loads compact ANB1 binary weights (.bin) from a URL into the live policy registry
- * (e.g. '/models/policies/aiPolicyWeights_v1.bin' or '..._v2.bin').
+ * (e.g. './models/policies/aiPolicyWeights_v1.bin' or '..._v2.bin').
  */
 export async function loadPolicyWeightsFromBinaryUrl(
   target: AiPolicyVariantId | 'starts',
@@ -280,13 +444,14 @@ export async function loadPolicyWeightsFromBinaryUrl(
 ): Promise<boolean> {
   if (typeof fetch !== 'function') return false;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { cache: 'no-cache' });
     if (!res.ok) return false;
     const buf = await res.arrayBuffer();
     const decoded = decodePolicyWeightsBinary(buf);
     if (!decoded) return false;
     if (target === 'starts') {
       activeStartPolicyWeights = decoded;
+      notifyPolicyRegistryListeners();
       return true;
     }
     POLICY_REGISTRY[target] = {
@@ -298,13 +463,114 @@ export async function loadPolicyWeightsFromBinaryUrl(
       binaryAvailable: true,
       meta: decoded.meta ?? null,
     };
+    if (target === 'v1') {
+      AI_POLICY_WEIGHTS = decoded;
+    }
+    notifyPolicyRegistryListeners();
     return true;
   } catch {
     return false;
   }
 }
 
-let activeStartPolicyWeights: PolicyWeights | null = validatePolicyWeights(aiPolicyWeightsStartsRaw);
+let binaryPreloadPromise: Promise<void> | null = null;
+
+/**
+ * Discovers and loads all shipped ANB1 binary policy models (general fallbacks, starts, and per-class specialists)
+ * from public/models/policies/manifest.json in the browser. Zero JSON weight files are bundled.
+ */
+export function preloadAllBinaryPolicies(baseUrl: string = POLICY_BINARY_BASE_URL): Promise<void> {
+  if (typeof window === 'undefined' || typeof fetch !== 'function') {
+    return Promise.resolve();
+  }
+  if (binaryPreloadPromise) return binaryPreloadPromise;
+
+  binaryPreloadPromise = (async () => {
+    const prefix = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+    let manifestFiles: string[] = [];
+    let manifestClasses: Record<string, string> = {};
+    try {
+      const mRes = await fetch(`${prefix}manifest.json`, { cache: 'no-cache' });
+      if (mRes.ok) {
+        const mData = (await mRes.json()) as {
+          files?: string[];
+          classes?: Record<string, string>;
+        };
+        if (Array.isArray(mData.files)) manifestFiles = mData.files;
+        if (mData.classes && typeof mData.classes === 'object') manifestClasses = mData.classes;
+      }
+    } catch {
+      // Fallback to probing standard fallback filenames when manifest is absent
+    }
+
+    const tasks: Promise<unknown>[] = [];
+    const hasManifest = manifestFiles.length > 0;
+    if (!hasManifest || manifestFiles.includes('aiPolicyWeights_v1.bin')) {
+      tasks.push(loadPolicyWeightsFromBinaryUrl('v1', `${prefix}aiPolicyWeights_v1.bin`));
+    }
+    if (!hasManifest || manifestFiles.includes('aiPolicyWeights_v2.bin')) {
+      tasks.push(loadPolicyWeightsFromBinaryUrl('v2', `${prefix}aiPolicyWeights_v2.bin`));
+    }
+    if (!hasManifest || manifestFiles.includes('aiPolicyWeights_starts.bin')) {
+      tasks.push(loadPolicyWeightsFromBinaryUrl('starts', `${prefix}aiPolicyWeights_starts.bin`));
+    }
+
+    for (const classId of AI_POLICY_CLASS_IDS) {
+      const file = manifestClasses[classId];
+      if (file) {
+        tasks.push(loadClassPolicyFromBinaryUrl(classId, `${prefix}${file}`));
+      }
+    }
+
+    await Promise.allSettled(tasks);
+    notifyPolicyRegistryListeners();
+  })();
+
+  return binaryPreloadPromise;
+}
+
+if (typeof window !== 'undefined' && typeof fetch === 'function') {
+  void preloadAllBinaryPolicies();
+}
+
+function readStoredPerClassPoliciesEnabled(): boolean {
+  if (typeof window === 'undefined' || !window.localStorage) return true;
+  try {
+    const raw = window.localStorage.getItem(PER_CLASS_POLICY_STORAGE_KEY);
+    if (raw === 'false') return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+let perClassPoliciesEnabled = readStoredPerClassPoliciesEnabled();
+const perClassListeners = new Set<(enabled: boolean) => void>();
+
+export function getPerClassPoliciesEnabled(): boolean {
+  return perClassPoliciesEnabled;
+}
+
+export function setPerClassPoliciesEnabled(enabled: boolean): void {
+  perClassPoliciesEnabled = Boolean(enabled);
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem(PER_CLASS_POLICY_STORAGE_KEY, String(perClassPoliciesEnabled));
+    } catch {
+      // ignore
+    }
+  }
+  for (const listener of perClassListeners) {
+    listener(perClassPoliciesEnabled);
+  }
+}
+
+export function subscribePerClassPolicies(listener: (enabled: boolean) => void): () => void {
+  perClassListeners.add(listener);
+  return () => {
+    perClassListeners.delete(listener);
+  };
+}
 
 function readStoredStartPolicyMode(): StartPolicyMode {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -804,6 +1070,7 @@ interface PackedPolicyWeights {
   useSilu: boolean;
   useResidual: boolean;
   useLinearOutput: boolean;
+  useSignedPedal: boolean;
   obsMean: Float32Array | null;
   obsInvStd: Float32Array | null;
   obsClip: number;
@@ -876,6 +1143,7 @@ function packPolicyWeights(weights: PolicyWeights): PackedPolicyWeights | null {
     useSilu: valid.activation === 'silu',
     useResidual: Boolean(valid.residual),
     useLinearOutput: (valid.version ?? 1) >= 2,
+    useSignedPedal: valid.pedalMode === 'signed' || (valid.version ?? 1) >= 4,
     obsMean,
     obsInvStd,
     obsClip,
@@ -899,10 +1167,8 @@ function packPolicyWeights(weights: PolicyWeights): PackedPolicyWeights | null {
   return packed;
 }
 
-const ANB1_MAGIC = [0x41, 0x4e, 0x42, 0x31] as const; // 'ANB1'
-
 /**
- * Encodes PolicyWeights into the compact ANB1 binary format (~3.5-4.5x smaller than JSON):
+ * Encodes PolicyWeights into the compact ANB1 binary format (~4-5x smaller than JSON):
  * [4B magic 'ANB1'][4B uint32 headerLen][UTF-8 JSON header][0-3B zero pad to 4B][little-endian Float32 tensors]
  */
 export function encodePolicyWeightsBinary(weights: PolicyWeights): Uint8Array {
@@ -914,15 +1180,19 @@ export function encodePolicyWeightsBinary(weights: PolicyWeights): Uint8Array {
   const numHidden: 2 | 3 = (valid.numHiddenLayers ?? (valid.w3 && valid.b3 ? 3 : 2)) === 3 ? 3 : 2;
   const hasLn = Boolean(valid.ln0Weight && valid.ln0Bias);
   const hasObsNorm = Boolean(valid.obsNorm);
+  const pedalMode: PolicyPedalMode =
+    valid.pedalMode ?? ((valid.version ?? 1) >= 4 ? 'signed' : 'independent');
 
   const headerObj = {
-    version: valid.version ?? 3,
+    version: valid.version ?? (pedalMode === 'signed' ? 4 : 3),
     obsDim: valid.obsDim,
     hiddenDim,
     actDim: valid.actDim ?? 3,
     numHiddenLayers: numHidden,
     activation: valid.activation ?? 'tanh',
     residual: Boolean(valid.residual),
+    pedalMode,
+    carClass: valid.carClass,
     hasLn,
     hasObsNorm,
     obsNormClip: valid.obsNorm?.clip ?? 10.0,
@@ -1005,6 +1275,8 @@ export function decodePolicyWeightsBinary(input: ArrayBuffer | Uint8Array): Poli
       numHiddenLayers: 2 | 3;
       activation?: 'tanh' | 'silu';
       residual?: boolean;
+      pedalMode?: PolicyPedalMode;
+      carClass?: CarClassId | string;
       hasLn?: boolean;
       hasObsNorm?: boolean;
       obsNormClip?: number;
@@ -1019,8 +1291,9 @@ export function decodePolicyWeightsBinary(input: ArrayBuffer | Uint8Array): Poli
     const tensorBytes = bytes.byteLength - tensorStart;
     if (tensorBytes < 0 || tensorBytes % 4 !== 0) return null;
 
-    const alignedSlice = bytes.slice(tensorStart);
-    const floats = new Float32Array(alignedSlice.buffer);
+    const alignedCopy = new Uint8Array(tensorBytes);
+    alignedCopy.set(bytes.subarray(tensorStart, tensorStart + tensorBytes));
+    const floats = new Float32Array(alignedCopy.buffer);
     let cursor = 0;
 
     const readVec = (n: number): number[] => {
@@ -1045,6 +1318,8 @@ export function decodePolicyWeightsBinary(input: ArrayBuffer | Uint8Array): Poli
       numHiddenLayers: numHidden,
       activation: hdr.activation ?? 'tanh',
       residual: Boolean(hdr.residual),
+      pedalMode: hdr.pedalMode ?? ((hdr.version ?? 3) >= 4 ? 'signed' : 'independent'),
+      carClass: hdr.carClass,
       obsConfig: hdr.obsConfig,
       meta: hdr.meta,
     };
@@ -1236,6 +1511,25 @@ export function evaluateNeuralPolicy(
     if (i === 0) out0 = clamped;
     else if (i === 1) out1 = clamped;
     else out2 = clamped;
+  }
+
+  if (packed.useSignedPedal) {
+    // Signed longitudinal pedal (v4): physically eliminates throttle+brake overlap
+    // and guarantees crisp 100% full throttle on straights when out1 >= 0.90.
+    const DEADZONE = 0.02;
+    const SPAN = 0.88;
+    let throttle = 0;
+    let brake = 0;
+    if (out1 > DEADZONE) {
+      throttle = Math.min(1, (out1 - DEADZONE) / SPAN);
+    } else if (out1 < -DEADZONE) {
+      brake = Math.min(1, (-out1 - DEADZONE) / SPAN);
+    }
+    return {
+      steer: out0,
+      throttle,
+      brake,
+    };
   }
 
   return {
@@ -1508,14 +1802,19 @@ export function computeNeuralAIControl(
   const skillTarget = mapDifficultyToSkillTarget(difficulty, car.aiPaceMultiplier);
   const prevSteer = car.steerAngle;
 
-  // Section 4.2.3: Per-Personality Neural Policy Blending (v1 / v2)
+  // Per-Class Binary Specialist Routing (preferred when a trained class_<classId>.bin exists)
+  const dedicatedClassWeights = perClassPoliciesEnabled
+    ? CLASS_POLICY_REGISTRY[car.carSpec.classId]?.weights ?? null
+    : null;
+
+  // Fallback: Section 4.2.3 Per-Personality Neural Policy Blending (v1 / v2)
   const effectiveMix = resolvePersonalityBlendedMix(
     activePolicyMix,
     car.personality,
     personalityPolicyBlendingEnabled,
   );
-  const entries = getNormalizedPolicyMix(effectiveMix);
-  if (entries.length === 0) return heuristic;
+  const entries = dedicatedClassWeights ? [] : getNormalizedPolicyMix(effectiveMix);
+  if (!dedicatedClassWeights && entries.length === 0) return heuristic;
 
   const obsCache = new Map<string, number[]>();
   const getCachedObs = (obsConfig?: PolicyObsConfig, obsDim: number = 43): number[] => {
@@ -1549,7 +1848,10 @@ export function computeNeuralAIControl(
 
   let primaryObs: number[] | null = null;
   let policyOut: { steer: number; throttle: number; brake: number } | null = null;
-  if (entries.length === 1) {
+  if (dedicatedClassWeights) {
+    primaryObs = getCachedObs(dedicatedClassWeights.obsConfig, dedicatedClassWeights.obsDim);
+    policyOut = evaluateNeuralPolicy(primaryObs, dedicatedClassWeights);
+  } else if (entries.length === 1) {
     const w = entries[0].weights;
     primaryObs = getCachedObs(w.obsConfig, w.obsDim);
     policyOut = evaluateNeuralPolicy(primaryObs, w);
@@ -1585,7 +1887,7 @@ export function computeNeuralAIControl(
   let blendedThrottle = policyOut.throttle;
   let blendedBrake = policyOut.brake;
 
-  // Apply per-personality neural control profile (brake timing, exit smoothness, Dive-Bomber vs Passive racecraft)
+  // Apply per-personality neural control profile (brake timing, exit smoothness, Average GTP Driver vs Passive racecraft)
   const pProf = car.personality ? PERSONALITY_POLICY_PROFILES[car.personality] : undefined;
   if (personalityPolicyBlendingEnabled && pProf) {
     if (blendedBrake > 0.08 && blendedBrake < 0.88) {
@@ -1731,7 +2033,7 @@ export function computeNeuralAIControl(
     }
   }
 
-  // Wheel-to-wheel personality expression: Dive-Bombers lunge aggressively inside, Passive drivers yield cleanly!
+  // Wheel-to-wheel personality expression: Average GTP Drivers lunge aggressively inside, Passive drivers yield cleanly!
   if (startWeight < 0.2 && offTrackRatio < 0.85) {
     if (car.aiDefenseCommitted) {
       blendedSteer = blendedSteer * 0.68 + heuristic.steer * 0.32;
@@ -1739,7 +2041,7 @@ export function computeNeuralAIControl(
       blendedSteer = blendedSteer * 0.62 + heuristic.steer * 0.38;
       blendedThrottle *= 0.91;
     } else if ((pProf?.diveBombTendency ?? 0) >= 0.55 && car.aiPassTimer > 0) {
-      // Aggressive Dive-Bomber / Late-Braker: commit hard to the inside passing lane & brake later
+      // Aggressive Average GTP Driver / Late-Braker: commit hard to the inside passing lane & brake later
       blendedSteer = blendedSteer * 0.58 + heuristic.steer * 0.42;
       if (blendedBrake > 0.12 && blendedBrake < 0.85) {
         blendedBrake *= 0.88;
@@ -1807,9 +2109,13 @@ export function computeNeuralAIControl(
   const finalBrake = Math.max(0, Math.min(1, blendedBrake));
 
   // Capture live neural telemetry snapshot for Section 4.2.2 HUD Neural Visualizer
-  const blendLabel = entries
-    .map((e) => `${POLICY_REGISTRY[e.id].shortLabel} ${Math.round(e.fraction * 100)}%`)
-    .join(' · ');
+  const blendLabel = dedicatedClassWeights
+    ? `${car.carSpec.classId} Class (ANB1${
+        dedicatedClassWeights.pedalMode === 'signed' ? ' · Signed' : ''
+      })`
+    : entries
+        .map((e) => `${POLICY_REGISTRY[e.id].shortLabel} ${Math.round(e.fraction * 100)}%`)
+        .join(' · ');
   const activeManeuver: AiNeuralTelemetrySnapshot['activeManeuver'] =
     startWeight > 0.25
       ? 'launch'

@@ -1020,7 +1020,7 @@ export function RaceViewport(props: RaceViewportProps) {
               ? 'soft'
               : profile.personality === 'Tire-Saver'
               ? 'hard'
-              : profile.personality === 'Dive-Bomber' || profile.personality === 'Late-Braker'
+              : profile.personality === 'Average GTP Driver' || profile.personality === 'Late-Braker'
               ? 'soft'
               : 'medium';
 

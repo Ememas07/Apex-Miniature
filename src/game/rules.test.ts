@@ -3946,6 +3946,96 @@ test('Section 4 AI Racecraft, On-Track Strategy, Turn-1 Braking Guard, FE-Only A
   assert.ok(bundle.jsonl.includes('"samples":'));
 });
 
+test('ANB1 v4 signed-pedal zero-overlap, per-class binary routing, and Average GTP Driver personality', async () => {
+  const {
+    encodePolicyWeightsBinary,
+    decodePolicyWeightsBinary,
+    evaluateNeuralPolicy,
+    setClassPolicyWeights,
+    getClassPolicyWeights,
+    setPerClassPoliciesEnabled,
+  } = await import('./aiNeuralPolicy');
+  const { AI_DRIVER_ROSTER, PERSONALITY_POLICY_PROFILES } = await import('./aiRacecraft');
+  const { CarClassId } = await import('./types');
+
+  // 1) Personality rename verification
+  assert.ok(
+    AI_DRIVER_ROSTER.some((d) => d.personality === 'Average GTP Driver'),
+    'Expected Average GTP Driver personality in AI_DRIVER_ROSTER'
+  );
+  assert.ok(
+    !AI_DRIVER_ROSTER.some((d) => (d.personality as string) === 'Dive-Bomber'),
+    'Dive-Bomber personality must be removed from AI_DRIVER_ROSTER'
+  );
+  assert.ok('Average GTP Driver' in PERSONALITY_POLICY_PROFILES);
+
+  // 2) ANB1 v4 round-trip with pedalMode='signed' & carClass=CarClassId.HYPERCAR_GTP
+  const obsDim = 59;
+  const hiddenDim = 8;
+  const actDim = 3;
+  const zeroMat = (r: number, c: number) => Array.from({ length: r }, () => new Array(c).fill(0));
+  const zeroVec = (n: number) => new Array(n).fill(0);
+
+  const makeSignedWeights = (pedalBias: number) => ({
+    version: 4,
+    obsDim,
+    hiddenDim,
+    actDim,
+    numHiddenLayers: 2 as const,
+    activation: 'tanh' as const,
+    residual: false,
+    pedalMode: 'signed' as const,
+    carClass: CarClassId.HYPERCAR_GTP,
+    w0: zeroMat(hiddenDim, obsDim),
+    b0: zeroVec(hiddenDim),
+    w1: zeroMat(hiddenDim, hiddenDim),
+    b1: zeroVec(hiddenDim),
+    w2: zeroMat(actDim, hiddenDim),
+    b2: [0, pedalBias, 0],
+  });
+
+  const encoded = encodePolicyWeightsBinary(makeSignedWeights(0.95));
+  // Test decoding from a Node Buffer slice with non-zero byteOffset
+  const padded = Buffer.alloc(encoded.byteLength + 17);
+  padded.set(encoded, 17);
+  const subBuf = padded.subarray(17);
+  const decoded = decodePolicyWeightsBinary(subBuf);
+  assert.ok(decoded, 'ANB1 v4 binary must decode cleanly even from non-zero byteOffset Buffer');
+  assert.equal(decoded!.version, 4);
+  assert.equal(decoded!.pedalMode, 'signed');
+  assert.equal(decoded!.carClass, CarClassId.HYPERCAR_GTP);
+
+  // 3) Signed-pedal zero-overlap across full throttle, coast, and full brake
+  const dummyObs = new Array(obsDim).fill(0);
+  const fullThr = evaluateNeuralPolicy(dummyObs, decoded!);
+  assert.ok(fullThr);
+  assert.equal(fullThr!.throttle, 1);
+  assert.equal(fullThr!.brake, 0);
+
+  const halfThr = evaluateNeuralPolicy(dummyObs, decodePolicyWeightsBinary(encodePolicyWeightsBinary(makeSignedWeights(0.46)))!);
+  assert.ok(halfThr);
+  assert.ok(halfThr!.throttle > 0.4 && halfThr!.throttle < 0.6);
+  assert.equal(halfThr!.brake, 0);
+
+  const deadzone = evaluateNeuralPolicy(dummyObs, decodePolicyWeightsBinary(encodePolicyWeightsBinary(makeSignedWeights(0.01)))!);
+  assert.ok(deadzone);
+  assert.equal(deadzone!.throttle, 0);
+  assert.equal(deadzone!.brake, 0);
+
+  const fullBrk = evaluateNeuralPolicy(dummyObs, decodePolicyWeightsBinary(encodePolicyWeightsBinary(makeSignedWeights(-0.95)))!);
+  assert.ok(fullBrk);
+  assert.equal(fullBrk!.throttle, 0);
+  assert.equal(fullBrk!.brake, 1);
+
+  // 4) Per-class policy registration & cleanup
+  const prevGtp = getClassPolicyWeights(CarClassId.HYPERCAR_GTP);
+  setPerClassPoliciesEnabled(true);
+  setClassPolicyWeights(CarClassId.HYPERCAR_GTP, decoded);
+  assert.equal(getClassPolicyWeights(CarClassId.HYPERCAR_GTP)?.carClass, CarClassId.HYPERCAR_GTP);
+  assert.equal(getClassPolicyWeights(CarClassId.GT4), null);
+  setClassPolicyWeights(CarClassId.HYPERCAR_GTP, prevGtp);
+});
+
 
 
 

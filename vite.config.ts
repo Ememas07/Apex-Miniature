@@ -116,10 +116,73 @@ function serveLowPolyCarsPlugin(): Plugin {
   };
 }
 
+function scanPolicyBinaries(policiesDir: string): {
+  files: string[];
+  classes: Record<string, string>;
+} {
+  if (!fs.existsSync(policiesDir)) return { files: [], classes: {} };
+  const files = fs
+    .readdirSync(policiesDir)
+    .filter((f) => f.toLowerCase().endsWith('.bin'))
+    .sort();
+  const classes: Record<string, string> = {};
+  for (const file of files) {
+    const m = /^class_([a-z0-9_]+)\.bin$/i.exec(file);
+    if (m) {
+      classes[m[1].toUpperCase()] = file;
+    }
+  }
+  return { files, classes };
+}
+
+function servePolicyBinariesManifestPlugin(): Plugin {
+  const policiesDir = path.resolve(__dirname, 'public', 'models', 'policies');
+  const distPoliciesDir = path.resolve(__dirname, 'dist', 'models', 'policies');
+  const manifestUrl = '/models/policies/manifest.json';
+
+  const attach = (
+    middlewares: { use: (handler: (req: any, res: any, next: () => void) => void) => void },
+    rootDir: string,
+  ) => {
+    middlewares.use((req, res, next) => {
+      const rawUrl = String(req.url || '').split('?')[0];
+      if (rawUrl !== manifestUrl && !rawUrl.endsWith(manifestUrl)) {
+        next();
+        return;
+      }
+      const manifest = scanPolicyBinaries(rootDir);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.end(JSON.stringify(manifest, null, 2));
+    });
+  };
+
+  return {
+    name: 'serve-policy-binaries-manifest',
+    configureServer(server) {
+      attach(server.middlewares, policiesDir);
+    },
+    configurePreviewServer(server) {
+      const rootDir = fs.existsSync(distPoliciesDir) ? distPoliciesDir : policiesDir;
+      attach(server.middlewares, rootDir);
+    },
+    closeBundle() {
+      const manifest = scanPolicyBinaries(policiesDir);
+      fs.mkdirSync(distPoliciesDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(distPoliciesDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2) + '\n',
+        'utf8',
+      );
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     base: './',
-    plugins: [react(), tailwindcss(), serveLowPolyCarsPlugin()],
+    plugins: [react(), tailwindcss(), serveLowPolyCarsPlugin(), servePolicyBinariesManifestPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
