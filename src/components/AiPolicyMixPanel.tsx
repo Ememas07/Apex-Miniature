@@ -285,13 +285,13 @@ export function AiPolicyMixPanel({ compact = false }: AiPolicyMixPanelProps) {
             })}
           </div>
 
-          {/* Per-Personality Neural Policy Blending Toggle */}
+          {/* Single-Model Per-Personality Inference Modifiers Toggle */}
           <div className="rounded px-2.5 py-2 border border-sky-500/20 bg-[#0d1420] flex flex-wrap items-center justify-between gap-2 text-[11px]">
             <div className="min-w-0 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              <span className="font-semibold text-sky-200">Per-Personality Blending</span>
+              <span className="font-semibold text-sky-200">Driver Personalities</span>
               <span className="text-slate-400 hidden sm:inline">
-                · Distinct neural mix per driver trait
+                · Single-model inference modifiers per trait
               </span>
             </div>
             <div className="flex items-center gap-1">

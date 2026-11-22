@@ -785,6 +785,10 @@ const TRACK_LOCATION_META: Record<string, { city: string; circuitLengthKm: numbe
 };
 
 for (const tr of TRACKS) {
+  const metric = REAL_TRACK_METRICS[tr.id];
+  if (metric) {
+    tr.trackWidth = metric.trackWidth;
+  }
   const meta = TRACK_LOCATION_META[tr.id];
   if (meta) {
     tr.city = meta.city;

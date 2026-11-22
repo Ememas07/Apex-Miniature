@@ -274,8 +274,6 @@ export type RaceFlagState =
   | 'green'
   | 'yellow'
   | 'double-yellow'
-  | 'vsc'
-  | 'sc'
   | 'white'
   | 'black-and-white'
   | 'black'
@@ -286,9 +284,7 @@ export type SectorFlag = 'green' | 'yellow';
 export type PenaltyReason =
   | 'corner-cut'
   | 'avoidable-contact'
-  | 'yellow-overtake'
-  | 'jump-start'
-  | 'vsc-speeding';
+  | 'yellow-overtake';
 
 export type PenaltyType = 'slow-down' | 'time-penalty' | 'drive-through' | 'stop-and-go';
 
@@ -362,8 +358,6 @@ export interface RaceConfig {
   aiDifficulty: AIDifficulty;
   damageLevel?: DamageLevel;
   absLevel?: AbsLevel;
-  safetyCarEnabled?: boolean;
-  jumpStartEnabled?: boolean;
   carSetup?: CarSetupConfig;
   roomCode?: string;
   sessionMode?: SinglePlayerSessionMode;
@@ -449,7 +443,7 @@ export interface HudSnapshot {
   countdown: number; // >0 before green flag
   startType?: RaceStartType;
   greenFlagFlash?: number; // >0 brief GREEN FLAG banner after start
-  launchStatus?: 'none' | 'staging' | 'perfect' | 'jump-start';
+  launchStatus?: 'none' | 'staging' | 'perfect';
   launchRpmSweetSpot?: [number, number];
   speedKmh: number;
   gear: number;
@@ -478,6 +472,8 @@ export interface HudSnapshot {
   brakeBalance?: number; // % front (45..68)
   compound: TireCompound;
   fuel: number; // 100 down to 0
+  fuelLiters?: number;
+  fuelCapacityLiters?: number;
   fuelLapsRemaining: number; // estimated laps of fuel remaining
   aeroDamage: number; // 0 up to 100
   damage?: LocalizedDamageState;
@@ -512,9 +508,10 @@ export interface HudSnapshot {
   penaltyType?: PenaltyType | null;
   raceFlag?: RaceFlagState;
   sectorFlags?: [SectorFlag, SectorFlag, SectorFlag];
+  inYellowMicrosector?: boolean;
+  yellowYieldTargetName?: string | null;
+  yellowYieldPositions?: number;
   blueFlagActive?: boolean;
-  safetyCarPhase?: 'none' | 'vsc' | 'sc' | 'sc-ending';
-  safetyCarSpeedLimitKmh?: number | null;
   raceControlMessage?: string | null;
   isStoppedOnTrack: boolean;
   pitStopRemaining: number;
@@ -531,7 +528,6 @@ export interface HudSnapshot {
     classId: CarClassId;
     isPlayer: boolean;
     isHumanPeer: boolean;
-    isSafetyCar?: boolean;
   }>;
   proximityCars?: ProximityCarIndicator[];
   qualiResultTime: number | null;

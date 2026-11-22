@@ -778,10 +778,6 @@ export function getNormalizedPolicyMix(
   }));
 }
 
-if (typeof window !== 'undefined' && typeof console !== 'undefined') {
-  console.info('[AI Policy]', AI_POLICY_WEIGHTS.meta);
-}
-
 export const LOOKAHEAD_METERS = [12, 25, 42, 65, 95, 135, 185, 250];
 export const TRAFFIC_SLOTS = 4;
 
@@ -1887,14 +1883,32 @@ export function computeNeuralAIControl(
   let blendedThrottle = policyOut.throttle;
   let blendedBrake = policyOut.brake;
 
-  // Apply per-personality neural control profile (brake timing, exit smoothness, Average GTP Driver vs Passive racecraft)
+  // Apply single-model per-personality inference-time modifiers (brake timing, turn-in sharpness, apex commitment, exit throttle)
   const pProf = car.personality ? PERSONALITY_POLICY_PROFILES[car.personality] : undefined;
   if (personalityPolicyBlendingEnabled && pProf) {
-    if (blendedBrake > 0.08 && blendedBrake < 0.88) {
+    // 1. Brake timing & trail-braking modulation (brakeBias < 1 = later/deeper, > 1 = earlier/gentler)
+    if (blendedBrake > 0.04 && blendedBrake < 0.94) {
       blendedBrake = Math.max(0, Math.min(1, blendedBrake * pProf.brakeBias));
+      if (pProf.brakeBias < 0.96 && blendedBrake < 0.35 && blendedThrottle > 0.1) {
+        // Late-brakers stay on throttle a fraction deeper into braking zones
+        blendedThrottle = Math.min(1, blendedThrottle * (1 + (1 - pProf.brakeBias) * 0.45));
+      }
     }
-    if (Math.abs(blendedSteer) > 0.35 && blendedBrake < 0.1 && car.tireWear < 75) {
-      blendedThrottle = Math.max(0, Math.min(1, blendedThrottle * pProf.throttleSmoothness));
+    // 2. Steering sharpness & cornering line commitment (same v2 model, distinct driving feel)
+    if (Math.abs(blendedSteer) > 0.08) {
+      const steerScaled = blendedSteer * pProf.steerAggression;
+      const sampleCurv = sampleTrackAtT(compiledTrack, car.trackT).curvature;
+      const apexPush =
+        Math.abs(sampleCurv) > 0.004
+          ? Math.sign(sampleCurv) * pProf.apexOffsetBias * 0.12
+          : 0;
+      blendedSteer = Math.max(-1, Math.min(1, steerScaled + apexPush));
+    }
+    // 3. Corner-exit throttle punch vs tire-saving smoothness
+    if (Math.abs(blendedSteer) > 0.22 && blendedBrake < 0.12) {
+      const wearScale = car.tireWear < 80 ? 1.0 : 0.65;
+      const effSmooth = 1 + (pProf.throttleSmoothness - 1) * wearScale;
+      blendedThrottle = Math.max(0, Math.min(1, blendedThrottle * effSmooth));
     }
   }
 

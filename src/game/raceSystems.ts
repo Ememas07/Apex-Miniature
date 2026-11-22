@@ -556,32 +556,25 @@ export function getErsModeProfile(mode: ErsMode): {
   }
 }
 
-// ==================== 1.2 Authentic Flag Rules, Race Control & Safety Car / VSC ====================
+// ==================== 1.2 Authentic Flag Rules & Microsector Race Control ====================
 
-export interface SafetyCarSimState {
-  active: boolean;
-  phase: 'none' | 'vsc' | 'sc' | 'sc-ending';
-  timer: number;
-  cooldown: number;
-  trackT: number;
-  x: number;
-  y: number;
-  z: number;
-  heading: number;
-  speed: number; // m/s
-  speedLimitMs: number; // m/s cap during VSC / SC
-  lightsOn: boolean; // amber flashing when active, green/off when ending
+export const MICROSECTOR_COUNT = 18; // 6 microsectors per sector (S1: 0..5, S2: 6..11, S3: 12..17)
+
+export interface YellowYieldObligation {
+  targetCarId: string;
+  targetName: string;
+  positionsToYield: number;
 }
 
 export interface RaceControlState {
   globalFlag: RaceFlagState;
   sectorFlags: [SectorFlag, SectorFlag, SectorFlag];
   sectorYellowTimers: [number, number, number];
-  safetyCar: SafetyCarSimState;
+  microsectorFlags: SectorFlag[];
+  microsectorYellowTimers: number[];
+  yellowYieldByCarId: Map<string, YellowYieldObligation>;
   message: string | null;
   messageTimer: number;
-  incidentAccumulator: number;
-  lastIncidentTime: number;
   prevRankByCarId: Map<string, number>;
   yellowOvertakeCooldown: Map<string, number>;
   elapsedRaceTime: number;
@@ -624,24 +617,11 @@ export function createRaceControlState(): RaceControlState {
     globalFlag: 'green',
     sectorFlags: ['green', 'green', 'green'],
     sectorYellowTimers: [0, 0, 0],
-    safetyCar: {
-      active: false,
-      phase: 'none',
-      timer: 0,
-      cooldown: 18, // grace period at race start
-      trackT: 0.04,
-      x: 0,
-      y: 0,
-      z: 0,
-      heading: 0,
-      speed: 32,
-      speedLimitMs: 36,
-      lightsOn: false,
-    },
+    microsectorFlags: Array<SectorFlag>(MICROSECTOR_COUNT).fill('green'),
+    microsectorYellowTimers: Array<number>(MICROSECTOR_COUNT).fill(0),
+    yellowYieldByCarId: new Map(),
     message: null,
     messageTimer: 0,
-    incidentAccumulator: 0,
-    lastIncidentTime: -99,
     prevRankByCarId: new Map(),
     yellowOvertakeCooldown: new Map(),
     elapsedRaceTime: 0,
@@ -655,6 +635,16 @@ export function getSectorIndexForT(t: number): 0 | 1 | 2 {
   return 2;
 }
 
+export function getMicrosectorIndexForT(t: number): number {
+  const tw = wrapT(t);
+  return Math.min(MICROSECTOR_COUNT - 1, Math.floor(tw * MICROSECTOR_COUNT));
+}
+
+export function isCarInYellowMicrosector(rc: RaceControlState, trackT: number): boolean {
+  const mIdx = getMicrosectorIndexForT(trackT);
+  return rc.microsectorFlags[mIdx] === 'yellow';
+}
+
 function setRaceControlMessage(rc: RaceControlState, msg: string, duration = 4.0): void {
   rc.message = msg;
   rc.messageTimer = duration;
@@ -662,10 +652,10 @@ function setRaceControlMessage(rc: RaceControlState, msg: string, duration = 4.0
 
 /**
  * Steps full Race Control:
- * - Local Yellow flags per sector on spins, stopped cars, or heavy crashes + overtaking under yellow enforcement
+ * - Local Yellow flags per microsector (18 microsectors = 6 per sector) on spins, stopped cars, or heavy crashes
+ * - Overtaking under yellow strictly gated to active yellow microsectors, with yield-back clearance
  * - Blue flags for slower-class or lapped traffic
  * - White flag (final lap), Black-and-White warning flag, Checkered flag
- * - Safety Car (SC) & Virtual Safety Car (VSC) deployment, physical SC spline movement & restart
  * - DRS detection/activation & Formula E Attack Mode zone detection
  */
 export function stepRaceControl(
@@ -677,16 +667,12 @@ export function stepRaceControl(
   opts: {
     totalLaps: number;
     isRace: boolean;
-    safetyCarEnabled: boolean;
   },
 ): void {
   rc.elapsedRaceTime += dt;
   if (rc.messageTimer > 0) {
     rc.messageTimer = Math.max(0, rc.messageTimer - dt);
     if (rc.messageTimer === 0) rc.message = null;
-  }
-  if (rc.safetyCar.cooldown > 0) {
-    rc.safetyCar.cooldown = Math.max(0, rc.safetyCar.cooldown - dt);
   }
 
   // Decay yellow overtake cooldowns
@@ -698,121 +684,85 @@ export function stepRaceControl(
 
   // 1. Sort cars by race progress (highest totalDistance first)
   const ordered = [...cars].sort((a, b) => b.totalDistance - a.totalDistance);
+  const rankById = new Map<string, number>();
+  for (let i = 0; i < ordered.length; i++) {
+    rankById.set(ordered[i].id, i);
+  }
   const leader = ordered[0];
   const trackLen = Math.max(200, compiledTrack.totalLength);
   const halfW = compiledTrack.spec.trackWidth * 0.5;
 
-  // 2. Detect sector incidents (spun, stopped, or crashed car)
-  const sectorIncidentThisTick: [boolean, boolean, boolean] = [false, false, false];
-  let stoppedOrHeavyCount = 0;
+  // 2. Detect microsector incidents (spun, stopped, or crashed car)
+  const microIncidentThisTick = new Array<boolean>(MICROSECTOR_COUNT).fill(false);
 
   for (let i = 0; i < cars.length; i++) {
     const c = cars[i];
     if (c.finished || c.pitStopRemaining > 0) continue;
-    const secIdx = getSectorIndexForT(c.trackT);
+    const mIdx = getMicrosectorIndexForT(c.trackT);
     const isSpun = Math.abs(c.yawRate ?? 0) > 2.65 && c.speed > 7.5;
     const isStoppedOnTrack = rc.elapsedRaceTime > 10.0 && c.speed < 1.6 && c.totalDistance > 0.03;
     const isHeavyCrash = (c.lastWallImpact ?? 0) > 18.0 || (c.lastCollisionImpact ?? 0) > 16.0;
 
     if (isSpun || isStoppedOnTrack || isHeavyCrash) {
-      sectorIncidentThisTick[secIdx] = true;
-      rc.sectorYellowTimers[secIdx] = Math.max(rc.sectorYellowTimers[secIdx], isHeavyCrash ? 4.2 : 2.5);
-    }
-    if (isHeavyCrash || isStoppedOnTrack) {
-      stoppedOrHeavyCount += 1;
+      const holdDur = isHeavyCrash ? 4.5 : 2.8;
+      microIncidentThisTick[mIdx] = true;
+      rc.microsectorYellowTimers[mIdx] = Math.max(rc.microsectorYellowTimers[mIdx], holdDur);
+      // Flag the immediate approach microsector as well so approaching drivers see the local yellow
+      const prevM = (mIdx - 1 + MICROSECTOR_COUNT) % MICROSECTOR_COUNT;
+      microIncidentThisTick[prevM] = true;
+      rc.microsectorYellowTimers[prevM] = Math.max(rc.microsectorYellowTimers[prevM], holdDur * 0.85);
     }
   }
 
+  for (let m = 0; m < MICROSECTOR_COUNT; m++) {
+    if (!microIncidentThisTick[m] && rc.microsectorYellowTimers[m] > 0) {
+      rc.microsectorYellowTimers[m] = Math.max(0, rc.microsectorYellowTimers[m] - dt);
+    }
+    rc.microsectorFlags[m] = rc.microsectorYellowTimers[m] > 0 ? 'yellow' : 'green';
+  }
+
+  // Derive general sector flags (S1/S2/S3) from microsectors for the sector status bar
+  const microPerSector = MICROSECTOR_COUNT / 3;
   for (let s = 0; s < 3; s++) {
-    if (!sectorIncidentThisTick[s] && rc.sectorYellowTimers[s] > 0) {
-      rc.sectorYellowTimers[s] = Math.max(0, rc.sectorYellowTimers[s] - dt);
+    let maxTimer = 0;
+    for (let k = 0; k < microPerSector; k++) {
+      const tVal = rc.microsectorYellowTimers[s * microPerSector + k];
+      if (tVal > maxTimer) maxTimer = tVal;
     }
-    rc.sectorFlags[s] = rc.sectorYellowTimers[s] > 0 ? 'yellow' : 'green';
+    rc.sectorYellowTimers[s] = maxTimer;
+    rc.sectorFlags[s] = maxTimer > 0 ? 'yellow' : 'green';
   }
 
-  // 3. Safety Car & Virtual Safety Car trigger / progression
-  if (opts.isRace && opts.safetyCarEnabled && opts.totalLaps >= 3 && leader && !leader.finished) {
-    if (stoppedOrHeavyCount >= 2 && rc.safetyCar.phase === 'none' && rc.safetyCar.cooldown <= 0 && rc.elapsedRaceTime > 12) {
-      rc.incidentAccumulator += dt * stoppedOrHeavyCount;
-      rc.lastIncidentTime = rc.elapsedRaceTime;
-    } else if (rc.elapsedRaceTime - rc.lastIncidentTime > 5.0) {
-      rc.incidentAccumulator = Math.max(0, rc.incidentAccumulator - dt * 0.5);
-    }
-
-    if (
-      rc.safetyCar.phase === 'none' &&
-      rc.safetyCar.cooldown <= 0 &&
-      leader.lap < opts.totalLaps &&
-      rc.incidentAccumulator >= 1.2
-    ) {
-      rc.incidentAccumulator = 0;
-      const deployFullSc = stoppedOrHeavyCount >= 3 || Math.random() < 0.55;
-      if (deployFullSc) {
-        rc.safetyCar.active = true;
-        rc.safetyCar.phase = 'sc';
-        rc.safetyCar.timer = 22.0;
-        rc.safetyCar.speed = 32.0; // ~115 km/h
-        rc.safetyCar.speedLimitMs = 34.0;
-        rc.safetyCar.lightsOn = true;
-        rc.safetyCar.trackT = wrapT(leader.trackT + Math.min(0.08, 45 / trackLen));
-        setRaceControlMessage(rc, 'SAFETY CAR DEPLOYED — NO OVERTAKING', 5.0);
-      } else {
-        rc.safetyCar.active = true;
-        rc.safetyCar.phase = 'vsc';
-        rc.safetyCar.timer = 14.0;
-        rc.safetyCar.speedLimitMs = 36.0; // ~130 km/h VSC delta cap
-        rc.safetyCar.lightsOn = false;
-        setRaceControlMessage(rc, 'VIRTUAL SAFETY CAR — RESPECT DELTA SPEED', 5.0);
-      }
-    }
-  }
-
-  if (rc.safetyCar.phase === 'vsc') {
-    rc.safetyCar.timer = Math.max(0, rc.safetyCar.timer - dt);
-    if (rc.safetyCar.timer <= 0) {
-      rc.safetyCar.phase = 'none';
-      rc.safetyCar.active = false;
-      rc.safetyCar.cooldown = 45.0;
-      setRaceControlMessage(rc, 'VSC ENDING — GREEN FLAG!', 3.5);
-    }
-  } else if (rc.safetyCar.phase === 'sc' || rc.safetyCar.phase === 'sc-ending') {
-    rc.safetyCar.timer = Math.max(0, rc.safetyCar.timer - dt);
-    // Advance physical Safety Car along spline ahead of leader
-    const scSpd = rc.safetyCar.phase === 'sc-ending' ? 42.0 : 32.0;
-    rc.safetyCar.speed = scSpd;
-    rc.safetyCar.trackT = wrapT(rc.safetyCar.trackT + (scSpd * dt) / trackLen);
-    const sp = sampleTrackAtT(compiledTrack, rc.safetyCar.trackT);
-    rc.safetyCar.x = sp.x;
-    rc.safetyCar.y = sp.y;
-    rc.safetyCar.z = sp.z;
-    rc.safetyCar.heading = Math.atan2(sp.tx, sp.tz);
-
-    if (rc.safetyCar.phase === 'sc' && rc.safetyCar.timer <= 5.0) {
-      rc.safetyCar.phase = 'sc-ending';
-      rc.safetyCar.lightsOn = false; // roof lights switch off -> green restart imminent
-      setRaceControlMessage(rc, 'SAFETY CAR IN THIS LAP — PREPARE FOR RESTART', 4.5);
-    } else if (rc.safetyCar.phase === 'sc-ending' && rc.safetyCar.timer <= 0) {
-      rc.safetyCar.phase = 'none';
-      rc.safetyCar.active = false;
-      rc.safetyCar.cooldown = 55.0;
-      setRaceControlMessage(rc, 'GREEN FLAG — RACING RESUMES!', 3.5);
-    }
-  }
-
-  // 4. Overtaking under Yellow / SC / VSC + VSC speeding enforcement
-  const isNeutralized = rc.safetyCar.phase !== 'none';
+  // 3. Overtaking under Yellow (strictly inside active yellow microsectors) + yield-back check
   for (let idx = 0; idx < ordered.length; idx++) {
     const c = ordered[idx];
     const prevRank = rc.prevRankByCarId.get(c.id);
-    const secIdx = getSectorIndexForT(c.trackT);
-    const inYellow = rc.sectorFlags[secIdx] === 'yellow' || isNeutralized;
+    const inYellowMicro = isCarInYellowMicrosector(rc, c.trackT);
+
+    // Check if an existing yellow-flag yield obligation has been satisfied
+    const activeYield = rc.yellowYieldByCarId.get(c.id);
+    if (activeYield) {
+      const targetRank = rankById.get(activeYield.targetCarId);
+      const gavePositionBack = targetRank !== undefined && idx > targetRank;
+      if (gavePositionBack || c.penaltyTimeRemaining <= 0 || c.penaltyReason !== 'yellow-overtake') {
+        rc.yellowYieldByCarId.delete(c.id);
+        if (gavePositionBack && c.penaltyReason === 'yellow-overtake') {
+          c.penaltyTimeRemaining = 0;
+          c.penaltyReason = null;
+          c.penaltyType = null;
+          if (c.isPlayer) {
+            setRaceControlMessage(rc, 'POSITION YIELDED — YELLOW FLAG PENALTY CLEARED', 2.8);
+          }
+        }
+      }
+    }
 
     if (
       opts.isRace &&
       rc.elapsedRaceTime > 8.0 &&
       prevRank !== undefined &&
       idx < prevRank &&
-      inYellow &&
+      inYellowMicro &&
       !c.finished &&
       c.pitStopRemaining <= 0 &&
       !rc.yellowOvertakeCooldown.has(c.id)
@@ -824,32 +774,24 @@ export function stepRaceControl(
         c.warningCount += 1;
         c.penaltyReason = 'yellow-overtake';
         c.penaltyType = 'slow-down';
-        c.penaltyTimeRemaining = Math.min(1.2, Math.max(0.5, c.penaltyTimeRemaining + 0.6));
+        const prevYield = rc.yellowYieldByCarId.get(c.id);
+        const positionsToYield = Math.min(3, (prevYield?.positionsToYield ?? 0) + (prevRank - idx));
+        c.penaltyTimeRemaining = Math.min(2.5, Math.max(1.2, c.penaltyTimeRemaining + 1.2));
+        rc.yellowYieldByCarId.set(c.id, {
+          targetCarId: passedCar.id,
+          targetName: passedCar.name,
+          positionsToYield,
+        });
         if (c.isPlayer) {
-          setRaceControlMessage(rc, 'YELLOW FLAG PASS — BRIEF LIFT TO CLEAR PENALTY', 3.0);
+          setRaceControlMessage(
+            rc,
+            `YELLOW FLAG OVERTAKE — YIELD ${positionsToYield} POS TO ${passedCar.name.toUpperCase()} OR SLOW ${c.penaltyTimeRemaining.toFixed(1)}s`,
+            3.8,
+          );
         }
       }
     }
     rc.prevRankByCarId.set(c.id, idx);
-
-    // VSC delta speed check (generous +9 m/s grace, light +1.5s penalty)
-    if (
-      opts.isRace &&
-      rc.safetyCar.phase === 'vsc' &&
-      rc.safetyCar.timer < 11.0 &&
-      c.speed > rc.safetyCar.speedLimitMs + 9.0 &&
-      !c.finished
-    ) {
-      if (!rc.yellowOvertakeCooldown.has(c.id)) {
-        rc.yellowOvertakeCooldown.set(c.id, 8.0);
-        c.penaltyReason = 'vsc-speeding';
-        c.penaltyType = 'time-penalty';
-        c.postRacePenaltySeconds = (c.postRacePenaltySeconds ?? 0) + 1.5;
-        if (c.isPlayer) {
-          setRaceControlMessage(rc, 'VSC DELTA INFRINGEMENT — +1.5s TIME PENALTY', 3.0);
-        }
-      }
-    }
 
     // Black-and-White flag warning at 5 warnings
     if (c.warningCount >= 5 && !c.blackAndWhiteFlagged) {
@@ -860,7 +802,7 @@ export function stepRaceControl(
     }
   }
 
-  // 5. Blue Flags (Multi-Class / Lapped Traffic)
+  // 4. Blue Flags (Multi-Class / Lapped Traffic)
   for (let i = 0; i < cars.length; i++) {
     const c = cars[i];
     c.blueFlagActive = false;
@@ -887,9 +829,8 @@ export function stepRaceControl(
     }
   }
 
-  // 6. DRS Detection/Activation (STRICTLY F1 2021 ONLY) & Formula E Attack Mode Zone
-  const drsAllowedGlobally =
-    !isNeutralized && (opts.isRace ? (leader?.lap ?? 1) >= 2 : true);
+  // 5. DRS Detection/Activation (STRICTLY F1 2021 ONLY) & Formula E Attack Mode Zone
+  const drsAllowedGlobally = opts.isRace ? (leader?.lap ?? 1) >= 2 : true;
 
   for (let i = 0; i < cars.length; i++) {
     const c = cars[i];
@@ -952,7 +893,7 @@ export function stepRaceControl(
     }
   }
 
-  // 7. Compute global flag priority
+  // 6. Compute global flag priority
   const anyFinished = ordered.some((c) => c.finished);
   const anyYellow = rc.sectorFlags[0] === 'yellow' || rc.sectorFlags[1] === 'yellow' || rc.sectorFlags[2] === 'yellow';
   const yellowCount =
@@ -962,10 +903,6 @@ export function stepRaceControl(
 
   if (anyFinished && opts.isRace) {
     rc.globalFlag = 'checkered';
-  } else if (rc.safetyCar.phase === 'sc' || rc.safetyCar.phase === 'sc-ending') {
-    rc.globalFlag = 'sc';
-  } else if (rc.safetyCar.phase === 'vsc') {
-    rc.globalFlag = 'vsc';
   } else if (yellowCount >= 2) {
     rc.globalFlag = 'double-yellow';
   } else if (anyYellow) {
@@ -977,25 +914,16 @@ export function stepRaceControl(
   }
 }
 
-// ==================== Standing-Start Launch / Jump-Start Helper ====================
+// ==================== Standing-Start Launch Helper ====================
 
 export const LAUNCH_RPM_SWEET_SPOT: [number, number] = [0.66, 0.88];
 
 export function evaluateStandingStartLaunch(params: {
   rpmNormalized: number;
-  jumpStartTriggered: boolean;
 }): {
-  status: 'none' | 'perfect' | 'jump-start';
+  status: 'none' | 'perfect';
   launchBoostSeconds: number;
-  postRacePenaltySeconds: number;
 } {
-  if (params.jumpStartTriggered) {
-    return {
-      status: 'jump-start',
-      launchBoostSeconds: 0,
-      postRacePenaltySeconds: 5,
-    };
-  }
   if (
     params.rpmNormalized >= LAUNCH_RPM_SWEET_SPOT[0] &&
     params.rpmNormalized <= LAUNCH_RPM_SWEET_SPOT[1]
@@ -1003,12 +931,10 @@ export function evaluateStandingStartLaunch(params: {
     return {
       status: 'perfect',
       launchBoostSeconds: 1.6,
-      postRacePenaltySeconds: 0,
     };
   }
   return {
     status: 'none',
     launchBoostSeconds: 0,
-    postRacePenaltySeconds: 0,
   };
 }

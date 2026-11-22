@@ -395,5 +395,6 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 
 ---
 
-## 15. Final Capstone TODO (At the Very End)
+## 15. Backlog & Capstone TODO
+- [ ] **"Get Mecachrome'd" (Player Engine Reliability Event):** Add a random 5-second sudden engine failure that only affects the player with a 1/1000 chance (temporary power cut / smoke / recovery after 5 seconds). *(Backlog — not yet implemented.)*
 - [ ] **Hand-Made (AI-Made) Custom 3D Car Models:** Build bespoke, handcrafted procedural/AI-authored 3D car meshes for flagship classes (F1, Hypercar/GTP, LMP2, GT3, GT4, Formula E, Supercars) with crisp proportions, aero detailing, clean wheel wells, cockpit halos/windscreens, and optimized triangle budgets — scheduled as the final milestone once all core gameplay, graphics, audio, and UI sections are complete.

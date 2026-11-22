@@ -126,7 +126,12 @@ export class MotorsportAudioEngine {
   }
 
   init() {
-    if (this.initialized) return;
+    if (this.initialized) {
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+      return;
+    }
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -135,6 +140,9 @@ export class MotorsportAudioEngine {
     try {
       const ctx = new AudioCtx();
       this.ctx = ctx;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
 
       // Gentle safety ceiling limiter so transient spikes never clip without pumping engine volume
       const limiter = ctx.createDynamicsCompressor();
@@ -622,6 +630,7 @@ export class MotorsportAudioEngine {
   }
 
   setMuted(mute: boolean) {
+    if (this.muted === mute) return;
     this.muted = mute;
     try {
       localStorage.setItem('apex_audio_muted', String(mute));
@@ -802,7 +811,9 @@ export class MotorsportAudioEngine {
     let gearWhineHz = 1800;
     let limiterActive = false;
 
-    const clampedRpm = Math.max(0, Math.min(1, rpmNorm));
+    const safeRpm = Number.isFinite(rpmNorm) ? rpmNorm : 0;
+    const clampedRpm = Math.max(0, Math.min(1, safeRpm));
+    throttle = Number.isFinite(throttle) ? Math.max(0, Math.min(1, throttle)) : 0;
     const clampedThrottle = Math.max(0, Math.min(1, throttle));
 
     if (profile.type === 'ELECTRIC_EV') {

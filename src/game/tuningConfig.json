@@ -1,92 +1,92 @@
 {
   "global": {
-    "downforceScale": 1.0049,
-    "brakeForceScale": 0.9931,
-    "dragScale": 1.1652,
-    "lowSpeedGripScale": 1.0221,
+    "downforceScale": 0.90,
+    "brakeForceScale": 0.93,
+    "dragScale": 1.18,
+    "lowSpeedGripScale": 0.92,
     "aiCornerSpeedScale": 1,
-    "aiBrakeMarginScale": 1.0609
+    "aiBrakeMarginScale": 1.05
   },
   "classes": {
     "GT3": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.86,
+      "brakeForceScale": 0.91,
+      "dragScale": 1.22,
+      "lowSpeedGripScale": 0.89,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.05
     },
     "HYPERCAR_GTP": {
-      "downforceScale": 1.04,
-      "brakeForceScale": 1.00,
-      "dragScale": 1.0,
-      "lowSpeedGripScale": 1.05,
+      "downforceScale": 0.85,
+      "brakeForceScale": 0.91,
+      "dragScale": 1.18,
+      "lowSpeedGripScale": 0.87,
       "aiCornerSpeedScale": 0.99,
       "aiBrakeMarginScale": 1.04
     },
     "F1_2026": {
-      "downforceScale": 1.0936,
-      "brakeForceScale": 0.9872,
-      "dragScale": 1.0,
-      "lowSpeedGripScale": 0.9739,
+      "downforceScale": 0.98,
+      "brakeForceScale": 0.95,
+      "dragScale": 1.06,
+      "lowSpeedGripScale": 0.92,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0211
+      "aiBrakeMarginScale": 1.03
     },
     "LMP2": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.85,
+      "brakeForceScale": 0.91,
+      "dragScale": 1.20,
+      "lowSpeedGripScale": 0.88,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.05
     },
     "GT4": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.86,
+      "brakeForceScale": 0.91,
+      "dragScale": 1.24,
+      "lowSpeedGripScale": 0.89,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.05
     },
     "F1_2021": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.0,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.96,
+      "brakeForceScale": 0.95,
+      "dragScale": 1.05,
+      "lowSpeedGripScale": 0.94,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.04
     },
     "F1_2005": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.0,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.94,
+      "brakeForceScale": 0.94,
+      "dragScale": 1.06,
+      "lowSpeedGripScale": 0.93,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.04
     },
     "FORMULA_E": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.88,
+      "brakeForceScale": 0.92,
+      "dragScale": 1.20,
+      "lowSpeedGripScale": 0.91,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.05
     },
     "TRACK_COUPE": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.88,
+      "brakeForceScale": 0.91,
+      "dragScale": 1.22,
+      "lowSpeedGripScale": 0.90,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.05
     },
     "SUPERCAR": {
-      "downforceScale": 1.0049,
-      "brakeForceScale": 0.9931,
-      "dragScale": 1.1652,
-      "lowSpeedGripScale": 1.0221,
+      "downforceScale": 0.88,
+      "brakeForceScale": 0.91,
+      "dragScale": 1.20,
+      "lowSpeedGripScale": 0.90,
       "aiCornerSpeedScale": 1,
-      "aiBrakeMarginScale": 1.0609
+      "aiBrakeMarginScale": 1.05
     }
   }
 }

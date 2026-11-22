@@ -1180,8 +1180,8 @@ export function TrackStudioModal({
           p.resetCamera(compiledTrack.totalLength, cameraView3d);
         }
         p.renderer.render(p.scene, p.camera);
-      } catch (err) {
-        console.warn('TrackStudio 3D preview build warning:', err);
+      } catch {
+        // Ignore transient preview build error while editing waypoints
       }
     }, p.builtScene ? 70 : 0);
 

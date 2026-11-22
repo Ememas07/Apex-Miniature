@@ -1,7 +1,11 @@
 import { CAR_CLASSES, CARS, getCarById } from './cars';
 import { CompiledTrack, TRACKS, getTrackById, sampleTrackAtT } from './tracks';
+import { createCarSimState, stepCarPhysics } from './physics';
+import { computeNeuralAIControl } from './aiNeuralPolicy';
 import {
+  AIDifficulty,
   CarClassId,
+  CarSpec,
   GhostTargetMode,
   MedalTier,
   RaceConfig,
@@ -24,19 +28,19 @@ export interface TrackMedalTargets {
  * Overall fleet reference mean across all 58 cars = 194.64 km/h.
  */
 const CLASS_BENCHMARK_SPEED_KMH: Record<CarClassId, number> = {
-  [CarClassId.F1_2021]: 245.3,
-  [CarClassId.F1_2005]: 242.5,
-  [CarClassId.F1_2026]: 242.4,
-  [CarClassId.HYPERCAR_GTP]: 214.6,
-  [CarClassId.LMP2]: 199.8,
-  [CarClassId.FORMULA_E]: 196.7,
-  [CarClassId.SUPERCAR]: 196.2,
-  [CarClassId.GT3]: 182.1,
-  [CarClassId.TRACK_COUPE]: 167.7,
-  [CarClassId.GT4]: 167.4,
+  [CarClassId.F1_2021]: 236.0,
+  [CarClassId.F1_2005]: 232.0,
+  [CarClassId.F1_2026]: 233.0,
+  [CarClassId.HYPERCAR_GTP]: 198.5,
+  [CarClassId.LMP2]: 188.0,
+  [CarClassId.FORMULA_E]: 185.0,
+  [CarClassId.SUPERCAR]: 186.0,
+  [CarClassId.GT3]: 172.0,
+  [CarClassId.TRACK_COUPE]: 158.0,
+  [CarClassId.GT4]: 156.5,
 };
 
-const FLEET_MEAN_KMH = 194.64;
+const FLEET_MEAN_KMH = 184.5;
 
 /**
  * Audited [circuitLengthKm, fleetMeanSpeedKmh] per built-in circuit so every medal target
@@ -376,9 +380,149 @@ export function sampleRecordedGhostAtTime(
   };
 }
 
+const PHYSICS_TARGET_GHOST_CACHE = new Map<string, StoredGhostLap>();
+
 /**
- * Synthesizes a smooth medal-pace Target Ghost along the track spline (modulated gently by curvature
- * so it slows slightly in corners and accelerates down straights!).
+ * Simulates a real, physics-obeying flying lap using the game's actual physics & AI engine
+ * so the Alien (and Gold/Silver/Bronze) target ghosts follow real braking zones, cornering grip,
+ * elevation, and racing lines instead of an impossible constant-speed centerline path.
+ */
+export function generatePhysicsTargetGhostLap(
+  compiledTrack: CompiledTrack,
+  carSpec: CarSpec,
+  mode: Exclude<GhostTargetMode, 'off' | 'personal-best'>,
+  trackWetness = 0,
+): StoredGhostLap | null {
+  const wetBucket = Math.round(Math.max(0, Math.min(1, trackWetness)) * 10);
+  const cacheKey = `${compiledTrack.spec.id}:${carSpec.id}:${mode}:${wetBucket}`;
+  const cached = PHYSICS_TARGET_GHOST_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const difficulty: AIDifficulty =
+    mode === 'alien' ? 'Alien' : mode === 'gold' ? 'Pro' : mode === 'silver' ? 'Amateur' : 'Rookie';
+  const paceMult =
+    mode === 'alien' ? 1.0 : mode === 'gold' ? 0.96 : mode === 'silver' ? 0.91 : 0.85;
+  const compound: TireCompound = trackWetness > 0.35 ? 'wet' : 'soft';
+
+  const simCar = createCarSimState({
+    id: `ghost-sim-${mode}`,
+    name: `${mode.toUpperCase()} Ghost`,
+    isPlayer: false,
+    carId: carSpec.id,
+    livery: carSpec.defaultLivery,
+    gridSlot: 0,
+    compiledTrack,
+    compound,
+    aiPaceMultiplier: paceMult,
+    personality: 'Metronome',
+  });
+  // Place on a flying run-up before S/F with warm brakes & optimal tyres so the recorded lap is a clean flying lap
+  const runupT = 0.84;
+  const runupSp = sampleTrackAtT(compiledTrack, runupT);
+  simCar.trackT = runupT;
+  simCar.x = runupSp.x;
+  simCar.y = runupSp.y;
+  simCar.z = runupSp.z;
+  simCar.heading = Math.atan2(runupSp.tx, runupSp.tz);
+  simCar.speed = 38;
+  simCar.vx = runupSp.tx * 38;
+  simCar.vz = runupSp.tz * 38;
+  simCar.brakeTempFront = 320;
+  simCar.brakeTempRear = 290;
+  simCar.ersBattery = 100;
+
+  const dt = 1 / 30;
+  const maxSimSteps = 30 * 420; // safety cap (7 min simulated max)
+  const samples: GhostSample[] = [];
+  let recording = false;
+  let lapStartTime = 0;
+  let simTime = 0;
+  let sampleAccum = 0;
+  let lapTime = 0;
+
+  for (let step = 0; step < maxSimSteps; step++) {
+    const prevLap = simCar.lap;
+    const input = computeNeuralAIControl(
+      simCar,
+      compiledTrack,
+      [simCar],
+      dt,
+      trackWetness,
+      difficulty,
+    );
+    stepCarPhysics(simCar, input, compiledTrack, dt, {
+      trackWetness,
+      localWetness: trackWetness,
+      totalLaps: 5,
+      isQualifying: true,
+      isPractice: false,
+      allCars: [simCar],
+      damageLevel: 'off',
+      absLevel: 'low',
+    });
+    simTime += dt;
+
+    if (!recording && simCar.lap > prevLap) {
+      recording = true;
+      lapStartTime = simTime;
+      sampleAccum = 0;
+      samples.push({
+        time: 0,
+        trackT: 0,
+        x: simCar.x,
+        y: simCar.y,
+        z: simCar.z,
+        heading: simCar.heading,
+        pitch: simCar.pitch ?? 0,
+        roll: simCar.roll ?? 0,
+      });
+    } else if (recording) {
+      if (simCar.lap > prevLap) {
+        lapTime = simCar.lastLapTime && simCar.lastLapTime > 10 ? simCar.lastLapTime : simTime - lapStartTime;
+        samples.push({
+          time: lapTime,
+          trackT: 1,
+          x: simCar.x,
+          y: simCar.y,
+          z: simCar.z,
+          heading: simCar.heading,
+          pitch: simCar.pitch ?? 0,
+          roll: simCar.roll ?? 0,
+        });
+        break;
+      }
+      sampleAccum += dt;
+      if (sampleAccum >= 0.08) {
+        sampleAccum = 0;
+        samples.push({
+          time: simTime - lapStartTime,
+          trackT: simCar.trackT,
+          x: simCar.x,
+          y: simCar.y,
+          z: simCar.z,
+          heading: simCar.heading,
+          pitch: simCar.pitch ?? 0,
+          roll: simCar.roll ?? 0,
+        });
+      }
+    }
+  }
+
+  if (samples.length < 10 || lapTime <= 10) return null;
+
+  const recorded: StoredGhostLap = {
+    trackId: compiledTrack.spec.id,
+    carId: carSpec.id,
+    lapTime,
+    updatedAt: Date.now(),
+    samples,
+  };
+  PHYSICS_TARGET_GHOST_CACHE.set(cacheKey, recorded);
+  return recorded;
+}
+
+/**
+ * Fallback target ghost sampler (used only if a physics-simulated ghost lap is unavailable).
  */
 export function sampleTargetGhostAtTime(
   compiledTrack: CompiledTrack,
@@ -601,8 +745,6 @@ export function saveLastRaceConfig(config: RaceConfig): void {
       aiDifficulty: config.aiDifficulty,
       damageLevel: config.damageLevel,
       absLevel: config.absLevel,
-      safetyCarEnabled: config.safetyCarEnabled,
-      jumpStartEnabled: config.jumpStartEnabled,
       startType: config.startType,
       ghostMode: config.ghostMode,
     };

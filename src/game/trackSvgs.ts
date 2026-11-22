@@ -141,8 +141,8 @@ export const TRACK_SVG_PATHS: Record<string, string> = {
   // 37. Marina Bay Street Circuit (Singapore) — Counter-Clockwise, S/F right south->north
   "singapore": "M 885 452 L 852 115 L 818 112 L 785 62 L 768 85 L 768 175 L 798 365 L 792 432 L 545 412 L 372 248 L 358 258 L 302 408 L 288 408 L 228 295 L 205 305 L 98 632 L 112 668 L 158 715 L 165 795 L 235 915 L 245 895 L 285 495 L 308 432 L 418 575 L 688 608 L 695 678 L 725 688 L 858 695 L 892 622 Z",
 
-  // 38. Circuit de Spa-Francorchamps — Clockwise, S/F on main straight before La Source
-  "spa-francorchamps": "M 205 715 L 122 802 L 115 788 L 165 622 L 262 455 L 278 405 L 328 382 L 425 255 L 715 72 L 745 105 L 798 85 L 885 255 L 872 292 L 848 288 L 812 208 L 622 308 L 612 355 L 615 435 L 648 475 L 778 548 L 785 588 L 775 655 L 862 765 L 825 878 L 785 882 L 695 795 L 625 605 L 515 535 L 415 612 L 312 638 L 305 588 L 285 625 Z",
+  // 38. Circuit de Spa-Francorchamps — Clockwise, S/F on main straight before La Source (smooth flat-out Eau Rouge/Raidillon & Blanchimont)
+  "spa-francorchamps": "M 205 715 L 122 802 L 115 788 L 165 622 L 248 476 L 282 400 L 356 318 L 448 236 L 715 72 L 745 105 L 798 85 L 885 255 L 872 292 L 848 288 L 812 208 L 622 308 L 612 355 L 615 435 L 648 475 L 778 548 L 785 588 L 775 655 L 862 765 L 825 878 L 785 882 L 695 795 L 615 625 L 518 552 L 420 595 L 322 632 L 305 588 L 285 625 Z",
 
   // 39. Suzuka International Racing Course — Figure-8 (Clockwise S1 -> Underpass -> Hairpin -> Counter-Clockwise Spoon -> Backstraight Overpass -> 130R -> Casio), S/F east Main Straight
   "suzuka": "M 811.5 516 L 865.8 581.4 L 929.3 659.2 L 935.1 667.4 L 938.9 697.1 L 931.5 720 L 928 726 L 922.9 730.6 L 918.6 733 L 910.8 734.9 L 903.8 734.7 L 896.1 732.1 L 888.9 726.4 L 881.5 715.3 L 844.1 657.8 L 837 651.8 L 830.9 649.8 L 821.7 648.2 L 802.3 648.1 L 792.6 645.3 L 785.7 640.4 L 759.9 579 L 753.1 574.1 L 744.6 570.1 L 735.9 568.4 L 713.3 568.1 L 702.9 566.1 L 695.8 562.7 L 688.5 557 L 683.1 549.1 L 679.7 541 L 678.2 533.4 L 678.3 526.1 L 692.7 475.5 L 691.5 470.1 L 688.6 462.4 L 684.3 455.8 L 676 449.9 L 665.9 444.4 L 624.4 430.1 L 611.9 429.9 L 602 430.3 L 593.8 432.5 L 553.2 456.2 L 543.4 466.6 L 502 516.7 L 499.9 519.6 L 493.3 521.2 L 433 526.6 L 429.1 526.1 L 425 523.3 L 423.3 518.6 L 422.5 514.6 L 413.4 476.9 L 401.1 406 L 398.8 393 L 398.2 386.4 L 416.9 332.3 L 416.2 329.1 L 414.3 326.3 L 411.2 324.1 L 407.5 323 L 404 323.2 L 400 325.9 L 363.4 384.7 L 357.2 391.9 L 351.8 396.5 L 342.6 403.8 L 332.9 409 L 322.7 412.1 L 305 414.6 L 288.3 415.3 L 275.7 414.4 L 214.1 394.2 L 204 388.1 L 194.5 381 L 184.6 372.1 L 174.3 360.7 L 167.5 350.8 L 161.4 339.9 L 146.3 299.8 L 138.3 282.3 L 134.2 275.2 L 128.6 270 L 121.3 266.7 L 112.6 265.1 L 102.2 265.3 L 92.5 266.7 L 83.1 268.8 L 73.8 272.6 L 66.3 278.4 L 61.8 285.6 L 60 292.8 L 60.5 301.8 L 62.6 308.4 L 65.6 315.2 L 70.7 320.8 L 80.8 330.3 L 93.4 340.8 L 105.8 351.6 L 121.5 363.5 L 139.4 375.7 L 157.8 387.2 L 178.3 397 L 196.6 406.4 L 215.5 413.5 L 433.2 489.9 L 441.5 490.1 L 450.2 488.5 L 458.6 486.1 L 473.9 480.2 L 488 473.2 L 499.8 465.9 L 590.5 388.3 L 611.8 401 L 645.8 380.3 L 657.3 379.3 L 668.1 379.9 L 679.4 382.3 L 690.8 386.7 L 700.5 391.4 L 712.6 399.6 L 723.5 409.7 L 734.7 422.2 L 811.5 516 Z",
@@ -170,52 +170,52 @@ export interface RealTrackMetric {
 
 /**
  * Official Real-World metric dimensions (1 unit = 1 meter) from RacingCircuits.info
- * for all 43 circuits, with realistic track widths (11m-15m) and real-life lap times.
+ * for all 43 circuits, with authentic per-circuit track widths (7.5m Monaco to 16m Sepang) and real-life lap times.
  */
 export const REAL_TRACK_METRICS: Record<string, RealTrackMetric> = {
-  'spa-francorchamps': { lengthMeters: 7004, trackWidth: 14.0, targetLapSeconds: 106 },
+  'spa-francorchamps': { lengthMeters: 7004, trackWidth: 13.5, targetLapSeconds: 106 },
   'daytona-road': { lengthMeters: 5729, trackWidth: 14.5, targetLapSeconds: 96 },
-  'laguna-seca': { lengthMeters: 3602, trackWidth: 12.0, targetLapSeconds: 76 },
-  'le-mans': { lengthMeters: 13626, trackWidth: 13.0, targetLapSeconds: 208 },
-  'monza': { lengthMeters: 5793, trackWidth: 13.5, targetLapSeconds: 81 },
+  'laguna-seca': { lengthMeters: 3602, trackWidth: 10.8, targetLapSeconds: 76 },
+  'le-mans': { lengthMeters: 13626, trackWidth: 12.0, targetLapSeconds: 208 },
+  'monza': { lengthMeters: 5793, trackWidth: 12.0, targetLapSeconds: 81 },
   'silverstone': { lengthMeters: 5891, trackWidth: 14.5, targetLapSeconds: 87 },
-  'suzuka': { lengthMeters: 5807, trackWidth: 13.0, targetLapSeconds: 89 },
-  'monaco': { lengthMeters: 3337, trackWidth: 9.5, targetLapSeconds: 72 },
+  'suzuka': { lengthMeters: 5807, trackWidth: 11.8, targetLapSeconds: 89 },
+  'monaco': { lengthMeters: 3337, trackWidth: 7.5, targetLapSeconds: 72 },
   'cota': { lengthMeters: 5513, trackWidth: 15.5, targetLapSeconds: 94 },
   'sebring': { lengthMeters: 6019, trackWidth: 14.0, targetLapSeconds: 107 },
-  'long-beach': { lengthMeters: 3167, trackWidth: 11.0, targetLapSeconds: 67 },
-  'detroit-street': { lengthMeters: 2735, trackWidth: 10.5, targetLapSeconds: 62 },
-  'mid-ohio': { lengthMeters: 3634, trackWidth: 12.0, targetLapSeconds: 74 },
-  'watkins-glen': { lengthMeters: 5472, trackWidth: 13.0, targetLapSeconds: 88 },
-  'mosport': { lengthMeters: 3957, trackWidth: 12.5, targetLapSeconds: 75 },
-  'lime-rock': { lengthMeters: 2414, trackWidth: 10.5, targetLapSeconds: 50 },
-  'road-america': { lengthMeters: 6515, trackWidth: 13.5, targetLapSeconds: 110 },
-  'vir': { lengthMeters: 5260, trackWidth: 12.0, targetLapSeconds: 98 },
+  'long-beach': { lengthMeters: 3167, trackWidth: 9.5, targetLapSeconds: 67 },
+  'detroit-street': { lengthMeters: 2735, trackWidth: 9.0, targetLapSeconds: 62 },
+  'mid-ohio': { lengthMeters: 3634, trackWidth: 10.8, targetLapSeconds: 74 },
+  'watkins-glen': { lengthMeters: 5472, trackWidth: 12.0, targetLapSeconds: 88 },
+  'mosport': { lengthMeters: 3957, trackWidth: 11.5, targetLapSeconds: 75 },
+  'lime-rock': { lengthMeters: 2414, trackWidth: 9.8, targetLapSeconds: 50 },
+  'road-america': { lengthMeters: 6515, trackWidth: 12.5, targetLapSeconds: 110 },
+  'vir': { lengthMeters: 5260, trackWidth: 10.8, targetLapSeconds: 98 },
   'indianapolis-road': { lengthMeters: 3925, trackWidth: 14.0, targetLapSeconds: 76 },
-  'road-atlanta': { lengthMeters: 4088, trackWidth: 12.5, targetLapSeconds: 72 },
-  'montreal': { lengthMeters: 4361, trackWidth: 13.0, targetLapSeconds: 73 },
-  'miami': { lengthMeters: 5412, trackWidth: 13.5, targetLapSeconds: 89 },
-  'las-vegas': { lengthMeters: 6201, trackWidth: 14.5, targetLapSeconds: 93 },
-  'mexico-city': { lengthMeters: 4304, trackWidth: 13.5, targetLapSeconds: 77 },
-  'interlagos': { lengthMeters: 4309, trackWidth: 13.0, targetLapSeconds: 70 },
-  'imola': { lengthMeters: 4909, trackWidth: 12.5, targetLapSeconds: 75 },
-  'barcelona': { lengthMeters: 4657, trackWidth: 13.5, targetLapSeconds: 73 },
-  'madring': { lengthMeters: 5474, trackWidth: 13.5, targetLapSeconds: 88 },
-  'red-bull-ring': { lengthMeters: 4318, trackWidth: 13.0, targetLapSeconds: 65 },
-  'hungaroring': { lengthMeters: 4381, trackWidth: 12.5, targetLapSeconds: 76 },
-  'zandvoort': { lengthMeters: 4259, trackWidth: 12.0, targetLapSeconds: 71 },
+  'road-atlanta': { lengthMeters: 4088, trackWidth: 11.5, targetLapSeconds: 72 },
+  'montreal': { lengthMeters: 4361, trackWidth: 11.2, targetLapSeconds: 73 },
+  'miami': { lengthMeters: 5412, trackWidth: 12.2, targetLapSeconds: 89 },
+  'las-vegas': { lengthMeters: 6201, trackWidth: 13.5, targetLapSeconds: 93 },
+  'mexico-city': { lengthMeters: 4304, trackWidth: 12.2, targetLapSeconds: 77 },
+  'interlagos': { lengthMeters: 4309, trackWidth: 12.0, targetLapSeconds: 70 },
+  'imola': { lengthMeters: 4909, trackWidth: 10.5, targetLapSeconds: 75 },
+  'barcelona': { lengthMeters: 4657, trackWidth: 12.2, targetLapSeconds: 73 },
+  'madring': { lengthMeters: 5474, trackWidth: 12.2, targetLapSeconds: 88 },
+  'red-bull-ring': { lengthMeters: 4318, trackWidth: 12.2, targetLapSeconds: 65 },
+  'hungaroring': { lengthMeters: 4381, trackWidth: 11.0, targetLapSeconds: 76 },
+  'zandvoort': { lengthMeters: 4259, trackWidth: 10.5, targetLapSeconds: 71 },
   'paul-ricard': { lengthMeters: 5842, trackWidth: 15.0, targetLapSeconds: 92 },
-  'baku': { lengthMeters: 6003, trackWidth: 10.5, targetLapSeconds: 102 },
-  'portimao': { lengthMeters: 4653, trackWidth: 14.0, targetLapSeconds: 78 },
+  'baku': { lengthMeters: 6003, trackWidth: 8.5, targetLapSeconds: 102 },
+  'portimao': { lengthMeters: 4653, trackWidth: 13.5, targetLapSeconds: 78 },
   'fuji': { lengthMeters: 4563, trackWidth: 15.5, targetLapSeconds: 74 },
   'shanghai': { lengthMeters: 5451, trackWidth: 15.5, targetLapSeconds: 93 },
-  'singapore': { lengthMeters: 4940, trackWidth: 11.0, targetLapSeconds: 91 },
+  'singapore': { lengthMeters: 4940, trackWidth: 9.8, targetLapSeconds: 91 },
   'sepang': { lengthMeters: 5543, trackWidth: 16.0, targetLapSeconds: 92 },
   'bahrain': { lengthMeters: 5412, trackWidth: 15.0, targetLapSeconds: 90 },
-  'jeddah': { lengthMeters: 6174, trackWidth: 12.5, targetLapSeconds: 88 },
+  'jeddah': { lengthMeters: 6174, trackWidth: 11.5, targetLapSeconds: 88 },
   'lusail': { lengthMeters: 5419, trackWidth: 15.0, targetLapSeconds: 83 },
   'yas-marina': { lengthMeters: 5281, trackWidth: 14.5, targetLapSeconds: 83 },
-  'albert-park': { lengthMeters: 5278, trackWidth: 13.5, targetLapSeconds: 78 },
+  'albert-park': { lengthMeters: 5278, trackWidth: 12.0, targetLapSeconds: 78 },
 };
 
 /**
@@ -384,7 +384,7 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
   }
 
   // Authentic 1:1 scale factor (1 unit = 1 meter)
-  const minSafeRadius = Math.max(9.5, trackWidth * 0.72);
+  const minSafeRadius = Math.max(7.5, trackWidth * 0.72);
   const n = filtered.length;
 
   let sumX = 0;
@@ -564,18 +564,20 @@ export function svgToTrackPoints(svgPathD: string, options: SvgTrackOptions = {}
         banking = 6.5 * factor;
       }
     } else if (trackId === 'zandvoort') {
-      if (tArc >= 0.14 && tArc <= 0.24) {
-        const ease = 0.025;
+      // T3 Hugenholtzbocht: LEFT-hand banked hairpin (positive banking raises RIGHT/outside edge)
+      if (tArc >= 0.18 && tArc <= 0.26) {
+        const ease = 0.022;
         let factor = 1.0;
-        if (tArc < 0.14 + ease) factor = (1 - Math.cos(((tArc - 0.14) / ease) * Math.PI)) * 0.5;
-        else if (tArc > 0.24 - ease) factor = (1 - Math.cos(((0.24 - tArc) / ease) * Math.PI)) * 0.5;
-        banking = -11.0 * factor;
-      } else if (tArc >= 0.88 && tArc <= 0.98) {
-        const ease = 0.025;
+        if (tArc < 0.18 + ease) factor = (1 - Math.cos(((tArc - 0.18) / ease) * Math.PI)) * 0.5;
+        else if (tArc > 0.26 - ease) factor = (1 - Math.cos(((0.26 - tArc) / ease) * Math.PI)) * 0.5;
+        banking = 15.0 * factor;
+      } else if (tArc >= 0.90 && tArc <= 0.98) {
+        // T14 Arie Luyendykbocht: RIGHT-hand banked final corner (negative banking raises LEFT/outside edge)
+        const ease = 0.022;
         let factor = 1.0;
-        if (tArc < 0.88 + ease) factor = (1 - Math.cos(((tArc - 0.88) / ease) * Math.PI)) * 0.5;
+        if (tArc < 0.90 + ease) factor = (1 - Math.cos(((tArc - 0.90) / ease) * Math.PI)) * 0.5;
         else if (tArc > 0.98 - ease) factor = (1 - Math.cos(((0.98 - tArc) / ease) * Math.PI)) * 0.5;
-        banking = -11.0 * factor;
+        banking = -14.5 * factor;
       }
     } else if (trackId === 'indianapolis-road') {
       if (tArc >= 0.88 && tArc <= 0.98) {

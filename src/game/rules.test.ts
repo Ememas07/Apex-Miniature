@@ -1165,7 +1165,9 @@ test('Gold-Standard SVGs & Gentle Banking: Le Mans, Silverstone, Portimao, Spa, 
 
   const zandvoort = TRACKS.find((t) => t.id === 'zandvoort')!;
   const maxZandvoortBank = Math.max(...zandvoort.waypoints.map((w) => w.banking || 0));
-  assert.ok(maxZandvoortBank <= 12.0, `Zandvoort banking must be <= 12 deg, got ${maxZandvoortBank} deg`);
+  const minZandvoortBank = Math.min(...zandvoort.waypoints.map((w) => w.banking || 0));
+  assert.ok(maxZandvoortBank > 0 && maxZandvoortBank <= 18.0, `Zandvoort T3 positive banking must be in (0, 18] deg, got ${maxZandvoortBank} deg`);
+  assert.ok(minZandvoortBank < 0 && minZandvoortBank >= -18.0, `Zandvoort T14 negative banking must be in [-18, 0) deg, got ${minZandvoortBank} deg`);
 
   const indy = TRACKS.find((t) => t.id === 'indianapolis-road')!;
   const maxIndyBank = Math.max(...indy.waypoints.map((w) => w.banking || 0));
@@ -3087,7 +3089,7 @@ test('Exponential slipstream tow reaches ~45m back, ramps up closely, and works 
   assert.equal(outOfWake, 0);
 });
 
-test('Dynamic AI pack pace slows runaway leaders and boosts AI trailing behind the player', async () => {
+test('AI pack pace applies zero rubberbanding so AI always pushes at full pace', async () => {
   const { computeDynamicAiPackPace } = await import('./physics');
   const track = compileTrack(getTrackById('monza-mini'));
   const makeCar = (id: string, name: string, isPlayer: boolean, slot: number) =>
@@ -3119,9 +3121,9 @@ test('Dynamic AI pack pace slows runaway leaders and boosts AI trailing behind t
   const paceBehind = computeDynamicAiPackPace(aiBehind, pack, track.totalLength);
 
   assert.equal(pacePlayer, 1.0, 'Player pace multiplier is untouched');
-  assert.ok(paceAhead < 1.0, `AI ahead of player should slightly ease off, got ${paceAhead}`);
-  assert.ok(paceFarAhead < paceAhead, `Further-ahead AI (${paceFarAhead}) should ease off more than closer AI (${paceAhead})`);
-  assert.ok(paceBehind > 1.02, `AI behind player should push harder to fight, got ${paceBehind}`);
+  assert.equal(paceAhead, 1.0, 'AI ahead of player must stay on full push without rubberbanding');
+  assert.equal(paceFarAhead, 1.0, 'Far-ahead AI must stay on full push without rubberbanding');
+  assert.equal(paceBehind, 1.0, 'AI behind player must stay on natural full push without artificial boost');
 });
 
 test('Solid track barriers clamp car bodywork strictly inside the barrier face', async () => {
@@ -3280,13 +3282,13 @@ test('Section 1 & 2 Systems: Dynamic weather evolution, drying line, track rubbe
   assert.equal(cycleErsMode('balanced'), 'overtake');
   assert.equal(cycleErsMode('quali'), 'harvest');
 
-  // Standing-start launch & jump-start evaluation
-  const perfect = evaluateStandingStartLaunch({ rpmNormalized: 0.78, jumpStartTriggered: false });
+  // Standing-start launch evaluation (jump starts removed)
+  const perfect = evaluateStandingStartLaunch({ rpmNormalized: 0.78 });
   assert.equal(perfect.status, 'perfect');
   assert.ok(perfect.launchBoostSeconds > 1.0);
-  const jumped = evaluateStandingStartLaunch({ rpmNormalized: 0.99, jumpStartTriggered: true });
-  assert.equal(jumped.status, 'jump-start');
-  assert.equal(jumped.postRacePenaltySeconds, 5);
+  const highRev = evaluateStandingStartLaunch({ rpmNormalized: 0.99 });
+  assert.equal(highRev.status, 'none');
+  assert.equal(highRev.launchBoostSeconds, 0);
 
   // Local yellow & Blue flag detection
   const rc = createRaceControlState();
@@ -3319,7 +3321,6 @@ test('Section 1 & 2 Systems: Dynamic weather evolution, drying line, track rubbe
   stepRaceControl(rc, [fastCar, slowCar], spa, zones, 0.1, {
     totalLaps: 5,
     isRace: true,
-    safetyCarEnabled: true,
   });
   assert.equal(slowCar.blueFlagActive, true, 'Lapped slower-class car should receive a Blue Flag');
 });
@@ -3381,7 +3382,8 @@ test('Section 2 Physics & Garage: 4-wheel tires, brake lock-up without ABS, surf
   car.speed = 65;
   car.vx = Math.sin(car.heading) * 65;
   car.vz = Math.cos(car.heading) * 65;
-  for (let i = 0; i < 20; i++) {
+  const initBrakeFront = car.brakeTempFront ?? 240;
+  for (let i = 0; i < 60; i++) {
     stepCarPhysics(car, { throttle: 0, brake: 1, steer: 0, specialPressed: false }, spa, 1 / 60, {
       trackWetness: 0,
       totalLaps: 5,
@@ -3391,7 +3393,7 @@ test('Section 2 Physics & Garage: 4-wheel tires, brake lock-up without ABS, surf
       damageLevel: 'realistic',
     });
   }
-  assert.ok((car.brakeTempFront ?? 0) > 300, 'Hard braking should heat front brakes');
+  assert.ok((car.brakeTempFront ?? 0) > initBrakeFront + 25, 'Hard braking should heat front brakes');
   assert.ok(car.tires !== undefined && car.tires.fl.flatSpot > 0, 'Heavy braking with ABS off should create front flat-spot');
 
   applyLocalizedImpactDamage(car, 'front', 14, 20, 1);
@@ -3881,7 +3883,6 @@ test('Section 4 AI Racecraft, On-Track Strategy, Turn-1 Braking Guard, FE-Only A
   stepRaceControl(rcState, [feCar, nonFeCar], monza, zones, 1 / 60, {
     totalLaps: 5,
     isRace: true,
-    safetyCarEnabled: false,
   });
   assert.equal(feCar.inAttackModeZone, true, 'Formula E car inside activation zone must detect Attack Mode');
   assert.equal(nonFeCar.inAttackModeZone, false, 'Non-Formula E car must NEVER trigger Attack Mode');

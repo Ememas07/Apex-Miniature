@@ -288,8 +288,6 @@ export function RaceMenuModal({
       weatherTimeline: config.weatherTimeline,
       damageLevel: config.damageLevel ?? 'light',
       absLevel: config.absLevel ?? 'low',
-      safetyCarEnabled: config.safetyCarEnabled ?? true,
-      jumpStartEnabled: config.jumpStartEnabled ?? true,
       carSetup: config.carSetup,
       raceDurationMinutes: config.raceDurationMinutes ?? 0,
       ghostMode: config.ghostMode ?? 'off',
@@ -1092,36 +1090,6 @@ export function RaceMenuModal({
                       </button>
                     ))}
                   </div>
-                  {!isSolo && (
-                    <div className="mt-1.5 grid grid-cols-2 gap-1">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateConfig({ safetyCarEnabled: !(config.safetyCarEnabled ?? true) })
-                        }
-                        className={`py-1 rounded text-[9px] font-bold border cursor-pointer ${
-                          (config.safetyCarEnabled ?? true)
-                            ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                            : 'bg-[#141923] border-white/10 text-slate-500'
-                        }`}
-                      >
-                        SC/VSC: {(config.safetyCarEnabled ?? true) ? 'ON' : 'OFF'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateConfig({ jumpStartEnabled: !(config.jumpStartEnabled ?? true) })
-                        }
-                        className={`py-1 rounded text-[9px] font-bold border cursor-pointer ${
-                          (config.jumpStartEnabled ?? true)
-                            ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                            : 'bg-[#141923] border-white/10 text-slate-500'
-                        }`}
-                      >
-                        Jump-Start: {(config.jumpStartEnabled ?? true) ? 'ON' : 'OFF'}
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
 

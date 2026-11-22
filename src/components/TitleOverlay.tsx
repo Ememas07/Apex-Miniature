@@ -1,10 +1,13 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Bot,
   Car,
   ChevronRight,
   Compass,
   Flag,
+  History,
+  Home,
   Layers,
   MapPin,
   Palette,
@@ -130,6 +133,7 @@ export function TitleOverlay({
   onOpenSoundStudio,
   onOpenSettings,
 }: TitleOverlayProps) {
+  const [showLegacyConfirm, setShowLegacyConfirm] = useState(false);
   const car = getCarById(raceConfig.playerCarId);
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
   const classMeta = CAR_CLASSES[car.classId];
@@ -167,7 +171,7 @@ export function TitleOverlay({
           <ApexLogo />
         </div>
 
-        <div className="flex items-center gap-3 pointer-events-auto">
+        <div className="flex items-center flex-wrap justify-end gap-2 sm:gap-2.5 pointer-events-auto">
           {roomCode && (
             <button
               type="button"
@@ -177,6 +181,23 @@ export function TitleOverlay({
               Room {roomCode}
             </button>
           )}
+          <a
+            href="/"
+            data-testid="btn-return-to-hub"
+            className="px-3 py-1.5 rounded bg-[#0b0e13]/72 hover:bg-sky-500/15 border border-sky-500/35 hover:border-sky-400 text-xs font-semibold text-sky-300 hover:text-sky-200 flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <Home className="w-3.5 h-3.5" />
+            <span>Return to Hub</span>
+          </a>
+          <button
+            type="button"
+            data-testid="btn-legacy-version"
+            onClick={() => setShowLegacyConfirm(true)}
+            className="px-3 py-1.5 rounded bg-[#0b0e13]/72 hover:bg-amber-500/15 border border-amber-500/35 hover:border-amber-400 text-xs font-semibold text-amber-200 hover:text-amber-100 flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <History className="w-3.5 h-3.5 text-amber-400" />
+            <span>Go to Legacy Version</span>
+          </button>
           <button
             type="button"
             data-testid="btn-open-settings"
@@ -394,6 +415,56 @@ export function TitleOverlay({
           WASD / Arrows / Touchpad / Gamepad · Space / Shift / E Special · C Camera · R Reset Cam · P Pause
         </div>
       </div>
+
+      {/* Legacy Version Confirmation Popup */}
+      {showLegacyConfirm && (
+        <div
+          data-testid="legacy-confirm-modal"
+          className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 pointer-events-auto"
+          onClick={() => setShowLegacyConfirm(false)}
+        >
+          <div
+            className="w-full max-w-md bg-[#0e121a] border border-amber-500/45 rounded-lg p-5 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-md bg-amber-500/15 border border-amber-500/35 shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-base font-display font-bold text-white">
+                  Go to Legacy Version?
+                </h2>
+                <p className="text-sm text-amber-200/95 font-medium">
+                  Low poly assets, different physics, unmaintained
+                </p>
+                <p className="text-xs text-slate-400 break-all">
+                  https://marc-mas.ddns.net/Apex-Miniature-Legacy/
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowLegacyConfirm(false)}
+                className="px-4 py-2 rounded bg-[#18202c] hover:bg-[#222c3d] border border-white/10 text-xs font-semibold text-slate-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-testid="btn-confirm-legacy"
+                onClick={() => {
+                  window.location.href = 'https://marc-mas.ddns.net/Apex-Miniature-Legacy/';
+                }}
+                className="px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-xs font-display font-bold text-white cursor-pointer"
+              >
+                Continue to Legacy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

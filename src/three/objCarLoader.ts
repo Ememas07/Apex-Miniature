@@ -137,8 +137,8 @@ async function loadObjTemplate(entry: LowPolyCarManifestEntry): Promise<THREE.Gr
           materialsCreator = mtlLoader.parse(mtlText, folderUrl);
           materialsCreator.preload();
         }
-      } catch (err) {
-        console.warn(`[objCarLoader] Failed to load MTL for ${entry.folder}:`, err);
+      } catch {
+        // Ignore missing MTL; OBJ will use fallback PBR materials
       }
     }
 
@@ -506,8 +506,8 @@ function convertSourceMaterial(
         liveryTexture.wrapS = THREE.RepeatWrapping;
         liveryTexture.wrapT = THREE.RepeatWrapping;
         liveryTexture.anisotropy = ctx.maxAniso;
-      } catch (err) {
-        console.warn('Failed to load custom livery texture:', err);
+      } catch {
+        // Ignore broken custom livery texture; fallback to paint color
       }
     } else if (ctx.isV2Pipeline) {
       liveryTexture = ctx.getProceduralLiveryTexture();
@@ -901,11 +901,32 @@ export async function buildCarRigAsync(
     try {
       const template = await loadObjTemplate(entry);
       return instantiateObjRig(template, carSpec, livery, maxAniso);
-    } catch (err) {
-      console.warn(`[objCarLoader] Falling back to procedural mesh for "${carSpec.id}":`, err);
+    } catch {
+      // Silently fall back to procedural diecast mesh if OBJ load fails
     }
   }
   return buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, maxAniso, carSpec.id);
+}
+
+/**
+ * Preloads the low-poly manifest and deduplicated OBJ templates for all car specs in a grid
+ * so race start has zero mid-frame asset/shader stalls.
+ */
+export async function preloadCarModels(carSpecs: ReadonlyArray<CarSpec>): Promise<void> {
+  await getLowPolyManifestMap();
+  const seenTargets = new Set<string>();
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < carSpecs.length; i++) {
+    const target = carSpecs[i].modelId || carSpecs[i].id;
+    if (seenTargets.has(target)) continue;
+    seenTargets.add(target);
+    tasks.push(
+      findLowPolyModelForCar(target)
+        .then((entry) => (entry ? loadObjTemplate(entry).then(() => undefined) : undefined))
+        .catch(() => undefined),
+    );
+  }
+  await Promise.all(tasks);
 }
 
 export function applyCustomTextureToRig(

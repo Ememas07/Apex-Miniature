@@ -587,12 +587,16 @@ export function assignAiRosterGrid(
   difficulty: AIDifficulty,
   baseDifficultyMultiplier: number,
 ): AiRosterAssignment[] {
-  // Shuffle roster order per race so you meet different personalities & teams up front
-  const shuffledRoster = [...AI_DRIVER_ROSTER];
-  for (let i = shuffledRoster.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffledRoster[i], shuffledRoster[j]] = [shuffledRoster[j], shuffledRoster[i]];
+  // Shuffle by 2-car team pairs so different teams rotate up front while teammates stay paired
+  const teamPairs: AiDriverProfile[][] = [];
+  for (let i = 0; i < AI_DRIVER_ROSTER.length; i += 2) {
+    teamPairs.push(AI_DRIVER_ROSTER.slice(i, i + 2));
   }
+  for (let i = teamPairs.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [teamPairs[i], teamPairs[j]] = [teamPairs[j], teamPairs[i]];
+  }
+  const shuffledRoster = teamPairs.flat();
   const shuffledPalettes = [...RANDOM_AI_LIVERY_PALETTES];
   for (let i = shuffledPalettes.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -630,15 +634,19 @@ export function assignAiRosterGrid(
 }
 
 // ============================================================================
-// 4.2.3 PER-PERSONALITY NEURAL POLICY BLENDING
+// 4.2.3 SINGLE-MODEL AI PERSONALITY INFERENCE PROFILES
 // ============================================================================
 
 export interface PersonalityPolicyProfile {
   mixWeights: Record<'v1' | 'v2', number>;
   label: string;
-  brakeBias: number; // <1 brakes slightly later, >1 brakes earlier
-  throttleSmoothness: number; // <1 smoother corner-exit throttle
+  brakeBias: number; // <1 brakes later/harder, >1 brakes earlier/gentler
+  throttleSmoothness: number; // <1 smoother corner-exit throttle, >1 aggressive exit punch
+  steerAggression: number; // >1 sharper turn-in/apex attack, <1 smoother wider arcs
+  apexOffsetBias: number; // subtle preferred lateral apex commitment (-1..+1)
   overtakeAggression: number; // >1 pulls out sooner / commits harder
+  defenseIntensity: number; // 0..1 tendency to cover inside line when defending
+  ersAggression: number; // >1 deploys ERS more aggressively on exits/straights
   wetConfidence: number;
   diveBombTendency: number; // 0..1 tendency to lunge down the inside under braking
   yieldTendency: number; // 0..1 tendency to yield/let faster rival past without fighting
@@ -646,61 +654,85 @@ export interface PersonalityPolicyProfile {
 
 export const PERSONALITY_POLICY_PROFILES: Record<AIPersonality, PersonalityPolicyProfile> = {
   'Average GTP Driver': {
-    mixWeights: { v1: 30, v2: 70 },
-    label: 'Average GTP Driver (Aggressive Lunge)',
-    brakeBias: 0.89,
-    throttleSmoothness: 1.03,
-    overtakeAggression: 1.32,
-    wetConfidence: 0.95,
+    mixWeights: { v1: 0, v2: 100 },
+    label: 'Average GTP Driver (v2 · Late Lunge & Hard Exit)',
+    brakeBias: 0.87,
+    throttleSmoothness: 1.08,
+    steerAggression: 1.12,
+    apexOffsetBias: 0.22,
+    overtakeAggression: 1.35,
+    defenseIntensity: 0.85,
+    ersAggression: 1.25,
+    wetConfidence: 0.94,
     diveBombTendency: 0.92,
     yieldTendency: 0.05,
   },
   'Late-Braker': {
-    mixWeights: { v1: 35, v2: 65 },
-    label: 'Late-Braker (v2 65% · v1 35%)',
-    brakeBias: 0.93,
-    throttleSmoothness: 1.02,
-    overtakeAggression: 1.18,
+    mixWeights: { v1: 0, v2: 100 },
+    label: 'Late-Braker (v2 · Deep Trail-Braking)',
+    brakeBias: 0.90,
+    throttleSmoothness: 1.04,
+    steerAggression: 1.08,
+    apexOffsetBias: 0.16,
+    overtakeAggression: 1.22,
+    defenseIntensity: 0.78,
+    ersAggression: 1.18,
     wetConfidence: 0.96,
-    diveBombTendency: 0.62,
-    yieldTendency: 0.15,
+    diveBombTendency: 0.70,
+    yieldTendency: 0.14,
   },
   Metronome: {
-    mixWeights: { v1: 55, v2: 45 },
-    label: 'Metronome (v1 55% · v2 45%)',
+    mixWeights: { v1: 0, v2: 100 },
+    label: 'Metronome (v2 · Precision Apex & Consistency)',
     brakeBias: 1.0,
-    throttleSmoothness: 0.98,
-    overtakeAggression: 0.95,
-    wetConfidence: 1.02,
-    diveBombTendency: 0.25,
-    yieldTendency: 0.35,
+    throttleSmoothness: 0.99,
+    steerAggression: 1.0,
+    apexOffsetBias: 0.0,
+    overtakeAggression: 0.96,
+    defenseIntensity: 0.55,
+    ersAggression: 1.05,
+    wetConfidence: 1.03,
+    diveBombTendency: 0.22,
+    yieldTendency: 0.32,
   },
   'Tire-Saver': {
-    mixWeights: { v1: 70, v2: 30 },
-    label: 'Tire-Saver (v1 70% · v2 30%)',
-    brakeBias: 1.06,
-    throttleSmoothness: 0.91,
-    overtakeAggression: 0.85,
-    wetConfidence: 1.04,
+    mixWeights: { v1: 0, v2: 100 },
+    label: 'Tire-Saver (v2 · Smooth Arcs & Gentle Exits)',
+    brakeBias: 1.07,
+    throttleSmoothness: 0.89,
+    steerAggression: 0.91,
+    apexOffsetBias: -0.14,
+    overtakeAggression: 0.86,
+    defenseIntensity: 0.35,
+    ersAggression: 1.0,
+    wetConfidence: 1.05,
     diveBombTendency: 0.12,
-    yieldTendency: 0.58,
+    yieldTendency: 0.54,
   },
   'Traffic-Smart': {
-    mixWeights: { v1: 20, v2: 80 },
-    label: 'Traffic-Smart (v2 80% · v1 20%)',
-    brakeBias: 0.98,
-    throttleSmoothness: 0.97,
-    overtakeAggression: 1.14,
-    wetConfidence: 1.01,
-    diveBombTendency: 0.40,
-    yieldTendency: 0.25,
+    mixWeights: { v1: 0, v2: 100 },
+    label: 'Traffic-Smart (v2 · Opportunistic & Clean)',
+    brakeBias: 0.96,
+    throttleSmoothness: 1.01,
+    steerAggression: 1.04,
+    apexOffsetBias: 0.06,
+    overtakeAggression: 1.18,
+    defenseIntensity: 0.65,
+    ersAggression: 1.15,
+    wetConfidence: 1.02,
+    diveBombTendency: 0.42,
+    yieldTendency: 0.24,
   },
   Passive: {
-    mixWeights: { v1: 75, v2: 25 },
-    label: 'Passive (Yields Cleanly)',
-    brakeBias: 1.08,
-    throttleSmoothness: 0.93,
-    overtakeAggression: 0.72,
+    mixWeights: { v1: 0, v2: 100 },
+    label: 'Passive (v2 · Early Brake & Clean Yield)',
+    brakeBias: 1.10,
+    throttleSmoothness: 0.92,
+    steerAggression: 0.90,
+    apexOffsetBias: -0.10,
+    overtakeAggression: 0.70,
+    defenseIntensity: 0.12,
+    ersAggression: 0.95,
     wetConfidence: 0.98,
     diveBombTendency: 0.04,
     yieldTendency: 0.90,
@@ -709,25 +741,15 @@ export const PERSONALITY_POLICY_PROFILES: Record<AIPersonality, PersonalityPolic
 
 export function resolvePersonalityBlendedMix(
   baseMix: Record<'v1' | 'v2', number>,
-  personality: AIPersonality | undefined,
-  enabled: boolean,
+  _personality: AIPersonality | undefined,
+  _enabled: boolean,
 ): Record<'v1' | 'v2', number> {
-  if (!enabled || !personality) return baseMix;
-  const profile = PERSONALITY_POLICY_PROFILES[personality];
-  if (!profile) return baseMix;
-
-  const keys = ['v1', 'v2'] as const;
-  let baseSum = 0;
-  for (const k of keys) baseSum += Math.max(0, baseMix[k] ?? 0);
-  if (baseSum <= 0) return { ...profile.mixWeights };
-
-  const out = { v1: 0, v2: 0 };
-  for (const k of keys) {
-    const bNorm = ((baseMix[k] ?? 0) / baseSum) * 100;
-    const pNorm = profile.mixWeights[k];
-    out[k] = Math.round((bNorm * 0.55 + pNorm * 0.45) * 10) / 10;
-  }
-  return out;
+  // Always keep a single trained model (no v1/v2 cross-model blending per personality).
+  // Distinct personalities are expressed purely through inference-time parameters/modifiers.
+  const v1 = Math.max(0, baseMix.v1 ?? 0);
+  const v2 = Math.max(0, baseMix.v2 ?? 0);
+  if (v1 + v2 <= 0) return { v1: 0, v2: 100 };
+  return { v1, v2 };
 }
 
 // ============================================================================

@@ -73,8 +73,6 @@ const INITIAL_CONFIG: RaceConfig = {
   startType: 'standing',
   damageLevel: 'light',
   absLevel: 'low',
-  safetyCarEnabled: true,
-  jumpStartEnabled: true,
 };
 
 export default function App() {
@@ -128,7 +126,21 @@ export default function App() {
   const [spectatorCameraMode, setSpectatorCameraMode] = useState<SpectatorCameraMode>('spectate');
   const spectateControlsRef = useRef<SpectateControls | null>(null);
   const inRaceControlsRef = useRef<InRaceTelemetryControls | null>(null);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('apex_audio_muted') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    const onAudioMute = (e: Event) => {
+      const detail = (e as CustomEvent<boolean>).detail;
+      if (typeof detail === 'boolean') setMuted(detail);
+    };
+    window.addEventListener('apex-audio-mute', onAudioMute);
+    return () => window.removeEventListener('apex-audio-mute', onAudioMute);
+  }, []);
   const [pitStrategy, setPitStrategy] = useState<PitStrategy>({
     nextCompound: 'soft',
   });

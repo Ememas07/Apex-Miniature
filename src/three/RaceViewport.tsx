@@ -14,6 +14,7 @@ import {
   computeRollingFormationControl,
   computeStandings,
   createCarSimState,
+  getClassFuelCapacityLiters,
   getRollingFormationSpeedMs,
   requestOnTrackPitStop,
   resolveCarCollisions,
@@ -45,7 +46,7 @@ import {
   computeNametagDistanceStyle,
   createCarNametagSprite,
 } from './nametagSprite';
-import { buildCarRigAsync } from './objCarLoader';
+import { buildCarRigAsync, preloadCarModels } from './objCarLoader';
 import { buildTrackEnvironment, BuiltTrackScene } from './trackBuilder';
 import { telemetryRecorder } from '../game/telemetryRecorder';
 import {
@@ -54,6 +55,7 @@ import {
   createWeatherSystemState,
   cycleErsMode,
   evaluateStandingStartLaunch,
+  isCarInYellowMicrosector,
   LAUNCH_RPM_SWEET_SPOT,
   RaceControlState,
   sampleLocalTrackSurfaceWeather,
@@ -66,6 +68,7 @@ import { DEFAULT_CAR_SETUP, getDefaultTrackClassSetup, normalizeCarSetup } from 
 import { assignAiRosterGrid, evaluateAiRaceStrategy } from '../game/aiRacecraft';
 import {
   computeLiveDeltaSeconds,
+  generatePhysicsTargetGhostLap,
   GhostSample,
   loadGhostLap,
   recordDailyChallengeLap,
@@ -215,9 +218,9 @@ export function RaceViewport(props: RaceViewportProps) {
     weatherSystem: WeatherSystemState;
     raceControl: RaceControlState;
     specialZones: TrackSpecialZones;
-    launchStatus: 'none' | 'perfect' | 'jump-start';
+    launchStatus: 'none' | 'perfect';
     launchStatusTimer: number;
-    jumpStartTriggered: boolean;
+    loadingAssets: boolean;
     trauma: number;
     qualiTime: number | null;
     qualiGridPos: number | null;
@@ -418,46 +421,6 @@ export function RaceViewport(props: RaceViewportProps) {
     }));
     let smokeCursor = 0;
 
-    // Miniature 3D Safety Car with Flashing Amber/Green Roof Lightbar
-    const safetyCarGroup = new THREE.Group();
-    safetyCarGroup.visible = false;
-    const scBodyGeo = new THREE.BoxGeometry(1.92, 0.56, 4.45);
-    const scBodyMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.65, roughness: 0.28 });
-    const scBody = new THREE.Mesh(scBodyGeo, scBodyMat);
-    scBody.position.set(0, 0.52, 0);
-    scBody.castShadow = !isSoftwareGl;
-    safetyCarGroup.add(scBody);
-
-    const scCabinGeo = new THREE.BoxGeometry(1.48, 0.42, 2.0);
-    const scCabinMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.5, roughness: 0.2 });
-    const scCabin = new THREE.Mesh(scCabinGeo, scCabinMat);
-    scCabin.position.set(0, 0.96, -0.15);
-    safetyCarGroup.add(scCabin);
-
-    const scStripeGeo = new THREE.BoxGeometry(1.95, 0.14, 4.47);
-    const scStripeMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.35, metalness: 0.2 });
-    const scStripe = new THREE.Mesh(scStripeGeo, scStripeMat);
-    scStripe.position.set(0, 0.42, 0);
-    safetyCarGroup.add(scStripe);
-
-    const scLightGeo = new THREE.BoxGeometry(0.46, 0.14, 0.22);
-    const scLeftLightMat = new THREE.MeshStandardMaterial({
-      color: 0xf59e0b,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 2.2,
-    });
-    const scRightLightMat = new THREE.MeshStandardMaterial({
-      color: 0xf59e0b,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 0.2,
-    });
-    const scLeftLight = new THREE.Mesh(scLightGeo, scLeftLightMat);
-    scLeftLight.position.set(-0.28, 1.24, -0.1);
-    const scRightLight = new THREE.Mesh(scLightGeo, scRightLightMat);
-    scRightLight.position.set(0.28, 1.24, -0.1);
-    safetyCarGroup.add(scLeftLight, scRightLight);
-    scene.add(safetyCarGroup);
-
     // Holographic Translucent 3D Ghost Car (Composite 6-part miniature silhouette)
     const ghostCarGroup = new THREE.Group();
     ghostCarGroup.visible = false;
@@ -603,9 +566,9 @@ export function RaceViewport(props: RaceViewportProps) {
       weatherSystem: initialWeatherSystem,
       raceControl: createRaceControlState(),
       specialZones: computeTrackSpecialZones(initialCompiled),
-      launchStatus: 'none' as 'none' | 'perfect' | 'jump-start',
+      launchStatus: 'none' as 'none' | 'perfect',
       launchStatusTimer: 0,
-      jumpStartTriggered: false,
+      loadingAssets: false,
       trauma: 0,
       qualiTime: null as number | null,
       qualiGridPos: null as number | null,
@@ -846,8 +809,6 @@ export function RaceViewport(props: RaceViewportProps) {
       sim.raceControl = createRaceControlState();
       sim.launchStatus = 'none';
       sim.launchStatusTimer = 0;
-      sim.jumpStartTriggered = false;
-      safetyCarGroup.visible = false;
       for (let i = 0; i < debrisPool.length; i++) debrisPool[i].active = false;
       for (let i = 0; i < smokePool.length; i++) smokePool[i].active = false;
       debrisMesh.visible = false;
@@ -876,21 +837,32 @@ export function RaceViewport(props: RaceViewportProps) {
       const isSoloSession = isQuali || isPractice || isLicenseSolo;
       const isAiRace = currentPhase === 'playing' && cfg.sessionMode === 'ai-race';
       const isElimination = currentPhase === 'playing' && cfg.sessionMode === 'elimination';
-      const activeClasses = isTitle
+      const playerSpec = getCarById(cfg.playerCarId);
+      const rawActiveClasses = isTitle
         ? attract.classes
         : cfg.activeClasses.length > 0
         ? cfg.activeClasses
-        : [getCarById(cfg.playerCarId).classId];
-      const allowedCars = CARS.filter((c) => activeClasses.includes(c.classId));
-      const poolCars = allowedCars.length > 0 ? allowedCars : CARS;
+        : [playerSpec.classId];
+      // Always include the player's own car class in playable sessions so multiclass never drops the player's class
+      const uniqueClasses = Array.from(
+        new Set(
+          !isTitle && !isAiRace
+            ? [...rawActiveClasses, playerSpec.classId]
+            : rawActiveClasses,
+        ),
+      );
+      // Sort active classes fastest first for authentic multi-class grid separation
+      const orderedClasses = [...uniqueClasses].sort(
+        (a, b) => (CAR_CLASSES[b]?.basePaceIndex ?? 0.8) - (CAR_CLASSES[a]?.basePaceIndex ?? 0.8),
+      );
 
-      // Sort classes fastest first for multi-class grid order
+      const allowedCars = CARS.filter((c) => orderedClasses.includes(c.classId));
+      const poolCars = allowedCars.length > 0 ? allowedCars : CARS;
       const sortedPool = [...poolCars].sort(
         (a, b) => CAR_CLASSES[b.classId].basePaceIndex - CAR_CLASSES[a.classId].basePaceIndex,
       );
 
       const newCars: CarSimState[] = [];
-      const playerSpec = getCarById(cfg.playerCarId);
 
       // Determine grid slot for player and peers (Practice, Time Trial, Solo License & Qualifying are solo local sessions; Host AI Race is all-AI)
       const peers =
@@ -915,6 +887,38 @@ export function RaceViewport(props: RaceViewportProps) {
           : isAiRace
           ? aiCount
           : Math.max(1, 1 + peers.length + aiCount);
+
+      // Partition grid slots evenly across all active classes (fastest class at the front, slowest at the rear)
+      const slotClasses: CarClassId[] = [];
+      if (orderedClasses.length <= 1 || isSoloSession) {
+        for (let s = 0; s < totalGrid; s++) slotClasses.push(playerSpec.classId);
+      } else {
+        const classCount = orderedClasses.length;
+        const basePerClass = Math.floor(totalGrid / classCount);
+        let remainder = totalGrid % classCount;
+        for (let ci = 0; ci < classCount; ci++) {
+          const cid = orderedClasses[ci];
+          const countForClass = Math.max(1, basePerClass + (remainder > 0 ? 1 : 0));
+          if (remainder > 0) remainder--;
+          for (let k = 0; k < countForClass && slotClasses.length < totalGrid; k++) {
+            slotClasses.push(cid);
+          }
+        }
+        while (slotClasses.length < totalGrid) {
+          slotClasses.push(orderedClasses[orderedClasses.length - 1]);
+        }
+      }
+
+      // Place player inside their own class's slot band unless explicitly overridden by scenario/qualifying
+      const playerClassSlots: number[] = [];
+      for (let s = 0; s < slotClasses.length; s++) {
+        if (slotClasses[s] === playerSpec.classId) playerClassSlots.push(s);
+      }
+      const defaultPlayerSlot =
+        playerClassSlots.length > 0
+          ? playerClassSlots[Math.floor(playerClassSlots.length * 0.45)]
+          : Math.min(totalGrid - 1, Math.floor(totalGrid * 0.45));
+
       const playerSlot =
         isSoloSession
           ? 0
@@ -924,7 +928,7 @@ export function RaceViewport(props: RaceViewportProps) {
           ? Math.max(0, Math.min(totalGrid - 1, cfg.startingGridPosition - 1))
           : sim.qualiGridPos !== null
           ? Math.min(totalGrid - 1, sim.qualiGridPos - 1)
-          : Math.min(totalGrid - 1, Math.floor(totalGrid * 0.45));
+          : defaultPlayerSlot;
 
       const aiPaceMult = 1.0 * (cfg.aiDifficulty === 'Rookie' ? 0.84 : cfg.aiDifficulty === 'Amateur' ? 0.92 : cfg.aiDifficulty === 'Pro' ? 1.0 : 1.07);
 
@@ -937,10 +941,24 @@ export function RaceViewport(props: RaceViewportProps) {
       const gridStartType: RaceStartType = useRollingStart ? 'rolling' : 'standing';
       sim.rollingFormationLanes.clear();
 
-      let peerCursor = 0;
+      // Group peers by class so multiplayer peers also start inside their respective class band
+      const unassignedPeers = [...peers];
+      const classAiCursors = new Map<CarClassId, number>();
       let aiCursor = 0;
       const aiRoster = assignAiRosterGrid(totalGrid, cfg.aiDifficulty, aiPaceMult);
       for (let slot = 0; slot < totalGrid; slot++) {
+        const slotClassId = slotClasses[slot] ?? playerSpec.classId;
+        const matchingPeerIdx =
+          currentPhase !== 'title' && !isSoloSession && slot !== playerSlot
+            ? unassignedPeers.findIndex((pr) => pr.classId === slotClassId)
+            : -1;
+        const fallbackPeerIdx =
+          matchingPeerIdx >= 0
+            ? matchingPeerIdx
+            : currentPhase !== 'title' && !isSoloSession && slot !== playerSlot && unassignedPeers.length >= totalGrid - slot
+            ? 0
+            : -1;
+
         if (slot === playerSlot && !isTitle && !isAiRace) {
           const pCar = createCarSimState({
             id: 'player',
@@ -978,8 +996,8 @@ export function RaceViewport(props: RaceViewportProps) {
           }
           sim.rollingFormationLanes.set(pCar.id, pCar.lateralOffset);
           newCars.push(pCar);
-        } else if (peerCursor < peers.length && currentPhase !== 'title' && !isSoloSession) {
-          const peer = peers[peerCursor++];
+        } else if (fallbackPeerIdx >= 0) {
+          const [peer] = unassignedPeers.splice(fallbackPeerIdx, 1);
           const peerCar = createCarSimState({
             id: peer.peerId,
             name: peer.name,
@@ -998,9 +1016,13 @@ export function RaceViewport(props: RaceViewportProps) {
           sim.rollingFormationLanes.set(peerCar.id, peerCar.lateralOffset);
           newCars.push(peerCar);
         } else {
-          // Fill remaining grid slots with structured 2-car team AI Roster pairings
-          const teamPairIdx = Math.floor(aiCursor / 2);
-          const pick = sortedPool[teamPairIdx % sortedPool.length];
+          // Fill remaining grid slots strictly from this slot's assigned class (ensuring true multiclass fields!)
+          const classPool = sortedPool.filter((c) => c.classId === slotClassId);
+          const effectivePool = classPool.length > 0 ? classPool : sortedPool;
+          const classAiIdx = classAiCursors.get(slotClassId) ?? 0;
+          classAiCursors.set(slotClassId, classAiIdx + 1);
+          const teamPairIdx = Math.floor(classAiIdx / 2);
+          const pick = effectivePool[teamPairIdx % effectivePool.length];
           const assignment = aiRoster[aiCursor % aiRoster.length];
           const profile = assignment.profile;
 
@@ -1079,18 +1101,9 @@ export function RaceViewport(props: RaceViewportProps) {
       }
 
       sim.cars = newCars;
+      // Preload all car OBJ templates + instantiate rigs & pre-compile WebGL shaders upfront to eliminate first-load frame drops
+      sim.loadingAssets = !isTitle;
       for (const c of newCars) {
-        buildCarRigAsync(c.carSpec, c.livery, maxAniso).then((rig) => {
-          if (disposed || worldVersion !== sim.worldVersion) {
-            rig.dispose();
-            return;
-          }
-          rig.root.position.set(c.x, c.y, c.z);
-          rig.root.rotation.y = c.heading;
-          scene.add(rig.root);
-          sim.carRigs.set(c.id, rig);
-        });
-
         // Create floating billboarded nametag ONCE on spawn for all remote players & AI (hide on local player's car)
         if (!c.isPlayer && currentPhase !== 'title') {
           const carHeight = c.carSpec.dimensions?.height ?? 1.25;
@@ -1110,6 +1123,40 @@ export function RaceViewport(props: RaceViewportProps) {
           sim.carNametags.set(c.id, tag);
         }
       }
+      preloadCarModels(newCars.map((c) => c.carSpec))
+        .then(() =>
+          Promise.all(
+            newCars.map((c) =>
+              buildCarRigAsync(c.carSpec, c.livery, maxAniso).then((rig) => ({ car: c, rig })),
+            ),
+          ),
+        )
+        .then((builtList) => {
+          if (disposed || worldVersion !== sim.worldVersion) {
+            for (const item of builtList) item.rig.dispose();
+            return;
+          }
+          for (const { car: c, rig } of builtList) {
+            rig.root.position.set(c.x, c.y, c.z);
+            rig.root.rotation.y = c.heading;
+            scene.add(rig.root);
+            sim.carRigs.set(c.id, rig);
+          }
+          // Pre-compile all shaders/materials once while still paused before countdown starts
+          if (!isSoftwareGl) {
+            try {
+              renderer.compile(scene, camera);
+            } catch {
+              // Ignore WebGL compile edge cases
+            }
+          }
+          sim.loadingAssets = false;
+        })
+        .catch(() => {
+          if (worldVersion === sim.worldVersion) {
+            sim.loadingAssets = false;
+          }
+        });
 
       const isAutostart = typeof window !== 'undefined' && window.location.search.includes('autostart=1');
       sim.activeStartType = gridStartType;
@@ -1161,10 +1208,37 @@ export function RaceViewport(props: RaceViewportProps) {
         playerSpec.classId,
         storedPbGhost,
       );
-      sim.ghostLap = storedPbGhost;
-      sim.ghostLabel = ghostResolved.label;
-      sim.ghostTargetTime = ghostResolved.targetTime;
-      sim.ghostUseSamples = ghostResolved.useRecordedSamples;
+      if (
+        !isTitle &&
+        (desiredGhostMode === 'alien' ||
+          desiredGhostMode === 'gold' ||
+          desiredGhostMode === 'silver' ||
+          desiredGhostMode === 'bronze')
+      ) {
+        // Generate a real physics-obeying lap for Alien/Gold/Silver/Bronze ghosts
+        const physicsGhost = generatePhysicsTargetGhostLap(
+          compiled,
+          playerSpec,
+          desiredGhostMode,
+          sim.trackWetness,
+        );
+        if (physicsGhost) {
+          sim.ghostLap = physicsGhost;
+          sim.ghostLabel = ghostResolved.label;
+          sim.ghostTargetTime = physicsGhost.lapTime;
+          sim.ghostUseSamples = true;
+        } else {
+          sim.ghostLap = storedPbGhost;
+          sim.ghostLabel = ghostResolved.label;
+          sim.ghostTargetTime = ghostResolved.targetTime;
+          sim.ghostUseSamples = ghostResolved.useRecordedSamples;
+        }
+      } else {
+        sim.ghostLap = storedPbGhost;
+        sim.ghostLabel = ghostResolved.label;
+        sim.ghostTargetTime = ghostResolved.targetTime;
+        sim.ghostUseSamples = ghostResolved.useRecordedSamples;
+      }
       ghostCarGroup.visible = false;
 
       // Reset behavioral cloning telemetry recorder for playable sessions
@@ -1501,6 +1575,13 @@ export function RaceViewport(props: RaceViewportProps) {
       }
     };
 
+    const unlockAudioOnGesture = () => {
+      sim.audio.init();
+    };
+    window.addEventListener('pointerdown', unlockAudioOnGesture, { capture: true, passive: true });
+    window.addEventListener('touchstart', unlockAudioOnGesture, { capture: true, passive: true });
+    window.addEventListener('keydown', unlockAudioOnGesture, { capture: true, passive: true });
+
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('dblclick', onDoubleClick);
     window.addEventListener('pointermove', onPointerMove);
@@ -1544,6 +1625,7 @@ export function RaceViewport(props: RaceViewportProps) {
       frameId = window.setTimeout(poll, 5);
     }
 
+    let lastSyncedMuted: boolean | null = null;
     const tick = () => {
       if (disposed) return;
       const now = performance.now();
@@ -1553,7 +1635,10 @@ export function RaceViewport(props: RaceViewportProps) {
 
       const p = propsRef.current;
       const activePhase = p.phase;
-      sim.audio.setMuted(p.muted);
+      if (lastSyncedMuted !== p.muted) {
+        lastSyncedMuted = p.muted;
+        sim.audio.setMuted(p.muted);
+      }
 
       const playerCar = sim.cars.find((c) => c.isPlayer) ?? null;
 
@@ -1637,7 +1722,9 @@ export function RaceViewport(props: RaceViewportProps) {
       } else if (activePhase === 'playing' || activePhase === 'qualifying') {
         const isQuali = activePhase === 'qualifying';
         const isPractice = activePhase === 'playing' && p.raceConfig.sessionMode === 'practice';
-        if (sim.countdown > 0) {
+        if (sim.loadingAssets) {
+          // Hold countdown cleanly until preloaded car rigs & shaders finish compiling
+        } else if (sim.countdown > 0) {
           const prevCeil = Math.ceil(sim.countdown);
           const countdownStep = Math.min(Math.max(rawDt, 0.001), 0.35);
           sim.countdown = Math.max(0, sim.countdown - countdownStep);
@@ -1647,11 +1734,10 @@ export function RaceViewport(props: RaceViewportProps) {
           } else if (sim.countdown === 0 && prevCeil > 0) {
             sim.audio.playBeep(880, 0.28);
             sim.greenFlagFlash = 1.4;
-            // Standing-start launch & jump-start evaluation at lights out
+            // Standing-start optimal RPM launch evaluation at lights out
             if (sim.activeStartType === 'standing' && playerCar && !isQuali && !isPractice) {
               const launchEval = evaluateStandingStartLaunch({
                 rpmNormalized: playerCar.rpmNormalized,
-                jumpStartTriggered: sim.jumpStartTriggered && p.raceConfig.jumpStartEnabled !== false,
               });
               sim.launchStatus = launchEval.status;
               sim.launchStatusTimer = launchEval.status === 'none' ? 0 : 3.2;
@@ -1659,13 +1745,6 @@ export function RaceViewport(props: RaceViewportProps) {
                 playerCar.launchBoostTimer = launchEval.launchBoostSeconds;
                 sim.raceControl.message = 'PERFECT LAUNCH! OPTIMAL RPM ENGAGEMENT';
                 sim.raceControl.messageTimer = 2.6;
-              } else if (launchEval.postRacePenaltySeconds > 0) {
-                playerCar.postRacePenaltySeconds =
-                  (playerCar.postRacePenaltySeconds ?? 0) + launchEval.postRacePenaltySeconds;
-                playerCar.penaltyReason = 'jump-start';
-                playerCar.penaltyType = 'time-penalty';
-                sim.raceControl.message = `JUMP START DETECTED — +${launchEval.postRacePenaltySeconds}s TIME PENALTY`;
-                sim.raceControl.messageTimer = 4.2;
               }
             }
           }
@@ -1829,18 +1908,11 @@ export function RaceViewport(props: RaceViewportProps) {
           stepRaceControl(sim.raceControl, sim.cars, sim.compiledTrack, sim.specialZones, dt, {
             totalLaps: effectiveTotalLaps > 0 ? effectiveTotalLaps : 99,
             isRace: isRealRace,
-            safetyCarEnabled: p.raceConfig.safetyCarEnabled !== false && !isEliminationMode,
           });
           if (isTimedFinish) {
             sim.raceControl.globalFlag = 'white';
           }
 
-          const scSpeedLimit =
-            sim.raceControl.safetyCar.phase === 'sc' ||
-            sim.raceControl.safetyCar.phase === 'sc-ending' ||
-            sim.raceControl.safetyCar.phase === 'vsc'
-              ? sim.raceControl.safetyCar.speedLimitMs
-              : undefined;
           const roadHalfW = sim.compiledTrack.spec.trackWidth * 0.5;
           const dmgLvl = p.raceConfig.damageLevel ?? 'light';
           const absLvl = p.raceConfig.absLevel ?? 'low';
@@ -1879,7 +1951,6 @@ export function RaceViewport(props: RaceViewportProps) {
                   puddleIntensity: localW.puddleIntensity,
                   trackRubber: sim.weatherSystem.trackRubber,
                   trackTempC: localW.trackTempC,
-                  safetyCarSpeedLimitMs: scSpeedLimit,
                   drsZoneEnforced: isRealRace,
                   damageLevel: dmgLvl,
                   absLevel: absLvl,
@@ -2034,7 +2105,6 @@ export function RaceViewport(props: RaceViewportProps) {
                 puddleIntensity: localW.puddleIntensity,
                 trackRubber: sim.weatherSystem.trackRubber,
                 trackTempC: localW.trackTempC,
-                safetyCarSpeedLimitMs: scSpeedLimit,
                 drsZoneEnforced: isRealRace,
                 damageLevel: dmgLvl,
                 absLevel: 'low',
@@ -2134,19 +2204,6 @@ export function RaceViewport(props: RaceViewportProps) {
                 ? Math.min(targetGridRpm, playerCar.rpmNormalized + dt * rate)
                 : Math.max(targetGridRpm, playerCar.rpmNormalized - dt * rate);
             playerCar.rpmNormalized = nextRpm;
-
-            // Jump-start detection: pinning full throttle past redline right before lights out without holding brake
-            if (
-              p.raceConfig.jumpStartEnabled !== false &&
-              !isQuali &&
-              !isPractice &&
-              sim.countdown < 0.75 &&
-              throttle > 0.94 &&
-              brake < 0.1 &&
-              playerCar.rpmNormalized > 0.96
-            ) {
-              sim.jumpStartTriggered = true;
-            }
           }
         }
 
@@ -2627,28 +2684,6 @@ export function RaceViewport(props: RaceViewportProps) {
         }
       }
 
-      // Sync 3D Safety Car mesh & alternating flashing roof lightbar
-      const scState = sim.raceControl.safetyCar;
-      const showSc = scState.active && (scState.phase === 'sc' || scState.phase === 'sc-ending');
-      safetyCarGroup.visible = showSc;
-      if (showSc) {
-        const scSample = sampleTrackAtT(sim.compiledTrack, scState.trackT);
-        const scTilt = computeRoadSurfaceTilt(scSample, scState.heading);
-        safetyCarGroup.position.set(scState.x, scState.y + 0.02, scState.z);
-        safetyCarGroup.rotation.order = 'YXZ';
-        safetyCarGroup.rotation.y = scState.heading;
-        safetyCarGroup.rotation.x = -scTilt.pitchRad;
-        safetyCarGroup.rotation.z = -scTilt.rollRad;
-        const flashA = Math.floor(now / 180) % 2 === 0;
-        const lightHex = scState.phase === 'sc-ending' ? 0x22c55e : 0xf59e0b;
-        scLeftLightMat.color.setHex(lightHex);
-        scLeftLightMat.emissive.setHex(lightHex);
-        scRightLightMat.color.setHex(lightHex);
-        scRightLightMat.emissive.setHex(lightHex);
-        scLeftLightMat.emissiveIntensity = flashA ? 3.2 : 0.12;
-        scRightLightMat.emissiveIntensity = flashA ? 0.12 : 3.2;
-      }
-
       // Step pooled carbon debris & brake lock-up smoke InstancedMeshes
       let anyDebris = false;
       for (let i = 0; i < debrisCount; i++) {
@@ -2893,6 +2928,10 @@ export function RaceViewport(props: RaceViewportProps) {
           tireTemp: Math.round(hudFocusCar.tireTemp),
           compound: hudFocusCar.compound,
           fuel: Math.round(hudFocusCar.fuel),
+          fuelCapacityLiters: getClassFuelCapacityLiters(hudFocusCar.carSpec.classId),
+          fuelLiters: Number(
+            ((hudFocusCar.fuel / 100) * getClassFuelCapacityLiters(hudFocusCar.carSpec.classId)).toFixed(1),
+          ),
           fuelLapsRemaining: hudFocusCar.fuelLapsRemaining,
           attackModeUsesRemaining: hudFocusCar.attackModeUsesRemaining,
           attackModeTimer: hudFocusCar.attackModeTimer,
@@ -2911,30 +2950,14 @@ export function RaceViewport(props: RaceViewportProps) {
           pitStrategy: hudFocusCar.pitStrategy,
           cameraMode: p.cameraMode,
           standings,
-          minimapDots: [
-            ...sim.cars.map((c) => ({
-              id: c.id,
-              x: c.x,
-              z: c.z,
-              classId: c.carSpec.classId,
-              isPlayer: isAiRaceHud ? c.id === hudFocusCar.id : c.isPlayer,
-              isHumanPeer: c.isHumanPeer,
-            })),
-            ...(sim.raceControl.safetyCar.active &&
-            (sim.raceControl.safetyCar.phase === 'sc' || sim.raceControl.safetyCar.phase === 'sc-ending')
-              ? [
-                  {
-                    id: 'safety-car',
-                    x: sim.raceControl.safetyCar.x,
-                    z: sim.raceControl.safetyCar.z,
-                    classId: CarClassId.SUPERCAR,
-                    isPlayer: false,
-                    isHumanPeer: false,
-                    isSafetyCar: true,
-                  },
-                ]
-              : []),
-          ],
+          minimapDots: sim.cars.map((c) => ({
+            id: c.id,
+            x: c.x,
+            z: c.z,
+            classId: c.carSpec.classId,
+            isPlayer: isAiRaceHud ? c.id === hudFocusCar.id : c.isPlayer,
+            isHumanPeer: c.isHumanPeer,
+          })),
           proximityCars,
           qualiResultTime: sim.qualiTime,
           qualiGridPos: sim.qualiGridPos,
@@ -2948,15 +2971,13 @@ export function RaceViewport(props: RaceViewportProps) {
           bestSectorTimes: hudFocusCar.bestSectorTimes ? [...hudFocusCar.bestSectorTimes] : [null, null, null],
           sessionBestSectorTimes: sessionBestSectors,
           lastLapSectorTimes: hudFocusCar.lastLapSectorTimes ? [...hudFocusCar.lastLapSectorTimes] : [null, null, null],
-          // Section 1.2: Race Control, Flags, Safety Car, Penalties & Standing Start
+          // Section 1.2: Race Control, Microsector Yellow Flags & Penalties
           raceFlag: sim.raceControl.globalFlag,
           sectorFlags: [...sim.raceControl.sectorFlags] as ['green' | 'yellow', 'green' | 'yellow', 'green' | 'yellow'],
+          inYellowMicrosector: isCarInYellowMicrosector(sim.raceControl, hudFocusCar.trackT),
+          yellowYieldTargetName: sim.raceControl.yellowYieldByCarId.get(hudFocusCar.id)?.targetName ?? null,
+          yellowYieldPositions: sim.raceControl.yellowYieldByCarId.get(hudFocusCar.id)?.positionsToYield ?? 0,
           blueFlagActive: Boolean(hudFocusCar.blueFlagActive),
-          safetyCarPhase: sim.raceControl.safetyCar.phase,
-          safetyCarSpeedLimitKmh:
-            sim.raceControl.safetyCar.phase !== 'none'
-              ? Math.round(sim.raceControl.safetyCar.speedLimitMs * SPEED_KMH_FACTOR)
-              : undefined,
           raceControlMessage: sim.raceControl.message,
           postRacePenaltySeconds: hudFocusCar.postRacePenaltySeconds ?? 0,
           penaltyReason: hudFocusCar.penaltyReason ?? null,
@@ -3077,6 +3098,9 @@ export function RaceViewport(props: RaceViewportProps) {
       gamepadController.detach(window);
       ro.disconnect();
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('pointerdown', unlockAudioOnGesture, { capture: true });
+      window.removeEventListener('touchstart', unlockAudioOnGesture, { capture: true });
+      window.removeEventListener('keydown', unlockAudioOnGesture, { capture: true });
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       window.removeEventListener('pointermove', onPointerMove);
@@ -3097,8 +3121,6 @@ export function RaceViewport(props: RaceViewportProps) {
         disposeGroupResources(sim.zoneMarkersGroup);
         sim.zoneMarkersGroup = null;
       }
-      scene.remove(safetyCarGroup);
-      disposeGroupResources(safetyCarGroup);
       scene.remove(ghostCarGroup);
       disposeGroupResources(ghostCarGroup);
       debrisGeo.dispose();
