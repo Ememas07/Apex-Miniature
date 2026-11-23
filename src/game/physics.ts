@@ -2,6 +2,8 @@ import { CAR_CLASSES, carHasHybridErs, getCarById, resolveCarSpecial, getCarBoP,
 import { computeSetupPhysicsModifiers, DEFAULT_CAR_SETUP, normalizeCarSetup, resolveEffectiveBoP } from './carSetup';
 import { getErsModeProfile } from './raceSystems';
 import { CompiledTrack, computeTrackWallHalfWidth, projectOntoTrack, sampleTrackAtT } from './tracks';
+export type { CompiledTrack } from './tracks';
+export { sampleTrackAtT } from './tracks';
 import tuningConfigRaw from './tuningConfig.json';
 import { getAiPaceOrderModifiers } from './scenarios';
 import { computeRacecraftOverlay } from './aiRacecraft';
@@ -14,6 +16,7 @@ import {
   CarClassId,
   CarSetupConfig,
   CarSpec,
+  CornerCallout,
   DamageLevel,
   DriverStandingsEntry,
   ErsMode,
@@ -26,6 +29,7 @@ import {
   PitStrategy,
   RaceStartType,
   SceneryTheme,
+  TcLevel,
   TireCompound,
   TrackSurfaceType,
 } from './types';
@@ -132,7 +136,18 @@ export interface CarSimState {
   carSpec: CarSpec;
   livery: LiveryConfig;
   personality?: AIPersonality;
-  transmissionMode?: 'auto' | 'manual';
+  transmissionMode?: 'auto' | 'semi-auto' | 'manual';
+  semiAutoHoldTimer?: number;
+  tcLevel?: TcLevel;
+  tcIntervening?: boolean;
+  stabilityControl?: boolean;
+  stabilityIntervening?: boolean;
+  mecachromeActive?: boolean;
+  mecachromeTimer?: number;
+  mecachromeCooldown?: number;
+  lastInputThrottle?: number;
+  lastInputBrake?: number;
+  lastInputSteer?: number;
   x: number;
   y: number;
   z: number;
@@ -457,7 +472,9 @@ export function createCarSimState(params: {
   compound: TireCompound;
   personality?: AIPersonality;
   aiPaceMultiplier?: number;
-  transmissionMode?: 'auto' | 'manual';
+  transmissionMode?: 'auto' | 'semi-auto' | 'manual';
+  tcLevel?: TcLevel;
+  stabilityControl?: boolean;
   bopEnabled?: boolean;
   startType?: RaceStartType;
   rollingSpeed?: number;
@@ -593,6 +610,17 @@ export function createCarSimState(params: {
     gear: 1,
     rpmNormalized: 0.18,
     transmissionMode: params.transmissionMode ?? 'auto',
+    semiAutoHoldTimer: 0,
+    tcLevel: params.tcLevel ?? 0,
+    tcIntervening: false,
+    stabilityControl: params.stabilityControl ?? false,
+    stabilityIntervening: false,
+    mecachromeActive: false,
+    mecachromeTimer: 0,
+    mecachromeCooldown: 0,
+    lastInputThrottle: 0,
+    lastInputBrake: 0,
+    lastInputSteer: 0,
     aiTargetOffset: lat * 0.4,
     aiPassTimer: 0,
     aiPaceMultiplier: params.aiPaceMultiplier ?? 1.0,
@@ -1595,27 +1623,36 @@ export function stepCarPhysics(
   // Longitudinal acceleration, braking & transmission drivetrain
   const throttle = Math.max(0, Math.min(1, input.throttle));
   const brake = Math.max(0, Math.min(1, input.brake));
+  car.lastInputThrottle = throttle;
+  car.lastInputBrake = brake;
+  car.lastInputSteer = Math.max(-1, Math.min(1, input.steer));
   const isManual = car.transmissionMode === 'manual';
+  const isSemiAuto = car.transmissionMode === 'semi-auto';
   const totalGears = car.carSpec.gears ?? classMeta.forwardGears ?? 6;
+  if ((car.semiAutoHoldTimer ?? 0) > 0) {
+    car.semiAutoHoldTimer = Math.max(0, (car.semiAutoHoldTimer ?? 0) - dt);
+  }
 
-  // Manual transmission shifting:
-  if (isManual) {
+  // Manual & Semi-Auto paddle shifting:
+  if (isManual || isSemiAuto) {
     if (input.shiftUp) {
       if (car.gear === -1 && car.speed < 4.0) {
         car.gear = 1;
       } else if (car.gear > 0 && car.gear < totalGears) {
         car.gear += 1;
       }
+      if (isSemiAuto) car.semiAutoHoldTimer = 2.6;
     } else if (input.shiftDown) {
       if (car.gear === 1 && car.speed < 3.0) {
         car.gear = -1;
       } else if (car.gear > 1) {
         car.gear -= 1;
       }
+      if (isSemiAuto) car.semiAutoHoldTimer = 2.6;
     }
   }
 
-  // Automatic transmission mode reverse engagement & forward shift:
+  // Automatic & Semi-Auto reverse engagement & forward shift:
   if (!isManual) {
     if (car.gear === -1) {
       if (throttle > 0.1) {
@@ -1690,11 +1727,13 @@ export function stepCarPhysics(
     const kAeroDrag = kAeroDragBase * (1 - 0.22 * slipstreamStrength);
     const fAeroDragN = kAeroDrag * car.speed * car.speed;
 
+    car.tcIntervening = false;
     if (throttle > 0 && brake < 0.1) {
       // Engine torque/power delivery across RPM & high-speed taper
       const lowSpeedSpool = isFE ? 1.0 : 0.88 + 0.12 * Math.min(1, car.speed / 18.0);
       const powerCurveFactor = lowSpeedSpool * (1 - highSpeedPowerTaper * Math.pow(speedRatio, isFormula && !isFE ? 1.18 : 1.45));
-      const pWheelW = powerWatts * specialAccelMult * fuelFactor * throttle * powerCurveFactor;
+      const mecachromeMult = car.mecachromeActive ? 0.08 : 1.0;
+      const pWheelW = powerWatts * specialAccelMult * fuelFactor * throttle * powerCurveFactor * mecachromeMult;
       const fPowerN = pWheelW / Math.max(4.5, car.speed);
 
       // Tire traction limit (static launch grip + aero downforce load + crest load + differential exit traction + perfect launch boost)
@@ -1709,7 +1748,21 @@ export function stepCarPhysics(
       const fTractionN =
         effectiveMassKg * (launchGripG * GRAVITY * tireLaunchFactor + downforceTractionCoeff * car.speed * car.speed);
 
-      const fDriveN = limiterTorqueCut === 0 ? 0 : Math.min(fPowerN, fTractionN);
+      // Traction Control (TC 1-3): smoothly trims wheel torque when cornering slip or launch wheelspin exceeds threshold
+      let tcTorqueScale = 1.0;
+      const tcLvl = car.tcLevel ?? 0;
+      if (tcLvl > 0 && car.speed > 2.5) {
+        const slipThreshold = tcLvl === 3 ? 0.18 : tcLvl === 2 ? 0.28 : 0.40;
+        const cornerThrottleDemand = (car.lateralSlip ?? 0) + (effectiveWetness * 0.22);
+        const overTraction = fPowerN > fTractionN * (1.06 - tcLvl * 0.04);
+        if (cornerThrottleDemand > slipThreshold || (overTraction && Math.abs(input.steer) > 0.18)) {
+          const excess = Math.max(0, cornerThrottleDemand - slipThreshold);
+          tcTorqueScale = Math.max(0.45, 1.0 - excess * (0.35 + tcLvl * 0.18) - (overTraction ? 0.08 * tcLvl : 0));
+          car.tcIntervening = tcTorqueScale < 0.96;
+        }
+      }
+
+      const fDriveN = limiterTorqueCut === 0 ? 0 : Math.min(fPowerN * tcTorqueScale, fTractionN);
       const fNetN = fDriveN - fAeroDragN - fRollN;
       car.speed = Math.max(0, car.speed + (fNetN / effectiveMassKg) * dt);
     }
@@ -1836,7 +1889,8 @@ export function stepCarPhysics(
       const gearFracs = getGearTopFracs(totalGears);
       const speedRatioGear = Math.min(1.02, car.speed / gearboxTopSpeed);
 
-      if (isManual) {
+      const holdManualGear = isManual || (isSemiAuto && (car.semiAutoHoldTimer ?? 0) > 0 && speedRatioGear < gearFracs[Math.max(0, Math.min(totalGears - 1, car.gear - 1))] * 1.01);
+      if (holdManualGear) {
         car.gear = Math.max(1, Math.min(totalGears, car.gear));
         if (car.speed < 1.0 && car.gear === 1 && throttle < 0.08) {
           car.rpmNormalized = 0.18;
@@ -2058,6 +2112,7 @@ export function stepCarPhysics(
   const cAlphaFront = fMaxFrontN * (isGTP ? 13.8 : 13.2);
   const cAlphaRear = fMaxRearN * (14.5 + 3.5 * exitSettling + 2.5 * speedNorm * exitSettling);
 
+  car.stabilityIntervening = false;
   let understeerAccum = 0;
   let dHeadingAccum = 0;
   if (car.speed < 0.35 && Math.abs(throttle) < 0.05 && Math.abs(brake) < 0.05) {
@@ -2090,10 +2145,19 @@ export function stepCarPhysics(
 
       rYaw += yawAccel * subDt;
 
-      // Speed-scaled yaw-rate damping + anti-pendulum counter-yaw catch (light in corners, crisp settling on release/straights)
+      // Speed-scaled yaw-rate damping + anti-pendulum counter-yaw catch + optional Stability Control assist
       const isCounterYaw = steerMag > 0.05 && rYaw * (steerInput * moveSign) < 0;
       const baseYawDamp = (1.0 + 1.4 * speedNorm) * (isCounterYaw ? 1.45 : 1.0);
-      const yawDampRate = baseYawDamp + exitSettling * (10.0 + 12.0 * speedNorm);
+      let stabDamp = 0;
+      if (car.stabilityControl && car.speed > 8.0) {
+        const slipAngleAbs = Math.abs(Math.atan2(vLat, Math.max(3, Math.abs(vFwd))));
+        if (slipAngleAbs > 0.14 || (isCounterYaw && Math.abs(rYaw) > 0.55)) {
+          stabDamp = 4.5 + Math.min(6.0, slipAngleAbs * 14.0);
+          vLat *= Math.exp(-3.8 * subDt);
+          car.stabilityIntervening = true;
+        }
+      }
+      const yawDampRate = baseYawDamp + stabDamp + exitSettling * (10.0 + 12.0 * speedNorm);
       rYaw *= Math.exp(-yawDampRate * subDt);
       if (exitSettling > 0.80 && Math.abs(rYaw) < 0.01) {
         rYaw = 0;
@@ -3598,3 +3662,124 @@ export function formatLapTime(seconds: number | null): string {
   const secs = seconds % 60;
   return `${mins}:${secs < 10 ? '0' : ''}${secs.toFixed(2)}`;
 }
+
+/**
+ * Resolves the authentic class-default Traction Control level when settings.tractionControl === 'auto'.
+ */
+export function resolveClassDefaultTc(classId: CarClassId, setting: 'auto' | TcLevel): TcLevel {
+  if (setting !== 'auto') return setting;
+  switch (classId) {
+    case CarClassId.GT3:
+    case CarClassId.GT4:
+      return 2;
+    case CarClassId.HYPERCAR_GTP:
+    case CarClassId.SUPERCAR:
+    case CarClassId.TRACK_COUPE:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Rare "Getting Mecachromed" mechanical failure easter egg (player-only).
+ * When triggered, drops engine output by 92% for 5.0s with white smoke, then recovers automatically.
+ * Returns true on the exact tick it triggers so UI/radio/audio can alert the driver.
+ */
+export function tryStepMecachromeEvent(
+  car: CarSimState,
+  dt: number,
+  rng: () => number = Math.random,
+): boolean {
+  if (!car.isPlayer || car.finished || car.pitStopRemaining > 0) return false;
+  if (car.carSpec.classId === CarClassId.FORMULA_E) return false; // EVs don't blow ICE pistons
+
+  if (car.mecachromeActive) {
+    car.mecachromeTimer = Math.max(0, (car.mecachromeTimer ?? 0) - dt);
+    if (car.mecachromeTimer <= 0) {
+      car.mecachromeActive = false;
+      car.mecachromeCooldown = 140;
+    }
+    return false;
+  }
+
+  if ((car.mecachromeCooldown ?? 0) > 0) {
+    car.mecachromeCooldown = Math.max(0, (car.mecachromeCooldown ?? 0) - dt);
+    return false;
+  }
+
+  // Only roll at high speed on full throttle past lap 1 (approx ~1 in 450s average)
+  const throttle = car.lastInputThrottle ?? 0;
+  if (car.lap >= 1 && car.speed > 42 && throttle > 0.85) {
+    const chancePerSec = 0.0022;
+    if (rng() < chancePerSec * dt) {
+      car.mecachromeActive = true;
+      car.mecachromeTimer = 5.0;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Scans the compiled track ahead of the car to detect the next major braking zone / corner
+ * for HUD corner callout badges (direction, severity, distance, suggested gear).
+ */
+export function computeUpcomingCornerInfo(
+  track: CompiledTrack,
+  trackT: number,
+  speedMs: number,
+): CornerCallout | null {
+  const totalLen = Math.max(100, track.totalLength);
+  const lookaheadM = Math.max(70, Math.min(240, speedMs * 3.4));
+  const stepM = 12;
+  let peakCurv = 0;
+  let peakDist = 0;
+  let peakSign = 0;
+  let signFlips = 0;
+  let prevSign = 0;
+
+  for (let d = 18; d <= lookaheadM; d += stepM) {
+    const t = (((trackT + d / totalLen) % 1) + 1) % 1;
+    const s1 = sampleTrackAtT(track, t);
+    const s2 = sampleTrackAtT(track, (((t + 10 / totalLen) % 1) + 1) % 1);
+    const h1 = Math.atan2(s1.tx, s1.tz);
+    const h2 = Math.atan2(s2.tx, s2.tz);
+    let dh = h2 - h1;
+    while (dh > Math.PI) dh -= Math.PI * 2;
+    while (dh < -Math.PI) dh += Math.PI * 2;
+    const curv = Math.abs(dh) / 10; // rad/m
+    const sign = dh > 0.018 ? 1 : dh < -0.018 ? -1 : 0;
+    if (sign !== 0) {
+      if (prevSign !== 0 && sign !== prevSign && curv > 0.006) {
+        signFlips++;
+      }
+      prevSign = sign;
+    }
+    if (curv > peakCurv) {
+      peakCurv = curv;
+      peakDist = d;
+      peakSign = dh >= 0 ? 1 : -1;
+    }
+  }
+
+  if (peakCurv < 0.0065) return null;
+
+  const severity: CornerCallout['severity'] =
+    peakCurv > 0.026 ? 'hairpin' : peakCurv > 0.017 ? 'sharp' : peakCurv > 0.011 ? 'medium' : 'fast';
+  const direction: CornerCallout['direction'] =
+    signFlips >= 1 && peakCurv > 0.011 ? 'chicane' : peakSign > 0 ? 'left' : 'right';
+  const suggestedGear =
+    severity === 'hairpin' ? 1 : severity === 'sharp' ? 2 : severity === 'medium' ? 3 : 5;
+  const cornerSafeSpeedMs = Math.sqrt(18 / Math.max(0.004, peakCurv));
+  const brakingRecommended = speedMs > cornerSafeSpeedMs * 1.12 && peakDist < Math.max(95, speedMs * 2.2);
+
+  return {
+    direction,
+    severity,
+    distanceM: Math.round(peakDist / 5) * 5,
+    suggestedGear,
+    brakingRecommended,
+  };
+}
+

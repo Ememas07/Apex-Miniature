@@ -65,6 +65,45 @@ export type NumberPlateStyle =
 
 export type HeadlightTint = 'crystal-white' | 'endurance-yellow' | 'ice-blue';
 
+export type PaintFinish =
+  | 'gloss'
+  | 'metallic'
+  | 'matte'
+  | 'satin'
+  | 'chrome'
+  | 'carbon-weave'
+  | 'pearlescent';
+
+export type WindowTint = 'clear' | 'smoke' | 'dark' | 'mirror';
+
+export type GarageEnvironment = 'display-case' | 'pit-garage' | 'sunset-grid' | 'wind-tunnel';
+
+export type DecalShape =
+  | 'stripe'
+  | 'chevron'
+  | 'star'
+  | 'circle'
+  | 'diamond'
+  | 'checkered'
+  | 'lightning'
+  | 'number-plate'
+  | 'text';
+
+export interface DecalLayer {
+  id: string;
+  shape: DecalShape;
+  x: number; // 0..1 normalized UV
+  y: number; // 0..1 normalized UV
+  scale: number; // 0.05..0.6
+  rotation: number; // degrees
+  color: string;
+  mirror: boolean;
+  text?: string;
+  opacity?: number;
+}
+
+export type LiveryDecal = DecalLayer;
+
 export interface LiveryConfig {
   primaryColor: string;
   secondaryColor: string;
@@ -79,6 +118,10 @@ export interface LiveryConfig {
   headlightTint: HeadlightTint;
   windshieldBanner: string;
   customTexture?: string; // Optional data URL or texture path for custom painted liveries
+  paintFinish?: PaintFinish;
+  caliperColor?: string;
+  windowTint?: WindowTint;
+  decals?: DecalLayer[];
 }
 
 export interface CarDimensions {
@@ -159,6 +202,9 @@ export interface TrackWaypoint {
   width?: number; // per-node width override
   banking?: number; // per-node banking in degrees
   tension?: number; // per-node Catmull-Rom tension (0.15 tight .. 0.85 sweeping, default 0.5)
+  sceneryProp?: 'none' | 'grandstand' | 'trees' | 'bridge' | 'tunnel';
+  runoff?: 'asphalt' | 'grass' | 'gravel';
+  drsZone?: boolean;
 }
 
 export interface TrackSpec {
@@ -184,6 +230,7 @@ export interface TrackSpec {
   startNodeIndex?: number;
   pitSide?: 'left' | 'right';
   banking?: number;
+  sectorSplits?: [number, number];
   createdAt?: number;
 }
 
@@ -298,7 +345,83 @@ export type AIPersonality =
   | 'Average GTP Driver'
   | 'Passive';
 
-export type CameraMode = 'orbit' | 'hood';
+export type TimeOfDayPreset =
+  | 'midday'
+  | 'dawn'
+  | 'golden-hour'
+  | 'dusk'
+  | 'night'
+  | 'dynamic-24h';
+
+export type CameraMode =
+  | 'orbit'
+  | 'chase-close'
+  | 'chase-far'
+  | 'hood'
+  | 'bumper'
+  | 'cockpit'
+  | 'tv-broadcast';
+
+export type PhotoFilterId =
+  | 'none'
+  | 'film-grain'
+  | 'noir'
+  | 'kodachrome'
+  | 'f1-broadcast'
+  | 'vintage';
+
+export type MfdPage = 'tires-brakes' | 'strategy' | 'electronics' | 'sectors';
+
+export type TcLevel = 0 | 1 | 2 | 3;
+
+export type EngineerVerbosity = 'off' | 'minimal' | 'full';
+
+export type BlindSpotStatus = 'clear' | 'left' | 'right' | 'both';
+
+export interface CornerCallout {
+  direction: 'left' | 'right' | 'chicane';
+  severity: 'hairpin' | 'sharp' | 'medium' | 'fast';
+  distanceM: number;
+  suggestedGear: number;
+  brakingRecommended: boolean;
+}
+
+export interface RaceRadioMessage {
+  id: string;
+  sender: 'SPOTTER' | 'ENGINEER' | 'RACE CONTROL';
+  text: string;
+  priority: 'low' | 'medium' | 'high';
+  timestamp: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+  isSystem?: boolean;
+}
+
+export interface LobbySummary {
+  code: string;
+  name: string;
+  trackId: string;
+  activeClasses: CarClassId[];
+  playerCount: number;
+  maxPlayers: number;
+  started: boolean;
+  hostName: string;
+}
+
+export interface PlayerOnlineProfile {
+  username: string;
+  eloRating: number;
+  safetyRating: number; // 0..100
+  racesCompleted: number;
+  wins: number;
+  cleanLaps: number;
+}
 
 export type PitServiceAction = 'tyres' | 'fuel' | 'repair';
 
@@ -371,6 +494,8 @@ export interface RaceConfig {
   championshipId?: string;
   weekendStage?: WeekendStage;
   dailyChallengeDate?: string;
+  timeOfDay?: TimeOfDayPreset;
+  timeScale?: number;
 }
 
 export interface AiNeuralRadarSlot {
@@ -483,7 +608,7 @@ export interface HudSnapshot {
   ersBattery?: number; // 0..100 standalone hybrid ERS battery (GTP, F1 26, F1 21 only)
   hasErs?: boolean;
   ersMode?: ErsMode;
-  transmissionMode?: 'auto' | 'manual';
+  transmissionMode?: 'auto' | 'semi-auto' | 'manual';
   drsEligible?: boolean;
   inDrsZone?: boolean;
   attackModeUsesRemaining?: number;
@@ -559,6 +684,28 @@ export interface HudSnapshot {
   weekendStage?: WeekendStage;
   championshipRoundLabel?: string | null;
   aiNeuralTelemetry?: AiNeuralTelemetrySnapshot | null;
+  // Section 5-10: Driving Aids, Live Inputs, Awareness, Radio, Replay, Telemetry & Online
+  tcLevel?: TcLevel;
+  tcIntervening?: boolean;
+  stabilityIntervening?: boolean;
+  throttleInput?: number;
+  brakeInput?: number;
+  steerInput?: number;
+  blindSpot?: BlindSpotStatus;
+  rearCarGapM?: number | null;
+  rearCarClosingKmh?: number;
+  rearCarLateralM?: number;
+  upcomingCorner?: CornerCallout | null;
+  radioMessage?: RaceRadioMessage | null;
+  mecachromeWarning?: boolean;
+  mecachromeRemaining?: number;
+  fps?: number;
+  timeOfDayHours?: number;
+  lapPositionHistory?: Array<{ lap: number; position: number }>;
+  replayAvailable?: boolean;
+  flashbackAvailable?: boolean;
+  peerPings?: Record<string, number>;
+  chatMessages?: ChatMessage[];
 }
 
 export interface RoomPeer {
@@ -569,14 +716,23 @@ export interface RoomPeer {
   livery: LiveryConfig;
   ready: boolean;
   isHost: boolean;
+  isSpectator?: boolean;
+  pingMs?: number;
+  eloRating?: number;
+  safetyRating?: number;
 }
 
 export interface RoomState {
   code: string;
   hostId: string;
+  name?: string;
+  isPublic?: boolean;
   config: Partial<RaceConfig>;
   customTrack?: TrackSpec;
   peers: RoomPeer[];
   players?: Record<string, RoomPeer>;
   started: boolean;
+  raceStartServerTime?: number;
+  trackVotes?: Record<string, string>;
+  chatMessages?: ChatMessage[];
 }

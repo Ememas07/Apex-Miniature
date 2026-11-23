@@ -706,7 +706,7 @@ def load_actor_from_bin(
         h_layers = int(header.get("numHiddenLayers", 2))
         h_has_ln = bool(header.get("hasLn", False))
         h_has_obs_norm = bool(header.get("hasObsNorm", False))
-        h_pedal_mode = str(header.get("pedalMode", "independent"))
+        h_pedal_mode = str(header.get("pedalMode") or "independent")
 
         if h_obs_dim != expected_obs_dim or h_hidden_dim != hidden_dim or h_act_dim != ACT_DIM:
             print(
@@ -720,12 +720,20 @@ def load_actor_from_bin(
                 f"layers={model.num_hidden_layers}, ln={len(model.get_actor_norms()) > 0}); starting from scratch."
             )
             return False, -1e9
+        cross_pedal_transfer = False
         if h_pedal_mode != model.pedal_mode:
-            print(
-                f"Pedal-mode mismatch in {bin_path} (file={h_pedal_mode} vs model={model.pedal_mode}); "
-                f"starting from scratch."
-            )
-            return False, -1e9
+            if h_pedal_mode == "independent" and model.pedal_mode == "signed" and h_act_dim >= 3:
+                cross_pedal_transfer = True
+                print(
+                    f"Adapting pedal head ({h_pedal_mode} -> {model.pedal_mode}) from {bin_path}; "
+                    f"transferring trunk, LayerNorm, obsNorm & steering head."
+                )
+            else:
+                print(
+                    f"Pedal-mode mismatch in {bin_path} (file={h_pedal_mode} vs model={model.pedal_mode}); "
+                    f"starting from scratch."
+                )
+                return False, -1e9
 
         floats = np.frombuffer(raw, dtype="<f4", offset=data_offset)
         cursor = 0
@@ -750,27 +758,36 @@ def load_actor_from_bin(
 
         layers = model.get_actor_linears()
         norms = model.get_actor_norms()
+        target_device = layers[0].weight.device
         with torch.no_grad():
             in_dim = h_obs_dim
             for idx in range(h_layers):
                 w = take(h_hidden_dim * in_dim).reshape(h_hidden_dim, in_dim)
                 b = take(h_hidden_dim)
-                layers[idx].weight.copy_(torch.from_numpy(w.copy()))
-                layers[idx].bias.copy_(torch.from_numpy(b.copy()))
+                layers[idx].weight.copy_(torch.from_numpy(w.copy()).to(target_device))
+                layers[idx].bias.copy_(torch.from_numpy(b.copy()).to(target_device))
                 if h_has_ln:
                     ln_w = take(h_hidden_dim)
                     ln_b = take(h_hidden_dim)
-                    norms[idx].weight.copy_(torch.from_numpy(ln_w.copy()))
-                    norms[idx].bias.copy_(torch.from_numpy(ln_b.copy()))
+                    norms[idx].weight.copy_(torch.from_numpy(ln_w.copy()).to(target_device))
+                    norms[idx].bias.copy_(torch.from_numpy(ln_b.copy()).to(target_device))
                 in_dim = h_hidden_dim
 
-            out_w = take(h_act_dim * h_hidden_dim).reshape(h_act_dim, h_hidden_dim)
-            out_b = take(h_act_dim)
-            layers[h_layers].weight.copy_(torch.from_numpy(out_w.copy()))
-            layers[h_layers].bias.copy_(torch.from_numpy(out_b.copy()))
+            out_w = take(h_act_dim * h_hidden_dim).reshape(h_act_dim, h_hidden_dim).copy()
+            out_b = take(h_act_dim).copy()
+            if cross_pedal_transfer:
+                adapted_w = np.zeros_like(out_w)
+                adapted_b = np.zeros_like(out_b)
+                adapted_w[0] = out_w[0]
+                adapted_b[0] = out_b[0]
+                adapted_w[1] = 0.5 * (out_w[1] - out_w[2])
+                adapted_b[1] = 0.5 * (out_b[1] - out_b[2])
+                out_w, out_b = adapted_w, adapted_b
+            layers[h_layers].weight.copy_(torch.from_numpy(out_w).to(target_device))
+            layers[h_layers].bias.copy_(torch.from_numpy(out_b).to(target_device))
 
         meta = header.get("meta") if isinstance(header.get("meta"), dict) else {}
-        prev_best = float(meta.get("checkpointScore", meta.get("meanStepReward", -1e9)))
+        prev_best = -1e9 if cross_pedal_transfer else float(meta.get("checkpointScore", meta.get("meanStepReward", -1e9)))
         return True, prev_best
     except Exception as e:
         print(f"Error loading ANB1 binary {bin_path}: {e}")
@@ -1536,10 +1553,20 @@ def resolve_class_cars(car_class: str) -> list[str]:
     """Queries headlessEnv catalog to fetch all base car IDs belonging to a CarClassId."""
     proc = spawn_env_worker(binary_ipc=False)
     try:
-        proc.stdin.write((json.dumps({"cmd": "catalog"}) + "\n").encode("utf-8"))
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(json.dumps({"cmd": "catalog"}) + "\n")
         proc.stdin.flush()
-        line = proc.stdout.readline().decode("utf-8")
-        data = json.loads(line)
+        data = None
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            stripped = line.strip()
+            if stripped.startswith("{"):
+                data = json.loads(stripped)
+                break
+        if not isinstance(data, dict):
+            raise RuntimeError("headlessEnv worker exited before returning catalog JSON")
         return [c["id"] for c in data.get("baseCars", []) if str(c.get("classId", "")).upper() == car_class.upper()]
     finally:
         proc.terminate()

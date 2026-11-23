@@ -1,23 +1,52 @@
-import { useEffect, useState } from 'react';
-import { Gamepad2, Gauge, Hand, Keyboard, RotateCcw, Settings, Volume2, VolumeX, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  Camera,
+  Eye,
+  Gamepad2,
+  Gauge,
+  Hand,
+  Keyboard,
+  Monitor,
+  Radio,
+  RotateCcw,
+  Settings,
+  Sliders,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
+import {
+  applyGraphicsPreset,
+  ColorblindMode,
+  DEFAULT_GAME_SETTINGS,
   DEFAULT_KEYBINDS,
   formatKeyCode,
+  GameSettings,
   getGameSettings,
+  GraphicsPreset,
+  HudPreset,
   KEYBIND_LABELS,
   KeybindAction,
   KeybindMap,
+  ParticleDensitySetting,
+  RacingLineMode,
   setGameSettings,
+  ShadowQuality,
   subscribeGameSettings,
   TouchControlsMode,
   TouchSteerStyle,
   TransmissionMode,
+  UnitsSystem,
 } from '../game/settings';
+import { EngineerVerbosity, TcLevel } from '../game/types';
 import { isTouchCapableDevice } from '../game/touchControls';
+import { audioEngine } from '../three/audioEngine';
 
 interface SettingsModalProps {
   onClose: () => void;
 }
+
+type SettingsTab = 'controls' | 'graphics' | 'audio' | 'camera' | 'hud' | 'accessibility';
 
 function detectConnectedGamepadName(): string | null {
   if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') {
@@ -37,35 +66,92 @@ function detectConnectedGamepadName(): string | null {
   return null;
 }
 
+interface PadLiveAxes {
+  steer: number; // -1..1
+  throttle: number; // 0..1
+  brake: number; // 0..1
+}
+
+function SliderRow({
+  label,
+  valueLabel,
+  min,
+  max,
+  step,
+  value,
+  onChange,
+  sublabel,
+}: {
+  label: string;
+  valueLabel: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (v: number) => void;
+  sublabel?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-semibold text-white/90">{label}</span>
+        <span className="font-mono font-bold text-amber-300 tabular-nums">{valueLabel}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="w-full h-1.5 accent-amber-400 bg-white/10 rounded-lg cursor-pointer"
+      />
+      {sublabel && <div className="text-[11px] text-white/45">{sublabel}</div>}
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 transition text-left"
+    >
+      <div>
+        <div className="text-xs font-bold text-white">{label}</div>
+        {description && <div className="text-[11px] text-white/45 mt-0.5">{description}</div>}
+      </div>
+      <span
+        className={`shrink-0 inline-flex items-center w-10 h-5 rounded-full p-0.5 transition-colors ${
+          checked ? 'bg-emerald-500 justify-end' : 'bg-white/15 justify-start'
+        }`}
+      >
+        <span className="w-4 h-4 rounded-full bg-white shadow" />
+      </span>
+    </button>
+  );
+}
+
 export function SettingsModal({ onClose }: SettingsModalProps) {
-  const [controllerEnabled, setControllerEnabled] = useState<boolean>(
-    () => getGameSettings().controllerEnabled,
-  );
-  const [touchControlsMode, setTouchControlsMode] = useState<TouchControlsMode>(
-    () => getGameSettings().touchControlsMode,
-  );
-  const [touchSteerStyle, setTouchSteerStyle] = useState<TouchSteerStyle>(
-    () => getGameSettings().touchSteerStyle,
-  );
-  const [transmissionMode, setTransmissionMode] = useState<TransmissionMode>(
-    () => getGameSettings().transmissionMode,
-  );
-  const [keybinds, setKeybinds] = useState<KeybindMap>(() => ({ ...getGameSettings().keybinds }));
+  const [activeTab, setActiveTab] = useState<SettingsTab>('controls');
+  const [settings, setSettings] = useState<GameSettings>(() => getGameSettings());
   const [listeningAction, setListeningAction] = useState<KeybindAction | null>(null);
   const [isTouchDevice] = useState<boolean>(() => isTouchCapableDevice());
   const [detectedGamepad, setDetectedGamepad] = useState<string | null>(() =>
     detectConnectedGamepadName(),
   );
-
-  const [volume, setVolume] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('apex_audio_volume');
-      return saved !== null ? Math.max(0, Math.min(1, parseFloat(saved))) : 0.8;
-    } catch {
-      return 0.8;
-    }
-  });
-
+  const [liveAxes, setLiveAxes] = useState<PadLiveAxes>({ steer: 0, throttle: 0, brake: 0 });
   const [muted, setMuted] = useState<boolean>(() => {
     try {
       return localStorage.getItem('apex_audio_muted') === 'true';
@@ -73,14 +159,23 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       return false;
     }
   });
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const patch = (partial: Partial<GameSettings>) => {
+    const next = setGameSettings(partial);
+    setSettings(next);
+    audioEngine.applyMixerSettings(next);
+    try {
+      localStorage.setItem('apex_audio_volume', String(next.masterVolume));
+    } catch {
+      // Ignore storage errors
+    }
+  };
 
   useEffect(() => {
     const unsub = subscribeGameSettings((next) => {
-      setControllerEnabled(next.controllerEnabled);
-      setTouchControlsMode(next.touchControlsMode);
-      setTouchSteerStyle(next.touchSteerStyle);
-      setTransmissionMode(next.transmissionMode);
-      setKeybinds({ ...next.keybinds });
+      setSettings(next);
     });
     const refreshPads = () => setDetectedGamepad(detectConnectedGamepadName());
     window.addEventListener('gamepadconnected', refreshPads);
@@ -92,6 +187,50 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     };
   }, []);
 
+  // Live Gamepad / Wheel Axis Tester when Controls tab is active
+  useEffect(() => {
+    if (activeTab !== 'controls') return;
+    let rafId = 0;
+    const poll = () => {
+      try {
+        const pads = navigator.getGamepads?.() ?? [];
+        let found: Gamepad | null = null;
+        for (let i = 0; i < pads.length; i++) {
+          if (pads[i]?.connected) {
+            found = pads[i];
+            break;
+          }
+        }
+        if (found) {
+          const s = settingsRef.current;
+          const rawSteer = found.axes[0] ?? 0;
+          const abs = Math.abs(rawSteer);
+          const dz = s.steerDeadzone;
+          let shaped = 0;
+          if (abs > dz) {
+            const norm = Math.min(1, (abs - dz) / Math.max(0.05, 1 - dz));
+            shaped = Math.sign(rawSteer) * Math.min(1, Math.pow(norm, s.steerLinearity) * s.steerSensitivity);
+          }
+          let throttle = found.buttons[7]?.value ?? 0;
+          let brake = found.buttons[6]?.value ?? 0;
+          if (s.splitPedalAxes && found.axes.length >= 3) {
+            const axThrottle = Math.max(0, Math.min(1, (1 - (found.axes[1] ?? 1)) * 0.5));
+            const axBrake = Math.max(0, Math.min(1, (1 - (found.axes[2] ?? 1)) * 0.5));
+            throttle = Math.max(throttle, axThrottle);
+            brake = Math.max(brake, axBrake);
+          }
+          setLiveAxes({ steer: shaped, throttle, brake });
+          if (!detectedGamepad) setDetectedGamepad(found.id || `Controller #${found.index + 1}`);
+        }
+      } catch {
+        // Ignore restricted environments
+      }
+      rafId = requestAnimationFrame(poll);
+    };
+    rafId = requestAnimationFrame(poll);
+    return () => cancelAnimationFrame(rafId);
+  }, [activeTab, detectedGamepad]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (listeningAction) {
@@ -101,17 +240,15 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           setListeningAction(null);
           return;
         }
-        const next: KeybindMap = { ...keybinds };
+        const next: KeybindMap = { ...settingsRef.current.keybinds };
         const prevCode = next[listeningAction];
-        // Swap if another action already uses this key so bindings stay conflict-free
         (Object.keys(next) as KeybindAction[]).forEach((act) => {
           if (act !== listeningAction && next[act] === e.code) {
             next[act] = prevCode;
           }
         });
         next[listeningAction] = e.code;
-        setKeybinds(next);
-        setGameSettings({ keybinds: next });
+        patch({ keybinds: next });
         setListeningAction(null);
         return;
       }
@@ -121,350 +258,928 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown, true);
-    };
-  }, [listeningAction, keybinds, onClose]);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [listeningAction, onClose]);
 
-  const handleToggleController = () => {
-    const next = !controllerEnabled;
-    setControllerEnabled(next);
-    setGameSettings({ controllerEnabled: next });
-    if (next) {
-      setDetectedGamepad(detectConnectedGamepadName());
-    }
-  };
-
-  const handleTransmissionModeChange = (mode: TransmissionMode) => {
-    setTransmissionMode(mode);
-    setGameSettings({ transmissionMode: mode });
-  };
-
-  const handleResetKeybinds = () => {
-    const defaults: KeybindMap = { ...DEFAULT_KEYBINDS };
-    setListeningAction(null);
-    setKeybinds(defaults);
-    setGameSettings({ keybinds: defaults });
-  };
-
-  const handleTouchModeChange = (mode: TouchControlsMode) => {
-    setTouchControlsMode(mode);
-    setGameSettings({ touchControlsMode: mode });
-  };
-
-  const handleTouchSteerStyleChange = (style: TouchSteerStyle) => {
-    setTouchSteerStyle(style);
-    setGameSettings({ touchSteerStyle: style });
-  };
-
-  const handleVolumeChange = (newVol: number) => {
-    setVolume(newVol);
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    audioEngine.setMuted(next);
     try {
-      localStorage.setItem('apex_audio_volume', String(newVol));
+      localStorage.setItem('apex_audio_muted', String(next));
     } catch {
       // ignore
     }
-    window.dispatchEvent(new CustomEvent('apex-audio-volume', { detail: { volume: newVol } }));
   };
 
-  const handleToggleMute = () => {
-    const nextMute = !muted;
-    setMuted(nextMute);
-    try {
-      localStorage.setItem('apex_audio_muted', String(nextMute));
-    } catch {
-      // ignore
-    }
-    window.dispatchEvent(new CustomEvent('apex-audio-mute', { detail: { muted: nextMute } }));
+  const resetAllSettings = () => {
+    const next = setGameSettings({
+      ...DEFAULT_GAME_SETTINGS,
+      keybinds: { ...DEFAULT_KEYBINDS },
+    });
+    setSettings(next);
+    audioEngine.applyMixerSettings(next);
+    setMuted(false);
+    audioEngine.setMuted(false);
   };
+
+  const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Settings }> = [
+    { id: 'controls', label: 'Controls & Aids', icon: Gamepad2 },
+    { id: 'graphics', label: 'Graphics', icon: Monitor },
+    { id: 'audio', label: 'Audio', icon: Volume2 },
+    { id: 'camera', label: 'Camera', icon: Camera },
+    { id: 'hud', label: 'HUD', icon: Gauge },
+    { id: 'accessibility', label: 'Access', icon: Eye },
+  ];
+
+  const keybindOrder: KeybindAction[] = [
+    'throttle',
+    'brake',
+    'steerLeft',
+    'steerRight',
+    'shiftUp',
+    'shiftDown',
+    'special',
+    'ersMode',
+    'brakeBiasDown',
+    'brakeBiasUp',
+    'tcToggle',
+    'mfdCycle',
+    'camera',
+    'resetCamera',
+    'lookBack',
+    'flashback',
+    'photoMode',
+    'pause',
+    'mute',
+  ];
 
   return (
     <div
-      data-testid="settings-modal"
-      role="dialog"
-      aria-label="Game Settings"
-      className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center safe-pad-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/75 backdrop-blur-md"
+      onClick={onClose}
     >
-      <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto custom-scroll bg-[#11151d] border border-white/15 rounded-lg p-5 sm:p-6 shadow-2xl space-y-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
-              <Settings className="w-5 h-5 text-red-500" />
-              Settings
-            </h2>
-            <p className="text-xs text-slate-400 mt-1">
-              Gearbox, keybinds, controller, touch, and audio preferences save automatically.
-            </p>
+      <div
+        className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl bg-[#0c1018] border border-white/15 shadow-2xl overflow-hidden text-white"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/[0.02]">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center text-amber-300">
+              <Sliders className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-base font-black tracking-wide uppercase">Motorsport Settings Suite</h2>
+              <p className="text-[11px] text-white/50">
+                All preferences save automatically and apply live in-session
+              </p>
+            </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close Settings"
-            className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white cursor-pointer shrink-0"
+            className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-white/75 hover:text-white transition"
+            aria-label="Close settings"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Transmission / Gearbox Section */}
-        <div className="p-4 rounded-lg bg-[#0c1017] border border-white/10 space-y-3">
-          <div className="space-y-0.5">
-            <div className="text-sm font-semibold text-white flex items-center gap-2">
-              <Gauge className="w-4 h-4 text-amber-400" />
-              Transmission / Gears
-            </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Choose Automatic shifting or Manual paddles ({formatKeyCode(keybinds.shiftDown)} / {formatKeyCode(keybinds.shiftUp)} or Gamepad LB / RB).
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Transmission Mode">
-            {([
-              { id: 'auto', label: 'Automatic' },
-              { id: 'manual', label: 'Manual Gears' },
-            ] as { id: TransmissionMode; label: string }[]).map((opt) => (
+        {/* Category Tabs */}
+        <div className="flex items-center gap-1 px-4 py-2.5 border-b border-white/10 bg-black/30 overflow-x-auto">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
               <button
-                key={opt.id}
+                key={tab.id}
                 type="button"
-                data-testid={`transmission-mode-${opt.id}`}
-                onClick={() => handleTransmissionModeChange(opt.id)}
-                className={`min-h-[38px] px-2 py-1.5 rounded text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
-                  transmissionMode === opt.id
-                    ? 'bg-amber-600 border-amber-400 text-white'
-                    : 'bg-[#151b26] border-white/10 text-slate-300 hover:text-white'
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  active
+                    ? 'bg-amber-400 text-black shadow'
+                    : 'bg-white/[0.03] text-white/70 hover:bg-white/[0.08] hover:text-white'
                 }`}
               >
-                {opt.label}
+                <Icon className="w-3.5 h-3.5" />
+                {tab.label}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        {/* Customizable Keyboard Keybinds Section */}
-        <div className="p-4 rounded-lg bg-[#0c1017] border border-white/10 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="space-y-0.5">
-              <div className="text-sm font-semibold text-white flex items-center gap-2">
-                <Keyboard className="w-4 h-4 text-indigo-400" />
-                Keyboard Keybinds
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Click any binding and press a new key. Press Esc to cancel.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleResetKeybinds}
-              className="px-2.5 py-1.5 rounded bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer shrink-0"
-              title="Reset keybinds to defaults"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Reset
-            </button>
-          </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* 1. CONTROLS & DRIVING AIDS */}
+          {activeTab === 'controls' && (
+            <div className="space-y-5">
+              {/* Driving Aids */}
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+                  Driving Aids & Transmission
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Transmission</div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(['auto', 'semi-auto', 'manual'] as TransmissionMode[]).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => patch({ transmissionMode: mode })}
+                          className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                            settings.transmissionMode === mode
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {mode === 'semi-auto' ? 'Semi' : mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Traction Control</div>
+                    <div className="grid grid-cols-5 gap-1">
+                      {(['auto', 0, 1, 2, 3] as Array<'auto' | TcLevel>).map((lvl) => (
+                        <button
+                          key={String(lvl)}
+                          type="button"
+                          onClick={() => patch({ tcDefault: lvl })}
+                          className={`px-1.5 py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                            settings.tcDefault === lvl
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {lvl === 'auto' ? 'Auto' : lvl === 0 ? 'Off' : `TC${lvl}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Dynamic Racing Line</div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(['off', 'corners-only', 'full'] as RacingLineMode[]).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => patch({ racingLineMode: mode })}
+                          className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                            settings.racingLineMode === mode
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {mode === 'corners-only' ? 'Brake' : mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ToggleRow
+                    label="Stability Control (SC)"
+                    description="Counters sudden snap oversteer on corner exit"
+                    checked={settings.stabilityControl}
+                    onChange={(v) => patch({ stabilityControl: v })}
+                  />
+                  <ToggleRow
+                    label="Pre-Race Controls Briefing"
+                    description="Show adaptive input cheat-sheet during grid lights"
+                    checked={settings.showControlsBriefing}
+                    onChange={(v) => patch({ showControlsBriefing: v })}
+                  />
+                </div>
+              </section>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto custom-scroll pr-0.5">
-            {(Object.keys(DEFAULT_KEYBINDS) as KeybindAction[]).map((action) => {
-              const isListening = listeningAction === action;
-              return (
-                <div
-                  key={action}
-                  className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-[#141a25] border border-white/8"
-                >
-                  <span className="text-[11px] text-slate-300 truncate">{KEYBIND_LABELS[action]}</span>
-                  <button
-                    type="button"
-                    data-testid={`keybind-${action}`}
-                    onClick={() => setListeningAction(isListening ? null : action)}
-                    className={`min-w-[68px] px-2 py-1 rounded text-[10px] font-telemetry font-bold border transition-colors cursor-pointer text-center ${
-                      isListening
-                        ? 'bg-red-600/30 border-red-400 text-red-200 animate-pulse'
-                        : 'bg-[#0b0f17] border-white/15 text-slate-100 hover:border-indigo-400/70'
+              {/* Gamepad & Wheel Calibration */}
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-300">
+                    <Gamepad2 className="w-4 h-4" />
+                    Gamepad & Racing Wheel
+                  </div>
+                  <span
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border ${
+                      detectedGamepad
+                        ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-300'
+                        : 'bg-white/5 border-white/10 text-white/50'
                     }`}
                   >
-                    {isListening ? 'Press key…' : formatKeyCode(keybinds[action])}
+                    {detectedGamepad ? `Connected: ${detectedGamepad.slice(0, 42)}` : 'No controller detected'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ToggleRow
+                    label="Enable Gamepad / Wheel Input"
+                    checked={settings.controllerEnabled}
+                    onChange={(v) => patch({ controllerEnabled: v })}
+                  />
+                  <ToggleRow
+                    label="Split Wheel Pedal Axes"
+                    description="Map dedicated racing pedal axes instead of triggers"
+                    checked={settings.splitPedalAxes}
+                    onChange={(v) => patch({ splitPedalAxes: v })}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <SliderRow
+                    label="Steering Deadzone"
+                    valueLabel={`${Math.round(settings.steerDeadzone * 100)}%`}
+                    min={0.02}
+                    max={0.25}
+                    step={0.01}
+                    value={settings.steerDeadzone}
+                    onChange={(v) => patch({ steerDeadzone: v })}
+                  />
+                  <SliderRow
+                    label="Steering Linearity"
+                    valueLabel={settings.steerLinearity.toFixed(2)}
+                    min={1.0}
+                    max={2.2}
+                    step={0.05}
+                    value={settings.steerLinearity}
+                    onChange={(v) => patch({ steerLinearity: v })}
+                    sublabel="Higher = smoother precision around center"
+                  />
+                  <SliderRow
+                    label="Steering Sensitivity"
+                    valueLabel={`${Math.round(settings.steerSensitivity * 100)}%`}
+                    min={0.5}
+                    max={1.8}
+                    step={0.05}
+                    value={settings.steerSensitivity}
+                    onChange={(v) => patch({ steerSensitivity: v })}
+                  />
+                  <SliderRow
+                    label="Wheel Rotation Lock"
+                    valueLabel={`${settings.wheelLockDegrees}°`}
+                    min={180}
+                    max={900}
+                    step={30}
+                    value={settings.wheelLockDegrees}
+                    onChange={(v) => patch({ wheelLockDegrees: v })}
+                  />
+                  <SliderRow
+                    label="Haptic Rumble Intensity"
+                    valueLabel={`${Math.round(settings.rumbleIntensity * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={settings.rumbleIntensity}
+                    onChange={(v) => patch({ rumbleIntensity: v })}
+                  />
+
+                  {/* Live Axis Tester */}
+                  <div className="rounded-xl bg-black/40 border border-white/10 p-3 space-y-2">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-white/55">
+                      Live Controller Axis Tester
+                    </div>
+                    <div className="space-y-1.5 text-[11px] font-mono">
+                      <div>
+                        <div className="flex justify-between text-white/70">
+                          <span>STEER</span>
+                          <span>{Math.round(liveAxes.steer * 100)}%</span>
+                        </div>
+                        <div className="relative h-2 bg-white/10 rounded overflow-hidden">
+                          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/30" />
+                          <div
+                            className="absolute top-0 bottom-0 bg-amber-400"
+                            style={{
+                              left: liveAxes.steer >= 0 ? '50%' : `${50 + liveAxes.steer * 50}%`,
+                              width: `${Math.abs(liveAxes.steer) * 50}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="flex justify-between text-emerald-300">
+                            <span>THR</span>
+                            <span>{Math.round(liveAxes.throttle * 100)}%</span>
+                          </div>
+                          <div className="h-2 bg-white/10 rounded overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-400"
+                              style={{ width: `${liveAxes.throttle * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-rose-300">
+                            <span>BRK</span>
+                            <span>{Math.round(liveAxes.brake * 100)}%</span>
+                          </div>
+                          <div className="h-2 bg-white/10 rounded overflow-hidden">
+                            <div
+                              className="h-full bg-rose-500"
+                              style={{ width: `${liveAxes.brake * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Touch / Mobile Controls */}
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-300">
+                    <Hand className="w-4 h-4" />
+                    Touch & Mobile Tilt Controls
+                  </div>
+                  <span className="text-[11px] text-white/45">
+                    {isTouchDevice ? 'Touchscreen detected' : 'Desktop browser'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Touch Overlay</div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(['auto', 'always', 'off'] as TouchControlsMode[]).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => patch({ touchControlsMode: m })}
+                          className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                            settings.touchControlsMode === m
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Steering Style</div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(['pad', 'buttons', 'gyro'] as TouchSteerStyle[]).map((style) => (
+                        <button
+                          key={style}
+                          type="button"
+                          onClick={() => patch({ touchSteerStyle: style })}
+                          className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                            settings.touchSteerStyle === style
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {style === 'gyro' ? 'Tilt Gyro' : style}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                  <SliderRow
+                    label="Touch Control Opacity"
+                    valueLabel={`${Math.round(settings.touchOpacity * 100)}%`}
+                    min={0.35}
+                    max={1}
+                    step={0.05}
+                    value={settings.touchOpacity}
+                    onChange={(v) => patch({ touchOpacity: v })}
+                  />
+                  <ToggleRow
+                    label="Auto-Accelerate (Touch)"
+                    description="Hold throttle automatically unless braking"
+                    checked={settings.touchAutoAccel}
+                    onChange={(v) => patch({ touchAutoAccel: v })}
+                  />
+                </div>
+              </section>
+
+              {/* Keyboard Remapper */}
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-300">
+                    <Keyboard className="w-4 h-4" />
+                    Keyboard Keybinds
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => patch({ keybinds: { ...DEFAULT_KEYBINDS } })}
+                    className="flex items-center gap-1 text-[11px] font-bold text-white/65 hover:text-amber-300 transition"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Reset Keys
                   </button>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Input / Controller Section */}
-        <div className="p-4 rounded-lg bg-[#0c1017] border border-white/10 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="space-y-0.5">
-              <div className="text-sm font-semibold text-white flex items-center gap-2">
-                <Gamepad2 className={`w-4 h-4 ${controllerEnabled ? 'text-emerald-400' : 'text-slate-500'}`} />
-                Controller / Gamepad Input
-              </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Supports PS4/PS5, Xbox, Switch Pro, and mobile Bluetooth controllers. Disable to prevent stick drift.
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={controllerEnabled}
-              data-testid="toggle-controller-input"
-              onClick={handleToggleController}
-              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors cursor-pointer ${
-                controllerEnabled
-                  ? 'bg-emerald-600 border-emerald-400/60'
-                  : 'bg-slate-800 border-white/15'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                  controllerEnabled ? 'translate-x-5.5' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] pt-2 border-t border-white/5 gap-2">
-            <span className="text-slate-400 shrink-0">Status</span>
-            <span
-              data-testid="controller-input-status"
-              className={`font-telemetry truncate max-w-[230px] ${
-                !controllerEnabled
-                  ? 'text-amber-400'
-                  : detectedGamepad
-                  ? 'text-emerald-400'
-                  : 'text-slate-400'
-              }`}
-              title={controllerEnabled ? detectedGamepad ?? 'No controller detected' : 'Disabled'}
-            >
-              {!controllerEnabled
-                ? 'Disabled (Keyboard / Touch Only)'
-                : detectedGamepad
-                ? detectedGamepad
-                : 'Enabled · No controller detected'}
-            </span>
-          </div>
-
-          {controllerEnabled && (
-            <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-slate-400">
-              <span>Steer: <strong className="text-slate-200">L-Stick / D-Pad</strong></span>
-              <span>Gas / Brake: <strong className="text-slate-200">R2 / L2</strong></span>
-              <span>Manual Shift: <strong className="text-slate-200">L1 / R1</strong></span>
-              <span>Special: <strong className="text-slate-200">A / Cross</strong></span>
-              <span>Camera: <strong className="text-slate-200">Y / Triangle</strong></span>
-              <span>Pause: <strong className="text-slate-200">Start / Options</strong></span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {keybindOrder.map((action) => {
+                    const isListening = listeningAction === action;
+                    return (
+                      <div
+                        key={action}
+                        className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/30 border border-white/10"
+                      >
+                        <span className="text-xs text-white/85">{KEYBIND_LABELS[action]}</span>
+                        <button
+                          type="button"
+                          onClick={() => setListeningAction(isListening ? null : action)}
+                          className={`min-w-[82px] px-2.5 py-1 rounded-md text-xs font-mono font-bold border transition ${
+                            isListening
+                              ? 'bg-amber-400 text-black border-amber-300 animate-pulse'
+                              : 'bg-white/10 text-white border-white/15 hover:bg-white/15'
+                          }`}
+                        >
+                          {isListening ? 'PRESS KEY…' : formatKeyCode(settings.keybinds[action])}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
             </div>
           )}
-        </div>
 
-        {/* Mobile Touchpad Controls Section */}
-        <div className="p-4 rounded-lg bg-[#0c1017] border border-white/10 space-y-3">
-          <div className="space-y-0.5">
-            <div className="text-sm font-semibold text-white flex items-center gap-2">
-              <Hand className="w-4 h-4 text-sky-400" />
-              On-Screen Touch Controls
+          {/* 2. GRAPHICS & PERFORMANCE */}
+          {activeTab === 'graphics' && (
+            <div className="space-y-5">
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+                  Quality Presets
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {(['low', 'medium', 'high', 'ultra'] as GraphicsPreset[]).map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => patch(applyGraphicsPreset(preset))}
+                      className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wider border transition ${
+                        settings.graphicsPreset === preset
+                          ? 'bg-amber-400 text-black border-amber-300 shadow'
+                          : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Shadow Map Quality</div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {(['off', 'low', 'medium', 'high'] as ShadowQuality[]).map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() => patch({ shadowQuality: q })}
+                          className={`py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                            settings.shadowQuality === q
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Particle VFX Density</div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {(['off', 'low', 'medium', 'high'] as ParticleDensitySetting[]).map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => patch({ particleDensity: d })}
+                          className={`py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                            settings.particleDensity === d
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <SliderRow
+                  label="Render Resolution Scale"
+                  valueLabel={`${Math.round(settings.renderScale * 100)}%`}
+                  min={0.5}
+                  max={2.0}
+                  step={0.05}
+                  value={settings.renderScale}
+                  onChange={(v) => patch({ renderScale: v })}
+                  sublabel="Capped automatically on low-power GPUs when Adaptive DPR is enabled"
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ToggleRow
+                    label="Adaptive Resolution (60 FPS Target)"
+                    description="Dynamically scales pixel ratio during heavy grid starts"
+                    checked={settings.adaptiveDpr}
+                    onChange={(v) => patch({ adaptiveDpr: v })}
+                  />
+                  <ToggleRow
+                    label="HDR Bloom (Brake Lights & Sparks)"
+                    description="Selective glow on emissive rotors, headlights & exhaust"
+                    checked={settings.bloomEnabled}
+                    onChange={(v) => patch({ bloomEnabled: v })}
+                  />
+                  <ToggleRow
+                    label="Miniature Tilt-Shift Depth of Field"
+                    description="Subtle diorama lens blur in Chase & Broadcast cameras"
+                    checked={settings.tiltShiftEnabled}
+                    onChange={(v) => patch({ tiltShiftEnabled: v })}
+                  />
+                  <ToggleRow
+                    label="High-Speed Peripheral Blur"
+                    description="Subtle radial speed vignette above 220 km/h"
+                    checked={settings.speedBlurEnabled}
+                    onChange={(v) => patch({ speedBlurEnabled: v })}
+                  />
+                  <ToggleRow
+                    label="Show FPS & Frame-Time Counter"
+                    description="Display live performance chip in HUD top-right"
+                    checked={settings.showFpsCounter}
+                    onChange={(v) => patch({ showFpsCounter: v })}
+                  />
+                </div>
+              </section>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Multi-touch steering pad, gas/brake pedals, and boost button. Auto enables on phones & tablets ({isTouchDevice ? 'touch screen detected' : 'desktop detected'}).
-            </p>
-          </div>
+          )}
 
-          <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Touch Controls Mode">
-            {([
-              { id: 'auto', label: 'Auto' },
-              { id: 'always', label: 'Always On' },
-              { id: 'off', label: 'Off' },
-            ] as { id: TouchControlsMode; label: string }[]).map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                data-testid={`touch-mode-${opt.id}`}
-                onClick={() => handleTouchModeChange(opt.id)}
-                className={`min-h-[38px] px-2 py-1.5 rounded text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
-                  touchControlsMode === opt.id
-                    ? 'bg-sky-600 border-sky-400 text-white'
-                    : 'bg-[#151b26] border-white/10 text-slate-300 hover:text-white'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-
-          {touchControlsMode !== 'off' && (
-            <div className="pt-2 border-t border-white/5 space-y-1.5">
-              <div className="text-[11px] text-slate-400">Steering Layout</div>
-              <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Touch Steering Layout">
-                {([
-                  { id: 'pad', label: 'Analog Touchpad' },
-                  { id: 'buttons', label: 'Left / Right Buttons' },
-                ] as { id: TouchSteerStyle; label: string }[]).map((opt) => (
+          {/* 3. AUDIO (7-CHANNEL MIXER + RACE ENGINEER) */}
+          {activeTab === 'audio' && (
+            <div className="space-y-5">
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+                    7-Channel Sound Mixer
+                  </div>
                   <button
-                    key={opt.id}
                     type="button"
-                    data-testid={`touch-steer-${opt.id}`}
-                    onClick={() => handleTouchSteerStyleChange(opt.id)}
-                    className={`min-h-[38px] px-2 py-1.5 rounded text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
-                      touchSteerStyle === opt.id
-                        ? 'bg-red-600 border-red-400 text-white'
-                        : 'bg-[#151b26] border-white/10 text-slate-300 hover:text-white'
+                    onClick={toggleMute}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                      muted
+                        ? 'bg-rose-500/20 border-rose-400/40 text-rose-300'
+                        : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10'
                     }`}
                   >
-                    {opt.label}
+                    {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                    {muted ? 'Audio Muted' : 'Mute All'}
                   </button>
-                ))}
-              </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <SliderRow
+                    label="Master Output"
+                    valueLabel={`${Math.round(settings.masterVolume * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={settings.masterVolume}
+                    onChange={(v) => patch({ masterVolume: v })}
+                  />
+                  <SliderRow
+                    label="Player Engine & Exhaust"
+                    valueLabel={`${Math.round(settings.engineVolume * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={settings.engineVolume}
+                    onChange={(v) => patch({ engineVolume: v })}
+                  />
+                  <SliderRow
+                    label="Spatial Opponent Engines"
+                    valueLabel={`${Math.round(settings.opponentVolume * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={settings.opponentVolume}
+                    onChange={(v) => patch({ opponentVolume: v })}
+                  />
+                  <SliderRow
+                    label="Tires, Kerbs & Surface Foley"
+                    valueLabel={`${Math.round(settings.tireSurfaceVolume * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={settings.tireSurfaceVolume}
+                    onChange={(v) => patch({ tireSurfaceVolume: v })}
+                  />
+                  <SliderRow
+                    label="Impacts & Wind Rush"
+                    valueLabel={`${Math.round(settings.collisionVolume * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={settings.collisionVolume}
+                    onChange={(v) => patch({ collisionVolume: v })}
+                  />
+                  <SliderRow
+                    label="UI, Shift Beeps & Radio"
+                    valueLabel={`${Math.round(settings.uiRadioVolume * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={settings.uiRadioVolume}
+                    onChange={(v) => patch({ uiRadioVolume: v })}
+                  />
+                  <SliderRow
+                    label="Menu Ambient Music"
+                    valueLabel={`${Math.round(settings.musicVolume * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={settings.musicVolume}
+                    onChange={(v) => patch({ musicVolume: v })}
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-300">
+                  <Radio className="w-4 h-4" />
+                  Pit Wall Race Engineer Radio
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold text-white/60 mb-1.5">Radio Chatter Level</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['off', 'minimal', 'full'] as EngineerVerbosity[]).map((lvl) => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        onClick={() => patch({ engineerVerbosity: lvl })}
+                        className={`py-2 rounded-lg text-xs font-bold uppercase border transition ${
+                          settings.engineerVerbosity === lvl
+                            ? 'bg-amber-400 text-black border-amber-300'
+                            : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <ToggleRow
+                  label="Spoken Engineer Voice (Web Speech)"
+                  description="Speak urgent pit-wall calls aloud in addition to radio subtitles"
+                  checked={settings.radioVoiceEnabled}
+                  onChange={(v) => patch({ radioVoiceEnabled: v })}
+                />
+              </section>
+            </div>
+          )}
+
+          {/* 4. CAMERA */}
+          {activeTab === 'camera' && (
+            <div className="space-y-5">
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+                  Camera Framing & Dynamics
+                </div>
+                <p className="text-xs text-white/55">
+                  Cycle all 7 views in-race (Chase Near, Chase Far, T-Cam / Roll Hoop, Cockpit, Hood, Bumper,
+                  TV Broadcast) with <span className="font-mono text-amber-300">{formatKeyCode(settings.keybinds.camera)}</span>,
+                  hold <span className="font-mono text-amber-300">{formatKeyCode(settings.keybinds.lookBack)}</span> to Look Back.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <SliderRow
+                    label="Field of View (FOV) Offset"
+                    valueLabel={`${settings.fovOffset >= 0 ? '+' : ''}${settings.fovOffset}°`}
+                    min={-10}
+                    max={15}
+                    step={1}
+                    value={settings.fovOffset}
+                    onChange={(v) => patch({ fovOffset: v })}
+                  />
+                  <SliderRow
+                    label="Look-to-Apex Rotation"
+                    valueLabel={`${Math.round(settings.lookToApex * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={settings.lookToApex}
+                    onChange={(v) => patch({ lookToApex: v })}
+                    sublabel="Subtly pans cockpit & chase cameras toward corner apex"
+                  />
+                  <SliderRow
+                    label="Speed & Kerb Camera Shake"
+                    valueLabel={`${Math.round(settings.cameraShake * 100)}%`}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={settings.cameraShake}
+                    onChange={(v) => patch({ cameraShake: v })}
+                  />
+                  <SliderRow
+                    label="Chase Distance Offset"
+                    valueLabel={`${settings.chaseDistanceOffset >= 0 ? '+' : ''}${settings.chaseDistanceOffset.toFixed(1)}m`}
+                    min={-3}
+                    max={4}
+                    step={0.2}
+                    value={settings.chaseDistanceOffset}
+                    onChange={(v) => patch({ chaseDistanceOffset: v })}
+                  />
+                  <SliderRow
+                    label="Chase Height Offset"
+                    valueLabel={`${settings.chaseHeightOffset >= 0 ? '+' : ''}${settings.chaseHeightOffset.toFixed(2)}m`}
+                    min={-0.5}
+                    max={1.0}
+                    step={0.05}
+                    value={settings.chaseHeightOffset}
+                    onChange={(v) => patch({ chaseHeightOffset: v })}
+                  />
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* 5. HUD & TELEMETRY */}
+          {activeTab === 'hud' && (
+            <div className="space-y-5">
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+                  HUD Layout & Measurement Units
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">HUD Density Preset</div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {(['full', 'minimal', 'pro', 'off'] as HudPreset[]).map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => patch({ hudPreset: p })}
+                          className={`py-2 rounded-lg text-xs font-bold uppercase border transition ${
+                            settings.hudPreset === p
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-white/60 mb-1.5">Units System</div>
+                    <div className="grid grid-cols-2 gap-1">
+                      {(['metric', 'imperial'] as UnitsSystem[]).map((u) => (
+                        <button
+                          key={u}
+                          type="button"
+                          onClick={() => patch({ units: u })}
+                          className={`py-2 rounded-lg text-xs font-bold uppercase border transition ${
+                            settings.units === u
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {u === 'metric' ? 'Metric (km/h · °C)' : 'Imperial (mph · °F)'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <SliderRow
+                  label="HUD UI Scale"
+                  valueLabel={`${Math.round(settings.hudScale * 100)}%`}
+                  min={0.75}
+                  max={1.25}
+                  step={0.05}
+                  value={settings.hudScale}
+                  onChange={(v) => patch({ hudScale: v })}
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ToggleRow
+                    label="Virtual Rear-View & Blind-Spot Radar"
+                    description="Gap to car behind plus left/right proximity arrows"
+                    checked={settings.showVirtualMirror}
+                    onChange={(v) => patch({ showVirtualMirror: v })}
+                  />
+                  <ToggleRow
+                    label="Live Pedal Input Trace"
+                    description="Scrolling 4-second throttle, brake & steering graph"
+                    checked={settings.showPedalTrace}
+                    onChange={(v) => patch({ showPedalTrace: v })}
+                  />
+                  <ToggleRow
+                    label="Upcoming Corner Callout Badge"
+                    description="Direction arrow, recommended gear & distance countdown"
+                    checked={settings.showCornerCallouts}
+                    onChange={(v) => patch({ showCornerCallouts: v })}
+                  />
+                  <ToggleRow
+                    label="Floating Driver Nametags"
+                    description="Show car labels above nearby rivals on track (toggle with N)"
+                    checked={settings.showNametags}
+                    onChange={(v) => patch({ showNametags: v })}
+                  />
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* 6. ACCESSIBILITY */}
+          {activeTab === 'accessibility' && (
+            <div className="space-y-5">
+              <section className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-4">
+                <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+                  Visual & Motion Accessibility
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold text-white/60 mb-1.5">
+                    Colorblind Semantic Palette (Sectors, Tires, Brake Temps & Pedal Trace)
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {(['none', 'deuteranopia', 'protanopia', 'tritanopia'] as ColorblindMode[]).map(
+                      (mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => patch({ colorblindMode: mode })}
+                          className={`py-2 px-2 rounded-lg text-xs font-bold capitalize border transition ${
+                            settings.colorblindMode === mode
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {mode === 'none' ? 'Standard' : mode}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+
+                <SliderRow
+                  label="Radio Subtitle Size"
+                  valueLabel={`${Math.round(settings.subtitleScale * 100)}%`}
+                  min={0.85}
+                  max={1.4}
+                  step={0.05}
+                  value={settings.subtitleScale}
+                  onChange={(v) => patch({ subtitleScale: v })}
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ToggleRow
+                    label="High-Contrast Solid HUD Panels"
+                    description="Replaces translucent glass panels with solid dark backing"
+                    checked={settings.highContrastHud}
+                    onChange={(v) => patch({ highContrastHud: v })}
+                  />
+                  <ToggleRow
+                    label="Reduced Motion Mode"
+                    description="Minimizes camera shake, speed blur & screen flash effects"
+                    checked={settings.reducedMotion}
+                    onChange={(v) => patch({ reducedMotion: v })}
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-xl bg-rose-500/10 border border-rose-500/25 p-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-wider text-rose-300">
+                    Reset All Preferences
+                  </div>
+                  <div className="text-[11px] text-white/60 mt-0.5">
+                    Restores Controls, Graphics, Audio Mixer, Camera, HUD, and Accessibility defaults.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={resetAllSettings}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/40 text-xs font-bold text-rose-200 transition"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset All Defaults
+                </button>
+              </section>
             </div>
           )}
         </div>
 
-        {/* Audio Section */}
-        <div className="p-4 rounded-lg bg-[#0c1017] border border-white/10 space-y-2.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-slate-200 flex items-center gap-1.5">
-              {muted ? (
-                <VolumeX className="w-3.5 h-3.5 text-rose-400" />
-              ) : (
-                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-              )}
-              Master Volume
-            </span>
-            <span className="font-mono text-slate-400">
-              {muted ? 'MUTED' : `${Math.round(volume * 100)}%`}
-            </span>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.02}
-              value={muted ? 0 : volume}
-              onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-              aria-label="Master Volume Slider"
-              className="flex-1 accent-red-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
-            />
-            <button
-              type="button"
-              onClick={handleToggleMute}
-              className={`min-w-[38px] min-h-[38px] flex items-center justify-center rounded border text-xs font-semibold cursor-pointer transition-colors ${
-                muted
-                  ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                  : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
-              }`}
-              title={muted ? 'Unmute Audio' : 'Mute Audio'}
-            >
-              {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-            </button>
-          </div>
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-3 border-t border-white/10 bg-black/40">
+          <span className="text-[11px] text-white/45">
+            Press <span className="font-mono text-white/75">ESC</span> to return
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-xs uppercase tracking-wider transition"
+          >
+            Done
+          </button>
         </div>
-
-        <button
-          type="button"
-          data-testid="btn-close-settings"
-          onClick={onClose}
-          className="w-full min-h-[44px] py-2.5 rounded bg-red-600 hover:bg-red-500 text-sm font-display font-bold text-white cursor-pointer"
-        >
-          Done
-        </button>
       </div>
     </div>
   );

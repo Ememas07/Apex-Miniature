@@ -39,6 +39,7 @@ import {
   computeRoadSurfaceTilt,
   computeRollingFormationControl,
   computeStandings,
+  computeUpcomingCornerInfo,
   createCarSimState,
   getCompoundModifiers,
   getRollingFormationSpeedMs,
@@ -46,20 +47,31 @@ import {
   resolveCarCollisions,
   resolveWallContact,
   stepCarPhysics,
+  tryStepMecachromeEvent,
 } from './physics';
 import { isPositionSafeFromTrack } from '../three/trackBuilder';
-import { computeCameraFrame } from './camera';
+import {
+  buildBroadcastCameraStations,
+  CAMERA_MODE_ORDER,
+  computeCameraFrame,
+  cycleCameraMode,
+  selectBroadcastStation,
+} from './camera';
 import {
   computeWarmFundamentalHz,
   makeSoftClippingCurve,
   resolveAcousticProfile,
 } from './audio';
 import {
+  decodeBinaryTelemetry,
+  encodeBinaryTelemetry,
   getDeploymentBasePath,
   getWebSocketUrl,
   getRoomRestUrl,
   MultiplayerClient,
 } from './multiplayer';
+import { RaceReplayRecorder } from './replay';
+import { applyGraphicsPreset, formatSpeed, formatTemp } from './settings';
 
 test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.HYPERCAR_GTP).length, 12);
@@ -4036,6 +4048,159 @@ test('ANB1 v4 signed-pedal zero-overlap, per-class binary routing, and Average G
   assert.equal(getClassPolicyWeights(CarClassId.GT4), null);
   setClassPolicyWeights(CarClassId.HYPERCAR_GTP, prevGtp);
 });
+
+test('Camera Suite: 7 camera modes cycle cleanly and broadcast stations track car progress', () => {
+  assert.equal(CAMERA_MODE_ORDER.length, 7);
+  let cur = CAMERA_MODE_ORDER[0];
+  const seen = new Set<string>([cur]);
+  for (let i = 0; i < CAMERA_MODE_ORDER.length; i++) {
+    cur = cycleCameraMode(cur);
+    seen.add(cur);
+  }
+  assert.equal(seen.size, 7);
+  assert.equal(cur, CAMERA_MODE_ORDER[0]);
+
+  const spa = compileTrack(TRACKS[0]);
+  const stations = buildBroadcastCameraStations(spa.samples, spa.spec.trackWidth);
+  assert.ok(stations.length >= 6 && stations.length <= 18);
+  const samplePt = spa.samples[Math.floor(spa.samples.length * 0.25)];
+  const picked = selectBroadcastStation(stations, samplePt.x, samplePt.z);
+  assert.ok(picked && Number.isFinite(picked.x) && Number.isFinite(picked.z));
+});
+
+test('Mecachrome Reliability Event: player-only 5s power cut and automatic recovery', () => {
+  const spa = compileTrack(TRACKS[0]);
+  const f1 = CARS.find((c) => c.id === 'f1-26-modern') ?? CARS[0];
+
+  const aiCar = createCarSimState({
+    id: 'ai-meca',
+    name: 'AI Car',
+    isPlayer: false,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  aiCar.lap = 2;
+  aiCar.speed = 65;
+  aiCar.lastInputThrottle = 1;
+  assert.equal(tryStepMecachromeEvent(aiCar, 0.1, () => 0), false);
+  assert.equal(aiCar.mecachromeActive, false);
+
+  const playerCar = createCarSimState({
+    id: 'player-meca',
+    name: 'Player',
+    isPlayer: true,
+    carId: f1.id,
+    livery: f1.defaultLivery,
+    gridSlot: 2,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+  playerCar.lap = 2;
+  playerCar.speed = 65;
+  playerCar.lastInputThrottle = 1;
+
+  // Forced trigger with rng() => 0
+  assert.equal(tryStepMecachromeEvent(playerCar, 0.1, () => 0), true);
+  assert.equal(playerCar.mecachromeActive, true);
+  assert.ok((playerCar.mecachromeTimer ?? 0) >= 4.99);
+
+  // Step 5.1s and verify full automatic recovery + cooldown
+  for (let i = 0; i < 51; i++) {
+    tryStepMecachromeEvent(playerCar, 0.1, () => 0.99);
+  }
+  assert.equal(playerCar.mecachromeActive, false);
+  assert.ok((playerCar.mecachromeCooldown ?? 0) > 100);
+});
+
+test('RaceReplayRecorder: 20Hz capture, interpolated sampling, overtake bookmark, and 5.5s flashback', () => {
+  const spa = compileTrack(TRACKS[0]);
+  const carSpec = CARS[0];
+  const car = createCarSimState({
+    id: 'p1',
+    name: 'Player',
+    isPlayer: true,
+    carId: carSpec.id,
+    livery: carSpec.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: spa,
+    compound: 'soft',
+  });
+
+  const rec = new RaceReplayRecorder();
+  for (let i = 0; i < 160; i++) {
+    const t = i * 0.05;
+    car.x = i * 2;
+    car.z = i * 0.5;
+    car.speed = 50;
+    car.totalTime = t;
+    const rank = i < 100 ? 3 : 1; // Overtake after 4s triggers highlight bookmark
+    rec.recordStep(0.05, t, [car], rank, 0);
+  }
+
+  const dur = rec.getDuration();
+  assert.ok(dur.end >= 7.0 && dur.frameCount >= 140);
+  assert.ok(rec.getBookmarks().length >= 1, 'Expected at least one overtake bookmark');
+
+  const mid = rec.sampleAtTime(2.025);
+  assert.ok(mid && mid.length === 1);
+  assert.ok(mid![0].x > 70 && mid![0].x < 90);
+
+  // Flashback rewinds car ~5.5s back
+  const beforeX = car.x;
+  const rewoundTo = rec.applyFlashback([car], 5.5);
+  assert.ok(rewoundTo !== null && rewoundTo < 3.5);
+  assert.ok(car.x < beforeX - 100);
+});
+
+test('Upcoming Corner Callout, Binary Telemetry Round-Trip & Settings/Units Formatting', () => {
+  const spa = compileTrack(TRACKS[0]);
+  // Scan around track to verify corner callout detection triggers on real corners
+  let foundCorner = false;
+  for (let i = 0; i < 60; i++) {
+    const info = computeUpcomingCornerInfo(spa, i / 60, 68);
+    if (info && info.distanceM > 0 && info.suggestedGear >= 1) {
+      foundCorner = true;
+      break;
+    }
+  }
+  assert.ok(foundCorner, 'Expected computeUpcomingCornerInfo to detect at least one corner on Spa');
+
+  // Binary telemetry encode/decode round-trip
+  const pkt = {
+    x: 112.5,
+    y: 4.25,
+    z: -320.75,
+    heading: 1.23,
+    speed: 62.5,
+    steerAngle: -0.15,
+    lap: 3,
+    trackT: 0.425,
+    totalDistance: 2.425,
+    specialActive: true,
+  };
+  const bin = encodeBinaryTelemetry('peer-abc', pkt, 1234567);
+  assert.ok(bin.byteLength >= 40);
+  const decoded = decodeBinaryTelemetry(bin);
+  assert.ok(decoded);
+  assert.equal(decoded!.peerId, 'peer-abc');
+  assert.ok(Math.abs(decoded!.packet.x - pkt.x) < 0.05);
+  assert.ok(Math.abs(decoded!.packet.z - pkt.z) < 0.05);
+  assert.equal(decoded!.packet.lap, 3);
+  assert.equal(decoded!.packet.specialActive, true);
+
+  // Units & graphics preset helpers
+  assert.deepEqual(formatSpeed(100, 'metric'), { value: 100, unit: 'KM/H' });
+  assert.deepEqual(formatSpeed(100, 'imperial'), { value: 62, unit: 'MPH' });
+  assert.equal(formatTemp(100, 'metric'), '100°C');
+  assert.equal(formatTemp(100, 'imperial'), '212°F');
+  const lowPreset = applyGraphicsPreset('low');
+  assert.equal(lowPreset.shadowQuality, 'off');
+  assert.equal(lowPreset.bloomEnabled, false);
+});
+
 
 
 

@@ -19,6 +19,9 @@ export interface BuiltTrackScene {
   skyColor: number;
   fogColor: number;
   startLightMats: THREE.MeshStandardMaterial[];
+  roadMat: THREE.MeshStandardMaterial;
+  updateMarshalFlags: (flagState: string, timeSec: number, yellowSectors?: number[]) => void;
+  setNightLights: (nightIntensity: number) => void;
   dispose: () => void;
 }
 
@@ -1383,8 +1386,9 @@ export function buildTrackEnvironment(
     group.add(propInst);
   }
 
-  // 10. Night Street Circuit Floodlight Towers
-  if (compiled.spec.scenery === 'street-night') {
+  // 10. Universal Circuit Floodlight Towers (dynamically lit during Dusk/Night or street-night)
+  const floodlightLampMats: THREE.MeshStandardMaterial[] = [];
+  {
     const floodlightGeo = track(new THREE.CylinderGeometry(0.25, 0.35, 11, 8));
     const floodlightHeadGeo = track(new THREE.BoxGeometry(2.0, 0.8, 1.4));
     const floodMat = track(
@@ -1396,14 +1400,16 @@ export function buildTrackEnvironment(
     );
     const lampMat = track(
       new THREE.MeshStandardMaterial({
-        color: 0xffffff,
+        color: 0xe2e8f0,
         emissive: 0xffedd5,
-        emissiveIntensity: 2.5,
+        emissiveIntensity: compiled.spec.scenery === 'street-night' ? 2.5 : 0.0,
         roughness: 0.2,
       }),
     );
+    floodlightLampMats.push(lampMat);
 
-    const floodStep = Math.max(12, Math.floor(compiled.samples.length / 20));
+    const towerCount = compiled.spec.scenery === 'street-night' ? 20 : 12;
+    const floodStep = Math.max(12, Math.floor(compiled.samples.length / towerCount));
     for (let i = 0; i < compiled.samples.length; i += floodStep) {
       const s = compiled.samples[i];
       const curHalfW = s.width ? s.width * 0.5 : halfW;
@@ -1431,11 +1437,144 @@ export function buildTrackEnvironment(
     }
   }
 
+  // 11. Trackside Marshal Posts with Animated Flag Meshes (12 posts distributed across 3 sectors)
+  const marshalFlags: Array<{ mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial; sector: number; baseRotY: number }> = [];
+  {
+    const boothGeo = track(new THREE.BoxGeometry(1.7, 2.2, 1.5));
+    const boothMat = track(new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.55, metalness: 0.1 }));
+    const poleGeo = track(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 6));
+    const poleMat = track(new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.7, roughness: 0.3 }));
+    const flagGeo = track(new THREE.PlaneGeometry(1.15, 0.72));
+    flagGeo.translate(0.58, 0, 0);
+
+    const marshalCount = 12;
+    const step = Math.max(8, Math.floor(compiled.samples.length / marshalCount));
+    for (let m = 0; m < marshalCount; m++) {
+      const idx = (m * step + Math.floor(step * 0.5)) % compiled.samples.length;
+      const s = compiled.samples[idx];
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const side = m % 2 === 0 ? 1 : -1;
+      const offset = curHalfW + 1.8 + 4.8;
+      const mx = s.x + s.nx * side * offset;
+      const mz = s.z + s.nz * side * offset;
+      if (!isSafe(mx, mz, 0.6)) continue;
+
+      const mGroup = new THREE.Group();
+      mGroup.position.set(mx, s.y, mz);
+      const faceY = Math.atan2(-s.nx * side, -s.nz * side);
+      mGroup.rotation.y = faceY;
+
+      const booth = new THREE.Mesh(boothGeo, boothMat);
+      booth.position.y = 1.1;
+      mGroup.add(booth);
+
+      const pole = new THREE.Mesh(poleGeo, poleMat);
+      pole.position.set(0.75, 2.1, 0.65);
+      mGroup.add(pole);
+
+      const fMat = track(
+        new THREE.MeshStandardMaterial({
+          color: 0x22c55e,
+          emissive: 0x16a34a,
+          emissiveIntensity: 0.35,
+          side: THREE.DoubleSide,
+          roughness: 0.5,
+        }),
+      );
+      const fMesh = new THREE.Mesh(flagGeo, fMat);
+      fMesh.position.set(0.75, 3.05, 0.65);
+      mGroup.add(fMesh);
+      group.add(mGroup);
+
+      const sector = Math.min(3, Math.floor((idx / compiled.samples.length) * 3) + 1);
+      marshalFlags.push({ mesh: fMesh, mat: fMat, sector, baseRotY: 0 });
+    }
+  }
+
+  // 12. Distant Biome Horizon Silhouette Ring
+  {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const s of compiled.samples) {
+      if (s.x < minX) minX = s.x;
+      if (s.x > maxX) maxX = s.x;
+      if (s.z < minZ) minZ = s.z;
+      if (s.z > maxZ) maxZ = s.z;
+    }
+    const cx = (minX + maxX) * 0.5;
+    const cz = (minZ + maxZ) * 0.5;
+    const span = Math.max(maxX - minX, maxZ - minZ);
+    const ringRadius = Math.max(360, span * 0.82);
+
+    const skylineColor =
+      compiled.spec.scenery === 'street-night'
+        ? 0x0f172a
+        : compiled.spec.scenery === 'desert'
+        ? 0xa16236
+        : compiled.spec.scenery === 'coastal'
+        ? 0x3b6c8c
+        : 0x254534;
+    const skylineMat = track(
+      new THREE.MeshStandardMaterial({
+        color: skylineColor,
+        roughness: 0.95,
+        metalness: 0.05,
+        fog: true,
+      }),
+    );
+
+    const segments = 28;
+    for (let i = 0; i < segments; i++) {
+      const ang = (i / segments) * Math.PI * 2;
+      const sx = cx + Math.cos(ang) * ringRadius;
+      const sz = cz + Math.sin(ang) * ringRadius;
+      const h =
+        compiled.spec.scenery === 'street-night'
+          ? 28 + ((i * 37) % 52)
+          : 22 + ((i * 29) % 44);
+      const w = (2 * Math.PI * ringRadius) / segments * 1.12;
+      const silGeo =
+        compiled.spec.scenery === 'street-night'
+          ? track(new THREE.BoxGeometry(w * 0.72, h, 24))
+          : track(new THREE.ConeGeometry(w * 0.78, h, 5));
+      const sil = new THREE.Mesh(silGeo, skylineMat);
+      sil.position.set(sx, h * 0.42 - 6, sz);
+      sil.rotation.y = -ang + Math.PI * 0.5;
+      group.add(sil);
+    }
+  }
+
+  const updateMarshalFlags = (flagState: string, timeSec: number, yellowSectors?: number[]) => {
+    for (let i = 0; i < marshalFlags.length; i++) {
+      const f = marshalFlags[i];
+      const sectorYellow = yellowSectors?.includes(f.sector) ?? false;
+      const isYellow = flagState === 'yellow' || flagState === 'vsc' || flagState === 'safety-car' || sectorYellow;
+      const isRed = flagState === 'red';
+      const isCheckered = flagState === 'checkered';
+      const colorHex = isRed ? 0xef4444 : isYellow ? 0xfacc15 : isCheckered ? 0xf8fafc : 0x22c55e;
+      f.mat.color.setHex(colorHex);
+      f.mat.emissive.setHex(colorHex);
+      f.mat.emissiveIntensity = isYellow || isRed ? 0.95 : 0.3;
+      const waveSpeed = isYellow || isRed ? 11.0 : 4.2;
+      const waveAmp = isYellow || isRed ? 0.52 : 0.18;
+      f.mesh.rotation.y = f.baseRotY + Math.sin(timeSec * waveSpeed + i * 0.7) * waveAmp;
+    }
+  };
+
+  const setNightLights = (nightIntensity: number) => {
+    const clamped = Math.max(0, Math.min(1, nightIntensity));
+    for (const m of floodlightLampMats) {
+      m.emissiveIntensity = clamped * 2.8;
+    }
+  };
+
   return {
     group,
     skyColor: palette.sky,
     fogColor: palette.sky,
     startLightMats,
+    roadMat,
+    updateMarshalFlags,
+    setNightLights,
     dispose: () => {
       disposables.forEach((d) => d.dispose());
     },

@@ -78,6 +78,104 @@ export function TrackStudioModal({
   const [copiedJson, setCopiedJson] = useState(false);
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
 
+  // Studio 2.0: Undo/Redo history, Snap-to-Grid, and Reference Underlay
+  const [undoStack, setUndoStack] = useState<TrackSpec[]>([]);
+  const [redoStack, setRedoStack] = useState<TrackSpec[]>([]);
+  const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
+  const snapToGridRef = useRef<boolean>(false);
+  snapToGridRef.current = snapToGrid;
+  const [underlayOpacity, setUnderlayOpacity] = useState<number>(0.42);
+  const [underlayName, setUnderlayName] = useState<string | null>(null);
+  const [underlayTick, setUnderlayTick] = useState<number>(0);
+  const underlayImgRef = useRef<HTMLImageElement | null>(null);
+  const underlayUrlRef = useRef<string | null>(null);
+  const underlayFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const pushHistorySnapshot = useCallback((snapshot: TrackSpec) => {
+    setUndoStack((prev) => [...prev.slice(-39), JSON.parse(JSON.stringify(snapshot))]);
+    setRedoStack([]);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    setUndoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const previous = prev[prev.length - 1];
+      setTrackSpec((current) => {
+        setRedoStack((r) => [...r.slice(-39), JSON.parse(JSON.stringify(current))]);
+        return previous;
+      });
+      setSelectedNodeIndex((idx) => Math.min(idx, Math.max(0, previous.waypoints.length - 1)));
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    setRedoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev[prev.length - 1];
+      setTrackSpec((current) => {
+        setUndoStack((u) => [...u.slice(-39), JSON.parse(JSON.stringify(current))]);
+        return next;
+      });
+      setSelectedNodeIndex((idx) => Math.min(idx, Math.max(0, next.waypoints.length - 1)));
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const handleSmoothAll = useCallback(() => {
+    setTrackSpec((prev) => {
+      if (prev.waypoints.length < 4) return prev;
+      pushHistorySnapshot(prev);
+      const n = prev.waypoints.length;
+      const smoothed = prev.waypoints.map((wp, i) => {
+        const p = prev.waypoints[(i - 1 + n) % n];
+        const q = prev.waypoints[(i + 1) % n];
+        return {
+          ...wp,
+          x: Math.round(wp.x * 0.6 + (p.x + q.x) * 0.2),
+          z: Math.round(wp.z * 0.6 + (p.z + q.z) * 0.2),
+          y: Math.round(((wp.y ?? 0) * 0.65 + ((p.y ?? 0) + (q.y ?? 0)) * 0.175) * 10) / 10,
+        };
+      });
+      return { ...prev, waypoints: smoothed };
+    });
+  }, [pushHistorySnapshot]);
+
+  const handleUnderlayUpload = useCallback((file: File | null) => {
+    if (!file) return;
+    if (underlayUrlRef.current) {
+      URL.revokeObjectURL(underlayUrlRef.current);
+      underlayUrlRef.current = null;
+    }
+    const url = URL.createObjectURL(file);
+    underlayUrlRef.current = url;
+    const img = new Image();
+    img.onload = () => {
+      underlayImgRef.current = img;
+      setUnderlayName(file.name);
+      setUnderlayTick((t) => t + 1);
+    };
+    img.src = url;
+  }, []);
+
+  const clearUnderlay = useCallback(() => {
+    if (underlayUrlRef.current) {
+      URL.revokeObjectURL(underlayUrlRef.current);
+      underlayUrlRef.current = null;
+    }
+    underlayImgRef.current = null;
+    setUnderlayName(null);
+    setUnderlayTick((t) => t + 1);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (underlayUrlRef.current) {
+        URL.revokeObjectURL(underlayUrlRef.current);
+      }
+    };
+  }, []);
+
   // 2D Canvas interaction state
   const canvas2dContainerRef = useRef<HTMLDivElement | null>(null);
   const canvas2dRef = useRef<HTMLCanvasElement | null>(null);
@@ -100,6 +198,29 @@ export function TrackStudioModal({
     return compileTrack(trackSpec);
   }, [trackSpec]);
 
+  // Extra real-time physics validation (max gradient %, class est. lap times)
+  const physicsValidation = useMemo(() => {
+    const samples = compiledTrack.samples;
+    let maxGradePct = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const a = samples[i];
+      const b = samples[(i + 1) % samples.length];
+      const horiz = Math.hypot(b.x - a.x, b.z - a.z);
+      if (horiz > 0.25) {
+        const grade = (Math.abs((b.y ?? 0) - (a.y ?? 0)) / horiz) * 100;
+        if (grade > maxGradePct) maxGradePct = grade;
+      }
+    }
+    const baseSec = analysis.estimatedLapSeconds;
+    return {
+      maxGradePct: Math.round(maxGradePct * 10) / 10,
+      steepGradeWarning: maxGradePct > 14,
+      estF1Sec: Math.max(12, Math.round(baseSec * 0.78)),
+      estLmp2Sec: Math.max(14, Math.round(baseSec * 0.89)),
+      estGt3Sec: Math.max(16, Math.round(baseSec * 1.04)),
+    };
+  }, [compiledTrack.samples, analysis.estimatedLapSeconds]);
+
   // Update track waypoint
   const updateWaypoint = useCallback(
     (index: number, patch: Partial<TrackWaypoint>) => {
@@ -116,6 +237,7 @@ export function TrackStudioModal({
   // Insert waypoint at an explicit index
   const insertWaypointAt = useCallback((insertIndex: number, newPoint: TrackWaypoint) => {
     setTrackSpec((prev) => {
+      pushHistorySnapshot(prev);
       const clampedIdx = Math.max(0, Math.min(prev.waypoints.length, insertIndex));
       const hasPerNodeTension = prev.waypoints.some((w) => w.tension !== undefined);
       const cleanPoint: TrackWaypoint = hasPerNodeTension
@@ -128,20 +250,22 @@ export function TrackStudioModal({
       return { ...prev, waypoints: newWps, startNodeIndex: nextSf };
     });
     setSelectedNodeIndex(insertIndex);
-  }, []);
+  }, [pushHistorySnapshot]);
 
   // Append waypoint at end of loop
   const appendWaypoint = useCallback((newPoint: TrackWaypoint) => {
     setTrackSpec((prev) => {
+      pushHistorySnapshot(prev);
       const nextIdx = prev.waypoints.length;
       queueMicrotask(() => setSelectedNodeIndex(nextIdx));
       return { ...prev, waypoints: [...prev.waypoints, newPoint] };
     });
-  }, []);
+  }, [pushHistorySnapshot]);
 
   // Insert waypoint after selected
   const handleInsertWaypoint = useCallback(() => {
     setTrackSpec((prev) => {
+      pushHistorySnapshot(prev);
       const idx = selectedNodeIndex;
       const cur = prev.waypoints[idx];
       const nextIdx = (idx + 1) % prev.waypoints.length;
@@ -164,19 +288,43 @@ export function TrackStudioModal({
       return { ...prev, waypoints: newWps, startNodeIndex: nextSf };
     });
     setSelectedNodeIndex((prev) => prev + 1);
-  }, [selectedNodeIndex]);
+  }, [selectedNodeIndex, pushHistorySnapshot]);
 
   // Delete waypoint
   const handleDeleteWaypoint = useCallback(() => {
     if (trackSpec.waypoints.length <= 4) return;
     setTrackSpec((prev) => {
+      pushHistorySnapshot(prev);
       const newWps = prev.waypoints.filter((_, i) => i !== selectedNodeIndex);
       const curSf = prev.startNodeIndex ?? 0;
       const nextSf = curSf > selectedNodeIndex ? curSf - 1 : curSf === selectedNodeIndex ? 0 : curSf;
       return { ...prev, waypoints: newWps, startNodeIndex: Math.min(nextSf, newWps.length - 1) };
     });
     setSelectedNodeIndex((prev) => Math.max(0, prev - 1));
-  }, [selectedNodeIndex, trackSpec.waypoints.length]);
+  }, [selectedNodeIndex, trackSpec.waypoints.length, pushHistorySnapshot]);
+
+  // Keyboard shortcuts: Ctrl+Z / Ctrl+Y / Delete / Backspace
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+        return;
+      }
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if ((mod && e.key.toLowerCase() === 'y') || (mod && e.shiftKey && e.key.toLowerCase() === 'z')) {
+        e.preventDefault();
+        handleRedo();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        handleDeleteWaypoint();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleUndo, handleRedo, handleDeleteWaypoint]);
 
   // Switch template
   const handleLoadTemplate = (templateId: string) => {
@@ -330,6 +478,18 @@ export function TrackStudioModal({
       ctx.moveTo(0, centerY);
       ctx.lineTo(width, centerY);
       ctx.stroke();
+
+      // Optional SVG / Image reference trace underlay
+      const underlayImg = underlayImgRef.current;
+      if (underlayImg && underlayImg.complete && underlayImg.naturalWidth > 0) {
+        ctx.save();
+        ctx.globalAlpha = underlayOpacity;
+        const aspect = underlayImg.naturalWidth / Math.max(1, underlayImg.naturalHeight);
+        const drawW = 360 * scale;
+        const drawH = drawW / aspect;
+        ctx.drawImage(underlayImg, centerX - drawW * 0.5, centerY - drawH * 0.5, drawW, drawH);
+        ctx.restore();
+      }
 
       // Draw compiled smooth track spline ribbon
       if (compiledTrack.samples.length > 1) {
@@ -491,7 +651,7 @@ export function TrackStudioModal({
     };
 
     render2d();
-  }, [trackSpec, compiledTrack, selectedNodeIndex, hoveredNode2d, pan, zoom, canvas2dSize]);
+  }, [trackSpec, compiledTrack, selectedNodeIndex, hoveredNode2d, pan, zoom, canvas2dSize, underlayOpacity, underlayTick]);
 
   const get2dPointerCoords = (e: React.PointerEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect();
@@ -528,6 +688,7 @@ export function TrackStudioModal({
     const scale = zoom * 1.35;
 
     const startWindowDrag = (nodeIdx: number) => {
+      pushHistorySnapshot(trackSpec);
       draggingNodeRef.current = nodeIdx;
       setCursor2d('grabbing');
       const onWinMove = (ev: PointerEvent) => {
@@ -541,8 +702,10 @@ export function TrackStudioModal({
         const cX = c.width * 0.5 + pan.x;
         const cY = c.height * 0.5 + pan.y;
         const sc = zoom * 1.35;
-        const tX = Math.round((mX - cX) / sc);
-        const tZ = Math.round((mY - cY) / sc);
+        const rawX = (mX - cX) / sc;
+        const rawZ = (mY - cY) / sc;
+        const tX = snapToGridRef.current ? Math.round(rawX / 10) * 10 : Math.round(rawX);
+        const tZ = snapToGridRef.current ? Math.round(rawZ / 10) * 10 : Math.round(rawZ);
         updateWaypoint(draggingNodeRef.current, { x: tX, z: tZ });
       };
       const onWinUp = () => {
@@ -611,8 +774,10 @@ export function TrackStudioModal({
       const centerX = canvas.width * 0.5 + pan.x;
       const centerY = canvas.height * 0.5 + pan.y;
       const scale = zoom * 1.35;
-      const trackX = Math.round((mouseX - centerX) / scale);
-      const trackZ = Math.round((mouseY - centerY) / scale);
+      const rawX = (mouseX - centerX) / scale;
+      const rawZ = (mouseY - centerY) / scale;
+      const trackX = snapToGridRef.current ? Math.round(rawX / 10) * 10 : Math.round(rawX);
+      const trackZ = snapToGridRef.current ? Math.round(rawZ / 10) * 10 : Math.round(rawZ);
       updateWaypoint(idx, { x: trackX, z: trackZ });
       setCursor2d('grabbing');
       return;
@@ -1362,10 +1527,80 @@ export function TrackStudioModal({
                 -
               </button>
               <span className="text-slate-500 font-mono">{Math.round(zoom * 100)}%</span>
-              <span aria-hidden="true" className="text-slate-600 hidden md:inline">|</span>
-              <span className="text-slate-400 hidden md:inline">
-                Left-Drag Nodes · Shift+Click Insert · Right-Drag Pan · Scroll Zoom
-              </span>
+              <span aria-hidden="true" className="text-slate-600">|</span>
+
+              {/* Studio 2.0 CAD Tools */}
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={undoStack.length === 0}
+                title="Undo (Ctrl+Z)"
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-35 text-slate-200 cursor-pointer"
+              >
+                ↶ Undo
+              </button>
+              <button
+                type="button"
+                onClick={handleRedo}
+                disabled={redoStack.length === 0}
+                title="Redo (Ctrl+Y)"
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-35 text-slate-200 cursor-pointer"
+              >
+                ↷ Redo
+              </button>
+              <button
+                type="button"
+                onClick={() => setSnapToGrid((s) => !s)}
+                className={`px-2 py-0.5 rounded cursor-pointer font-semibold transition-colors ${
+                  snapToGrid ? 'bg-amber-500 text-black' : 'bg-white/10 hover:bg-white/20 text-slate-200'
+                }`}
+              >
+                Snap 10m
+              </button>
+              <button
+                type="button"
+                onClick={handleSmoothAll}
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 cursor-pointer"
+              >
+                Smooth All
+              </button>
+
+              <input
+                ref={underlayFileInputRef}
+                type="file"
+                accept="image/*,.svg"
+                className="hidden"
+                onChange={(e) => handleUnderlayUpload(e.target.files?.[0] ?? null)}
+              />
+              <button
+                type="button"
+                onClick={() => underlayFileInputRef.current?.click()}
+                className="px-2 py-0.5 rounded bg-purple-600/30 hover:bg-purple-600/50 border border-purple-400/30 text-purple-200 cursor-pointer"
+                title="Trace over an SVG or real-world satellite circuit image"
+              >
+                {underlayName ? 'Change Trace' : '+ Trace Image'}
+              </button>
+              {underlayName && (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={0.85}
+                    step={0.05}
+                    value={underlayOpacity}
+                    onChange={(e) => setUnderlayOpacity(parseFloat(e.target.value))}
+                    className="w-16 accent-purple-400 cursor-pointer"
+                    title="Trace underlay opacity"
+                  />
+                  <button
+                    type="button"
+                    onClick={clearUnderlay}
+                    className="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/40 text-rose-200 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1384,32 +1619,104 @@ export function TrackStudioModal({
             className="w-full h-full flex-1 touch-none"
           />
 
+          {/* Interactive 2D Elevation & Banking Profile Strip Chart */}
+          <div className="h-16 px-4 py-1.5 bg-[#0a0e16] border-t border-white/10 shrink-0 flex items-center gap-3">
+            <div className="text-[10px] font-mono text-slate-400 leading-tight shrink-0 w-24">
+              <div className="text-purple-300 font-bold">ELEVATION</div>
+              <div className="text-amber-300 font-bold">BANKING</div>
+              <div className={physicsValidation.steepGradeWarning ? 'text-rose-400 font-bold' : 'text-slate-500'}>
+                Max {physicsValidation.maxGradePct}%
+              </div>
+            </div>
+            <svg
+              viewBox="0 0 400 44"
+              preserveAspectRatio="none"
+              className="flex-1 h-full rounded bg-black/40 border border-white/10 overflow-visible"
+            >
+              {/* Baseline */}
+              <line x1="0" y1="38" x2="400" y2="38" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
+              {/* Elevation Polyline */}
+              <polyline
+                fill="none"
+                stroke="#c084fc"
+                strokeWidth="2"
+                points={trackSpec.waypoints
+                  .map((w, i) => {
+                    const x = (i / Math.max(1, trackSpec.waypoints.length - 1)) * 392 + 4;
+                    const y = 38 - (Math.max(0, Math.min(24, w.y ?? 0)) / 24) * 32;
+                    return `${x},${y}`;
+                  })
+                  .join(' ')}
+              />
+              {/* Banking Bars + Clickable Node Markers */}
+              {trackSpec.waypoints.map((w, i) => {
+                const x = (i / Math.max(1, trackSpec.waypoints.length - 1)) * 392 + 4;
+                const y = 38 - (Math.max(0, Math.min(24, w.y ?? 0)) / 24) * 32;
+                const bankH = (Math.abs(w.banking ?? 0) / 20) * 14;
+                const selected = i === selectedNodeIndex;
+                return (
+                  <g
+                    key={i}
+                    onClick={() => setSelectedNodeIndex(i)}
+                    className="cursor-pointer"
+                  >
+                    {bankH > 0.5 && (
+                      <rect
+                        x={x - 2}
+                        y={38 - bankH}
+                        width={4}
+                        height={bankH}
+                        fill={(w.banking ?? 0) >= 0 ? 'rgba(251,191,36,0.55)' : 'rgba(244,63,94,0.55)'}
+                      />
+                    )}
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={selected ? 4.5 : 2.6}
+                      fill={selected ? '#38bdf8' : '#e9d5ff'}
+                      stroke={selected ? '#ffffff' : 'none'}
+                      strokeWidth={1.2}
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
           {/* Bottom Telemetry Bar */}
-          <div className="h-11 px-4 bg-[#0d121a] border-t border-white/10 flex items-center justify-between text-xs shrink-0 font-telemetry">
-            <div className="flex items-center gap-4 text-slate-300">
+          <div className="min-h-11 py-1.5 px-4 bg-[#0d121a] border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0 font-telemetry">
+            <div className="flex flex-wrap items-center gap-3 text-slate-300">
               <div>
-                <span className="text-slate-500 uppercase mr-1">Length:</span>
+                <span className="text-slate-500 uppercase mr-1">Len:</span>
                 <span className="text-white font-bold">{analysis.totalLengthMeters}m</span>
               </div>
               <div>
-                <span className="text-slate-500 uppercase mr-1">Est. Lap:</span>
-                <span className="text-emerald-400 font-bold">{analysis.estimatedLapSeconds}s</span>
-                <span className="text-slate-500 text-[10px] ml-1">(Target: 35–55s)</span>
+                <span className="text-slate-500 uppercase mr-1">Est Lap:</span>
+                <span className="text-sky-300 font-bold">F1 ~{physicsValidation.estF1Sec}s</span>
+                <span className="text-slate-500 mx-1">·</span>
+                <span className="text-amber-300 font-bold">LMP2 ~{physicsValidation.estLmp2Sec}s</span>
+                <span className="text-slate-500 mx-1">·</span>
+                <span className="text-emerald-300 font-bold">GT3 ~{physicsValidation.estGt3Sec}s</span>
               </div>
               <div>
                 <span className="text-slate-500 uppercase mr-1">Corners:</span>
                 <span className="text-slate-200 font-semibold">{analysis.cornerCount}</span>
               </div>
               <div>
-                <span className="text-slate-500 uppercase mr-1">Elevation:</span>
+                <span className="text-slate-500 uppercase mr-1">Elev:</span>
                 <span className="text-purple-300 font-semibold">
-                  {analysis.elevationRange.min}m – {analysis.elevationRange.max}m
+                  {analysis.elevationRange.min}–{analysis.elevationRange.max}m
                 </span>
               </div>
             </div>
 
             {/* Validation Badges */}
             <div className="flex items-center gap-2">
+              {physicsValidation.steepGradeWarning && (
+                <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold">
+                  ⚠ Steep Grade ({physicsValidation.maxGradePct}% &gt; 14%)
+                </span>
+              )}
               {analysis.isValid ? (
                 <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold flex items-center gap-1">
                   ✓ Valid Circuit
@@ -1600,6 +1907,54 @@ export function TrackStudioModal({
                   </div>
                 </div>
 
+                {/* Studio 2.0 Per-Node Scenery Prop, Runoff & DRS Zone */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">Trackside Prop</label>
+                    <select
+                      value={selectedWp.sceneryProp ?? 'none'}
+                      onChange={(e) =>
+                        updateWaypoint(selectedNodeIndex, {
+                          sceneryProp: e.target.value as TrackWaypoint['sceneryProp'],
+                        })
+                      }
+                      className="w-full px-2 py-1 rounded bg-black/40 border border-white/15 text-slate-200 text-xs outline-none"
+                    >
+                      <option value="none">Auto / None</option>
+                      <option value="grandstand">Grandstand</option>
+                      <option value="trees">Tree Grove</option>
+                      <option value="bridge">Sponsor Bridge</option>
+                      <option value="tunnel">Tunnel Portal</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">Runoff Surface</label>
+                    <select
+                      value={selectedWp.runoff ?? 'grass'}
+                      onChange={(e) =>
+                        updateWaypoint(selectedNodeIndex, {
+                          runoff: e.target.value as TrackWaypoint['runoff'],
+                        })
+                      }
+                      className="w-full px-2 py-1 rounded bg-black/40 border border-white/15 text-slate-200 text-xs outline-none"
+                    >
+                      <option value="grass">Turf / Grass</option>
+                      <option value="asphalt">Asphalt Apron</option>
+                      <option value="gravel">Gravel Trap</option>
+                    </select>
+                  </div>
+                </div>
+
+                <label className="flex items-center justify-between px-2.5 py-1.5 rounded bg-black/30 border border-white/10 cursor-pointer">
+                  <span className="text-slate-200 font-medium">DRS / Aero Activation Zone</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selectedWp.drsZone)}
+                    onChange={(e) => updateWaypoint(selectedNodeIndex, { drsZone: e.target.checked })}
+                    className="accent-emerald-400 w-4 h-4 cursor-pointer"
+                  />
+                </label>
+
                 {/* Set Start/Finish straight */}
                 <button
                   type="button"
@@ -1701,6 +2056,45 @@ export function TrackStudioModal({
                       />
                     ))}
                   </div>
+                </div>
+              </div>
+
+              {/* Sector 1 / Sector 2 Split Points */}
+              <div className="pt-2 border-t border-white/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Sector Split Points</span>
+                  <span className="font-mono text-[11px] text-sky-300">
+                    S1 {Math.round((trackSpec.sectorSplits?.[0] ?? 0.33) * 100)}% · S2{' '}
+                    {Math.round((trackSpec.sectorSplits?.[1] ?? 0.67) * 100)}%
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="range"
+                    min={0.15}
+                    max={0.5}
+                    step={0.01}
+                    value={trackSpec.sectorSplits?.[0] ?? 0.33}
+                    onChange={(e) => {
+                      const s1 = parseFloat(e.target.value);
+                      const s2 = Math.max(s1 + 0.15, trackSpec.sectorSplits?.[1] ?? 0.67);
+                      setTrackSpec((prev) => ({ ...prev, sectorSplits: [s1, Math.min(0.88, s2)] }));
+                    }}
+                    className="w-full accent-sky-400 cursor-pointer"
+                  />
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={0.88}
+                    step={0.01}
+                    value={trackSpec.sectorSplits?.[1] ?? 0.67}
+                    onChange={(e) => {
+                      const s2 = parseFloat(e.target.value);
+                      const s1 = Math.min(s2 - 0.15, trackSpec.sectorSplits?.[0] ?? 0.33);
+                      setTrackSpec((prev) => ({ ...prev, sectorSplits: [Math.max(0.15, s1), s2] }));
+                    }}
+                    className="w-full accent-emerald-400 cursor-pointer"
+                  />
                 </div>
               </div>
             </div>

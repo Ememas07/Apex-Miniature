@@ -132,7 +132,7 @@
 
 ---
 
-## 5. Graphics, Visual Polish, VFX & Track Atmosphere
+## 5. Graphics, Visual Polish, VFX & Track Atmosphere *(✅ Implemented)*
 
 ### 5.1 Die-Cast Miniature Identity & Visual Signatures
 - **Tilt-Shift Miniature Depth-of-Field Mode (Optional Toggle):** Reinforce the *"Apex Miniature"* brand with an optional subtle tilt-shift blur shader (top & bottom frame bokeh) that makes cars and circuits look like hyper-detailed 1:43 scale die-cast models on a tabletop diorama!
@@ -171,7 +171,7 @@
 
 ---
 
-## 6. Camera System, Replay Suite & Photo Mode
+## 6. Camera System, Replay Suite & Photo Mode *(✅ Implemented)*
 
 ### 6.1 Expanded Camera Views
 Currently `CameraMode` supports `'orbit' | 'hood'` (plus `spectate` / `freecam` in AI Race). Add:
@@ -196,7 +196,7 @@ Currently `CameraMode` supports `'orbit' | 'hood'` (plus `spectate` / `freecam` 
 
 ---
 
-## 7. Audio Engine, Spatial Soundscape & Race Radio
+## 7. Audio Engine, Spatial Soundscape & Race Radio *(✅ Implemented)*
 
 ### 7.1 Multi-Car 3D Spatial Audio
 - **Proximity Rival Engine Audio:** Currently `MotorsportAudioEngine` synthesizes only the single focus car (`RaceViewport.tsx:1504,1717`). Add a lightweight 3–5 voice pooled spatial synth (using Web Audio `PannerNode` with `HRTF` or equal-power stereo panning + Doppler pitch shift) for the nearest surrounding cars — hearing a V10 F1 or Cadillac V8 Hypercar scream past your right ear in multi-class traffic will transform immersion!
@@ -220,7 +220,7 @@ Currently `CameraMode` supports `'orbit' | 'hood'` (plus `spectate` / `freecam` 
 
 ---
 
-## 8. HUD, Telemetry, Track Awareness & Race Feedback
+## 8. HUD, Telemetry, Track Awareness & Race Feedback *(✅ Implemented)*
 
 ### 8.1 Situational Awareness & Wheel-to-Wheel Aids
 - [x] **Proximity Car Radar (iRacing / ACC Style):** Compact circular radar near bottom-center that appears automatically whenever another car is within 18m, showing exact relative lateral/longitudinal bounding boxes, class colors, and red danger ring when side-by-side.
@@ -247,7 +247,7 @@ Currently `CameraMode` supports `'orbit' | 'hood'` (plus `spectate` / `freecam` 
 
 ---
 
-## 9. Controls, Driving Assists, Input & Settings
+## 9. Controls, Driving Assists, Input & Settings *(✅ Implemented)*
 
 ### 9.1 Driving Assists & Transmission Control
 - **Expose Manual / Sequential Gearbox in UI & Settings:** `CarSimState.transmissionMode` (`'auto' | 'manual'`) and `ControlInput.shiftUp` / `shiftDown` already exist in `physics.ts`! Add a clear toggle in Race Setup / Settings (`Automatic`, `Semi-Auto`, `Full Manual`) with customizable upshift/downshift keys & paddle triggers (`LB/RB`, `Q/E`, `Shift/Ctrl`) plus an audible/visual shift-beep indicator.
@@ -282,7 +282,7 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 
 ---
 
-## 10. Multiplayer, Netcode & Competitive Online Play
+## 10. Multiplayer, Netcode & Competitive Online Play *(✅ Implemented)*
 
 ### 10.1 Netcode, Synchronization & Collision Fairness
 - **Timestamped Snapshot Interpolation & Dead-Reckoning:** Upgrade `PeerTelemetryPacket` (`src/game/multiplayer.ts`) to include `timestamp`, `vx`, `vz`, `yawRate`, `pitch`, `roll`, `gear`, `rpmNormalized`, `brake`, `compound`, and `pitState`. Buffer incoming packets (~80–100ms interpolation buffer) using Hermite/cubic spline interpolation so remote peers glide smoothly with zero stutter even on jittery Wi-Fi!
@@ -303,7 +303,7 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 
 ---
 
-## 11. Creative Studios (Track, Livery & Sound)
+## 11. Creative Studios (Track, Livery & Sound) *(✅ Implemented)*
 
 ### 11.1 Track Studio (`TrackStudioModal.tsx` & `customTracks.ts`)
 - **Undo / Redo History Stack & Keyboard Shortcuts:** Essential for spline editing (`Ctrl+Z` / `Ctrl+Y`, `Delete` node, snap-to-grid, smooth-all-nodes).
@@ -327,7 +327,7 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 
 ---
 
-## 12. UI/UX, Onboarding & Quality of Life
+## 12. UI/UX, Onboarding & Quality of Life *(✅ Implemented)*
 
 ### 12.1 First-Time User Experience (FTUE) & Discoverability
 - **Interactive Controls Card & Pre-Race Briefing:** Show a compact, dismissible control overlay (auto-adapting to Keyboard / Xbox / PlayStation / Touch) on the grid before the first race, plus a brief explanation of the selected car's `ClassSpecialType` (e.g., *"Hold SPACE for Active Aero"* vs. *"Tap SPACE for ERS Overtake"*).
@@ -342,7 +342,7 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 
 ---
 
-## 13. Performance, Asset Pipeline & Codebase Architecture
+## 13. Performance, Asset Pipeline & Codebase Architecture *(✅ Implemented)*
 
 ### 13.1 Rendering & Runtime Performance
 - **3D Model Pipeline Optimization (`objCarLoader.ts` & `carBuilder.ts`):**
@@ -396,5 +396,5 @@ Currently `SettingsModal.tsx` only covers controller toggle, touch controls, and
 ---
 
 ## 15. Backlog & Capstone TODO
-- [ ] **"Get Mecachrome'd" (Player Engine Reliability Event):** Add a random 5-second sudden engine failure that only affects the player with a 1/1000 chance (temporary power cut / smoke / recovery after 5 seconds). *(Backlog — not yet implemented.)*
+- [x] **"Get Mecachrome'd" (Player Engine Reliability Event):** Added a random 5-second sudden engine power cut (92% power loss, smoke plume, HUD warning banner & race engineer radio alert) that only affects the player with a 1/1000 per-second chance and automatically recovers after 5 seconds.
 - [ ] **Hand-Made (AI-Made) Custom 3D Car Models:** Build bespoke, handcrafted procedural/AI-authored 3D car meshes for flagship classes (F1, Hypercar/GTP, LMP2, GT3, GT4, Formula E, Supercars) with crisp proportions, aero detailing, clean wheel wells, cockpit halos/windscreens, and optimized triangle budgets — scheduled as the final milestone once all core gameplay, graphics, audio, and UI sections are complete.

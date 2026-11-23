@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { computeCameraFrame, DEFAULT_CHASE_CAMERA } from '../game/camera';
+import {
+  buildBroadcastCameraStations,
+  BroadcastCameraStation,
+  computeCameraFrame,
+  DEFAULT_CHASE_CAMERA,
+  selectBroadcastStation,
+} from '../game/camera';
 import { CAR_CLASSES, carHasHybridErs, CARS, getCarById, resolveCarSpecial } from '../game/cars';
 import { GamepadController } from '../game/gamepad';
-import { getGameSettings, subscribeGameSettings } from '../game/settings';
+import { getGameSettings, getSemanticPalette, subscribeGameSettings } from '../game/settings';
 import { blendAllDrivingInputs, touchInputStore } from '../game/touchControls';
 import { MultiplayerClient } from '../game/multiplayer';
 import { computeNeuralAIControl } from '../game/aiNeuralPolicy';
@@ -13,34 +19,46 @@ import {
   computeRoadSurfaceTilt,
   computeRollingFormationControl,
   computeStandings,
+  computeUpcomingCornerInfo,
   createCarSimState,
   getClassFuelCapacityLiters,
   getRollingFormationSpeedMs,
   requestOnTrackPitStop,
   resolveCarCollisions,
+  resolveClassDefaultTc,
   SPEED_KMH_FACTOR,
   stepCarPhysics,
+  tryStepMecachromeEvent,
 } from '../game/physics';
 import { compileTrack, getTrackById, sampleTrackAtT } from '../game/tracks';
 import {
   AiPaceOrder,
   AIPersonality,
+  BlindSpotStatus,
   CameraMode,
   CarClassId,
   ErsMode,
   GamePhase,
   HudSnapshot,
+  MfdPage,
+  PhotoFilterId,
   PitServiceAction,
   PitStrategy,
   ProximityCarIndicator,
   RaceConfig,
+  RaceRadioMessage,
   RaceStartType,
   RoomPeer,
   SpectatorCameraMode,
+  TcLevel,
   TireCompound,
 } from '../game/types';
 import { MotorsportAudioEngine } from './audioEngine';
 import { BuiltCarRig } from './carBuilder';
+import { RaceVfxManager } from './raceVfx';
+import { RacePostProcessor } from './postProcessing';
+import { RaceReplayRecorder, ReplayBookmark } from '../game/replay';
+import { RaceEngineerRadio } from '../game/raceRadio';
 import {
   CarNametagHandle,
   computeNametagDistanceStyle,
@@ -95,10 +113,54 @@ export interface SpectateControls {
 
 export interface InRaceTelemetryControls {
   cycleErsMode: () => void;
+  cycleTcLevel?: () => void;
   adjustBrakeBalance: (delta: number) => void;
+  triggerFlashback?: () => boolean;
+  setMfdPage?: (page: MfdPage) => void;
+  openPhotoMode?: () => void;
+  openReplay?: () => void;
   setAiPaceOrder: (carId: string, order: AiPaceOrder) => void;
   setAiErsMode: (carId: string, mode: ErsMode) => void;
   callAiOnTrackService: (carId: string, action: PitServiceAction, compound?: TireCompound) => boolean;
+}
+
+export interface PhotoModeState {
+  active: boolean;
+  fov: number;
+  rollDeg: number;
+  exposure: number;
+  contrast: number;
+  saturation: number;
+  tiltShift: boolean;
+  tiltShiftStrength: number;
+  filter: PhotoFilterId;
+  watermark: boolean;
+}
+
+export interface ReplayStateSnapshot {
+  active: boolean;
+  playing: boolean;
+  time: number;
+  duration: number;
+  speed: number;
+  focusCarId: string;
+  cameraMode: CameraMode;
+  cars: Array<{ id: string; name: string }>;
+  bookmarks: ReplayBookmark[];
+}
+
+export interface ReplayAndPhotoControls {
+  enterReplay: () => void;
+  exitReplay: () => void;
+  setReplayPlaying: (playing: boolean) => void;
+  setReplaySpeed: (speed: number) => void;
+  seekReplay: (timeSec: number) => void;
+  setReplayFocusCar: (carId: string) => void;
+  setReplayCamera: (mode: CameraMode) => void;
+  enterPhotoMode: () => void;
+  exitPhotoMode: () => void;
+  updatePhotoSettings: (patch: Partial<PhotoModeState>) => void;
+  capturePhoto: (withWatermark: boolean) => void;
 }
 
 interface RaceViewportProps {
@@ -121,6 +183,10 @@ interface RaceViewportProps {
   onPitHandlerReady?: (handler: (action: PitServiceAction, nextCompound?: TireCompound) => boolean) => void;
   onSpectateControlsReady?: (controls: SpectateControls) => void;
   onInRaceControlsReady?: (controls: InRaceTelemetryControls) => void;
+  onReplayStateChange?: (state: ReplayStateSnapshot) => void;
+  onPhotoStateChange?: (state: PhotoModeState) => void;
+  onReplayAndPhotoControlsReady?: (controls: ReplayAndPhotoControls) => void;
+  onCycleMfd?: () => void;
 }
 
 function detectSoftwareGl(): boolean {
@@ -332,16 +398,34 @@ export function RaceViewport(props: RaceViewportProps) {
     sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.camera.near = 20;
     sun.shadow.camera.far = 480;
-    sun.shadow.camera.left = -190;
-    sun.shadow.camera.right = 190;
-    sun.shadow.camera.top = 190;
-    sun.shadow.camera.bottom = -190;
+    sun.shadow.camera.left = -120;
+    sun.shadow.camera.right = 120;
+    sun.shadow.camera.top = 120;
+    sun.shadow.camera.bottom = -120;
     sun.shadow.bias = -0.0005;
     scene.add(sun);
+    scene.add(sun.target);
 
     const rim = new THREE.DirectionalLight(0x93c5fd, 0.65);
     rim.position.set(-140, 80, -120);
     scene.add(rim);
+
+    // VFX Manager (pooled smoke/spray/dust/sparks/skidmarks/backfire/3D racing line) & Post-Processing
+    const initSettings = getGameSettings();
+    const vfx = new RaceVfxManager(isSoftwareGl ? 'low' : initSettings.particleDensity);
+    scene.add(vfx.root);
+    const postProcessor = new RacePostProcessor(renderer, scene, camera, w, h, isSoftwareGl);
+    postProcessor.updateConfig({
+      bloomEnabled: !isSoftwareGl && initSettings.bloomEnabled,
+      tiltShiftEnabled: !isSoftwareGl && initSettings.tiltShiftEnabled,
+    });
+    const replayRecorder = new RaceReplayRecorder();
+    const raceRadio = new RaceEngineerRadio(() => audio.playRadioChirp());
+    raceRadio.configure({
+      verbosity: initSettings.engineerVerbosity,
+      volume: initSettings.uiRadioVolume,
+      muted: propsRef.current.muted,
+    });
 
     // Pooled InstancedMesh for Slipstream Airflow Trails & Rain
     const slipGeo = new THREE.BoxGeometry(0.08, 0.08, 1.4);
@@ -618,6 +702,44 @@ export function RaceViewport(props: RaceViewportProps) {
       attractTransitionAt: 0,
       elimination: createEliminationState(false, 30),
       raceDurationSeconds: 0,
+      // Section 5-10 state: VFX, Replay, Photo Mode, Time-of-Day, Radio, Broadcast Cams, Lap History & FPS
+      vfx,
+      postProcessor,
+      replayRecorder,
+      raceRadio,
+      broadcastStations: [] as BroadcastCameraStation[],
+      timeOfDayHours: 13.0,
+      timeScale: 1,
+      lightningFlash: 0,
+      fpsSmoothed: 60,
+      adaptiveDprLowFrames: 0,
+      lastRadioMessage: null as RaceRadioMessage | null,
+      lapPositionHistory: [] as Array<{ lap: number; position: number }>,
+      prevCarGears: new Map<string, number>(),
+      replay: {
+        active: false,
+        playing: true,
+        time: 0,
+        speed: 1,
+        focusCarId: 'player',
+        cameraMode: 'tv-broadcast' as CameraMode,
+      },
+      photo: {
+        active: false,
+        fov: 44,
+        rollDeg: 0,
+        exposure: 1.0,
+        contrast: 1.04,
+        saturation: 1.06,
+        tiltShift: true,
+        tiltShiftStrength: 0.45,
+        filter: 'none' as PhotoFilterId,
+        watermark: true,
+        camPos: new THREE.Vector3(),
+        camYaw: 0,
+        camPitch: -0.18,
+      },
+      lastReplayEmitAt: 0,
       timedFinalLapAnnounced: false,
       ghostLap: null as StoredGhostLap | null,
       ghostLabel: null as string | null,
@@ -700,9 +822,188 @@ export function RaceViewport(props: RaceViewportProps) {
       sim.audio.playBeep(500 + (next - 46) * 8, 0.04);
     };
 
+    const emitPhotoState = () => {
+      propsRef.current.onPhotoStateChange?.({
+        active: sim.photo.active,
+        fov: sim.photo.fov,
+        rollDeg: sim.photo.rollDeg,
+        exposure: sim.photo.exposure,
+        contrast: sim.photo.contrast,
+        saturation: sim.photo.saturation,
+        tiltShift: sim.photo.tiltShift,
+        tiltShiftStrength: sim.photo.tiltShiftStrength,
+        filter: sim.photo.filter,
+        watermark: sim.photo.watermark,
+      });
+    };
+
+    const emitReplayState = () => {
+      const dur = sim.replayRecorder.getDuration();
+      propsRef.current.onReplayStateChange?.({
+        active: sim.replay.active,
+        playing: sim.replay.playing,
+        time: Math.max(0, sim.replay.time - dur.start),
+        duration: Math.max(0.1, dur.end - dur.start),
+        speed: sim.replay.speed,
+        focusCarId: sim.replay.focusCarId,
+        cameraMode: sim.replay.cameraMode,
+        cars: sim.cars.map((c) => ({ id: c.id, name: c.name })),
+        bookmarks: sim.replayRecorder.getBookmarks().map((bm) => ({
+          ...bm,
+          time: Math.max(0, bm.time - dur.start),
+        })),
+      });
+    };
+
+    const enterPhotoMode = () => {
+      sim.photo.active = true;
+      sim.photo.camPos.copy(camera.position);
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      sim.photo.camYaw = Math.atan2(dir.x, dir.z);
+      sim.photo.camPitch = Math.asin(Math.max(-0.95, Math.min(0.95, dir.y)));
+      sim.postProcessor.updateConfig({
+        exposure: sim.photo.exposure,
+        contrast: sim.photo.contrast,
+        saturation: sim.photo.saturation,
+        tiltShiftEnabled: sim.photo.tiltShift,
+        tiltShiftStrength: sim.photo.tiltShiftStrength,
+        filter: sim.photo.filter,
+      });
+      emitPhotoState();
+    };
+
+    const exitPhotoMode = () => {
+      sim.photo.active = false;
+      const gs = getGameSettings();
+      sim.postProcessor.updateConfig({
+        exposure: 1.0,
+        contrast: 1.04,
+        saturation: 1.06,
+        tiltShiftEnabled: !isSoftwareGl && gs.tiltShiftEnabled,
+        tiltShiftStrength: 0.55,
+        filter: 'none',
+      });
+      emitPhotoState();
+    };
+
+    const enterReplayMode = () => {
+      if (!sim.replayRecorder.hasFrames()) return;
+      const dur = sim.replayRecorder.getDuration();
+      sim.replay.active = true;
+      sim.replay.playing = true;
+      sim.replay.time = dur.start;
+      sim.replay.speed = 1;
+      sim.replay.focusCarId = sim.cars.find((c) => c.isPlayer)?.id ?? sim.cars[0]?.id ?? 'player';
+      emitReplayState();
+    };
+
+    const exitReplayMode = () => {
+      sim.replay.active = false;
+      emitReplayState();
+    };
+
+    const triggerPlayerFlashback = (): boolean => {
+      const cfg = propsRef.current.raceConfig;
+      if (propsRef.current.roomPeers.length > 1 || cfg.sessionMode === 'ai-race') return false;
+      if (!sim.replayRecorder.canFlashback()) return false;
+      const rewoundTo = sim.replayRecorder.applyFlashback(sim.cars, 5.5);
+      if (rewoundTo === null) return false;
+      sim.raceElapsed = rewoundTo;
+      sim.raceControl.message = 'FLASHBACK REWIND (-5.5s)';
+      sim.raceControl.messageTimer = 2.0;
+      sim.audio.playBeep(620, 0.08);
+      return true;
+    };
+
+    const cyclePlayerTcLevel = () => {
+      const pCar = sim.cars.find((c) => c.isPlayer);
+      if (!pCar) return;
+      const next = (((pCar.tcLevel ?? 0) + 1) % 4) as TcLevel;
+      pCar.tcLevel = next;
+      sim.raceControl.message = `TRACTION CONTROL: ${next === 0 ? 'OFF' : `LEVEL ${next}`}`;
+      sim.raceControl.messageTimer = 1.8;
+      sim.audio.playBeep(520 + next * 70, 0.05);
+    };
+
+    const replayAndPhotoControls: ReplayAndPhotoControls = {
+      enterReplay: enterReplayMode,
+      exitReplay: exitReplayMode,
+      setReplayPlaying: (playing: boolean) => {
+        sim.replay.playing = playing;
+        emitReplayState();
+      },
+      setReplaySpeed: (speed: number) => {
+        sim.replay.speed = speed;
+        emitReplayState();
+      },
+      seekReplay: (relTimeSec: number) => {
+        const dur = sim.replayRecorder.getDuration();
+        sim.replay.time = Math.max(dur.start, Math.min(dur.end, dur.start + relTimeSec));
+        emitReplayState();
+      },
+      setReplayFocusCar: (carId: string) => {
+        sim.replay.focusCarId = carId;
+        emitReplayState();
+      },
+      setReplayCamera: (mode: CameraMode) => {
+        sim.replay.cameraMode = mode;
+        emitReplayState();
+      },
+      enterPhotoMode,
+      exitPhotoMode,
+      updatePhotoSettings: (patch: Partial<PhotoModeState>) => {
+        Object.assign(sim.photo, patch);
+        sim.postProcessor.updateConfig({
+          exposure: sim.photo.exposure,
+          contrast: sim.photo.contrast,
+          saturation: sim.photo.saturation,
+          tiltShiftEnabled: sim.photo.tiltShift,
+          tiltShiftStrength: sim.photo.tiltShiftStrength,
+          filter: sim.photo.filter,
+        });
+        emitPhotoState();
+      },
+      capturePhoto: (withWatermark: boolean) => {
+        try {
+          sim.postProcessor.render();
+          const srcCanvas = renderer.domElement;
+          const out = document.createElement('canvas');
+          out.width = srcCanvas.width;
+          out.height = srcCanvas.height;
+          const ctx2d = out.getContext('2d');
+          if (!ctx2d) return;
+          ctx2d.drawImage(srcCanvas, 0, 0);
+          if (withWatermark) {
+            ctx2d.save();
+            ctx2d.font = '900 22px "Oxanium", system-ui, sans-serif';
+            ctx2d.fillStyle = 'rgba(255,255,255,0.85)';
+            ctx2d.shadowColor = 'rgba(0,0,0,0.8)';
+            ctx2d.shadowBlur = 8;
+            ctx2d.textAlign = 'right';
+            ctx2d.fillText('APEX MINIATURE', out.width - 28, out.height - 28);
+            ctx2d.restore();
+          }
+          const url = out.toDataURL('image/png');
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `apex-miniature-photo-${Date.now()}.png`;
+          a.click();
+          sim.audio.playBeep(920, 0.09);
+        } catch {
+          // ignore canvas capture errors
+        }
+      },
+    };
+    propsRef.current.onReplayAndPhotoControlsReady?.(replayAndPhotoControls);
+
     propsRef.current.onInRaceControlsReady?.({
       cycleErsMode: cyclePlayerErsMode,
+      cycleTcLevel: cyclePlayerTcLevel,
       adjustBrakeBalance: adjustPlayerBrakeBalance,
+      triggerFlashback: triggerPlayerFlashback,
+      openPhotoMode: enterPhotoMode,
+      openReplay: enterReplayMode,
       setAiPaceOrder: (carId: string, order: AiPaceOrder) => {
         const target = sim.cars.find((c) => c.id === carId && !c.isPlayer);
         if (!target) return;
@@ -808,6 +1109,44 @@ export function RaceViewport(props: RaceViewportProps) {
       });
       sim.raceControl = createRaceControlState();
       sim.launchStatus = 'none';
+      sim.broadcastStations = buildBroadcastCameraStations(compiled.samples, compiled.spec.trackWidth);
+      sim.replayRecorder.reset();
+      sim.raceRadio.reset();
+      sim.lapPositionHistory = [];
+      sim.prevCarGears.clear();
+      sim.lastRadioMessage = null;
+      sim.replay.active = false;
+      sim.photo.active = false;
+      emitReplayState();
+      emitPhotoState();
+
+      // Sync Time-of-Day preset & 3D Dynamic Racing Line
+      const todPreset = isTitle ? 'midday' : (cfg.timeOfDay ?? (compiled.spec.scenery === 'street-night' ? 'night' : 'midday'));
+      sim.timeOfDayHours =
+        todPreset === 'dawn'
+          ? 6.2
+          : todPreset === 'golden-hour'
+          ? 17.6
+          : todPreset === 'dusk'
+          ? 19.3
+          : todPreset === 'night'
+          ? 22.5
+          : todPreset === 'dynamic-24h'
+          ? 14.0
+          : 13.0;
+      sim.timeScale = todPreset === 'dynamic-24h' ? Math.max(10, cfg.timeScale ?? 30) : Math.max(1, cfg.timeScale ?? 1);
+      const gsRebuild = getGameSettings();
+      const rebuildPal = getSemanticPalette(gsRebuild.colorblindMode);
+      sim.vfx.syncRacingLine(
+        compiled,
+        isTitle ? 'off' : gsRebuild.racingLineMode,
+        sim.trackWetness,
+        {
+          racingLineFast: parseInt(rebuildPal.good.replace('#', ''), 16),
+          racingLineCoast: parseInt(rebuildPal.warn.replace('#', ''), 16),
+          racingLineBrake: parseInt(rebuildPal.danger.replace('#', ''), 16),
+        },
+      );
       sim.launchStatusTimer = 0;
       for (let i = 0; i < debrisPool.length; i++) debrisPool[i].active = false;
       for (let i = 0; i < smokePool.length; i++) smokePool[i].active = false;
@@ -975,6 +1314,8 @@ export function RaceViewport(props: RaceViewportProps) {
             damageLevel: cfg.damageLevel ?? 'light',
             absLevel: cfg.absLevel ?? 'low',
             transmissionMode: getGameSettings().transmissionMode,
+            tcLevel: resolveClassDefaultTc(playerSpec.classId, getGameSettings().tcDefault),
+            stabilityControl: getGameSettings().stabilityControl,
           });
           if (cfg.startingFuelOverride !== undefined && Number.isFinite(cfg.startingFuelOverride)) {
             pCar.fuel = Math.max(5, Math.min(100, cfg.startingFuelOverride));
@@ -1366,13 +1707,36 @@ export function RaceViewport(props: RaceViewportProps) {
         propsRef.current.onToggleMute();
         return;
       }
-      if (code === 'F9' && !e.repeat) {
+      if (code === kb.photoMode && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying' || curPhase === 'paused')) {
+        e.preventDefault();
+        if (sim.photo.active) exitPhotoMode();
+        else enterPhotoMode();
+        return;
+      }
+      if (code === 'F8' && !e.repeat) {
         e.preventDefault();
         const exported = telemetryRecorder.exportManual(true);
         if (exported) sim.audio.playBeep(880, 0.08);
         return;
       }
-      if (activeSettings.transmissionMode === 'manual' && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
+      if (code === kb.flashback && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying') && propsRef.current.raceConfig.sessionMode !== 'ai-race') {
+        triggerPlayerFlashback();
+        return;
+      }
+      if (code === kb.tcToggle && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
+        cyclePlayerTcLevel();
+        return;
+      }
+      if (code === kb.mfdCycle && !e.repeat && (curPhase === 'playing' || curPhase === 'qualifying')) {
+        e.preventDefault();
+        propsRef.current.onCycleMfd?.();
+        return;
+      }
+      if (
+        (activeSettings.transmissionMode === 'manual' || activeSettings.transmissionMode === 'semi-auto') &&
+        !e.repeat &&
+        (curPhase === 'playing' || curPhase === 'qualifying')
+      ) {
         if (code === kb.shiftUp) {
           sim.shiftUpJustPressed = true;
         } else if (code === kb.shiftDown) {
@@ -1396,12 +1760,61 @@ export function RaceViewport(props: RaceViewportProps) {
 
     const gamepadController = new GamepadController();
     gamepadController.setEnabled(activeSettings.controllerEnabled);
+    gamepadController.updateConfig({
+      steerDeadzone: activeSettings.steerDeadzone,
+      steerLinearity: activeSettings.steerLinearity,
+      steerSensitivity: activeSettings.steerSensitivity,
+      wheelLockDegrees: activeSettings.wheelLockDegrees,
+      rumbleIntensity: activeSettings.rumbleIntensity,
+      splitPedalAxes: activeSettings.splitPedalAxes,
+    });
+    sim.audio.applyMixerSettings(activeSettings);
+
     const unsubscribeGameSettings = subscribeGameSettings((next) => {
       activeSettings = next;
       gamepadController.setEnabled(next.controllerEnabled);
+      gamepadController.updateConfig({
+        steerDeadzone: next.steerDeadzone,
+        steerLinearity: next.steerLinearity,
+        steerSensitivity: next.steerSensitivity,
+        wheelLockDegrees: next.wheelLockDegrees,
+        rumbleIntensity: next.rumbleIntensity,
+        splitPedalAxes: next.splitPedalAxes,
+      });
+      sim.audio.applyMixerSettings(next);
+      sim.vfx.setDensity(isSoftwareGl ? 'low' : next.particleDensity);
+      const nextPal = getSemanticPalette(next.colorblindMode);
+      sim.vfx.syncRacingLine(
+        sim.compiledTrack,
+        propsRef.current.phase === 'title' ? 'off' : next.racingLineMode,
+        sim.trackWetness,
+        {
+          racingLineFast: parseInt(nextPal.good.replace('#', ''), 16),
+          racingLineCoast: parseInt(nextPal.warn.replace('#', ''), 16),
+          racingLineBrake: parseInt(nextPal.danger.replace('#', ''), 16),
+        },
+      );
+      if (!sim.photo.active) {
+        sim.postProcessor.updateConfig({
+          bloomEnabled: !isSoftwareGl && next.bloomEnabled,
+          tiltShiftEnabled: !isSoftwareGl && next.tiltShiftEnabled,
+        });
+      }
+      sim.raceRadio.configure({
+        verbosity: next.engineerVerbosity,
+        volume: next.uiRadioVolume,
+        muted: propsRef.current.muted,
+      });
+      if (!isSoftwareGl) {
+        const dprCap = Math.min(window.devicePixelRatio, next.renderScale);
+        renderer.setPixelRatio(dprCap);
+        sun.castShadow = next.shadowQuality !== 'off';
+      }
       const pCar = sim.cars.find((c) => c.isPlayer);
       if (pCar) {
         pCar.transmissionMode = next.transmissionMode;
+        pCar.tcLevel = resolveClassDefaultTc(pCar.carSpec.classId, next.tcDefault);
+        pCar.stabilityControl = next.stabilityControl;
       }
     });
     gamepadController.attach(window);
@@ -1450,7 +1863,10 @@ export function RaceViewport(props: RaceViewportProps) {
         sim.isDraggingOrbit = false;
         return;
       }
-      if (isFreecamMode()) {
+      if (sim.photo.active) {
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+      } else if (isFreecamMode()) {
         sim.isDraggingFreecam = true;
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
@@ -1480,6 +1896,15 @@ export function RaceViewport(props: RaceViewportProps) {
           }
         }
         lastPinchDist = dist;
+        return;
+      }
+      if (sim.photo.active && activeCanvasPointers.size === 1) {
+        const dx = e.clientX - lastMouseX;
+        const dy = e.clientY - lastMouseY;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        sim.photo.camYaw -= dx * 0.0055;
+        sim.photo.camPitch = Math.max(-1.42, Math.min(1.42, sim.photo.camPitch - dy * 0.0055));
         return;
       }
       if (sim.isDraggingFreecam && isFreecamMode()) {
@@ -1597,7 +2022,8 @@ export function RaceViewport(props: RaceViewportProps) {
       camera.aspect = rw / rh;
       camera.updateProjectionMatrix();
       renderer.setSize(rw, rh, false);
-      renderer.render(scene, camera);
+      sim.postProcessor.setSize(rw, rh);
+      sim.postProcessor.render();
     };
     window.addEventListener('resize', onResize);
     const ro = new ResizeObserver(onResize);
@@ -1719,7 +2145,7 @@ export function RaceViewport(props: RaceViewportProps) {
           camera.lookAt(_camCurrLook);
         }
         sim.audio.updateEngine(0, 0, 'v8-hybrid', false);
-      } else if (activePhase === 'playing' || activePhase === 'qualifying') {
+      } else if ((activePhase === 'playing' || activePhase === 'qualifying') && !sim.photo.active && !sim.replay.active) {
         const isQuali = activePhase === 'qualifying';
         const isPractice = activePhase === 'playing' && p.raceConfig.sessionMode === 'practice';
         if (sim.loadingAssets) {
@@ -2031,25 +2457,48 @@ export function RaceViewport(props: RaceViewportProps) {
                     sim.playerTopSpeedKmh,
                   );
                 }
+                const curStandings = computeStandings(sim.cars, sim.compiledTrack);
+                const pStanding = curStandings.find((s) => s.id === c.id);
+                if (pStanding) {
+                  sim.lapPositionHistory.push({ lap: Math.max(1, c.lap - 1), position: pStanding.position });
+                }
+                if (pbRes.isNewBest) {
+                  sim.replayRecorder.addBookmark({
+                    time: sim.raceElapsed,
+                    type: 'fastest-lap',
+                    label: `Fastest Lap ${c.lastLapTime.toFixed(2)}s`,
+                  });
+                }
                 sim.currentLapGhostSamples = [];
                 sim.lastGhostSampleTime = -1;
               } else if (c.currentLapTime < sim.lastGhostSampleTime - 1) {
                 sim.currentLapGhostSamples = [];
                 sim.lastGhostSampleTime = -1;
               }
+
+              // Rare "Getting Mecachromed" mechanical failure easter egg (player-only)
+              if (tryStepMecachromeEvent(c, dt)) {
+                sim.raceControl.message = 'ENGINE FAILURE! NO POWER — GETTING MECACHROMED!';
+                sim.raceControl.messageTimer = 4.5;
+                sim.audio.playImpact(0.75, 'car');
+                gamepadController.triggerRumble(0.85, 0.7, 360);
+              }
             } else if (c.isHumanPeer) {
-              const pkt = p.mpClient.peerTelemetry.get(c.id);
-              if (pkt) {
-                c.x += (pkt.x - c.x) * Math.min(1, dt * 15);
-                c.y += (pkt.y - c.y) * Math.min(1, dt * 15);
-                c.z += (pkt.z - c.z) * Math.min(1, dt * 15);
-                c.heading = pkt.heading;
-                c.speed = pkt.speed;
-                c.steerAngle = pkt.steerAngle;
-                c.lap = pkt.lap;
-                c.trackT = pkt.trackT;
-                c.totalDistance = pkt.totalDistance;
-                c.specialActive = pkt.specialActive;
+              const interp = p.mpClient.getInterpolatedPeerState(c.id);
+              if (interp) {
+                c.x = interp.x;
+                c.y = interp.y;
+                c.z = interp.z;
+                c.heading = interp.heading;
+                c.speed = interp.speed;
+                c.steerAngle = interp.steerAngle;
+                c.lap = interp.lap;
+                c.trackT = interp.trackT;
+                c.totalDistance = interp.totalDistance;
+                c.specialActive = interp.specialActive;
+                if (interp.isGhosted) {
+                  c.spawnGhostTimer = Math.max(c.spawnGhostTimer ?? 0, 0.25);
+                }
               }
             } else {
               const localW = sampleLocalTrackSurfaceWeather(
@@ -2453,6 +2902,12 @@ export function RaceViewport(props: RaceViewportProps) {
               }
             }
             const focusRig = sim.carRigs.get(focusCar.id);
+            const isLookingBack =
+              keysPressed.has(activeSettings.keybinds.lookBack) || gp.lookBackPressed;
+            const broadcastStation =
+              mode === 'tv-broadcast'
+                ? selectBroadcastStation(sim.broadcastStations, focusCar.x, focusCar.z)
+                : undefined;
             const camFrame = computeCameraFrame(
               mode,
               {
@@ -2469,6 +2924,15 @@ export function RaceViewport(props: RaceViewportProps) {
               pPitch,
               pRoll,
               lookOffset,
+              {
+                fovOffset: activeSettings.fovOffset,
+                chaseDistanceOffset: activeSettings.chaseDistanceOffset,
+                chaseHeightOffset: activeSettings.chaseHeightOffset,
+                lookToApex: activeSettings.lookToApex,
+                steerAngle: focusCar.steerAngle,
+                lookBack: isLookingBack,
+                broadcastStation,
+              },
             );
 
             if (camFrame.isLocked) {
@@ -2601,7 +3065,7 @@ export function RaceViewport(props: RaceViewportProps) {
           }
         }
 
-        // Rival boost / Push-to-Pass / Attack Mode LED & rain-light indicator on rear brakeLightMat
+        // Rival boost / Push-to-Pass / Attack Mode LED & FIA Rain Light + Glowing Brake Rotors
         if (rig.brakeLightMat) {
           if (c.specialActive || c.attackModeTimer > 0) {
             const pulse = (now % 260) < 130;
@@ -2612,7 +3076,106 @@ export function RaceViewport(props: RaceViewportProps) {
           } else {
             rig.brakeLightMat.emissive.setHex(0xef4444);
             rig.brakeLightMat.emissiveIntensity =
-              (c.brakeLockupIntensity ?? 0) > 0.1 || c.pitStopRemaining > 0 ? 2.6 : 0.55;
+              (c.lastInputBrake ?? 0) > 0.1 || (c.brakeLockupIntensity ?? 0) > 0.1 || c.pitStopRemaining > 0 ? 2.6 : 0.55;
+          }
+        }
+        if (rig.brakeRotorMat) {
+          const bt = Math.max(c.brakeTempFront ?? 240, c.brakeTempRear ?? 220);
+          const glow = bt > 460 ? Math.min(2.8, ((bt - 460) / 360) * 2.8) : 0;
+          rig.brakeRotorMat.emissiveIntensity = glow;
+        }
+        if (rig.rainLightMat) {
+          const wetBlink = sim.trackWetness > 0.25 || c.ersMode === 'harvest' || c.pitStopRemaining > 0;
+          rig.rainLightMat.emissiveIntensity = wetBlink ? ((now % 380) < 190 ? 2.8 : 0.15) : 0.15;
+        }
+        if (rig.headlightCones && rig.headlightCones.length > 0) {
+          const nightFactor = sim.timeOfDayHours < 6.5 || sim.timeOfDayHours > 18.8;
+          for (const cone of rig.headlightCones) {
+            cone.visible = nightFactor && !c.damage?.headlightBroken;
+          }
+        }
+
+        // Dynamic VFX emission: brake lockup/drift smoke, wet spray, off-track dust, titanium sparks, exhaust backfire, Mecachrome smoke
+        if (activePhase === 'playing' || activePhase === 'qualifying') {
+          const prevG = sim.prevCarGears.get(c.id) ?? c.gear;
+          if (c.gear < prevG && c.speed > 20 && c.carSpec.classId !== CarClassId.FORMULA_E) {
+            sim.vfx.spawnExhaustBackfire(c.x, c.y, c.z, c.heading, c.carSpec.classId !== CarClassId.F1_2005);
+          }
+          sim.prevCarGears.set(c.id, c.gear);
+
+          if ((c.brakeLockupIntensity ?? 0) > 0.22 || c.lateralSlip > 0.42) {
+            sim.vfx.spawnParticle(
+              'smoke',
+              c.x + (Math.random() - 0.5) * 1.1,
+              c.y + 0.18,
+              c.z + (Math.random() - 0.5) * 1.1,
+              (Math.random() - 0.5) * 1.6,
+              0.8 + Math.random() * 0.6,
+              (Math.random() - 0.5) * 1.6,
+              0.55,
+              0.38,
+              1.35,
+              0xd1d5db,
+            );
+            if (c.speed > 12) {
+              sim.vfx.addSkidmark(c.x, c.y, c.z, c.heading, 1.4);
+            }
+          }
+          if (sim.trackWetness > 0.22 && c.speed > 18 && Math.random() < sim.trackWetness * 0.55) {
+            sim.vfx.spawnParticle(
+              'spray',
+              c.x - Math.sin(c.heading) * 2.1 + (Math.random() - 0.5) * 1.2,
+              c.y + 0.28,
+              c.z - Math.cos(c.heading) * 2.1 + (Math.random() - 0.5) * 1.2,
+              -Math.sin(c.heading) * c.speed * 0.22,
+              1.6 + Math.random() * 1.1,
+              -Math.cos(c.heading) * c.speed * 0.22,
+              0.42,
+              0.45,
+              1.6,
+              0xcbd5e1,
+            );
+          }
+          if ((c.surfaceType === 'gravel' || c.surfaceType === 'grass') && c.speed > 8 && Math.random() < 0.5) {
+            sim.vfx.spawnParticle(
+              'dust',
+              c.x + (Math.random() - 0.5) * 1.3,
+              c.y + 0.2,
+              c.z + (Math.random() - 0.5) * 1.3,
+              (Math.random() - 0.5) * 2.2,
+              1.2 + Math.random(),
+              (Math.random() - 0.5) * 2.2,
+              0.6,
+              0.4,
+              1.5,
+              0xb4966e,
+            );
+          }
+          if (
+            c.speed > 62 &&
+            (c.carSpec.classId === CarClassId.F1_2026 ||
+              c.carSpec.classId === CarClassId.F1_2021 ||
+              c.carSpec.classId === CarClassId.F1_2005 ||
+              c.carSpec.classId === CarClassId.HYPERCAR_GTP) &&
+            (c.onKerb || (c.crestLoadFactor ?? 1) > 1.12) &&
+            Math.random() < 0.35
+          ) {
+            sim.vfx.spawnFloorSparks(c.x, c.y, c.z, c.heading, c.speed, 3);
+          }
+          if (c.mecachromeActive && Math.random() < 0.75) {
+            sim.vfx.spawnParticle(
+              'mecachrome',
+              c.x - Math.sin(c.heading) * 1.4,
+              c.y + 0.58,
+              c.z - Math.cos(c.heading) * 1.4,
+              (Math.random() - 0.5) * 2.0,
+              2.2 + Math.random() * 1.4,
+              (Math.random() - 0.5) * 2.0,
+              0.95,
+              0.6,
+              2.6,
+              0xe2e8f0,
+            );
           }
         }
 
@@ -2822,8 +3385,248 @@ export function RaceViewport(props: RaceViewportProps) {
         slipstreamMesh.visible = false;
       }
 
-      // Render Scene
-      renderer.render(scene, camera);
+      // Section 5-9 Per-Frame Polish: Time-of-Day Sky/Lighting, Wet Asphalt Sheen, Player-Centered Shadow Frustum,
+      // Spatial Opponent Audio, Environment Foley, VFX, Gamepad Rumble, Replay Recording/Playback & Photo Mode Camera
+      if (activePhase === 'playing' || activePhase === 'qualifying') {
+        // Advance Time-of-Day clock (if timeScale > 1)
+        if (!sim.photo.active && !sim.replay.active && sim.timeScale > 1) {
+          sim.timeOfDayHours = (sim.timeOfDayHours + (dt * sim.timeScale) / 3600) % 24;
+        }
+        const hr = sim.timeOfDayHours;
+        const sunElev = Math.sin(((hr - 6) / 12) * Math.PI); // -1..+1
+        const dayBlend = Math.max(0, Math.min(1, (sunElev + 0.15) / 0.85));
+        const nightBlend = 1 - dayBlend;
+        const goldenBlend = Math.max(0, 1 - Math.abs(sunElev - 0.14) / 0.28);
+
+        // Storm lightning flash during heavy rain
+        if (sim.weatherSystem.rainIntensity > 0.72 && Math.random() < dt * 0.16) {
+          sim.lightningFlash = 1.0;
+        }
+        if (sim.lightningFlash > 0) {
+          sim.lightningFlash = Math.max(0, sim.lightningFlash - dt * 5.5);
+        }
+
+        const sunAngle = ((hr - 6) / 12) * Math.PI;
+        const focusAnchor = playerCar ?? sim.cars[0];
+        if (focusAnchor) {
+          sun.target.position.set(focusAnchor.x, focusAnchor.y, focusAnchor.z);
+          sun.position.set(
+            focusAnchor.x + Math.cos(sunAngle) * 140,
+            focusAnchor.y + Math.max(32, Math.sin(sunAngle) * 175),
+            focusAnchor.z + 85,
+          );
+          sun.target.updateMatrixWorld();
+        }
+        sun.intensity = Math.max(0.28, dayBlend * 1.95) + sim.lightningFlash * 2.2;
+        if (goldenBlend > 0.35) {
+          sun.color.setHex(0xffa75e);
+        } else if (nightBlend > 0.65) {
+          sun.color.setHex(0x8bb4ff);
+        } else {
+          sun.color.setHex(0xfff1d6);
+        }
+        hemi.intensity = Math.max(0.32, 0.32 + dayBlend * 0.55) + sim.lightningFlash * 0.6;
+        sim.trackScene?.setNightLights(nightBlend);
+
+        // Wet asphalt mirror sheen
+        if (sim.trackScene?.roadMat) {
+          sim.trackScene.roadMat.roughness = Math.max(0.18, 0.86 - sim.trackWetness * 0.64);
+          sim.trackScene.roadMat.metalness = 0.04 + sim.trackWetness * 0.24;
+        }
+        // Animated trackside marshal flags
+        const yellowSectors: number[] = [];
+        sim.raceControl.sectorFlags.forEach((f, idx) => {
+          if (f === 'yellow') yellowSectors.push(idx + 1);
+        });
+        sim.trackScene?.updateMarshalFlags(sim.raceControl.globalFlag, sim.raceElapsed, yellowSectors);
+
+        // Record Replay frame (20Hz internal throttle) & step VFX
+        if (!sim.replay.active && !sim.photo.active) {
+          sim.replayRecorder.recordStep(dt, sim.raceElapsed, sim.cars);
+        }
+
+        if (focusAnchor) {
+          sim.vfx.update(
+            dt,
+            {
+              x: focusAnchor.x,
+              y: focusAnchor.y,
+              z: focusAnchor.z,
+              heading: focusAnchor.heading,
+              speed: focusAnchor.speed,
+              inSlipstream: focusAnchor.inSlipstream,
+            },
+            sim.weatherSystem.rainIntensity,
+          );
+
+          // Spatial Opponent Engine Audio (4 closest rivals with stereo pan + Doppler) & Environment Foley
+          const oppInputs = sim.cars
+            .filter((c) => c.id !== focusAnchor.id)
+            .map((c) => ({
+              id: c.id,
+              x: c.x,
+              z: c.z,
+              vx: c.vx,
+              vz: c.vz,
+              rpmNormalized: c.rpmNormalized,
+              speedMs: c.speed,
+              cylinders: c.carSpec.classId === CarClassId.F1_2005 ? 10 : 8,
+              isElectric: c.carSpec.classId === CarClassId.FORMULA_E,
+            }));
+          sim.audio.updateOpponentEngines(
+            oppInputs,
+            focusAnchor.x,
+            focusAnchor.z,
+            focusAnchor.vx,
+            focusAnchor.vz,
+            focusAnchor.heading,
+          );
+          sim.audio.updateEnvironmentFoley({
+            speedKmh: focusAnchor.speed * SPEED_KMH_FACTOR,
+            wetness: sim.trackWetness,
+            surface: focusAnchor.surfaceType,
+            inCockpit: p.cameraMode === 'cockpit',
+            inTunnel: false,
+          });
+
+          // Impact audio & gamepad haptic rumble on kerbs, lockups & collisions
+          if ((focusAnchor.lastCollisionImpact ?? 0) > 2.2) {
+            sim.audio.playImpact(Math.min(1, (focusAnchor.lastCollisionImpact ?? 0) / 14), 'car');
+            gamepadController.triggerRumble(0.85, 0.75, 220);
+            focusAnchor.lastCollisionImpact = 0;
+          } else if ((focusAnchor.lastWallImpact ?? 0) > 2.5) {
+            sim.audio.playImpact(Math.min(1, (focusAnchor.lastWallImpact ?? 0) / 16), 'wall');
+            gamepadController.triggerRumble(0.95, 0.65, 260);
+            focusAnchor.lastWallImpact = 0;
+          } else if (focusAnchor.isPlayer && focusAnchor.onKerb && focusAnchor.speed > 14) {
+            gamepadController.triggerRumble(0.22, 0.35, 60);
+          } else if (focusAnchor.isPlayer && (focusAnchor.brakeLockupIntensity ?? 0) > 0.35) {
+            gamepadController.triggerRumble(0.42, 0.18, 70);
+          }
+
+          // Dynamic high-speed edge sensation for post-processor
+          if (!sim.photo.active) {
+            const spdSens = Math.max(0, Math.min(1, (focusAnchor.speed * SPEED_KMH_FACTOR - 170) / 170));
+            sim.postProcessor.updateConfig({ speedIntensity: activeSettings.reducedMotion ? 0 : spdSens });
+          }
+        }
+      }
+
+      // Replay Playback Override (interpolated car poses + focus camera)
+      if (sim.replay.active) {
+        const dur = sim.replayRecorder.getDuration();
+        if (sim.replay.playing && !sim.photo.active) {
+          sim.replay.time += dt * sim.replay.speed;
+          if (sim.replay.time > dur.end) sim.replay.time = dur.start;
+        }
+        const frames = sim.replayRecorder.sampleAtTime(sim.replay.time);
+        if (frames && frames.length > 0) {
+          for (const rf of frames) {
+            const rig = sim.carRigs.get(rf.id);
+            if (!rig) continue;
+            rig.root.position.set(rf.x, rf.y + 0.02, rf.z);
+            rig.root.rotation.order = 'YXZ';
+            rig.root.rotation.y = rf.heading;
+            rig.root.rotation.x = -rf.pitch;
+            rig.root.rotation.z = -rf.roll;
+            for (const fw of rig.frontWheels) fw.rotation.y = -rf.steerAngle;
+          }
+          if (!sim.photo.active) {
+            const focusRf = frames.find((f) => f.id === sim.replay.focusCarId) ?? frames[0];
+            const focusRig = sim.carRigs.get(focusRf.id);
+            const focusSimCar = sim.cars.find((c) => c.id === focusRf.id);
+            const bStation =
+              sim.replay.cameraMode === 'tv-broadcast'
+                ? selectBroadcastStation(sim.broadcastStations, focusRf.x, focusRf.z)
+                : undefined;
+            const rFrame = computeCameraFrame(
+              sim.replay.cameraMode,
+              {
+                x: focusRf.x,
+                y: focusRf.y,
+                z: focusRf.z,
+                heading: focusRf.heading,
+                pitch: focusRf.pitch,
+                roll: focusRf.roll,
+                speed: focusRf.speed,
+                hoodMount: focusRig?.hoodMount,
+                carSpec: focusSimCar?.carSpec,
+              },
+              0,
+              0,
+              undefined,
+              { broadcastStation: bStation, steerAngle: focusRf.steerAngle },
+            );
+            camera.position.set(rFrame.position.x, rFrame.position.y, rFrame.position.z);
+            camera.lookAt(rFrame.lookAt.x, rFrame.lookAt.y, rFrame.lookAt.z);
+            camera.up.set(0, 1, 0);
+            if (Math.abs(camera.fov - rFrame.fov) > 0.1) {
+              camera.fov = rFrame.fov;
+              camera.updateProjectionMatrix();
+            }
+          }
+        }
+        if (now - sim.lastReplayEmitAt > 120) {
+          sim.lastReplayEmitAt = now;
+          emitReplayState();
+        }
+      }
+
+      // Photo Mode Free-Camera Flight & Roll/FOV Override
+      if (sim.photo.active) {
+        const moveSpd = 16 * dt;
+        const fwdX = Math.sin(sim.photo.camYaw);
+        const fwdZ = Math.cos(sim.photo.camYaw);
+        const rightX = Math.cos(sim.photo.camYaw);
+        const rightZ = -Math.sin(sim.photo.camYaw);
+        if (keysPressed.has('KeyW') || keysPressed.has('ArrowUp')) {
+          sim.photo.camPos.x += fwdX * moveSpd;
+          sim.photo.camPos.z += fwdZ * moveSpd;
+        }
+        if (keysPressed.has('KeyS') || keysPressed.has('ArrowDown')) {
+          sim.photo.camPos.x -= fwdX * moveSpd;
+          sim.photo.camPos.z -= fwdZ * moveSpd;
+        }
+        if (keysPressed.has('KeyA') || keysPressed.has('ArrowLeft')) {
+          sim.photo.camPos.x -= rightX * moveSpd;
+          sim.photo.camPos.z -= rightZ * moveSpd;
+        }
+        if (keysPressed.has('KeyD') || keysPressed.has('ArrowRight')) {
+          sim.photo.camPos.x += rightX * moveSpd;
+          sim.photo.camPos.z += rightZ * moveSpd;
+        }
+        if (keysPressed.has('KeyE')) sim.photo.camPos.y += moveSpd * 0.7;
+        if (keysPressed.has('KeyQ')) sim.photo.camPos.y = Math.max(0.4, sim.photo.camPos.y - moveSpd * 0.7);
+        camera.position.copy(sim.photo.camPos);
+        const lookDist = 10;
+        const lx = sim.photo.camPos.x + Math.sin(sim.photo.camYaw) * Math.cos(sim.photo.camPitch) * lookDist;
+        const ly = sim.photo.camPos.y + Math.sin(sim.photo.camPitch) * lookDist;
+        const lz = sim.photo.camPos.z + Math.cos(sim.photo.camYaw) * Math.cos(sim.photo.camPitch) * lookDist;
+        camera.up.set(Math.sin((sim.photo.rollDeg * Math.PI) / 180), Math.cos((sim.photo.rollDeg * Math.PI) / 180), 0);
+        camera.lookAt(lx, ly, lz);
+        if (Math.abs(camera.fov - sim.photo.fov) > 0.1) {
+          camera.fov = sim.photo.fov;
+          camera.updateProjectionMatrix();
+        }
+      }
+
+      // Track FPS & Adaptive Resolution Scaling
+      if (dt > 0.001) {
+        const instFps = Math.min(240, 1 / dt);
+        sim.fpsSmoothed = sim.fpsSmoothed * 0.92 + instFps * 0.08;
+        if (!isSoftwareGl && activeSettings.adaptiveDpr && sim.fpsSmoothed < 42) {
+          sim.adaptiveDprLowFrames++;
+          if (sim.adaptiveDprLowFrames > 90) {
+            renderer.setPixelRatio(Math.max(0.75, renderer.getPixelRatio() * 0.85));
+            sim.adaptiveDprLowFrames = 0;
+          }
+        } else {
+          sim.adaptiveDprLowFrames = 0;
+        }
+      }
+
+      // Render Scene (through post-processing composer when active, else direct renderer)
+      sim.postProcessor.render();
 
       // Throttled HUD Snapshot (~12Hz)
       const isAiRaceHud = activePhase === 'playing' && p.raceConfig.sessionMode === 'ai-race';
@@ -3051,6 +3854,87 @@ export function RaceViewport(props: RaceViewportProps) {
             }
             return nearestAi?.aiLastTelemetry ?? null;
           })(),
+          // Section 5-10 HUD telemetry: TC/SC, live inputs, blind-spot, rear-view gap, corner callout, radio, Mecachrome, FPS, Time-of-Day, Replay/Flashback & Lap Position History
+          tcLevel: hudFocusCar.tcLevel ?? 0,
+          tcIntervening: Boolean(hudFocusCar.tcIntervening),
+          stabilityIntervening: Boolean(hudFocusCar.stabilityIntervening),
+          throttleInput: hudFocusCar.lastInputThrottle ?? 0,
+          brakeInput: hudFocusCar.lastInputBrake ?? 0,
+          steerInput: hudFocusCar.lastInputSteer ?? 0,
+          ...(() => {
+            let leftNear = false;
+            let rightNear = false;
+            let rearGapM: number | null = null;
+            let rearClosingKmh = 0;
+            let rearLatM = 0;
+            if (playerCar && !isAiRaceHud) {
+              const sinH = Math.sin(playerCar.heading);
+              const cosH = Math.cos(playerCar.heading);
+              for (const other of sim.cars) {
+                if (other.id === playerCar.id) continue;
+                const dx = other.x - playerCar.x;
+                const dz = other.z - playerCar.z;
+                const fwd = dx * sinH + dz * cosH;
+                const lat = dx * cosH - dz * sinH;
+                if (Math.abs(fwd) < 5.5 && Math.abs(lat) < 4.2) {
+                  if (lat < 0) leftNear = true;
+                  else rightNear = true;
+                }
+                if (fwd < -2.2 && fwd > -34 && Math.abs(lat) < 6.5) {
+                  const g = Math.abs(fwd);
+                  if (rearGapM === null || g < rearGapM) {
+                    rearGapM = Number(g.toFixed(1));
+                    rearClosingKmh = Math.round((other.speed - playerCar.speed) * SPEED_KMH_FACTOR);
+                    rearLatM = Number(lat.toFixed(1));
+                  }
+                }
+              }
+            }
+            const blindSpot: BlindSpotStatus =
+              leftNear && rightNear ? 'both' : leftNear ? 'left' : rightNear ? 'right' : 'clear';
+            const radioSpoken =
+              playerCar && !isAiRaceHud
+                ? sim.raceRadio.step({
+                    raceTime: sim.raceElapsed,
+                    lap: playerCar.lap,
+                    totalLaps: p.raceConfig.totalLaps,
+                    blindSpot,
+                    blueFlagActive: Boolean(playerCar.blueFlagActive),
+                    trackWetness: sim.trackWetness,
+                    compound: playerCar.compound,
+                    fuelLapsRemaining: playerCar.fuelLapsRemaining,
+                    mecachromeActive: Boolean(playerCar.mecachromeActive),
+                  })
+                : null;
+            if (radioSpoken) {
+              sim.lastRadioMessage = {
+                id: `rad-${Math.round(sim.raceElapsed * 10)}`,
+                sender: radioSpoken.includes('LEFT') || radioSpoken.includes('RIGHT') || radioSpoken.includes('WIDE') ? 'SPOTTER' : 'ENGINEER',
+                text: radioSpoken,
+                priority: playerCar?.mecachromeActive ? 'high' : 'medium',
+                timestamp: Date.now(),
+              };
+            }
+            const activeSub = sim.raceRadio.getSubtitle(sim.raceElapsed);
+            return {
+              blindSpot,
+              rearCarGapM: rearGapM,
+              rearCarClosingKmh: rearClosingKmh,
+              rearCarLateralM: rearLatM,
+              radioMessage: activeSub ? sim.lastRadioMessage : null,
+            };
+          })(),
+          upcomingCorner: computeUpcomingCornerInfo(sim.compiledTrack, hudFocusCar.trackT, hudFocusCar.speed),
+          mecachromeWarning: Boolean(hudFocusCar.mecachromeActive),
+          mecachromeRemaining: Number((hudFocusCar.mecachromeTimer ?? 0).toFixed(1)),
+          fps: Math.round(sim.fpsSmoothed),
+          timeOfDayHours: sim.timeOfDayHours,
+          lapPositionHistory: [...sim.lapPositionHistory],
+          replayAvailable: sim.replayRecorder.hasFrames(),
+          flashbackAvailable:
+            sim.replayRecorder.canFlashback() &&
+            p.roomPeers.length <= 1 &&
+            p.raceConfig.sessionMode !== 'ai-race',
         };
 
         p.onHudUpdate(snapshot);
@@ -3131,6 +4015,8 @@ export function RaceViewport(props: RaceViewportProps) {
       slipMat.dispose();
       rainGeo.dispose();
       rainMat.dispose();
+      vfx.dispose();
+      postProcessor.dispose();
       audio.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === container) {

@@ -20,11 +20,21 @@ import { CAR_CLASSES, getCarById, resolveCarSpecial } from '../game/cars';
 import { formatLapTime } from '../game/physics';
 import { compileTrack, getTrackById } from '../game/tracks';
 import { formatWeatherCondition } from '../game/raceSystems';
-import { formatKeyCode, getGameSettings, KeybindMap, subscribeGameSettings } from '../game/settings';
+import {
+  formatKeyCode,
+  formatSpeed,
+  formatTemp,
+  GameSettings,
+  getGameSettings,
+  getSemanticPalette,
+  KeybindMap,
+  subscribeGameSettings,
+} from '../game/settings';
 import {
   AiPaceOrder,
   ErsMode,
   HudSnapshot,
+  MfdPage,
   PitServiceAction,
   PitStrategy,
   TireCompound,
@@ -59,6 +69,11 @@ interface RaceHUDProps {
   onSetAiErsMode?: (carId: string, mode: ErsMode) => void;
   onCallAiOnTrackService?: (carId: string, action: PitServiceAction, compound?: TireCompound) => void;
   touchControlsActive?: boolean;
+  mfdPage?: MfdPage;
+  onCycleMfd?: () => void;
+  onCycleTcLevel?: () => void;
+  onTriggerFlashback?: () => void;
+  onOpenPhotoMode?: () => void;
 }
 
 export function RaceHUD({
@@ -82,18 +97,42 @@ export function RaceHUD({
   onSetAiErsMode,
   onCallAiOnTrackService,
   touchControlsActive = false,
+  mfdPage: externalMfdPage,
+  onCycleMfd,
+  onCycleTcLevel,
+  onTriggerFlashback,
+  onOpenPhotoMode,
 }: RaceHUDProps) {
   const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
   const [relativeExpanded, setRelativeExpanded] = useState(true);
   const [aiServiceCompound, setAiServiceCompound] = useState<TireCompound>('soft');
   const [showAiVisualizer, setShowAiVisualizer] = useState(false);
-  const [keybinds, setKeybinds] = useState<KeybindMap>(() => getGameSettings().keybinds);
+  const [localMfdPage, setLocalMfdPage] = useState<MfdPage>('tires-brakes');
+  const [gameSettings, setGameSettings] = useState<GameSettings>(() => getGameSettings());
+  const keybinds: KeybindMap = gameSettings.keybinds;
+  const activeMfdPage: MfdPage = externalMfdPage ?? localMfdPage;
 
   useEffect(() => {
     return subscribeGameSettings((next) => {
-      setKeybinds({ ...next.keybinds });
+      setGameSettings({ ...next, keybinds: { ...next.keybinds } });
     });
   }, []);
+
+  const cycleMfd = () => {
+    if (onCycleMfd) {
+      onCycleMfd();
+      return;
+    }
+    const order: MfdPage[] = ['tires-brakes', 'strategy', 'electronics', 'sectors'];
+    const idx = order.indexOf(localMfdPage);
+    setLocalMfdPage(order[(idx + 1) % order.length]);
+  };
+
+  const palette = getSemanticPalette(gameSettings.colorblindMode);
+  const hudPreset = gameSettings.hudPreset;
+  const hudScale = gameSettings.hudScale;
+  const highContrast = gameSettings.highContrastHud;
+  const units = gameSettings.units;
 
   const track = customTrack || getTrackById(trackId);
   const isAiRace = hud.sessionMode === 'ai-race';
@@ -163,11 +202,156 @@ export function RaceHUD({
       ? Math.max(0, Math.min(100, ((hud.pitStopTotal - remainingTotal) / hud.pitStopTotal) * 100))
       : 0;
 
+  if (hudPreset === 'off') {
+    return (
+      <div
+        data-testid="race-hud"
+        className="fixed inset-0 z-20 pointer-events-none flex justify-end items-start safe-pad-hud"
+      >
+        <button
+          type="button"
+          onClick={onTogglePause}
+          className="pointer-events-auto px-2.5 py-1.5 rounded bg-black/75 border border-white/20 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"
+        >
+          <Pause className="w-3.5 h-3.5" />
+          HUD Off (H)
+        </button>
+      </div>
+    );
+  }
+
+  const formatTimeOfDay = (hours?: number): string => {
+    if (hours === undefined || !Number.isFinite(hours)) return '';
+    const h = Math.floor(((hours % 24) + 24) % 24);
+    const m = Math.floor((hours - Math.floor(hours)) * 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
   return (
     <div
       data-testid="race-hud"
-      className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between safe-pad-hud"
+      className={`fixed inset-0 z-20 pointer-events-none flex flex-col justify-between safe-pad-hud ${
+        highContrast ? 'contrast-125' : ''
+      }`}
+      style={
+        hudScale !== 1
+          ? {
+              transform: `scale(${hudScale})`,
+              transformOrigin: 'center center',
+            }
+          : undefined
+      }
     >
+      {/* Section 7 Top-Center Awareness Stack: Virtual Rear-View Bar, Blind-Spot Arrows, Corner Callout & Mecachrome Alert */}
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-25 pointer-events-none flex flex-col items-center gap-1.5 max-w-[92vw]">
+        {gameSettings.showVirtualMirror && !isAiRace && (hud.rearCarGapM !== null && hud.rearCarGapM !== undefined || (hud.blindSpot && hud.blindSpot !== 'clear')) && (
+          <div className="flex items-center gap-2 bg-[#0b0e13]/90 border border-white/20 rounded-md px-3 py-1 shadow-xl">
+            <span
+              className={`text-[11px] font-black tracking-wider px-1.5 py-0.5 rounded ${
+                hud.blindSpot === 'left' || hud.blindSpot === 'both'
+                  ? 'bg-amber-500 text-slate-950 animate-pulse'
+                  : 'text-slate-600'
+              }`}
+            >
+              ◀ L
+            </span>
+            <div className="text-center min-w-[110px]">
+              <div className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">
+                Rear Mirror
+              </div>
+              {hud.rearCarGapM !== null && hud.rearCarGapM !== undefined ? (
+                <div className="text-xs font-telemetry font-bold text-white tabular-nums">
+                  {hud.rearCarGapM.toFixed(1)}m{' '}
+                  <span
+                    className={
+                      (hud.rearCarClosingKmh ?? 0) > 8
+                        ? 'text-rose-400'
+                        : 'text-emerald-400'
+                    }
+                  >
+                    {(hud.rearCarClosingKmh ?? 0) >= 0 ? '+' : ''}
+                    {(() => {
+                      const spd = formatSpeed(Math.abs(hud.rearCarClosingKmh ?? 0), units);
+                      return `${spd.value} ${spd.unit}`;
+                    })()}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-[10px] font-bold text-amber-300 uppercase">Side-by-Side</div>
+              )}
+            </div>
+            <span
+              className={`text-[11px] font-black tracking-wider px-1.5 py-0.5 rounded ${
+                hud.blindSpot === 'right' || hud.blindSpot === 'both'
+                  ? 'bg-amber-500 text-slate-950 animate-pulse'
+                  : 'text-slate-600'
+              }`}
+            >
+              R ▶
+            </span>
+          </div>
+        )}
+
+        {gameSettings.showCornerCallouts && !isAiRace && hud.upcomingCorner && (
+          <div
+            className={`flex items-center gap-2 px-3 py-1 rounded-md border shadow-lg text-xs font-display font-bold ${
+              hud.upcomingCorner.brakingRecommended
+                ? 'bg-rose-950/90 border-rose-400/70 text-rose-100'
+                : 'bg-[#0b0e13]/85 border-white/15 text-slate-100'
+            }`}
+          >
+            <span className="text-base leading-none">
+              {hud.upcomingCorner.direction === 'left'
+                ? '↰'
+                : hud.upcomingCorner.direction === 'right'
+                ? '↱'
+                : '⇄'}
+            </span>
+            <span className="uppercase tracking-wider text-[11px]">
+              {hud.upcomingCorner.severity} {hud.upcomingCorner.direction}
+            </span>
+            <span className="font-telemetry text-[11px] text-sky-300 tabular-nums">
+              {hud.upcomingCorner.distanceM}m
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-white/10 font-telemetry text-[10px]">
+              G{hud.upcomingCorner.suggestedGear}
+            </span>
+            {hud.upcomingCorner.brakingRecommended && (
+              <span className="px-1.5 py-0.5 rounded bg-red-600 text-white text-[10px] font-black animate-pulse">
+                BRAKE
+              </span>
+            )}
+          </div>
+        )}
+
+        {hud.mecachromeWarning && (
+          <div className="px-4 py-1.5 rounded-md bg-red-950/95 border-2 border-red-500 text-red-100 font-display font-black text-xs uppercase tracking-wider shadow-2xl animate-pulse">
+            ENGINE FAILURE — GETTING MECACHROMED ({(hud.mecachromeRemaining ?? 0).toFixed(1)}s)
+          </div>
+        )}
+
+        {hud.radioMessage && (
+          <div className="px-3.5 py-1.5 rounded-md bg-[#0b1220]/92 border border-sky-400/50 text-sky-100 text-xs shadow-xl flex items-center gap-2">
+            <span className="px-1.5 py-0.5 rounded bg-sky-500/25 border border-sky-400/50 text-[9px] font-black uppercase tracking-widest text-sky-300">
+              {hud.radioMessage.sender}
+            </span>
+            <span className="font-semibold">{hud.radioMessage.text}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Subtle Top-Right Performance & Time-of-Day Pill */}
+      {(gameSettings.showFpsCounter || hud.timeOfDayHours !== undefined) && (
+        <div className="fixed top-2 right-1/2 translate-x-[230px] hidden lg:flex items-center gap-2 px-2 py-0.5 rounded bg-[#0b0e13]/80 border border-white/10 text-[10px] font-mono text-slate-300 pointer-events-none">
+          {hud.timeOfDayHours !== undefined && <span>{formatTimeOfDay(hud.timeOfDayHours)}</span>}
+          {gameSettings.showFpsCounter && hud.fps !== undefined && (
+            <span className={hud.fps < 45 ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+              {hud.fps} FPS
+            </span>
+          )}
+        </div>
+      )}
+
       {/* TOP BAR CORNERS */}
       <div className="flex items-start justify-between gap-2 sm:gap-4 short:gap-2">
         {/* Top-Left Cluster: Broadcast AI Race / Practice / Race Standings */}
@@ -1996,6 +2180,226 @@ export function RaceHUD({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Section 7 Bottom-Left Compact 4-Page MFD & Live Pedal Input Trace (when HUD is full & not AI Race) */}
+      {!isAiRace && hudPreset === 'full' && !touchControlsActive && (
+        <div className="fixed bottom-4 left-4 z-22 pointer-events-auto hidden md:flex flex-col gap-2 w-60">
+          {gameSettings.showPedalTrace && (
+            <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md p-2 space-y-1 shadow-lg">
+              <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                <span>Live Inputs</span>
+                <span className="font-mono text-slate-300">
+                  {(() => {
+                    const spd = formatSpeed(hud.speedKmh, units);
+                    return `${spd.value} ${spd.unit}`;
+                  })()}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[9px] font-mono">
+                <span className="w-7 text-slate-400">THR</span>
+                <div className="flex-1 h-1.5 rounded bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-75"
+                    style={{
+                      width: `${Math.round((hud.throttleInput ?? 0) * 100)}%`,
+                      backgroundColor: palette.throttle,
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 text-[9px] font-mono">
+                <span className="w-7 text-slate-400">BRK</span>
+                <div className="flex-1 h-1.5 rounded bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-75"
+                    style={{
+                      width: `${Math.round((hud.brakeInput ?? 0) * 100)}%`,
+                      backgroundColor: palette.brake,
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 text-[9px] font-mono">
+                <span className="w-7 text-slate-400">STR</span>
+                <div className="flex-1 h-1.5 rounded bg-slate-800 relative overflow-hidden">
+                  <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/30" />
+                  <div
+                    className="absolute top-0 bottom-0 bg-sky-400"
+                    style={{
+                      left: (hud.steerInput ?? 0) >= 0 ? '50%' : `${50 + (hud.steerInput ?? 0) * 50}%`,
+                      width: `${Math.abs(hud.steerInput ?? 0) * 50}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 4-Page Multi-Function Display (Tab to cycle) */}
+          <div className="bg-[#0b0e13]/92 border border-white/15 rounded-md p-2.5 shadow-xl space-y-2 text-[11px]">
+            <div className="flex items-center justify-between border-b border-white/10 pb-1">
+              <span className="text-[10px] font-display font-bold uppercase tracking-wider text-sky-300">
+                MFD · {activeMfdPage.replace('-', ' & ')}
+              </span>
+              <button
+                type="button"
+                onClick={cycleMfd}
+                className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[9px] font-mono text-slate-200 cursor-pointer"
+                title={`Cycle MFD (${formatKeyCode(keybinds.mfdCycle)})`}
+              >
+                {formatKeyCode(keybinds.mfdCycle)} ▸
+              </button>
+            </div>
+
+            {activeMfdPage === 'tires-brakes' && (
+              <div className="grid grid-cols-2 gap-1.5 font-telemetry text-[10px] tabular-nums">
+                <div className="bg-[#121722] rounded p-1.5 border border-white/5">
+                  <div className="text-slate-400 text-[9px]">FL / FR TEMP</div>
+                  <div className="text-white font-bold">
+                    {formatTemp(hud.tires?.fl.temp ?? hud.tireTemp, units)} ·{' '}
+                    {formatTemp(hud.tires?.fr.temp ?? hud.tireTemp, units)}
+                  </div>
+                </div>
+                <div className="bg-[#121722] rounded p-1.5 border border-white/5">
+                  <div className="text-slate-400 text-[9px]">RL / RR TEMP</div>
+                  <div className="text-white font-bold">
+                    {formatTemp(hud.tires?.rl.temp ?? hud.tireTemp, units)} ·{' '}
+                    {formatTemp(hud.tires?.rr.temp ?? hud.tireTemp, units)}
+                  </div>
+                </div>
+                <div className="bg-[#121722] rounded p-1.5 border border-white/5 col-span-2 flex items-center justify-between">
+                  <span className="text-slate-400 text-[9px]">BRAKES F / R</span>
+                  <span className="text-amber-300 font-bold">
+                    {formatTemp(hud.brakeTempFront ?? 280, units)} / {formatTemp(hud.brakeTempRear ?? 250, units)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {activeMfdPage === 'strategy' && (
+              <div className="space-y-1 text-[10px] font-telemetry">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Fuel Remaining</span>
+                  <span className="text-white font-bold">
+                    {Math.round(hud.fuel)}% (~{hud.fuelLapsRemaining.toFixed(1)} laps)
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Tyre Life</span>
+                  <span className="text-white font-bold">
+                    {Math.round(hud.tireWear)}% ({hud.compound.toUpperCase()})
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Track Temp</span>
+                  <span className="text-sky-300 font-bold">
+                    {formatTemp(hud.trackTempC ?? 28, units)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {activeMfdPage === 'electronics' && (
+              <div className="space-y-1.5 text-[10px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Traction Control</span>
+                  <button
+                    type="button"
+                    onClick={onCycleTcLevel}
+                    className={`px-2 py-0.5 rounded font-mono font-bold cursor-pointer ${
+                      hud.tcIntervening
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                    }`}
+                  >
+                    TC {hud.tcLevel ?? 0} {hud.tcIntervening ? 'ACT' : ''}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Brake Bias</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onAdjustBrakeBalance?.(-0.5)}
+                      className="px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
+                    >
+                      -
+                    </button>
+                    <span className="font-mono text-white font-bold">
+                      {(hud.brakeBalance ?? 56).toFixed(1)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onAdjustBrakeBalance?.(0.5)}
+                      className="px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                {hud.hasErs && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">ERS Mode</span>
+                    <button
+                      type="button"
+                      onClick={onCycleErsMode}
+                      className="px-2 py-0.5 rounded bg-sky-500/25 border border-sky-400/40 text-sky-200 font-mono font-bold uppercase cursor-pointer"
+                    >
+                      {hud.ersMode}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeMfdPage === 'sectors' && (
+              <div className="grid grid-cols-3 gap-1 font-telemetry text-[10px] text-center">
+                {[0, 1, 2].map((sIdx) => {
+                  const t = hud.sectorTimes?.[sIdx] ?? hud.lastLapSectorTimes?.[sIdx] ?? null;
+                  const best = hud.sessionBestSectorTimes?.[sIdx] ?? null;
+                  const isPurple = t !== null && best !== null && t <= best + 0.01;
+                  return (
+                    <div
+                      key={sIdx}
+                      className={`p-1 rounded border ${
+                        isPurple
+                          ? 'bg-fuchsia-950/60 border-fuchsia-400/60 text-fuchsia-200'
+                          : 'bg-[#121722] border-white/5 text-slate-200'
+                      }`}
+                    >
+                      <div className="text-[8px] text-slate-400">S{sIdx + 1}</div>
+                      <div className="font-bold">{t !== null ? t.toFixed(2) : '--.--'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {(onTriggerFlashback || onOpenPhotoMode) && (
+              <div className="flex items-center gap-1.5 pt-1 border-t border-white/10">
+                {onTriggerFlashback && hud.flashbackAvailable && (
+                  <button
+                    type="button"
+                    onClick={onTriggerFlashback}
+                    className="flex-1 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-200 text-[9px] font-bold uppercase cursor-pointer"
+                  >
+                    Rewind [{formatKeyCode(keybinds.flashback)}]
+                  </button>
+                )}
+                {onOpenPhotoMode && (
+                  <button
+                    type="button"
+                    onClick={onOpenPhotoMode}
+                    className="flex-1 py-1 rounded bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-sky-200 text-[9px] font-bold uppercase cursor-pointer"
+                  >
+                    Photo [{formatKeyCode(keybinds.photoMode)}]
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

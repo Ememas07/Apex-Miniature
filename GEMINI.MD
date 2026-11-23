@@ -10,3 +10,8 @@
 1. **Only Two Race Slots (`v1` and `v2`) + `starts`:** Never create `v3`, `v4`, `v5`, etc. The codebase and training scripts maintain strictly `v1` (current/previous trained baseline), `v2` (newest model under development/training), and `starts` (dedicated standing/rolling race starts specialist).
 2. **Naming Flip on Every New Model Generation:** Whenever a new AI model generation is introduced, the previous `v2` model is promoted to **`v1`** (replacing the old `v1`), and the new model ALWAYS takes the **`v2`** slot.
 3. **Minimal Scripts Discipline:** Keep only the single unified trainer (`scripts/trainPPO.py` + internal bridge `scripts/headlessEnv.ts`), the single unified bench/audit runner (`scripts/benchAndAudit.py`), and car conversion (`scripts/objToLowPoly.mjs`).
+
+### Mandatory Changelog Logging Rule
+1. **Log Every Change Automatically:** Every meaningful change, feature, or fix made to the project MUST be logged at the top of `CHANGELOG.md` (ordered newest to oldest).
+2. **Exact Format:** Use a timestamped heading (`## YYYY-MM-DD HH:MM`) followed by concise bullet points.
+3. **Half-Detailed, Human-Readable Level:** Write entries that players and general readers can easily understand—neither overly vague ("Physics overhaul") nor overly technical ("Changed `ThermalModel.ts` coefficient from 0.45 to 0.12"). Explain what changed and how it affects gameplay or usability.

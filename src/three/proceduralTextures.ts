@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { resolveNumberPlateColors, validateDriverNumber } from '../game/cars';
-import { CarClassId, LiveryConfig } from '../game/types';
+import { CarClassId, LiveryConfig, LiveryDecal } from '../game/types';
 
 function drawCarbonWeave(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
   ctx.save();
@@ -310,6 +310,124 @@ export function createLiveryTexture(
         num,
         layout.right.transform,
       );
+    }
+  }
+
+  // 5. Custom Multi-Layer Decal & Sponsor Stack (Section 11.2)
+  if (livery.decals && livery.decals.length > 0) {
+    const drawSingleDecal = (d: LiveryDecal, px: number, py: number, flipH = false) => {
+      ctx.save();
+      ctx.translate(px, py);
+      if (flipH) ctx.scale(-1, 1);
+      ctx.rotate((d.rotation * Math.PI) / 180);
+      const s = Math.max(0.25, Math.min(3.0, d.scale)) * 34;
+      ctx.fillStyle = d.color || '#ffffff';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2;
+
+      switch (d.shape) {
+        case 'stripe':
+          ctx.fillRect(-s * 1.35, -s * 0.24, s * 2.7, s * 0.48);
+          break;
+        case 'chevron':
+          ctx.beginPath();
+          ctx.moveTo(-s * 0.9, s * 0.55);
+          ctx.lineTo(0, -s * 0.65);
+          ctx.lineTo(s * 0.9, s * 0.55);
+          ctx.lineTo(s * 0.45, s * 0.55);
+          ctx.lineTo(0, -s * 0.12);
+          ctx.lineTo(-s * 0.45, s * 0.55);
+          ctx.closePath();
+          ctx.fill();
+          break;
+        case 'star': {
+          ctx.beginPath();
+          for (let i = 0; i < 10; i++) {
+            const rad = i % 2 === 0 ? s * 0.72 : s * 0.3;
+            const ang = (i * Math.PI) / 5 - Math.PI / 2;
+            const sx = Math.cos(ang) * rad;
+            const sy = Math.sin(ang) * rad;
+            if (i === 0) ctx.moveTo(sx, sy);
+            else ctx.lineTo(sx, sy);
+          }
+          ctx.closePath();
+          ctx.fill();
+          break;
+        }
+        case 'circle':
+          ctx.beginPath();
+          ctx.arc(0, 0, s * 0.58, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        case 'diamond':
+          ctx.beginPath();
+          ctx.moveTo(0, -s * 0.72);
+          ctx.lineTo(s * 0.62, 0);
+          ctx.lineTo(0, s * 0.72);
+          ctx.lineTo(-s * 0.62, 0);
+          ctx.closePath();
+          ctx.fill();
+          break;
+        case 'checkered': {
+          const cell = s * 0.26;
+          for (let r = -2; r < 2; r++) {
+            for (let c = -2; c < 2; c++) {
+              ctx.fillStyle = (r + c) % 2 === 0 ? d.color || '#ffffff' : '#0f172a';
+              ctx.fillRect(c * cell, r * cell, cell, cell);
+            }
+          }
+          break;
+        }
+        case 'lightning':
+          ctx.beginPath();
+          ctx.moveTo(s * 0.15, -s * 0.75);
+          ctx.lineTo(-s * 0.45, s * 0.05);
+          ctx.lineTo(-s * 0.02, s * 0.05);
+          ctx.lineTo(-s * 0.2, s * 0.75);
+          ctx.lineTo(s * 0.48, -s * 0.12);
+          ctx.lineTo(s * 0.04, -s * 0.12);
+          ctx.closePath();
+          ctx.fill();
+          break;
+        case 'number-plate':
+          ctx.fillStyle = d.color || '#ffffff';
+          ctx.fillRect(-s * 0.75, -s * 0.48, s * 1.5, s * 0.96);
+          ctx.strokeRect(-s * 0.75, -s * 0.48, s * 1.5, s * 0.96);
+          ctx.fillStyle = '#0f172a';
+          ctx.font = `900 ${Math.round(s * 0.62)}px "Oxanium", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(d.text || num, 0, 2, s * 1.3);
+          break;
+        case 'text':
+          ctx.font = `900 ${Math.round(s * 0.56)}px "Oxanium", "Arial Black", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 3;
+          ctx.strokeText((d.text || 'APEX').slice(0, 14), 0, 0, s * 3.2);
+          ctx.fillText((d.text || 'APEX').slice(0, 14), 0, 0, s * 3.2);
+          break;
+      }
+      ctx.restore();
+    };
+
+    for (const decal of livery.decals) {
+      const px = Math.max(0, Math.min(1, decal.x)) * 512;
+      const py = Math.max(0, Math.min(1, decal.y)) * 512;
+      drawSingleDecal(decal, px, py, false);
+      if (decal.mirror) {
+        // Mirror across TOP zone horizontal center (cx=118) or between LEFT_SIDE (y~66) and RIGHT_SIDE (y~189)
+        if (px < 235) {
+          const mirroredX = 236 - px;
+          if (Math.abs(mirroredX - px) > 4) {
+            drawSingleDecal(decal, mirroredX, py, true);
+          }
+        } else if (py <= 128) {
+          drawSingleDecal(decal, px, py + 123, false);
+        } else if (py <= 256) {
+          drawSingleDecal(decal, px, py - 123, false);
+        }
+      }
     }
   }
 

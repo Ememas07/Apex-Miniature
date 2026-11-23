@@ -1,20 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { CarSetupModal } from './components/CarSetupModal';
-import { CarsShowcaseModal } from './components/CarsShowcaseModal';
-import { LiveryStudioModal } from './components/LiveryStudioModal';
-import { ModesHubModal } from './components/ModesHubModal';
-import { MultiplayerModal } from './components/MultiplayerModal';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ControlsBriefingCard,
+  hasDismissedBriefing,
+  markBriefingDismissed,
+} from './components/ControlsBriefingCard';
 import { PauseModal } from './components/PauseModal';
+import { LandscapeMobileBanner, OfflineIndicator, PWAInstallButton } from './components/PWAControls';
 import { RaceHUD } from './components/RaceHUD';
 import { RaceMenuModal } from './components/RaceMenuModal';
+import { ReplayAndPhotoOverlay } from './components/ReplayAndPhotoOverlay';
 import { ResultsModal } from './components/ResultsModal';
-import { SettingsModal } from './components/SettingsModal';
-import { SoundEditorModal } from './components/SoundEditorModal';
 import { TitleOverlay } from './components/TitleOverlay';
 import { TouchControlsOverlay } from './components/TouchControlsOverlay';
-import { TracksShowcaseModal } from './components/TracksShowcaseModal';
-import { TrackStudioModal } from './components/TrackStudioModal';
 import { getSavedCarSetup } from './game/carSetup';
+import { CAMERA_MODE_ORDER, cycleCameraMode } from './game/camera';
 import { CARS, getCarById, resolveCarSpecial } from './game/cars';
 import {
   ActiveChampionshipState,
@@ -33,16 +32,24 @@ import {
 import { formatLapTime } from './game/physics';
 import { loadLastRaceConfig, saveLastRaceConfig } from './game/records';
 import { evaluateScenarioResult, getScenarioById, saveChallengeMedal } from './game/scenarios';
-import { GameSettings, getGameSettings, subscribeGameSettings } from './game/settings';
+import {
+  GameSettings,
+  getGameSettings,
+  HudPreset,
+  setGameSettings as persistGameSettings,
+  subscribeGameSettings,
+} from './game/settings';
 import { isTouchCapableDevice, shouldShowTouchControls } from './game/touchControls';
 import { getTrackById } from './game/tracks';
 import {
   CameraMode,
   CarClassId,
+  ChatMessage,
   GamePhase,
   HudSnapshot,
   LiveryConfig,
   MedalTier,
+  MfdPage,
   PitServiceAction,
   PitStrategy,
   RaceConfig,
@@ -51,7 +58,47 @@ import {
   TireCompound,
   TrackSpec,
 } from './game/types';
-import { InRaceTelemetryControls, RaceViewport, SpectateControls } from './three/RaceViewport';
+import { audioEngine } from './three/audioEngine';
+import {
+  InRaceTelemetryControls,
+  PhotoModeState,
+  RaceViewport,
+  ReplayAndPhotoControls,
+  ReplayStateSnapshot,
+  SpectateControls,
+} from './three/RaceViewport';
+
+// Code-split heavy studios & secondary modals for fast initial TTI
+const CarSetupModal = lazy(() =>
+  import('./components/CarSetupModal').then((m) => ({ default: m.CarSetupModal })),
+);
+const CarsShowcaseModal = lazy(() =>
+  import('./components/CarsShowcaseModal').then((m) => ({ default: m.CarsShowcaseModal })),
+);
+const LiveryStudioModal = lazy(() =>
+  import('./components/LiveryStudioModal').then((m) => ({ default: m.LiveryStudioModal })),
+);
+const ModesHubModal = lazy(() =>
+  import('./components/ModesHubModal').then((m) => ({ default: m.ModesHubModal })),
+);
+const MultiplayerModal = lazy(() =>
+  import('./components/MultiplayerModal').then((m) => ({ default: m.MultiplayerModal })),
+);
+const SettingsModal = lazy(() =>
+  import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })),
+);
+const SoundEditorModal = lazy(() =>
+  import('./components/SoundEditorModal').then((m) => ({ default: m.SoundEditorModal })),
+);
+const TracksShowcaseModal = lazy(() =>
+  import('./components/TracksShowcaseModal').then((m) => ({ default: m.TracksShowcaseModal })),
+);
+const TrackStudioModal = lazy(() =>
+  import('./components/TrackStudioModal').then((m) => ({ default: m.TrackStudioModal })),
+);
+
+const MFD_PAGE_ORDER: MfdPage[] = ['tires-brakes', 'strategy', 'electronics', 'sectors'];
+const HUD_PRESET_ORDER: HudPreset[] = ['full', 'minimal', 'pro', 'off'];
 
 const INITIAL_CAR = CARS[0]; // Ferrari 499P
 
@@ -118,9 +165,16 @@ export default function App() {
   const [lastChampPoints, setLastChampPoints] = useState<number | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const params = new URLSearchParams(window.location.search);
-    const cam = params.get('camera');
-    return cam === 'orbit' || cam === 'hood' ? cam : 'orbit';
+    const cam = params.get('camera') as CameraMode | null;
+    return cam && CAMERA_MODE_ORDER.includes(cam) ? cam : 'orbit';
   });
+  const [mfdPage, setMfdPage] = useState<MfdPage>('tires-brakes');
+  const [replayState, setReplayState] = useState<ReplayStateSnapshot | null>(null);
+  const [photoState, setPhotoState] = useState<PhotoModeState | null>(null);
+  const replayControlsRef = useRef<ReplayAndPhotoControls | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [myPingMs, setMyPingMs] = useState<number>(0);
+  const [briefingDismissed, setBriefingDismissed] = useState<boolean>(() => hasDismissedBriefing());
   const [gameSettings, setGameSettings] = useState<GameSettings>(() => getGameSettings());
   const [touchCapable, setTouchCapable] = useState<boolean>(() => isTouchCapableDevice());
   const [spectatorCameraMode, setSpectatorCameraMode] = useState<SpectatorCameraMode>('spectate');
@@ -192,10 +246,11 @@ export default function App() {
     }, 280);
   }, []);
 
-  // Sync document.body.dataset.state & subscribe to persisted settings (touch controls, etc.)
+  // Sync document.body.dataset.state & ambient menu music
   useEffect(() => {
     document.body.dataset.state = phase === 'qualifying' ? 'playing' : phase;
-  }, [phase]);
+    audioEngine.setMenuMusicActive(phase === 'title' && !muted);
+  }, [phase, muted]);
 
   useEffect(() => {
     const unsub = subscribeGameSettings((next) => setGameSettings(next));
@@ -270,7 +325,19 @@ export default function App() {
     };
     mp.onError = (msg) => setMpError(msg);
     mp.onConnectionModeChange = (mode) => setConnectionMode(mode);
+    mp.onChatMessage = (entry) => {
+      setChatMessages((prev) => [...prev.slice(-49), entry]);
+    };
+    mp.onKicked = (reason) => {
+      setRoom(null);
+      setChatMessages([]);
+      setMpError(reason || 'Removed from lobby by host.');
+    };
     setConnectionMode(mp.connectionMode);
+    const pingTimer = window.setInterval(() => {
+      setMyPingMs(Math.round(mp.myPingMs || 0));
+    }, 1000);
+    return () => window.clearInterval(pingTimer);
   }, [runWithScreenFade]);
 
   const handleStartSession = useCallback(() => {
@@ -420,9 +487,69 @@ export default function App() {
     });
   }, [runWithScreenFade]);
 
-  // Enter / Space shortcut on Title screen
+  // Global QoL & Title keyboard shortcuts (Enter/Space on Title, Shift+R quick restart, H HUD cycle, N nametags, Esc nested modals)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inInput =
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+      if (inInput) return;
+
+      if (e.code === 'Escape') {
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          return;
+        }
+        if (carSetupOpen) {
+          setCarSetupOpen(false);
+          return;
+        }
+        if (soundStudioOpen) {
+          setSoundStudioOpen(false);
+          return;
+        }
+        if (liveryStudioOpen) {
+          setLiveryStudioOpen(false);
+          return;
+        }
+        if (carsShowcaseOpen) {
+          setCarsShowcaseOpen(false);
+          return;
+        }
+        if (tracksShowcaseOpen) {
+          setTracksShowcaseOpen(false);
+          return;
+        }
+        if (modesHubOpen) {
+          setModesHubOpen(false);
+          return;
+        }
+        if (raceMenuOpen) {
+          setRaceMenuOpen(false);
+          return;
+        }
+      }
+
+      if (phase === 'playing' || phase === 'qualifying') {
+        if (e.shiftKey && e.code === 'KeyR' && !room) {
+          e.preventDefault();
+          setRunNonce((n) => n + 1);
+          return;
+        }
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'KeyH') {
+          const cur = getGameSettings().hudPreset;
+          const next = HUD_PRESET_ORDER[(HUD_PRESET_ORDER.indexOf(cur) + 1) % HUD_PRESET_ORDER.length];
+          persistGameSettings({ hudPreset: next });
+          return;
+        }
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'KeyN') {
+          const cur = getGameSettings().showNametags;
+          persistGameSettings({ showNametags: !cur });
+          return;
+        }
+      }
+
       if (
         phase !== 'title' ||
         raceMenuOpen ||
@@ -446,6 +573,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     phase,
+    room,
     raceMenuOpen,
     modesHubOpen,
     multiplayerOpen,
@@ -455,6 +583,7 @@ export default function App() {
     liveryStudioOpen,
     soundStudioOpen,
     settingsOpen,
+    carSetupOpen,
     handleStartSession,
   ]);
 
@@ -472,9 +601,11 @@ export default function App() {
   }, [activePrePausePhase]);
 
   const handleCycleCamera = useCallback(() => {
-    setCameraMode((prev) =>
-      prev === 'orbit' ? 'hood' : 'orbit',
-    );
+    setCameraMode((prev) => cycleCameraMode(prev));
+  }, []);
+
+  const handleCycleMfd = useCallback(() => {
+    setMfdPage((prev) => MFD_PAGE_ORDER[(MFD_PAGE_ORDER.indexOf(prev) + 1) % MFD_PAGE_ORDER.length]);
   }, []);
 
   const handleToggleMute = useCallback(() => {
@@ -672,7 +803,20 @@ export default function App() {
         onInRaceControlsReady={(controls) => {
           inRaceControlsRef.current = controls;
         }}
+        onReplayStateChange={setReplayState}
+        onPhotoStateChange={setPhotoState}
+        onReplayAndPhotoControlsReady={(controls) => {
+          replayControlsRef.current = controls;
+        }}
+        onCycleMfd={handleCycleMfd}
       />
+
+      {/* PWA Install button in top-right paddock header during title screen */}
+      {phase === 'title' && titleVisible && (
+        <div className="fixed top-3 right-3 z-30">
+          <PWAInstallButton compact />
+        </div>
+      )}
 
       {/* Title Screen (kept mounted during title phase for smooth fade-in/fade-out with sub-menus) */}
       {phase === 'title' && (
@@ -738,176 +882,217 @@ export default function App() {
         />
       )}
 
-      {/* Championships, Time Trial, Daily Hotlap, Scenarios, Licenses, Elimination & Collector Career Hub */}
-      {modesHubOpen && (
-        <ModesHubModal
-          raceConfig={raceConfig}
-          activeChampionship={activeChampionship}
-          onUpdateChampionship={setActiveChampionship}
-          onLaunchChampionshipStage={handleLaunchChampionshipStage}
-          onStartModeSession={(patch) => handleStartSinglePlayer(patch)}
-          onApplyHeritageLivery={(liveryPatch) => {
-            handleChangeLivery({ ...raceConfig.playerLivery, ...liveryPatch });
-          }}
-          onClose={() => setModesHubOpen(false)}
-        />
-      )}
-
-      {/* Unified Multiplayer Room Creation & Lobby */}
-      {multiplayerOpen && (
-        <MultiplayerModal
-          config={raceConfig}
-          room={room}
-          myPeerId={mpClientRef.current.peerId}
-          connectionMode={connectionMode}
-          customTracksNonce={customTracksNonce}
-          mpError={mpError}
-          onUpdateConfig={handleUpdateConfig}
-          onUpdatePeer={(payload) => mpClientRef.current?.updatePeer(payload)}
-          onCreateRoom={async (name) => {
-            try {
-              setMpError(null);
-              const mpConfig: RaceConfig = {
-                ...raceConfig,
-                sessionMode: 'race',
-                totalLaps: raceConfig.totalLaps > 0 ? raceConfig.totalLaps : 5,
-              };
-              setRaceConfig(mpConfig);
-              await mpClientRef.current?.createRoom(
-                name,
-                mpConfig.playerCarId,
-                mpConfig.playerLivery,
-                mpConfig,
-                getCarById(mpConfig.playerCarId).classId,
-              );
-            } catch (err: unknown) {
-              setMpError(err instanceof Error ? err.message : 'Failed to create room');
-            }
-          }}
-          onJoinRoom={async (code, name) => {
-            try {
-              setMpError(null);
-              await mpClientRef.current?.joinRoom(
-                code,
-                name,
-                raceConfig.playerCarId,
-                raceConfig.playerLivery,
-                getCarById(raceConfig.playerCarId).classId,
-              );
-            } catch (err: unknown) {
-              setMpError(err instanceof Error ? err.message : 'Failed to join room');
-            }
-          }}
-          onLeaveRoom={() => {
-            try {
-              mpClientRef.current?.leaveRoom();
-              setRoom(null);
-              setMpError(null);
-            } catch (err: unknown) {
-              setMpError(err instanceof Error ? err.message : 'Error leaving room');
-            }
-          }}
-          onStartFromLobby={handleStartSession}
-          onClose={() => setMultiplayerOpen(false)}
-        />
-      )}
-
-      {/* Interactive IMSA Sound Studio (Untouched) */}
-      {soundStudioOpen && (
-        <SoundEditorModal
-          currentCarId={raceConfig.playerCarId}
-          onClose={() => setSoundStudioOpen(false)}
-        />
-      )}
-
-      {/* 3D Livery Studio & UV Painter (Untouched) */}
-      {liveryStudioOpen && (
-        <LiveryStudioModal
-          initialCarId={raceConfig.playerCarId}
-          initialLivery={raceConfig.playerLivery}
-          onApplyLivery={(carId, newLivery) => {
-            if (carId !== raceConfig.playerCarId) {
-              handleSelectCar(carId, newLivery);
-            } else {
-              handleChangeLivery(newLivery);
-            }
-          }}
-          onClose={() => setLiveryStudioOpen(false)}
-        />
-      )}
-
-      {/* Interactive Track Studio Circuit Builder */}
-      {trackStudioOpen && (
-        <TrackStudioModal
-          initialTrack={editingCustomTrack}
-          onClose={() => setTrackStudioOpen(false)}
-          onSaveTrack={handleStudioSaveTrack}
-          onTestDrive={handleStudioTestDrive}
-        />
-      )}
-
-      {/* Cars Showcase 3D Menu */}
-      {carsShowcaseOpen && (
-        <CarsShowcaseModal
-          selectedCarId={raceConfig.playerCarId}
-          selectedLivery={raceConfig.playerLivery}
-          onSelectCar={handleSelectCar}
-          onClose={() => setCarsShowcaseOpen(false)}
-        />
-      )}
-
-      {/* Tracks Showcase 3D Menu */}
-      {tracksShowcaseOpen && (
-        <TracksShowcaseModal
-          selectedTrackId={raceConfig.trackId}
-          selectedCustomTrack={raceConfig.customTrack}
-          onSelectTrack={(trackId, customTrack) => {
-            handleUpdateConfig({ trackId, customTrack });
-          }}
-          onClose={() => setTracksShowcaseOpen(false)}
-        />
-      )}
-
-      {/* Active Race / Qualifying HUD */}
-      {(phase === 'playing' || phase === 'qualifying') && hud && (
-        <>
-          <RaceHUD
-            hud={hud}
-            trackId={raceConfig.trackId}
-            customTrack={raceConfig.customTrack}
-            playerCarId={raceConfig.playerCarId}
-            muted={muted}
-            touchControlsActive={touchControlsActive}
-            onChangePitStrategy={setPitStrategy}
-            onRequestPitStop={(action, nextCompound) =>
-              pitHandlerRef.current ? pitHandlerRef.current(action, nextCompound) : false
-            }
-            onCycleCamera={handleCycleCamera}
-            onToggleSpectatorCameraMode={() => spectateControlsRef.current?.toggleCameraMode()}
-            onCycleSpectatedCar={(dir) => spectateControlsRef.current?.cycleCar(dir)}
-            onSelectSpectatedCar={(carId) => spectateControlsRef.current?.selectCar(carId)}
-            onToggleMute={handleToggleMute}
-            onTogglePause={handleTogglePause}
-            onReturnToTitle={handleReturnToTitle}
-            onCycleErsMode={() => inRaceControlsRef.current?.cycleErsMode()}
-            onAdjustBrakeBalance={(delta) => inRaceControlsRef.current?.adjustBrakeBalance(delta)}
-            onSetAiPaceOrder={(carId, order) => inRaceControlsRef.current?.setAiPaceOrder(carId, order)}
-            onSetAiErsMode={(carId, mode) => inRaceControlsRef.current?.setAiErsMode(carId, mode)}
-            onCallAiOnTrackService={(carId, action, compound) =>
-              inRaceControlsRef.current?.callAiOnTrackService(carId, action, compound)
-            }
+      {/* Lazy-Loaded Heavy Studios & Secondary Modals */}
+      <Suspense fallback={null}>
+        {/* Championships, Time Trial, Daily Hotlap, Scenarios, Licenses, Elimination & Collector Career Hub */}
+        {modesHubOpen && (
+          <ModesHubModal
+            raceConfig={raceConfig}
+            activeChampionship={activeChampionship}
+            onUpdateChampionship={setActiveChampionship}
+            onLaunchChampionshipStage={handleLaunchChampionshipStage}
+            onStartModeSession={(patch) => handleStartSinglePlayer(patch)}
+            onApplyHeritageLivery={(liveryPatch) => {
+              handleChangeLivery({ ...raceConfig.playerLivery, ...liveryPatch });
+            }}
+            onClose={() => setModesHubOpen(false)}
           />
-          <TouchControlsOverlay
-            visible={touchControlsActive}
-            steerStyle={gameSettings.touchSteerStyle}
-            isFreecam={isAiRaceSession && spectatorCameraMode === 'freecam'}
-            isAiRace={isAiRaceSession}
-            specialLabel={playerSpecial.specialType !== 'none' ? playerSpecial.specialLabel : undefined}
-            specialActive={hud.specialActive}
-            specialCharge={hud.specialCharge}
+        )}
+
+        {/* Unified Multiplayer Room Creation & Lobby */}
+        {multiplayerOpen && (
+          <MultiplayerModal
+            config={raceConfig}
+            room={room}
+            myPeerId={mpClientRef.current.peerId}
+            myPingMs={myPingMs}
+            connectionMode={connectionMode}
+            customTracksNonce={customTracksNonce}
+            mpError={mpError}
+            chatMessages={chatMessages}
+            onFetchPublicLobbies={() => mpClientRef.current!.fetchPublicLobbies()}
+            onSendChat={(text) => mpClientRef.current?.sendChat(text)}
+            onKickPeer={(targetId) => mpClientRef.current?.kickPeer(targetId)}
+            onVoteTrack={(trackId) => mpClientRef.current?.voteTrack(trackId)}
+            onUpdateConfig={handleUpdateConfig}
+            onUpdatePeer={(payload) => mpClientRef.current?.updatePeer(payload)}
+            onCreateRoom={async (name, opts) => {
+              try {
+                setMpError(null);
+                setChatMessages([]);
+                const mpConfig: RaceConfig = {
+                  ...raceConfig,
+                  sessionMode: 'race',
+                  totalLaps: raceConfig.totalLaps > 0 ? raceConfig.totalLaps : 5,
+                };
+                setRaceConfig(mpConfig);
+                await mpClientRef.current?.createRoom(
+                  name,
+                  mpConfig.playerCarId,
+                  mpConfig.playerLivery,
+                  mpConfig,
+                  getCarById(mpConfig.playerCarId).classId,
+                  opts,
+                );
+              } catch (err: unknown) {
+                setMpError(err instanceof Error ? err.message : 'Failed to create room');
+              }
+            }}
+            onJoinRoom={async (code, name, opts) => {
+              try {
+                setMpError(null);
+                setChatMessages([]);
+                await mpClientRef.current?.joinRoom(
+                  code,
+                  name,
+                  raceConfig.playerCarId,
+                  raceConfig.playerLivery,
+                  getCarById(raceConfig.playerCarId).classId,
+                  opts,
+                );
+              } catch (err: unknown) {
+                setMpError(err instanceof Error ? err.message : 'Failed to join room');
+              }
+            }}
+            onLeaveRoom={() => {
+              try {
+                mpClientRef.current?.leaveRoom();
+                setRoom(null);
+                setChatMessages([]);
+                setMpError(null);
+              } catch (err: unknown) {
+                setMpError(err instanceof Error ? err.message : 'Error leaving room');
+              }
+            }}
+            onStartFromLobby={handleStartSession}
+            onClose={() => setMultiplayerOpen(false)}
           />
-        </>
-      )}
+        )}
+
+        {/* Interactive IMSA Sound Studio */}
+        {soundStudioOpen && (
+          <SoundEditorModal
+            currentCarId={raceConfig.playerCarId}
+            onClose={() => setSoundStudioOpen(false)}
+          />
+        )}
+
+        {/* 3D Livery Studio & UV Painter */}
+        {liveryStudioOpen && (
+          <LiveryStudioModal
+            initialCarId={raceConfig.playerCarId}
+            initialLivery={raceConfig.playerLivery}
+            onApplyLivery={(carId, newLivery) => {
+              if (carId !== raceConfig.playerCarId) {
+                handleSelectCar(carId, newLivery);
+              } else {
+                handleChangeLivery(newLivery);
+              }
+            }}
+            onClose={() => setLiveryStudioOpen(false)}
+          />
+        )}
+
+        {/* Interactive Track Studio Circuit Builder */}
+        {trackStudioOpen && (
+          <TrackStudioModal
+            initialTrack={editingCustomTrack}
+            onClose={() => setTrackStudioOpen(false)}
+            onSaveTrack={handleStudioSaveTrack}
+            onTestDrive={handleStudioTestDrive}
+          />
+        )}
+
+        {/* Cars Showcase 3D Menu */}
+        {carsShowcaseOpen && (
+          <CarsShowcaseModal
+            selectedCarId={raceConfig.playerCarId}
+            selectedLivery={raceConfig.playerLivery}
+            onSelectCar={handleSelectCar}
+            onClose={() => setCarsShowcaseOpen(false)}
+          />
+        )}
+
+        {/* Tracks Showcase 3D Menu */}
+        {tracksShowcaseOpen && (
+          <TracksShowcaseModal
+            selectedTrackId={raceConfig.trackId}
+            selectedCustomTrack={raceConfig.customTrack}
+            onSelectTrack={(trackId, customTrack) => {
+              handleUpdateConfig({ trackId, customTrack });
+            }}
+            onClose={() => setTracksShowcaseOpen(false)}
+          />
+        )}
+      </Suspense>
+
+      {/* Active Race / Qualifying HUD (hidden during Photo Mode & Replay Theater) */}
+      {(phase === 'playing' || phase === 'qualifying') &&
+        hud &&
+        !photoState?.active &&
+        !replayState?.active && (
+          <>
+            <RaceHUD
+              hud={hud}
+              trackId={raceConfig.trackId}
+              customTrack={raceConfig.customTrack}
+              playerCarId={raceConfig.playerCarId}
+              muted={muted}
+              touchControlsActive={touchControlsActive}
+              mfdPage={mfdPage}
+              onCycleMfd={handleCycleMfd}
+              onCycleTcLevel={() => inRaceControlsRef.current?.cycleTcLevel?.()}
+              onTriggerFlashback={() => inRaceControlsRef.current?.triggerFlashback?.()}
+              onOpenPhotoMode={() => inRaceControlsRef.current?.openPhotoMode?.()}
+              onChangePitStrategy={setPitStrategy}
+              onRequestPitStop={(action, nextCompound) =>
+                pitHandlerRef.current ? pitHandlerRef.current(action, nextCompound) : false
+              }
+              onCycleCamera={handleCycleCamera}
+              onToggleSpectatorCameraMode={() => spectateControlsRef.current?.toggleCameraMode()}
+              onCycleSpectatedCar={(dir) => spectateControlsRef.current?.cycleCar(dir)}
+              onSelectSpectatedCar={(carId) => spectateControlsRef.current?.selectCar(carId)}
+              onToggleMute={handleToggleMute}
+              onTogglePause={handleTogglePause}
+              onReturnToTitle={handleReturnToTitle}
+              onCycleErsMode={() => inRaceControlsRef.current?.cycleErsMode()}
+              onAdjustBrakeBalance={(delta) => inRaceControlsRef.current?.adjustBrakeBalance(delta)}
+              onSetAiPaceOrder={(carId, order) => inRaceControlsRef.current?.setAiPaceOrder(carId, order)}
+              onSetAiErsMode={(carId, mode) => inRaceControlsRef.current?.setAiErsMode(carId, mode)}
+              onCallAiOnTrackService={(carId, action, compound) =>
+                inRaceControlsRef.current?.callAiOnTrackService(carId, action, compound)
+              }
+            />
+            {gameSettings.showControlsBriefing &&
+              !briefingDismissed &&
+              !isAiRaceSession &&
+              hud.countdown > 0 && (
+                <ControlsBriefingCard
+                  carId={raceConfig.playerCarId}
+                  onDismiss={() => {
+                    markBriefingDismissed();
+                    setBriefingDismissed(true);
+                  }}
+                />
+              )}
+            <TouchControlsOverlay
+              visible={touchControlsActive}
+              steerStyle={gameSettings.touchSteerStyle}
+              isFreecam={isAiRaceSession && spectatorCameraMode === 'freecam'}
+              isAiRace={isAiRaceSession}
+              specialLabel={playerSpecial.specialType !== 'none' ? playerSpecial.specialLabel : undefined}
+              specialActive={hud.specialActive}
+              specialCharge={hud.specialCharge}
+            />
+          </>
+        )}
+
+      {/* Instant Replay Theater & Photo Mode Studio Overlay */}
+      <ReplayAndPhotoOverlay
+        replayState={replayState}
+        photoState={photoState}
+        controls={replayControlsRef.current}
+      />
 
       {/* Qualifying Hotlap Complete Modal */}
       {phase === 'qualifying' && qualiBanner && (
@@ -938,7 +1123,7 @@ export default function App() {
       )}
 
       {/* Pause Modal */}
-      {phase === 'paused' && (
+      {phase === 'paused' && !photoState?.active && !replayState?.active && (
         <PauseModal
           onResume={() => {
             setSettingsOpen(false);
@@ -949,30 +1134,53 @@ export default function App() {
             setRunNonce((n) => n + 1);
             setPhase(activePrePausePhase);
           }}
+          onOpenPhotoMode={() => {
+            setSettingsOpen(false);
+            handleTogglePause();
+            replayControlsRef.current?.enterPhotoMode();
+          }}
+          onOpenReplay={() => {
+            setSettingsOpen(false);
+            handleTogglePause();
+            replayControlsRef.current?.enterReplay();
+          }}
+          onTriggerFlashback={
+            !room
+              ? () => {
+                  setSettingsOpen(false);
+                  handleTogglePause();
+                  inRaceControlsRef.current?.triggerFlashback?.();
+                }
+              : undefined
+          }
+          replayAvailable={(replayState?.duration ?? 0) > 1 || (hud?.lap ?? 1) > 1 || (hud?.currentLapTime ?? 0) > 1}
+          flashbackAvailable={!room && ((hud?.lap ?? 1) > 1 || (hud?.currentLapTime ?? 0) > 2)}
           onOpenSettings={() => setSettingsOpen(true)}
           onReturnToTitle={handleReturnToTitle}
         />
       )}
 
-      {/* Settings Modal (accessible from Title Paddock & Pause Menu) */}
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      <Suspense fallback={null}>
+        {/* Settings Modal (accessible from Title Paddock & Pause Menu) */}
+        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
 
-      {/* Garage Car Setup & BoP Workbench Modal */}
-      {carSetupOpen && (
-        <CarSetupModal
-          open={carSetupOpen}
-          carId={raceConfig.playerCarId}
-          trackId={raceConfig.trackId}
-          currentSetup={raceConfig.carSetup}
-          onClose={() => setCarSetupOpen(false)}
-          onApplySetup={(setup) => {
-            handleUpdateConfig({ carSetup: setup });
-          }}
-        />
-      )}
+        {/* Garage Car Setup & BoP Workbench Modal */}
+        {carSetupOpen && (
+          <CarSetupModal
+            open={carSetupOpen}
+            carId={raceConfig.playerCarId}
+            trackId={raceConfig.trackId}
+            currentSetup={raceConfig.carSetup}
+            onClose={() => setCarSetupOpen(false)}
+            onApplySetup={(setup) => {
+              handleUpdateConfig({ carSetup: setup });
+            }}
+          />
+        )}
+      </Suspense>
 
-      {/* Post-Race Results Modal */}
-      {phase === 'gameover' && finalSnapshot && (
+      {/* Post-Race Results Modal (hidden while reviewing Replay Theater) */}
+      {phase === 'gameover' && finalSnapshot && !replayState?.active && (
         <ResultsModal
           snapshot={finalSnapshot}
           trackName={track.name}
@@ -981,6 +1189,7 @@ export default function App() {
           championshipPointsEarned={lastChampPoints}
           careerReward={lastCareerReward}
           scenarioResult={lastScenarioResult}
+          onWatchReplay={() => replayControlsRef.current?.enterReplay()}
           onNextChampionshipRound={
             activeChampionship && !activeChampionship.completed
               ? () => handleLaunchChampionshipStage(activeChampionship, false)
@@ -991,14 +1200,27 @@ export default function App() {
         />
       )}
 
-      {/* Smooth Main Menu / Session Fade-In & Fade-Out Curtain */}
+      {/* Global PWA Offline & Mobile Landscape Indicators */}
+      <OfflineIndicator />
+      <LandscapeMobileBanner active={phase === 'playing' || phase === 'qualifying'} />
+
+      {/* Smooth Main Menu / Session Fade-In & Fade-Out Curtain with Circuit Trivia Tip */}
       <div
         aria-hidden="true"
         data-testid="screen-fade-overlay"
-        className={`fixed inset-0 z-50 pointer-events-none bg-[#0b0e13] transition-opacity duration-300 ease-in-out ${
+        className={`fixed inset-0 z-50 pointer-events-none bg-[#0b0e13] transition-opacity duration-300 ease-in-out flex flex-col items-center justify-center px-6 text-center ${
           screenFading ? 'opacity-100' : 'opacity-0'
         }`}
-      />
+      >
+        <div className="text-[11px] font-mono uppercase tracking-[0.25em] text-amber-400/90">
+          {track.name} · {track.country}
+        </div>
+        {track.circuitInfo && (
+          <div className="mt-2 max-w-md text-xs text-slate-400 leading-relaxed">
+            {track.circuitInfo}
+          </div>
+        )}
+      </div>
     </main>
   );
 }

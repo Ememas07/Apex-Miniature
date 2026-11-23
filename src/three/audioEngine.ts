@@ -1,4 +1,5 @@
-import { CarClassId, CarSpec, SoundProfileId } from '../game/types';
+import { CarClassId, CarSpec, SoundProfileId, TrackSurfaceType } from '../game/types';
+import type { GameSettings } from '../game/settings';
 import {
   AcousticProfile,
   computeWarmFundamentalHz,
@@ -6,12 +7,63 @@ import {
   resolveAcousticProfile,
 } from '../game/audio';
 
+export interface SpatialOpponentAudioInput {
+  id: string;
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+  rpmNormalized: number;
+  speedMs: number;
+  cylinders?: number;
+  isElectric?: boolean;
+}
+
+interface OpponentVoice {
+  osc: OscillatorNode;
+  subOsc: OscillatorNode;
+  filter: BiquadFilterNode;
+  panner: StereoPannerNode;
+  gain: GainNode;
+}
+
 export class MotorsportAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private masterLimiter: DynamicsCompressorNode | null = null;
   private engineBus: GainNode | null = null;
+  private opponentBus: GainNode | null = null;
+  private tireBus: GainNode | null = null;
+  private surfaceBus: GainNode | null = null;
+  private windBus: GainNode | null = null;
+  private uiBus: GainNode | null = null;
+  private musicBus: GainNode | null = null;
   private sfxBus: GainNode | null = null;
+  private cabinFilter: BiquadFilterNode | null = null;
+  private tunnelDelay: DelayNode | null = null;
+  private tunnelFeedback: GainNode | null = null;
+  private tunnelWetGain: GainNode | null = null;
+  private windSource: AudioBufferSourceNode | null = null;
+  private windFilter: BiquadFilterNode | null = null;
+  private windGain: GainNode | null = null;
+  private surfaceSource: AudioBufferSourceNode | null = null;
+  private surfaceFilter: BiquadFilterNode | null = null;
+  private surfaceGain: GainNode | null = null;
+  private opponentVoices: OpponentVoice[] = [];
+  private musicOscA: OscillatorNode | null = null;
+  private musicOscB: OscillatorNode | null = null;
+  private musicPadGain: GainNode | null = null;
+  private musicActive = false;
+  private mixerVolumes = {
+    master: 0.8,
+    engine: 0.9,
+    opponents: 0.75,
+    tires: 0.85,
+    surface: 0.8,
+    wind: 0.65,
+    ui: 0.8,
+    music: 0.35,
+  };
   private analyser: AnalyserNode | null = null;
   private engineGain: GainNode | null = null;
 
@@ -159,11 +211,39 @@ export class MotorsportAudioEngine {
       master.connect(limiter);
       this.masterGain = master;
 
-      // Dedicated isolated sub-buses so SFX (tire scrub, kerbs, exhaust pops) never modulate engine gain/RMS
+      // Dedicated isolated sub-buses for 7-channel mixer so SFX never destabilize engine RMS
+      const cabinFilter = ctx.createBiquadFilter();
+      cabinFilter.type = 'lowpass';
+      cabinFilter.frequency.value = 18000;
+      cabinFilter.Q.value = 0.7;
+      cabinFilter.connect(master);
+      this.cabinFilter = cabinFilter;
+
+      // Subtle tunnel reverb tail send
+      const tDelay = ctx.createDelay(0.5);
+      tDelay.delayTime.value = 0.085;
+      const tFeedback = ctx.createGain();
+      tFeedback.gain.value = 0.36;
+      const tWet = ctx.createGain();
+      tWet.gain.value = 0;
+      tDelay.connect(tFeedback);
+      tFeedback.connect(tDelay);
+      tDelay.connect(tWet);
+      tWet.connect(master);
+      this.tunnelDelay = tDelay;
+      this.tunnelFeedback = tFeedback;
+      this.tunnelWetGain = tWet;
+
       const engineBus = ctx.createGain();
-      engineBus.gain.value = 1.0;
-      engineBus.connect(master);
+      engineBus.gain.value = this.mixerVolumes.engine;
+      engineBus.connect(cabinFilter);
+      engineBus.connect(tDelay);
       this.engineBus = engineBus;
+
+      const opponentBus = ctx.createGain();
+      opponentBus.gain.value = this.mixerVolumes.opponents;
+      opponentBus.connect(cabinFilter);
+      this.opponentBus = opponentBus;
 
       const sfxCompressor = ctx.createDynamicsCompressor();
       sfxCompressor.threshold.setValueAtTime(-6, ctx.currentTime);
@@ -177,6 +257,31 @@ export class MotorsportAudioEngine {
       sfxBus.gain.value = 1.0;
       sfxBus.connect(sfxCompressor);
       this.sfxBus = sfxBus;
+
+      const tireBus = ctx.createGain();
+      tireBus.gain.value = this.mixerVolumes.tires;
+      tireBus.connect(sfxBus);
+      this.tireBus = tireBus;
+
+      const surfaceBus = ctx.createGain();
+      surfaceBus.gain.value = this.mixerVolumes.surface;
+      surfaceBus.connect(sfxBus);
+      this.surfaceBus = surfaceBus;
+
+      const windBus = ctx.createGain();
+      windBus.gain.value = this.mixerVolumes.wind;
+      windBus.connect(sfxBus);
+      this.windBus = windBus;
+
+      const uiBus = ctx.createGain();
+      uiBus.gain.value = this.mixerVolumes.ui;
+      uiBus.connect(master);
+      this.uiBus = uiBus;
+
+      const musicBus = ctx.createGain();
+      musicBus.gain.value = this.mixerVolumes.music;
+      musicBus.connect(master);
+      this.musicBus = musicBus;
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
@@ -457,7 +562,7 @@ export class MotorsportAudioEngine {
 
       sSrc.connect(sFilter);
       sFilter.connect(sGain);
-      sGain.connect(sfxBus);
+      sGain.connect(this.tireBus ?? sfxBus);
       sSrc.start();
 
       this.scrubSource = sSrc;
@@ -478,12 +583,99 @@ export class MotorsportAudioEngine {
 
       kOsc.connect(kFilter);
       kFilter.connect(kGain);
-      kGain.connect(sfxBus);
+      kGain.connect(this.surfaceBus ?? sfxBus);
       kOsc.start();
 
       this.kerbOsc = kOsc;
       this.kerbFilter = kFilter;
       this.kerbGain = kGain;
+
+      // High-speed aerodynamic wind rush foley channel
+      if (this.noiseBuffer) {
+        const wSrc = ctx.createBufferSource();
+        wSrc.buffer = this.noiseBuffer;
+        wSrc.loop = true;
+        const wFilter = ctx.createBiquadFilter();
+        wFilter.type = 'bandpass';
+        wFilter.frequency.value = 520;
+        wFilter.Q.value = 0.9;
+        const wGain = ctx.createGain();
+        wGain.gain.value = 0;
+        wSrc.connect(wFilter);
+        wFilter.connect(wGain);
+        wGain.connect(this.windBus ?? sfxBus);
+        wSrc.start();
+        this.windSource = wSrc;
+        this.windFilter = wFilter;
+        this.windGain = wGain;
+
+        // Surface gravel / grass / wet spray foley channel
+        const sSrc = ctx.createBufferSource();
+        sSrc.buffer = this.noiseBuffer;
+        sSrc.loop = true;
+        const sFilter = ctx.createBiquadFilter();
+        sFilter.type = 'bandpass';
+        sFilter.frequency.value = 950;
+        sFilter.Q.value = 1.1;
+        const sGain = ctx.createGain();
+        sGain.gain.value = 0;
+        sSrc.connect(sFilter);
+        sFilter.connect(sGain);
+        sGain.connect(this.surfaceBus ?? sfxBus);
+        sSrc.start();
+        this.surfaceSource = sSrc;
+        this.surfaceFilter = sFilter;
+        this.surfaceGain = sGain;
+      }
+
+      // 4-voice spatial opponent engine synthesizer pool with Doppler + stereo pan
+      this.opponentVoices = [];
+      for (let i = 0; i < 4; i++) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = 110;
+        const subOsc = ctx.createOscillator();
+        subOsc.type = 'triangle';
+        subOsc.frequency.value = 55;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 900;
+        filter.Q.value = 1.5;
+        const panner = ctx.createStereoPanner();
+        panner.pan.value = 0;
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        osc.connect(filter);
+        subOsc.connect(filter);
+        filter.connect(panner);
+        panner.connect(gain);
+        gain.connect(this.opponentBus ?? master);
+        osc.start();
+        subOsc.start();
+        this.opponentVoices.push({ osc, subOsc, filter, panner, gain });
+      }
+
+      // Subtle atmospheric menu pad synth (silent during racing)
+      const mOscA = ctx.createOscillator();
+      mOscA.type = 'sine';
+      mOscA.frequency.value = 110;
+      const mOscB = ctx.createOscillator();
+      mOscB.type = 'triangle';
+      mOscB.frequency.value = 164.81;
+      const mFilter = ctx.createBiquadFilter();
+      mFilter.type = 'lowpass';
+      mFilter.frequency.value = 340;
+      const mPadGain = ctx.createGain();
+      mPadGain.gain.value = 0;
+      mOscA.connect(mFilter);
+      mOscB.connect(mFilter);
+      mFilter.connect(mPadGain);
+      mPadGain.connect(this.musicBus ?? master);
+      mOscA.start();
+      mOscB.start();
+      this.musicOscA = mOscA;
+      this.musicOscB = mOscB;
+      this.musicPadGain = mPadGain;
 
       this.initialized = true;
     } catch {
@@ -558,10 +750,222 @@ export class MotorsportAudioEngine {
     return true;
   }
 
+  public getFrequencyData(target?: Uint8Array): Uint8Array | null {
+    if (!this.analyser) return null;
+    const buf = target ?? new Uint8Array(this.analyser.frequencyBinCount);
+    this.analyser.getByteFrequencyData(buf as Uint8Array<ArrayBuffer>);
+    return buf;
+  }
+
   public getAnalyserTimeData(out: Uint8Array): boolean {
     if (!this.analyser) return false;
     this.analyser.getByteTimeDomainData(out as Uint8Array<ArrayBuffer>);
     return true;
+  }
+
+  public applyMixerSettings(settings: GameSettings): void {
+    this.mixerVolumes = {
+      master: settings.masterVolume,
+      engine: settings.engineVolume,
+      opponents: settings.opponentVolume,
+      tires: settings.tireSurfaceVolume,
+      surface: settings.tireSurfaceVolume,
+      wind: settings.collisionVolume,
+      ui: settings.uiRadioVolume,
+      music: settings.musicVolume,
+    };
+    this.setMasterVolume(settings.masterVolume);
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.engineBus?.gain.setTargetAtTime(settings.engineVolume, now, 0.04);
+    this.opponentBus?.gain.setTargetAtTime(settings.opponentVolume, now, 0.04);
+    this.tireBus?.gain.setTargetAtTime(settings.tireSurfaceVolume, now, 0.04);
+    this.surfaceBus?.gain.setTargetAtTime(settings.tireSurfaceVolume, now, 0.04);
+    this.windBus?.gain.setTargetAtTime(settings.collisionVolume, now, 0.04);
+    this.uiBus?.gain.setTargetAtTime(settings.uiRadioVolume, now, 0.04);
+    this.musicBus?.gain.setTargetAtTime(settings.musicVolume, now, 0.05);
+  }
+
+  public setMenuMusicActive(active: boolean): void {
+    this.musicActive = active;
+    if (!this.ctx || !this.musicPadGain) return;
+    const now = this.ctx.currentTime;
+    this.musicPadGain.gain.setTargetAtTime(active && !this.muted ? 0.055 : 0, now, 0.45);
+  }
+
+  public updateOpponentEngines(
+    opponents: SpatialOpponentAudioInput[],
+    listenerX: number,
+    listenerZ: number,
+    listenerVx: number,
+    listenerVz: number,
+    listenerHeading: number,
+  ): void {
+    if (!this.initialized || !this.ctx || this.muted || this.opponentVoices.length === 0) return;
+    const now = this.ctx.currentTime;
+    const rightX = Math.cos(listenerHeading);
+    const rightZ = -Math.sin(listenerHeading);
+
+    const ranked = opponents
+      .map((opp) => {
+        const dx = opp.x - listenerX;
+        const dz = opp.z - listenerZ;
+        const dist = Math.hypot(dx, dz);
+        return { opp, dx, dz, dist };
+      })
+      .filter((item) => item.dist < 62 && item.opp.speedMs > 1.5)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, this.opponentVoices.length);
+
+    for (let i = 0; i < this.opponentVoices.length; i++) {
+      const voice = this.opponentVoices[i];
+      const item = ranked[i];
+      if (!item) {
+        voice.gain.gain.setTargetAtTime(0, now, 0.06);
+        continue;
+      }
+      const { opp, dx, dz, dist } = item;
+      const safeDist = Math.max(2.5, dist);
+      // Distance attenuation + stereo pan
+      const atten = Math.max(0, Math.min(1, 1 - (safeDist - 3) / 58));
+      const pan = Math.max(-0.92, Math.min(0.92, (dx * rightX + dz * rightZ) / Math.max(6, safeDist)));
+
+      // Doppler shift based on radial closing velocity (speed of sound = 343 m/s)
+      const invD = 1 / safeDist;
+      const relVx = opp.vx - listenerVx;
+      const relVz = opp.vz - listenerVz;
+      const radialSpeed = (relVx * dx + relVz * dz) * invD; // positive = moving away
+      const doppler = Math.max(0.76, Math.min(1.28, 343 / Math.max(180, 343 + radialSpeed * 1.15)));
+
+      const cyl = opp.cylinders ?? 8;
+      const baseHz = opp.isElectric
+        ? (280 + opp.rpmNormalized * 960) * doppler
+        : (62 + opp.rpmNormalized * (cyl >= 10 ? 290 : 195)) * doppler;
+
+      voice.osc.type = opp.isElectric ? 'sine' : 'sawtooth';
+      voice.osc.frequency.setTargetAtTime(Math.max(40, Math.min(2200, baseHz)), now, 0.035);
+      voice.subOsc.frequency.setTargetAtTime(Math.max(28, baseHz * 0.5), now, 0.035);
+      voice.filter.frequency.setTargetAtTime(
+        opp.isElectric ? 2400 : 420 + opp.rpmNormalized * 1100 * atten,
+        now,
+        0.04,
+      );
+      voice.panner.pan.setTargetAtTime(pan, now, 0.035);
+      voice.gain.gain.setTargetAtTime(atten * atten * (opp.isElectric ? 0.08 : 0.13), now, 0.04);
+    }
+  }
+
+  public updateEnvironmentFoley(params: {
+    speedKmh: number;
+    wetness: number;
+    surface?: TrackSurfaceType;
+    inCockpit?: boolean;
+    inTunnel?: boolean;
+  }): void {
+    if (!this.initialized || !this.ctx || this.muted) return;
+    const now = this.ctx.currentTime;
+    const spdFrac = Math.min(1, Math.max(0, (params.speedKmh - 45) / 260));
+
+    if (this.windGain && this.windFilter) {
+      this.windFilter.frequency.setTargetAtTime(280 + spdFrac * 1350, now, 0.06);
+      this.windGain.gain.setTargetAtTime(spdFrac * spdFrac * 0.13, now, 0.06);
+    }
+
+    if (this.surfaceGain && this.surfaceFilter) {
+      const surf = params.surface ?? 'asphalt';
+      let targetGain = 0;
+      let targetFreq = 900;
+      if (surf === 'gravel' && params.speedKmh > 8) {
+        targetGain = Math.min(0.22, (params.speedKmh / 110) * 0.22);
+        targetFreq = 1650;
+      } else if (surf === 'grass' && params.speedKmh > 8) {
+        targetGain = Math.min(0.14, (params.speedKmh / 120) * 0.14);
+        targetFreq = 680;
+      } else if (params.wetness > 0.18 && params.speedKmh > 35) {
+        targetGain = Math.min(0.18, params.wetness * spdFrac * 0.22);
+        targetFreq = 2200;
+      }
+      this.surfaceFilter.frequency.setTargetAtTime(targetFreq, now, 0.05);
+      this.surfaceGain.gain.setTargetAtTime(targetGain, now, 0.05);
+    }
+
+    if (this.cabinFilter) {
+      this.cabinFilter.frequency.setTargetAtTime(params.inCockpit ? 3800 : 18000, now, 0.08);
+    }
+    if (this.tunnelWetGain) {
+      this.tunnelWetGain.gain.setTargetAtTime(params.inTunnel ? 0.32 : 0, now, 0.12);
+    }
+  }
+
+  public playImpact(intensity = 0.5, kind: 'wall' | 'car' = 'car'): void {
+    const outBus = this.surfaceBus ?? this.sfxBus ?? this.masterGain;
+    if (!this.initialized || !this.ctx || !outBus || this.muted) return;
+    const now = this.ctx.currentTime;
+    const amp = Math.max(0.08, Math.min(0.45, intensity * 0.38));
+
+    // Low thump body
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(kind === 'wall' ? 115 : 155, now);
+    osc.frequency.exponentialRampToValueAtTime(34, now + 0.18);
+    const oGain = this.ctx.createGain();
+    oGain.gain.setValueAtTime(amp, now);
+    oGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc.connect(oGain);
+    oGain.connect(outBus);
+    osc.start(now);
+    osc.stop(now + 0.21);
+
+    // Carbon/metal crunch burst
+    if (this.noiseBuffer) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      const filt = this.ctx.createBiquadFilter();
+      filt.type = 'bandpass';
+      filt.frequency.setValueAtTime(kind === 'wall' ? 880 : 1450, now);
+      filt.Q.setValueAtTime(1.1, now);
+      const nGain = this.ctx.createGain();
+      nGain.gain.setValueAtTime(amp * 0.85, now);
+      nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      src.connect(filt);
+      filt.connect(nGain);
+      nGain.connect(outBus);
+      src.start(now);
+      src.stop(now + 0.17);
+    }
+  }
+
+  public playRadioChirp(): void {
+    const outBus = this.uiBus ?? this.sfxBus ?? this.masterGain;
+    if (!this.initialized || !this.ctx || !outBus || this.muted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1480, now);
+    osc.frequency.setValueAtTime(1920, now + 0.045);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.09, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    osc.connect(g);
+    g.connect(outBus);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  public playShiftBeep(isUp = true): void {
+    const outBus = this.uiBus ?? this.sfxBus ?? this.masterGain;
+    if (!this.initialized || !this.ctx || !outBus || this.muted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(isUp ? 1120 : 740, now);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.07, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+    osc.connect(g);
+    g.connect(outBus);
+    osc.start(now);
+    osc.stop(now + 0.06);
   }
 
   public getAudioContext(): AudioContext | null {
@@ -707,6 +1111,11 @@ export class MotorsportAudioEngine {
     this.turboSpoolGain?.gain.setTargetAtTime(0, now, 0.05);
     this.gearGain?.gain.setTargetAtTime(0, now, 0.04);
     this.intakeGain?.gain.setTargetAtTime(0, now, 0.04);
+    this.windGain?.gain.setTargetAtTime(0, now, 0.05);
+    this.surfaceGain?.gain.setTargetAtTime(0, now, 0.05);
+    for (const v of this.opponentVoices) {
+      v.gain.gain.setTargetAtTime(0, now, 0.06);
+    }
   }
 
   /**
@@ -1200,6 +1609,17 @@ export class MotorsportAudioEngine {
       this.turboNoiseSource?.stop();
       this.scrubSource?.stop();
       this.kerbOsc?.stop();
+      this.windSource?.stop();
+      this.surfaceSource?.stop();
+      this.musicOscA?.stop();
+      this.musicOscB?.stop();
+      for (const v of this.opponentVoices) {
+        try {
+          v.osc.stop();
+          v.subOsc.stop();
+        } catch {}
+      }
+      this.opponentVoices = [];
       this.ctx?.close();
     } catch {
       // ignore
@@ -1207,3 +1627,6 @@ export class MotorsportAudioEngine {
     this.initialized = false;
   }
 }
+
+export const audioEngine = new MotorsportAudioEngine();
+

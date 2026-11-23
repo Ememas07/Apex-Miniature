@@ -16,11 +16,19 @@ export interface GamepadInputState {
   rbPressed: boolean; // R1 / RB (buttons[5]) held
   lbJustPressed: boolean; // Rising edge of L1 / LB (buttons[4])
   rbJustPressed: boolean; // Rising edge of R1 / RB (buttons[5])
+  lookBackPressed: boolean; // Circle / B (buttons[1]) or L3 (buttons[10]) held
+  mfdCycleJustPressed: boolean; // D-Pad Up (buttons[12]) rising edge
+  rawSteerAxis: number; // Uncurved raw left stick X for live calibration tester
   hasAnyInput: boolean; // True if any mapped trigger/stick/button is active
 }
 
 export interface GamepadConfig {
   steerDeadzone: number;
+  steerLinearity: number;
+  steerSensitivity: number;
+  wheelLockDegrees: number;
+  rumbleIntensity: number;
+  splitPedalAxes: boolean;
   cameraDeadzone: number;
   triggerDeadzone: number;
   specialButtonThreshold: number;
@@ -28,6 +36,11 @@ export interface GamepadConfig {
 
 export const DEFAULT_GAMEPAD_CONFIG: GamepadConfig = {
   steerDeadzone: 0.1,
+  steerLinearity: 1.35,
+  steerSensitivity: 1.0,
+  wheelLockDegrees: 360,
+  rumbleIntensity: 0.75,
+  splitPedalAxes: false,
   cameraDeadzone: 0.12,
   triggerDeadzone: 0.04,
   specialButtonThreshold: 0.5,
@@ -40,6 +53,12 @@ export interface GamepadLike {
   mapping?: string;
   axes?: ReadonlyArray<number>;
   buttons?: ReadonlyArray<{ pressed?: boolean; value?: number } | undefined>;
+  vibrationActuator?: {
+    playEffect?: (
+      type: 'dual-rumble',
+      params?: { duration?: number; strongMagnitude?: number; weakMagnitude?: number },
+    ) => Promise<unknown>;
+  } | null;
 }
 
 const NEUTRAL_STATE: GamepadInputState = {
@@ -60,6 +79,9 @@ const NEUTRAL_STATE: GamepadInputState = {
   rbPressed: false,
   lbJustPressed: false,
   rbJustPressed: false,
+  lookBackPressed: false,
+  mfdCycleJustPressed: false,
+  rawSteerAxis: 0,
   hasAnyInput: false,
 };
 
@@ -71,14 +93,19 @@ function clamp(v: number, min: number, max: number): number {
  * Applies a deadzone and smooth non-linear response curve to a -1..+1 stick axis
  * so slight center drift never causes steering jitter while keeping full lock linear.
  */
-export function applySteeringCurve(rawAxis: number, deadzone = DEFAULT_GAMEPAD_CONFIG.steerDeadzone): number {
+export function applySteeringCurve(
+  rawAxis: number,
+  deadzone = DEFAULT_GAMEPAD_CONFIG.steerDeadzone,
+  linearity = DEFAULT_GAMEPAD_CONFIG.steerLinearity,
+  sensitivity = DEFAULT_GAMEPAD_CONFIG.steerSensitivity,
+): number {
   if (!Number.isFinite(rawAxis)) return 0;
   const clamped = clamp(rawAxis, -1, 1);
   const absVal = Math.abs(clamped);
   if (absVal <= deadzone) return 0;
-  const normalized = clamp((absVal - deadzone) / (1 - deadzone), 0, 1);
-  // Smooth racing-game blend: gentle precision near center, responsive sweep toward full lock
-  const curved = 0.4 * normalized + 0.6 * normalized * normalized;
+  const normalized = clamp((absVal - deadzone) / Math.max(0.05, 1 - deadzone), 0, 1);
+  const exp = clamp(linearity, 1.0, 2.4);
+  const curved = clamp(Math.pow(normalized, exp) * clamp(sensitivity, 0.5, 2.0), 0, 1);
   return Math.sign(clamped) * curved;
 }
 
@@ -155,6 +182,8 @@ export class GamepadController {
   private prevResetCamPressed = false;
   private prevLbPressed = false;
   private prevRbPressed = false;
+  private prevMfdPressed = false;
+  private lastRumbleAtMs = 0;
   private attached = false;
   private enabled = true;
 
@@ -206,6 +235,35 @@ export class GamepadController {
     return this.enabled;
   }
 
+  updateConfig(patch: Partial<GamepadConfig>): void {
+    Object.assign(this.config, patch);
+  }
+
+  triggerRumble(strongMagnitude: number, weakMagnitude: number, durationMs = 110): void {
+    if (!this.enabled || this.config.rumbleIntensity <= 0.01) return;
+    const now = Date.now();
+    if (now - this.lastRumbleAtMs < 55) return;
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+    try {
+      const list = Array.from(navigator.getGamepads() ?? []) as Array<GamepadLike | null>;
+      const gp = selectActiveGamepad(list, this.activeIndex);
+      const actuator = gp?.vibrationActuator;
+      if (actuator && typeof actuator.playEffect === 'function') {
+        this.lastRumbleAtMs = now;
+        const scale = clamp(this.config.rumbleIntensity, 0, 1);
+        actuator
+          .playEffect('dual-rumble', {
+            duration: Math.max(30, Math.min(600, durationMs)),
+            strongMagnitude: clamp(strongMagnitude * scale, 0, 1),
+            weakMagnitude: clamp(weakMagnitude * scale, 0, 1),
+          })
+          .catch(() => {});
+      }
+    } catch {
+      // ignore unsupported actuators
+    }
+  }
+
   resetEdgeState(): void {
     this.prevSpecialPressed = false;
     this.prevCameraPressed = false;
@@ -213,6 +271,7 @@ export class GamepadController {
     this.prevResetCamPressed = false;
     this.prevLbPressed = false;
     this.prevRbPressed = false;
+    this.prevMfdPressed = false;
   }
 
   /**
@@ -269,14 +328,28 @@ export class GamepadController {
     // D-pad Left/Right = buttons[14]/buttons[15] (fallback steering when stick is neutral)
     // Cross/A = buttons[0] (Special), Square/X = buttons[2] (brake fallback), Triangle/Y = buttons[3] (Camera)
     // L1/LB = buttons[4], R1/RB = buttons[5], Select/Share = buttons[8], Start/Options = buttons[9], R3 = buttons[11]
-    const triggerThrottle = readTriggerValue(buttons[7], this.config.triggerDeadzone);
-    const triggerBrake = readTriggerValue(buttons[6], this.config.triggerDeadzone);
+    let triggerThrottle = readTriggerValue(buttons[7], this.config.triggerDeadzone);
+    let triggerBrake = readTriggerValue(buttons[6], this.config.triggerDeadzone);
+    if (this.config.splitPedalAxes && axes.length >= 6) {
+      // Racing wheel split pedal axes (often axes[2]/axes[5] ranging +1 resting to -1 pressed)
+      const pedalGas = clamp((1 - (axes[2] ?? 1)) * 0.5, 0, 1);
+      const pedalBrake = clamp((1 - (axes[5] ?? 1)) * 0.5, 0, 1);
+      if (pedalGas > this.config.triggerDeadzone) triggerThrottle = Math.max(triggerThrottle, pedalGas);
+      if (pedalBrake > this.config.triggerDeadzone) triggerBrake = Math.max(triggerBrake, pedalBrake);
+    }
     const squareBrake = isBtnDown(2) ? 1 : 0;
 
     const throttle = triggerThrottle;
     const brake = Math.max(triggerBrake, squareBrake);
 
-    const stickSteer = applySteeringCurve(axes[0] ?? 0, this.config.steerDeadzone);
+    const rawSteerAxis = clamp(axes[0] ?? 0, -1, 1);
+    const lockGain = clamp(360 / Math.max(180, this.config.wheelLockDegrees), 0.4, 2.0);
+    const stickSteer = applySteeringCurve(
+      rawSteerAxis,
+      this.config.steerDeadzone,
+      this.config.steerLinearity,
+      this.config.steerSensitivity * lockGain,
+    );
     const dpadSteer = (isBtnDown(15) ? 1 : 0) - (isBtnDown(14) ? 1 : 0);
     const steer = stickSteer !== 0 ? stickSteer : dpadSteer;
 
@@ -308,6 +381,11 @@ export class GamepadController {
     const rbJustPressed = rbPressed && !this.prevRbPressed;
     this.prevRbPressed = rbPressed;
 
+    const lookBackPressed = isBtnDown(1) || isBtnDown(10);
+    const mfdPressed = isBtnDown(12);
+    const mfdCycleJustPressed = mfdPressed && !this.prevMfdPressed;
+    this.prevMfdPressed = mfdPressed;
+
     const hasAnyInput =
       throttle > 0 ||
       brake > 0 ||
@@ -320,7 +398,9 @@ export class GamepadController {
       pausePressed ||
       resetCamPressed ||
       lbPressed ||
-      rbPressed;
+      rbPressed ||
+      lookBackPressed ||
+      mfdPressed;
 
     return {
       connected: true,
@@ -340,6 +420,9 @@ export class GamepadController {
       rbPressed,
       lbJustPressed,
       rbJustPressed,
+      lookBackPressed,
+      mfdCycleJustPressed,
+      rawSteerAxis,
       hasAnyInput,
     };
   }

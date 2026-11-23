@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -6,13 +6,23 @@ import {
   Clock,
   CloudRain,
   Copy,
+  Eye,
   Flag,
+  Globe,
+  Lock,
   LogOut,
+  MessageSquare,
+  RefreshCw,
   Search,
+  Send,
+  Shield,
   Shuffle,
   Sun,
+  UserX,
   Users,
+  Wifi,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   CAR_CLASSES,
@@ -22,12 +32,14 @@ import {
   validateDriverNumber,
 } from '../game/cars';
 import { getSavedCustomTracks } from '../game/customTracks';
-import { ConnectionMode } from '../game/multiplayer';
+import { ConnectionMode, loadOnlineProfile } from '../game/multiplayer';
 import { generateRandomScenario } from '../game/randomScenario';
 import { TRACKS, compileTrack, filterTracks, formatTargetLapMMSS, getTrackById } from '../game/tracks';
 import {
   CarClassId,
+  ChatMessage,
   LiveryConfig,
+  LobbySummary,
   RaceConfig,
   RoomState,
   TrackRegion,
@@ -40,22 +52,32 @@ interface MultiplayerModalProps {
   config: RaceConfig;
   room: RoomState | null;
   myPeerId?: string;
+  myPingMs?: number;
   connectionMode?: ConnectionMode;
   customTracksNonce?: number;
   mpError: string | null;
-  onUpdateConfig: (patch: Partial<RaceConfig>) => void;
-  onCreateRoom: (driverName: string) => void;
-  onJoinRoom: (code: string, driverName: string) => void;
+  chatMessages?: ChatMessage[];
+  onFetchPublicLobbies?: () => Promise<LobbySummary[]>;
+  onUpdateConfig: (patch: Partial<RaceConfig>, meta?: { isPublic?: boolean; lobbyName?: string }) => void;
+  onCreateRoom: (driverName: string, opts?: { isPublic?: boolean; lobbyName?: string }) => void;
+  onJoinRoom: (code: string, driverName: string, opts?: { isSpectator?: boolean }) => void;
   onLeaveRoom: () => void;
   onStartFromLobby: () => void;
+  onSendChat?: (text: string) => void;
+  onKickPeer?: (targetPeerId: string) => void;
+  onVoteTrack?: (trackId: string) => void;
   onUpdatePeer?: (payload: {
     carId?: string;
     classId?: CarClassId;
     livery?: LiveryConfig;
     ready?: boolean;
+    isSpectator?: boolean;
   }) => void;
   onClose: () => void;
 }
+
+const QUICK_CHAT_PHRASES = ['Good luck!', 'Ready!', 'Change track?', 'Clean T1!'];
+const VOTE_TRACK_IDS = ['monza', 'spa', 'suzuka', 'silverstone', 'lemans'];
 
 const PRESET_COLORS = [
   '#c8102e',
@@ -108,22 +130,40 @@ export function MultiplayerModal({
   config,
   room,
   myPeerId,
+  myPingMs = 0,
   connectionMode = 'disconnected',
   customTracksNonce,
   mpError,
+  chatMessages = [],
+  onFetchPublicLobbies,
   onUpdateConfig,
   onCreateRoom,
   onJoinRoom,
   onLeaveRoom,
   onStartFromLobby,
+  onSendChat,
+  onKickPeer,
+  onVoteTrack,
   onUpdatePeer,
   onClose,
 }: MultiplayerModalProps) {
-  const [driverName, setDriverName] = useState('Player 1');
+  const onlineProfile = useMemo(() => loadOnlineProfile(), []);
+  const [driverName, setDriverName] = useState(onlineProfile.username || 'Player 1');
+  const [lobbyName, setLobbyName] = useState(`${onlineProfile.username || 'Player 1'}'s Paddock`);
+  const [isPublicRoom, setIsPublicRoom] = useState(true);
+  const [joinAsSpectator, setJoinAsSpectator] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  // Public lobby browser state
+  const [publicLobbies, setPublicLobbies] = useState<LobbySummary[]>([]);
+  const [loadingLobbies, setLoadingLobbies] = useState(false);
+
+  // Lobby chat state
+  const [chatDraft, setChatDraft] = useState('');
+  const chatScrollRef = useRef<HTMLDivElement>(null);
 
   // Track picker state (for pre-lobby room creation and host lobby editing)
   const [regionFilter, setRegionFilter] = useState<'Flagship' | TrackRegion | 'All'>('Flagship');
@@ -133,12 +173,72 @@ export function MultiplayerModal({
   // Paddock car picker state
   const [paddockCarSearch, setPaddockCarSearch] = useState('');
 
+  const refreshPublicLobbies = async () => {
+    if (!onFetchPublicLobbies) return;
+    setLoadingLobbies(true);
+    try {
+      const list = await onFetchPublicLobbies();
+      setPublicLobbies(list);
+    } finally {
+      setLoadingLobbies(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!room) {
+      refreshPublicLobbies();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room]);
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages.length]);
+
   useEffect(() => {
     if (room || mpError) {
       setCreatingRoom(false);
       setJoiningRoom(false);
     }
   }, [room, mpError]);
+
+  const effectiveMessages = useMemo(
+    () => (chatMessages.length > 0 ? chatMessages : room?.chatMessages ?? []),
+    [chatMessages, room?.chatMessages],
+  );
+
+  const voteCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (room?.trackVotes) {
+      for (const tid of Object.values(room.trackVotes)) {
+        counts[tid] = (counts[tid] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [room?.trackVotes]);
+
+  const handleQuickMatch = () => {
+    const openLobby = publicLobbies.find((l) => !l.started && l.playerCount < l.maxPlayers);
+    if (openLobby) {
+      setJoiningRoom(true);
+      onJoinRoom(openLobby.code, driverName.trim() || 'Guest Driver', { isSpectator: false });
+      return;
+    }
+    setCreatingRoom(true);
+    onCreateRoom(driverName.trim() || 'Host Driver', {
+      isPublic: true,
+      lobbyName: lobbyName.trim() || `${driverName.trim() || 'Host'}'s Public Grid`,
+    });
+  };
+
+  const handleSendChatSubmit = (textOverride?: string) => {
+    const payload = (textOverride ?? chatDraft).trim();
+    if (!payload || !onSendChat) return;
+    onSendChat(payload);
+    if (!textOverride) setChatDraft('');
+  };
 
   const customTracks = useMemo(() => {
     void customTracksNonce;
@@ -374,6 +474,19 @@ export function MultiplayerModal({
                   </p>
                 </div>
 
+                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded bg-[#0c1017] border border-white/10 text-[11px]">
+                  <div className="flex items-center gap-2 text-slate-300">
+                    <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Elo <strong className="font-telemetry text-white">{onlineProfile.eloRating}</strong></span>
+                    <span className="text-slate-600">·</span>
+                    <span>SR <strong className="font-telemetry text-emerald-300">{onlineProfile.safetyRating}%</strong></span>
+                  </div>
+                  <div className="flex items-center gap-1 text-slate-400 font-telemetry">
+                    <Wifi className="w-3 h-3 text-sky-400" />
+                    {myPingMs > 0 ? `${myPingMs}ms` : 'LAN'}
+                  </div>
+                </div>
+
                 <div>
                   <label htmlFor="mp-driver-name" className="block text-xs font-semibold text-slate-300 mb-1.5">
                     Driver Name
@@ -389,20 +502,113 @@ export function MultiplayerModal({
                   />
                 </div>
 
+                {/* Quick Match & Public Lobby Browser */}
+                <div className="pt-4 border-t border-white/10 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-sky-400" />
+                      Public Lobbies ({publicLobbies.length})
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleQuickMatch}
+                        disabled={creatingRoom || joiningRoom}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-[11px] font-display font-bold text-white cursor-pointer transition-colors"
+                      >
+                        <Zap className="w-3 h-3" />
+                        Quick Match
+                      </button>
+                      <button
+                        type="button"
+                        onClick={refreshPublicLobbies}
+                        disabled={loadingLobbies}
+                        aria-label="Refresh public lobbies"
+                        className="p-1.5 rounded bg-[#181f2c] hover:bg-[#222c3d] border border-white/10 text-slate-300 cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${loadingLobbies ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+                  {publicLobbies.length === 0 ? (
+                    <div className="p-2.5 rounded bg-[#0c1017] border border-white/10 text-[11px] text-slate-400 text-center">
+                      No open public lobbies yet — click <span className="text-sky-300 font-semibold">Quick Match</span> or host one below.
+                    </div>
+                  ) : (
+                    <div className="max-h-36 overflow-y-auto custom-scroll space-y-1.5 pr-1">
+                      {publicLobbies.map((lobby) => {
+                        const trk = getTrackById(lobby.trackId);
+                        return (
+                          <div
+                            key={lobby.code}
+                            className="flex items-center justify-between gap-2 px-2.5 py-2 rounded bg-[#0d121b] border border-white/10 text-xs"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-white truncate flex items-center gap-1.5">
+                                <span className="truncate">{lobby.name}</span>
+                                {lobby.started && (
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">
+                                    IN RACE
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-400 truncate">
+                                {trk.name} · {lobby.playerCount}/{lobby.maxPlayers} · Host: {lobby.hostName}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setJoiningRoom(true);
+                                onJoinRoom(lobby.code, driverName.trim() || 'Guest Driver', {
+                                  isSpectator: lobby.started || joinAsSpectator,
+                                });
+                              }}
+                              className="px-2.5 py-1 rounded bg-red-600/90 hover:bg-red-500 text-[11px] font-semibold text-white cursor-pointer shrink-0"
+                            >
+                              {lobby.started ? 'Spectate' : 'Join'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 {/* Host Room Action */}
                 <div className="pt-4 border-t border-white/10 space-y-3">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-slate-200">Host New Room</span>
-                    <span className="text-slate-400 truncate max-w-[60%]">
-                      {selectedTrack.name} · {config.totalLaps}L
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsPublicRoom((v) => !v)}
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-semibold cursor-pointer ${
+                        isPublicRoom
+                          ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-300'
+                          : 'bg-[#161c28] border-white/15 text-slate-300'
+                      }`}
+                    >
+                      {isPublicRoom ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                      {isPublicRoom ? 'Public Lobby' : 'Private Code'}
+                    </button>
                   </div>
+                  <input
+                    type="text"
+                    maxLength={32}
+                    value={lobbyName}
+                    onChange={(e) => setLobbyName(e.target.value)}
+                    placeholder="Lobby title (e.g. Monza GT3 Sprint)"
+                    className="w-full px-3 py-1.5 rounded bg-[#0c1017] border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500"
+                  />
                   <button
                     type="button"
                     data-testid="btn-create-room"
                     onClick={() => {
                       setCreatingRoom(true);
-                      onCreateRoom(driverName.trim() || 'Host Driver');
+                      onCreateRoom(driverName.trim() || 'Host Driver', {
+                        isPublic: isPublicRoom,
+                        lobbyName: lobbyName.trim() || `${driverName.trim() || 'Host'}'s Paddock`,
+                      });
                     }}
                     disabled={creatingRoom}
                     className="w-full py-3 px-4 rounded-md bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-display font-bold text-white cursor-pointer transition-colors shadow-lg shadow-red-950/40"
@@ -413,9 +619,21 @@ export function MultiplayerModal({
 
                 {/* Join Room Action */}
                 <div className="pt-4 border-t border-white/10 space-y-2.5">
-                  <label htmlFor="mp-join-code" className="block text-xs font-semibold text-slate-200">
-                    Join by Room Code
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="mp-join-code" className="block text-xs font-semibold text-slate-200">
+                      Join by Room Code
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={joinAsSpectator}
+                        onChange={(e) => setJoinAsSpectator(e.target.checked)}
+                        className="accent-sky-500 cursor-pointer"
+                      />
+                      <Eye className="w-3 h-3 text-sky-400" />
+                      Spectator
+                    </label>
+                  </div>
                   <div className="flex gap-2">
                     <input
                       id="mp-join-code"
@@ -432,12 +650,14 @@ export function MultiplayerModal({
                       data-testid="btn-join-room"
                       onClick={() => {
                         setJoiningRoom(true);
-                        onJoinRoom(joinCode.trim(), driverName.trim() || 'Guest Driver');
+                        onJoinRoom(joinCode.trim(), driverName.trim() || 'Guest Driver', {
+                          isSpectator: joinAsSpectator,
+                        });
                       }}
                       disabled={joiningRoom || joinCode.trim().length < 4}
                       className="px-5 py-2.5 rounded bg-[#1d2534] hover:bg-[#263144] disabled:opacity-40 border border-white/15 text-xs font-semibold text-white cursor-pointer transition-colors whitespace-nowrap"
                     >
-                      {joiningRoom ? 'Joining...' : 'Join Room'}
+                      {joiningRoom ? 'Joining...' : joinAsSpectator ? 'Spectate' : 'Join Room'}
                     </button>
                   </div>
                 </div>
@@ -824,10 +1044,13 @@ export function MultiplayerModal({
                       CAR_CLASSES[p.classId as CarClassId] ||
                       CAR_CLASSES[peerCar.classId] ||
                       CAR_CLASSES[CarClassId.HYPERCAR_GTP];
+                    const pingVal = p.peerId === myPeerId ? myPingMs : p.pingMs ?? 0;
+                    const pingTone =
+                      pingVal > 220 ? 'text-rose-400' : pingVal > 100 ? 'text-amber-300' : 'text-emerald-400';
                     return (
                       <div
                         key={p.peerId}
-                        className="flex items-center justify-between px-3.5 py-2.5 rounded bg-[#151a24] border border-white/10 text-xs"
+                        className="flex items-center justify-between gap-2 px-3.5 py-2.5 rounded bg-[#151a24] border border-white/10 text-xs"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <span
@@ -835,17 +1058,26 @@ export function MultiplayerModal({
                             style={{ backgroundColor: p.livery.primaryColor || '#dc2626' }}
                           />
                           <div className="min-w-0">
-                            <div className="font-semibold text-white truncate">
-                              {p.name}
-                              {p.isHost && <span className="ml-1.5 text-amber-400 font-normal">(Host)</span>}
-                              {p.peerId === myPeerId && <span className="ml-1.5 text-sky-400 font-normal">(You)</span>}
+                            <div className="font-semibold text-white truncate flex items-center gap-1.5">
+                              <span className="truncate">{p.name}</span>
+                              {p.isHost && <span className="text-amber-400 font-normal">(Director)</span>}
+                              {p.peerId === myPeerId && <span className="text-sky-400 font-normal">(You)</span>}
+                              {p.isSpectator && (
+                                <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[9px] font-bold">
+                                  SPECTATOR
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-slate-400 truncate">
-                              {peerCar.name} · #{p.livery.driverNumber}
+                              {peerCar.name} · #{p.livery.driverNumber} · Elo {p.eloRating ?? 1200} · SR{' '}
+                              {p.safetyRating ?? 80}%
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2.5 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`font-telemetry text-[10px] ${pingTone}`}>
+                            {pingVal > 0 ? `${pingVal}ms` : 'LAN'}
+                          </span>
                           <span
                             className="px-1.5 py-0.5 rounded-sm text-[10px] font-display font-bold"
                             style={{ backgroundColor: peerClass.plateColor, color: peerClass.badgeTextColor }}
@@ -857,13 +1089,117 @@ export function MultiplayerModal({
                               p.ready ? 'text-emerald-400' : 'text-amber-300'
                             }`}
                           >
-                            {p.ready ? 'READY' : 'CHOOSING'}
+                            {p.isSpectator ? 'WATCHING' : p.ready ? 'READY' : 'CHOOSING'}
                           </span>
+                          {isHost && p.peerId !== myPeerId && onKickPeer && (
+                            <button
+                              type="button"
+                              onClick={() => onKickPeer(p.peerId)}
+                              title={`Remove ${p.name} from lobby`}
+                              aria-label={`Kick ${p.name}`}
+                              className="p-1 rounded bg-rose-950/60 hover:bg-rose-800/70 border border-rose-500/30 text-rose-300 cursor-pointer"
+                            >
+                              <UserX className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Track Vote & Lobby Chat */}
+              <div className="p-4 rounded-lg bg-[#11151d] border border-white/10 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-display font-bold uppercase tracking-wide text-white">
+                    <MessageSquare className="w-3.5 h-3.5 text-sky-400" />
+                    Paddock Chat & Circuit Vote
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {VOTE_TRACK_IDS.map((tid) => {
+                      const trk = getTrackById(tid);
+                      const votes = voteCounts[tid] || 0;
+                      const myVote = room.trackVotes?.[myPeerId || ''] === tid;
+                      return (
+                        <button
+                          key={tid}
+                          type="button"
+                          onClick={() => {
+                            onVoteTrack?.(tid);
+                            if (isHost) {
+                              onUpdateConfig({ trackId: tid, customTrack: undefined });
+                            }
+                          }}
+                          className={`px-2 py-0.5 rounded border text-[10px] font-semibold cursor-pointer ${
+                            myVote || config.trackId === tid
+                              ? 'bg-sky-600/25 border-sky-400 text-sky-200'
+                              : 'bg-[#151a24] border-white/10 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {trk.name.split(' ')[0]}
+                          {votes > 0 ? ` (${votes})` : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div
+                  ref={chatScrollRef}
+                  className="h-28 overflow-y-auto custom-scroll rounded bg-[#0b0f17] border border-white/10 p-2.5 space-y-1.5 text-xs"
+                >
+                  {effectiveMessages.length === 0 ? (
+                    <div className="text-[11px] text-slate-500 italic">
+                      No messages yet — say hello or vote for the next circuit.
+                    </div>
+                  ) : (
+                    effectiveMessages.map((m) => (
+                      <div key={m.id} className={m.isSystem ? 'text-amber-300/90 text-[11px]' : 'text-slate-200'}>
+                        <span className="font-semibold text-sky-300 mr-1.5">{m.senderName}:</span>
+                        <span>{m.text}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-1">
+                  {QUICK_CHAT_PHRASES.map((phrase) => (
+                    <button
+                      key={phrase}
+                      type="button"
+                      onClick={() => handleSendChatSubmit(phrase)}
+                      className="px-2 py-0.5 rounded bg-[#161d2b] hover:bg-[#1f293d] border border-white/10 text-[10px] text-slate-300 cursor-pointer"
+                    >
+                      {phrase}
+                    </button>
+                  ))}
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSendChatSubmit();
+                  }}
+                  className="flex gap-2"
+                >
+                  <input
+                    type="text"
+                    maxLength={140}
+                    value={chatDraft}
+                    onChange={(e) => setChatDraft(e.target.value)}
+                    placeholder="Message paddock..."
+                    className="flex-1 px-3 py-1.5 rounded bg-[#0c1017] border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chatDraft.trim()}
+                    className="px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-xs font-semibold text-white cursor-pointer flex items-center gap-1"
+                  >
+                    <Send className="w-3 h-3" />
+                    Send
+                  </button>
+                </form>
               </div>
 
               {/* Room Settings (Editable for Host, Read-Only for Guest) */}

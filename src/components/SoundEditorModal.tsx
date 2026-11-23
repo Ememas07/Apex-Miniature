@@ -51,6 +51,51 @@ const WAVEFORM_OPTIONS: Array<{ value: OscillatorType; label: string }> = [
   { value: 'sine', label: 'Sine' },
 ];
 
+interface SavedSoundPreset {
+  id: string;
+  name: string;
+  savedAt: number;
+  profile: AcousticProfile;
+}
+
+const SOUND_LIBRARY_STORAGE_KEY = 'apex_saved_sound_presets_v1';
+
+function loadSavedSoundPresets(): SavedSoundPreset[] {
+  try {
+    const raw = localStorage.getItem(SOUND_LIBRARY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedSoundPresets(list: SavedSoundPreset[]): void {
+  try {
+    localStorage.setItem(SOUND_LIBRARY_STORAGE_KEY, JSON.stringify(list.slice(0, 16)));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function encodeSoundShareCode(p: AcousticProfile): string {
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(p))));
+  return `APXSND:${encoded}`;
+}
+
+function decodeSoundShareCode(code: string): Partial<AcousticProfile> | null {
+  try {
+    const trimmed = code.trim();
+    if (!trimmed.startsWith('APXSND:')) return null;
+    const parsed = JSON.parse(decodeURIComponent(escape(atob(trimmed.slice(7)))));
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as Partial<AcousticProfile>;
+  } catch {
+    return null;
+  }
+}
+
 export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProps) {
   const activeCar = useMemo(() => getCarById(currentCarId), [currentCarId]);
   const defaultProfileId: SoundProfileId = useMemo(
@@ -85,6 +130,12 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
   const [manualThrottle, setManualThrottle] = useState(0.25);
   const [manualGear, setManualGear] = useState(2);
   const [copiedJson, setCopiedJson] = useState(false);
+  const [savedSoundPresets, setSavedSoundPresets] = useState<SavedSoundPreset[]>(() =>
+    loadSavedSoundPresets(),
+  );
+  const [presetSlotName, setPresetSlotName] = useState('');
+  const [soundShareInput, setSoundShareInput] = useState('');
+  const [soundShareStatus, setSoundShareStatus] = useState<string | null>(null);
 
   // Reference Audio & Browser Auto-Fitter State
   const [refWindow, setRefWindow] = useState<ReferenceAudioWindow | null>(null);
@@ -421,15 +472,15 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
         s.sweepPhaseTimer += dt;
         if (!s.sweepLifting) {
           s.simThrottle = 1.0;
-          const accelRate = Math.max(0.32, 0.92 - (s.simGear - 1) * 0.11);
+          const accelRate = Math.max(0.28, 1.05 - (s.simGear - 1) * 0.1);
           s.simRpm += dt * accelRate;
           if (s.simRpm >= 0.99) {
-            if (s.simGear < 6) {
+            if (s.simGear < 8) {
               s.simGear += 1;
-              s.simRpm = 0.58;
+              s.simRpm = 0.62;
             } else {
-              // Hold top gear redline bounce briefly, then lift off for overrun crackles
-              if (s.sweepPhaseTimer > 7.5) {
+              // Hold 8th gear redline bounce briefly, then lift off for overrun crackles & downshift blips
+              if (s.sweepPhaseTimer > 8.5) {
                 s.sweepLifting = true;
                 s.sweepPhaseTimer = 0;
               } else {
@@ -439,19 +490,20 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
           }
         } else {
           s.simThrottle = 0.0;
-          s.simRpm -= dt * 0.42;
-          if (s.simRpm <= 0.46 && s.simGear > 2) {
+          s.simRpm -= dt * 0.52;
+          if (s.simRpm <= 0.48 && s.simGear > 1) {
             s.simGear -= 1;
-            s.simRpm = 0.78;
+            s.simRpm = 0.84; // Rev-matched downshift blip
+            s.simThrottle = 0.65;
           }
-          if (s.sweepPhaseTimer > 2.6 || (s.simGear <= 2 && s.simRpm <= 0.22)) {
+          if (s.sweepPhaseTimer > 4.2 || (s.simGear <= 1 && s.simRpm <= 0.2)) {
             s.sweepLifting = false;
             s.sweepPhaseTimer = 0;
             s.simGear = 1;
-            s.simRpm = 0.15;
+            s.simRpm = 0.16;
           }
         }
-        s.simSpeedKmh = Math.max(25, Math.min(335, s.simGear * 48 * (0.4 + s.simRpm * 0.68)));
+        s.simSpeedKmh = Math.max(25, Math.min(365, s.simGear * 44 * (0.42 + s.simRpm * 0.65)));
       } else if (s.testMode === 'pedal') {
         if (s.pedalPressed) {
           s.simThrottle = Math.min(1, s.simThrottle + dt * 6.0);
@@ -1131,7 +1183,7 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                     : 'bg-[#172030] hover:bg-[#1f2c42] border-sky-500/40 text-sky-300'
                 }`}
               >
-                {testMode === 'sweep' ? 'Stop Gear Sweep' : 'Auto RPM Sweep'}
+                {testMode === 'sweep' ? 'Stop 1–8 Dyno Sweep' : 'Dyno 1→8 Gear Sweep'}
               </button>
 
               <button
@@ -1149,6 +1201,133 @@ export function SoundEditorModal({ currentCarId, onClose }: SoundEditorModalProp
                 <Flame className="w-3.5 h-3.5" />
                 {testMode === 'limiter' ? 'Stop Limiter' : 'Rev Limiter Test'}
               </button>
+            </div>
+
+            {/* Saved Sound Library & Shareable APXSND: Code */}
+            <div className="p-3 rounded-lg bg-[#0d1421] border border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-sky-300">
+                  Preset Library & APXSND Share
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const code = encodeSoundShareCode(profileRef.current);
+                    navigator.clipboard?.writeText(code).catch(() => {});
+                    setSoundShareInput(code);
+                    setSoundShareStatus('Copied APXSND: code!');
+                    setTimeout(() => setSoundShareStatus(null), 2200);
+                  }}
+                  className="px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 text-[11px] font-bold text-white cursor-pointer"
+                >
+                  Copy APXSND:
+                </button>
+              </div>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  maxLength={24}
+                  value={presetSlotName}
+                  onChange={(e) => setPresetSlotName(e.target.value)}
+                  placeholder="Save custom preset name..."
+                  className="flex-1 px-2.5 py-1 rounded bg-black/40 border border-white/15 text-xs text-white outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const entry: SavedSoundPreset = {
+                      id: `snd-${Date.now()}`,
+                      name: presetSlotName.trim() || `${profile.soundProfile} Custom`,
+                      savedAt: Date.now(),
+                      profile: JSON.parse(JSON.stringify(profileRef.current)),
+                    };
+                    const updated = [entry, ...savedSoundPresets].slice(0, 16);
+                    setSavedSoundPresets(updated);
+                    persistSavedSoundPresets(updated);
+                    setPresetSlotName('');
+                  }}
+                  className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white cursor-pointer"
+                >
+                  Save
+                </button>
+              </div>
+              {savedSoundPresets.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                  {savedSoundPresets.map((item) => (
+                    <div
+                      key={item.id}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[11px]"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const merged: AcousticProfile = {
+                            ...profileRef.current,
+                            ...item.profile,
+                            soundProfile: selectedPresetId,
+                          };
+                          profileRef.current = merged;
+                          setProfile(merged);
+                          saveSoundProfileOverride(selectedPresetId, merged);
+                          setHasCustomOverride(true);
+                          applyLiveAudioUpdate(merged);
+                        }}
+                        className="text-slate-200 hover:text-sky-300 font-semibold cursor-pointer"
+                      >
+                        {item.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = savedSoundPresets.filter((s) => s.id !== item.id);
+                          setSavedSoundPresets(updated);
+                          persistSavedSoundPresets(updated);
+                        }}
+                        className="text-rose-400 hover:text-rose-300 cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={soundShareInput}
+                  onChange={(e) => setSoundShareInput(e.target.value)}
+                  placeholder="Paste APXSND:... code to import"
+                  className="flex-1 px-2 py-1 rounded bg-black/40 border border-white/15 text-[11px] font-mono text-slate-200 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const decoded = decodeSoundShareCode(soundShareInput);
+                    if (!decoded) {
+                      setSoundShareStatus('Invalid APXSND: code.');
+                      return;
+                    }
+                    const merged: AcousticProfile = {
+                      ...profileRef.current,
+                      ...decoded,
+                      soundProfile: selectedPresetId,
+                    };
+                    profileRef.current = merged;
+                    setProfile(merged);
+                    saveSoundProfileOverride(selectedPresetId, merged);
+                    setHasCustomOverride(true);
+                    applyLiveAudioUpdate(merged);
+                    setSoundShareStatus('Sound profile imported!');
+                    setTimeout(() => setSoundShareStatus(null), 2200);
+                  }}
+                  className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-xs font-bold text-white cursor-pointer"
+                >
+                  Import
+                </button>
+              </div>
+              {soundShareStatus && (
+                <div className="text-[11px] text-emerald-300">{soundShareStatus}</div>
+              )}
             </div>
 
             {/* Manual RPM / Throttle / Gear Sliders */}

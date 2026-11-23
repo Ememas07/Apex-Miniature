@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Award, ChevronRight, Download, Trophy } from 'lucide-react';
+import { Award, ChevronRight, Download, Film, Trophy } from 'lucide-react';
 import { CAR_CLASSES, getCarById } from '../game/cars';
 import { ActiveChampionshipState } from '../game/championship';
 import { formatLapTime } from '../game/physics';
@@ -17,6 +17,7 @@ interface ResultsModalProps {
   careerReward?: { creditsEarned: number; repEarned: number } | null;
   scenarioResult?: { passed: boolean; medal: MedalTier | null; summary: string } | null;
   onNextChampionshipRound?: () => void;
+  onWatchReplay?: () => void;
   onRaceAgain: () => void;
   onReturnToTitle: () => void;
 }
@@ -30,6 +31,7 @@ export function ResultsModal({
   careerReward,
   scenarioResult,
   onNextChampionshipRound,
+  onWatchReplay,
   onRaceAgain,
   onReturnToTitle,
 }: ResultsModalProps) {
@@ -185,6 +187,50 @@ export function ResultsModal({
           </div>
         )}
 
+        {/* Lap-by-Lap Position Progression Chart */}
+        {!isAiRace && snapshot.lapPositionHistory && snapshot.lapPositionHistory.length >= 2 && (
+          <div className="px-4 py-2.5 sm:px-6 bg-[#0b1018] border-b border-white/10">
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">
+              <span>Lap-by-Lap Position Chart</span>
+              <span className="font-mono text-sky-300">
+                P{snapshot.lapPositionHistory[0].position} &rarr; P
+                {snapshot.lapPositionHistory[snapshot.lapPositionHistory.length - 1].position}
+              </span>
+            </div>
+            <svg viewBox="0 0 320 56" className="w-full h-14 bg-[#0f1623] rounded border border-white/5">
+              {[1, Math.ceil(snapshot.totalCars / 2), Math.max(2, snapshot.totalCars)].map((posTick) => {
+                const y = 8 + ((posTick - 1) / Math.max(1, snapshot.totalCars - 1)) * 40;
+                return (
+                  <g key={posTick}>
+                    <line x1="22" y1={y} x2="312" y2={y} stroke="#1e293b" strokeWidth="0.7" />
+                    <text x="4" y={y + 3} fill="#64748b" fontSize="7" fontFamily="monospace">
+                      P{posTick}
+                    </text>
+                  </g>
+                );
+              })}
+              <polyline
+                fill="none"
+                stroke="#38bdf8"
+                strokeWidth="2"
+                strokeLinejoin="round"
+                points={snapshot.lapPositionHistory
+                  .map((pt, idx) => {
+                    const x = 26 + (idx / Math.max(1, snapshot.lapPositionHistory!.length - 1)) * 282;
+                    const y = 8 + ((pt.position - 1) / Math.max(1, snapshot.totalCars - 1)) * 40;
+                    return `${x.toFixed(1)},${y.toFixed(1)}`;
+                  })
+                  .join(' ')}
+              />
+              {snapshot.lapPositionHistory.map((pt, idx) => {
+                const x = 26 + (idx / Math.max(1, snapshot.lapPositionHistory!.length - 1)) * 282;
+                const y = 8 + ((pt.position - 1) / Math.max(1, snapshot.totalCars - 1)) * 40;
+                return <circle key={pt.lap} cx={x} cy={y} r="2.6" fill="#f8fafc" stroke="#0284c7" strokeWidth="1" />;
+              })}
+            </svg>
+          </div>
+        )}
+
         {/* Classification Table */}
         <div className="flex-1 overflow-auto custom-scroll p-3 sm:p-6">
           <table className="w-full min-w-[540px] text-left text-xs border-collapse">
@@ -277,6 +323,16 @@ export function ResultsModal({
             >
               <Download className="w-3.5 h-3.5" />
               {bcExportLabel ?? `Export ${recordedCleanLaps.length} BC Lap(s)`}
+            </button>
+          )}
+          {onWatchReplay && snapshot.replayAvailable && (
+            <button
+              type="button"
+              onClick={onWatchReplay}
+              className="px-4 py-2.5 rounded bg-rose-600/25 hover:bg-rose-600/40 border border-rose-500/45 text-xs font-display font-bold text-rose-200 cursor-pointer flex items-center gap-1.5"
+            >
+              <Film className="w-3.5 h-3.5" />
+              Watch Replay
             </button>
           )}
           <button

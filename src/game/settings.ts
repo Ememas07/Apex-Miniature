@@ -1,10 +1,19 @@
 /**
- * Persistent client-side gameplay & input settings (localStorage-backed).
+ * Persistent client-side gameplay, graphics, audio, camera, HUD & accessibility settings (localStorage-backed).
  */
 
+import { EngineerVerbosity, TcLevel } from './types';
+
 export type TouchControlsMode = 'auto' | 'always' | 'off';
-export type TouchSteerStyle = 'pad' | 'buttons';
-export type TransmissionMode = 'auto' | 'manual';
+export type TouchSteerStyle = 'pad' | 'buttons' | 'gyro';
+export type TransmissionMode = 'auto' | 'semi-auto' | 'manual';
+export type GraphicsPreset = 'low' | 'medium' | 'high' | 'ultra';
+export type ShadowQuality = 'off' | 'low' | 'medium' | 'high';
+export type ParticleDensitySetting = 'off' | 'low' | 'medium' | 'high';
+export type RacingLineMode = 'off' | 'corners-only' | 'full';
+export type HudPreset = 'full' | 'minimal' | 'pro' | 'off';
+export type ColorblindMode = 'none' | 'protanopia' | 'deuteranopia' | 'tritanopia';
+export type UnitsSystem = 'metric' | 'imperial';
 
 export type KeybindAction =
   | 'throttle'
@@ -17,8 +26,13 @@ export type KeybindAction =
   | 'ersMode'
   | 'camera'
   | 'resetCamera'
+  | 'lookBack'
   | 'brakeBiasDown'
   | 'brakeBiasUp'
+  | 'tcToggle'
+  | 'mfdCycle'
+  | 'flashback'
+  | 'photoMode'
   | 'pause'
   | 'mute';
 
@@ -36,8 +50,13 @@ export const DEFAULT_KEYBINDS: KeybindConfig = {
   ersMode: 'KeyB',
   camera: 'KeyC',
   resetCamera: 'KeyR',
+  lookBack: 'KeyV',
   brakeBiasDown: 'BracketLeft',
   brakeBiasUp: 'BracketRight',
+  tcToggle: 'KeyT',
+  mfdCycle: 'Tab',
+  flashback: 'KeyF',
+  photoMode: 'F9',
   pause: 'KeyP',
   mute: 'KeyM',
 };
@@ -47,14 +66,19 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   brake: 'Brake / Reverse',
   steerLeft: 'Steer Left',
   steerRight: 'Steer Right',
-  shiftUp: 'Shift Up (Manual)',
-  shiftDown: 'Shift Down (Manual)',
+  shiftUp: 'Shift Up (Manual / Semi)',
+  shiftDown: 'Shift Down (Manual / Semi)',
   special: 'Special (DRS / Aero / Attack / Boost)',
   ersMode: 'Cycle ERS Mode (Hybrids)',
   camera: 'Cycle Camera',
   resetCamera: 'Reset Camera',
+  lookBack: 'Look Back (Hold)',
   brakeBiasDown: 'Brake Bias Rear (-)',
   brakeBiasUp: 'Brake Bias Front (+)',
+  tcToggle: 'Cycle Traction Control',
+  mfdCycle: 'Cycle MFD Telemetry Page',
+  flashback: 'Instant Flashback (-5.5s)',
+  photoMode: 'Toggle Photo Mode',
   pause: 'Pause Menu',
   mute: 'Mute Audio',
 };
@@ -92,43 +116,255 @@ export function formatKeyCode(code: string): string {
   return map[code] ?? code.replace(/^Numpad/, 'NUM ');
 }
 
+/** Alias used by HUD / ControlsBriefingCard */
+export const formatKeyLabel = formatKeyCode;
+
 export interface GameSettings {
-  /** When false, all Gamepad / joystick / steering-wheel polling is ignored. */
+  // 1. Controls & Driving Aids
   controllerEnabled: boolean;
-  /** Controls visibility of on-screen mobile touchpad driving controls. */
   touchControlsMode: TouchControlsMode;
-  /** On-screen steering style: analog horizontal touchpad or split Left/Right buttons. */
   touchSteerStyle: TouchSteerStyle;
-  /** Gearbox mode: automatic or manual sequential shifting. */
+  touchOpacity: number; // 0.35..1.0
+  touchAutoAccel: boolean;
   transmissionMode: TransmissionMode;
-  /** Customizable keyboard bindings (KeyboardEvent.code values). */
+  tcDefault: 'auto' | TcLevel;
+  stabilityControl: boolean;
+  racingLineMode: RacingLineMode;
+  steerDeadzone: number; // 0.02..0.25
+  steerLinearity: number; // 1.0..2.2
+  steerSensitivity: number; // 0.5..1.8
+  wheelLockDegrees: number; // 180..900
+  rumbleIntensity: number; // 0..1
+  splitPedalAxes: boolean;
+  showControlsBriefing: boolean;
   keybinds: KeybindConfig;
+
+  // 2. Graphics & Performance
+  graphicsPreset: GraphicsPreset;
+  renderScale: number; // 0.5..2.0
+  adaptiveDpr: boolean;
+  shadowQuality: ShadowQuality;
+  particleDensity: ParticleDensitySetting;
+  bloomEnabled: boolean;
+  tiltShiftEnabled: boolean;
+  speedBlurEnabled: boolean;
+  showFpsCounter: boolean;
+
+  // 3. Audio Mixer (7 channels, 0..1)
+  masterVolume: number;
+  engineVolume: number;
+  opponentVolume: number;
+  tireSurfaceVolume: number;
+  collisionVolume: number;
+  uiRadioVolume: number;
+  musicVolume: number;
+  engineerVerbosity: EngineerVerbosity;
+  radioVoiceEnabled: boolean;
+
+  // 4. Camera
+  fovOffset: number; // -10..+15 degrees
+  lookToApex: number; // 0..1
+  cameraShake: number; // 0..1
+  chaseHeightOffset: number; // -0.5..+1.0
+  chaseDistanceOffset: number; // -3..+4
+
+  // 5. HUD & Telemetry
+  hudPreset: HudPreset;
+  hudScale: number; // 0.75..1.25
+  showVirtualMirror: boolean;
+  showPedalTrace: boolean;
+  showCornerCallouts: boolean;
+  showNametags: boolean;
+  units: UnitsSystem;
+
+  // 6. Accessibility
+  colorblindMode: ColorblindMode;
+  highContrastHud: boolean;
+  reducedMotion: boolean;
+  subtitleScale: number; // 0.85..1.4
 }
 
-const STORAGE_KEY = 'apex_game_settings_v1';
+const STORAGE_KEY = 'apex_game_settings_v2';
+const LEGACY_STORAGE_KEY = 'apex_game_settings_v1';
 
 export const DEFAULT_GAME_SETTINGS: GameSettings = {
   controllerEnabled: true,
   touchControlsMode: 'auto',
   touchSteerStyle: 'pad',
+  touchOpacity: 0.75,
+  touchAutoAccel: false,
   transmissionMode: 'auto',
+  tcDefault: 'auto',
+  stabilityControl: true,
+  racingLineMode: 'corners-only',
+  steerDeadzone: 0.08,
+  steerLinearity: 1.35,
+  steerSensitivity: 1.0,
+  wheelLockDegrees: 360,
+  rumbleIntensity: 0.75,
+  splitPedalAxes: false,
+  showControlsBriefing: true,
   keybinds: { ...DEFAULT_KEYBINDS },
+
+  graphicsPreset: 'high',
+  renderScale: 1.0,
+  adaptiveDpr: true,
+  shadowQuality: 'medium',
+  particleDensity: 'high',
+  bloomEnabled: true,
+  tiltShiftEnabled: false,
+  speedBlurEnabled: true,
+  showFpsCounter: false,
+
+  masterVolume: 0.85,
+  engineVolume: 0.9,
+  opponentVolume: 0.7,
+  tireSurfaceVolume: 0.8,
+  collisionVolume: 0.85,
+  uiRadioVolume: 0.85,
+  musicVolume: 0.35,
+  engineerVerbosity: 'full',
+  radioVoiceEnabled: false,
+
+  fovOffset: 0,
+  lookToApex: 0.45,
+  cameraShake: 0.7,
+  chaseHeightOffset: 0,
+  chaseDistanceOffset: 0,
+
+  hudPreset: 'full',
+  hudScale: 1.0,
+  showVirtualMirror: true,
+  showPedalTrace: true,
+  showCornerCallouts: true,
+  showNametags: true,
+  units: 'metric',
+
+  colorblindMode: 'none',
+  highContrastHud: false,
+  reducedMotion: false,
+  subtitleScale: 1.0,
 };
 
-type SettingsListener = (settings: GameSettings) => void;
+export function applyGraphicsPreset(preset: GraphicsPreset): Partial<GameSettings> {
+  switch (preset) {
+    case 'low':
+      return {
+        graphicsPreset: 'low',
+        renderScale: 0.75,
+        shadowQuality: 'off',
+        particleDensity: 'low',
+        bloomEnabled: false,
+        tiltShiftEnabled: false,
+        speedBlurEnabled: false,
+        adaptiveDpr: true,
+      };
+    case 'medium':
+      return {
+        graphicsPreset: 'medium',
+        renderScale: 1.0,
+        shadowQuality: 'low',
+        particleDensity: 'medium',
+        bloomEnabled: false,
+        tiltShiftEnabled: false,
+        speedBlurEnabled: true,
+        adaptiveDpr: true,
+      };
+    case 'ultra':
+      return {
+        graphicsPreset: 'ultra',
+        renderScale: 1.5,
+        shadowQuality: 'high',
+        particleDensity: 'high',
+        bloomEnabled: true,
+        tiltShiftEnabled: true,
+        speedBlurEnabled: true,
+        adaptiveDpr: false,
+      };
+    case 'high':
+    default:
+      return {
+        graphicsPreset: 'high',
+        renderScale: 1.0,
+        shadowQuality: 'medium',
+        particleDensity: 'high',
+        bloomEnabled: true,
+        tiltShiftEnabled: false,
+        speedBlurEnabled: true,
+        adaptiveDpr: true,
+      };
+  }
+}
 
+export function formatSpeed(kmh: number, units: UnitsSystem = activeSettings.units): { value: number; unit: string } {
+  const safe = Number.isFinite(kmh) ? kmh : 0;
+  if (units === 'imperial') {
+    return { value: Math.round(safe * 0.621371), unit: 'MPH' };
+  }
+  return { value: Math.round(safe), unit: 'KM/H' };
+}
+
+export function formatTemp(celsius: number, units: UnitsSystem = activeSettings.units): string {
+  const safe = Number.isFinite(celsius) ? celsius : 0;
+  if (units === 'imperial') {
+    return `${Math.round(safe * 1.8 + 32)}°F`;
+  }
+  return `${Math.round(safe)}°C`;
+}
+
+export interface SemanticPalette {
+  good: string;
+  warn: string;
+  danger: string;
+  purple: string;
+  throttle: string;
+  brake: string;
+}
+
+export function getSemanticPalette(mode: ColorblindMode = activeSettings.colorblindMode): SemanticPalette {
+  switch (mode) {
+    case 'protanopia':
+    case 'deuteranopia':
+      return {
+        good: '#38bdf8',
+        warn: '#facc15',
+        danger: '#f97316',
+        purple: '#c084fc',
+        throttle: '#38bdf8',
+        brake: '#f97316',
+      };
+    case 'tritanopia':
+      return {
+        good: '#2dd4bf',
+        warn: '#fda4af',
+        danger: '#ef4444',
+        purple: '#f472b6',
+        throttle: '#2dd4bf',
+        brake: '#ef4444',
+      };
+    case 'none':
+    default:
+      return {
+        good: '#22c55e',
+        warn: '#f59e0b',
+        danger: '#ef4444',
+        purple: '#a855f7',
+        throttle: '#22c55e',
+        brake: '#ef4444',
+      };
+  }
+}
+
+type SettingsListener = (settings: GameSettings) => void;
 const listeners = new Set<SettingsListener>();
 
-function isValidTouchMode(v: unknown): v is TouchControlsMode {
-  return v === 'auto' || v === 'always' || v === 'off';
+function clampNum(v: unknown, min: number, max: number, fallback: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
+  return Math.max(min, Math.min(max, v));
 }
 
-function isValidTouchSteerStyle(v: unknown): v is TouchSteerStyle {
-  return v === 'pad' || v === 'buttons';
-}
-
-function isValidTransmissionMode(v: unknown): v is TransmissionMode {
-  return v === 'auto' || v === 'manual';
+function isOneOf<T extends string>(v: unknown, list: readonly T[]): v is T {
+  return typeof v === 'string' && (list as readonly string[]).includes(v);
 }
 
 function sanitizeKeybinds(raw: unknown): KeybindConfig {
@@ -144,32 +380,83 @@ function sanitizeKeybinds(raw: unknown): KeybindConfig {
   return out;
 }
 
+function sanitizeSettings(raw: unknown): GameSettings {
+  const d = DEFAULT_GAME_SETTINGS;
+  const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const tcRaw = p.tcDefault;
+  const tcDefault: 'auto' | TcLevel =
+    tcRaw === 'auto' || tcRaw === 0 || tcRaw === 1 || tcRaw === 2 || tcRaw === 3 ? tcRaw : d.tcDefault;
+
+  return {
+    controllerEnabled: typeof p.controllerEnabled === 'boolean' ? p.controllerEnabled : d.controllerEnabled,
+    touchControlsMode: isOneOf(p.touchControlsMode, ['auto', 'always', 'off'] as const) ? p.touchControlsMode : d.touchControlsMode,
+    touchSteerStyle: isOneOf(p.touchSteerStyle, ['pad', 'buttons', 'gyro'] as const) ? p.touchSteerStyle : d.touchSteerStyle,
+    touchOpacity: clampNum(p.touchOpacity, 0.35, 1.0, d.touchOpacity),
+    touchAutoAccel: typeof p.touchAutoAccel === 'boolean' ? p.touchAutoAccel : d.touchAutoAccel,
+    transmissionMode: isOneOf(p.transmissionMode, ['auto', 'semi-auto', 'manual'] as const) ? p.transmissionMode : d.transmissionMode,
+    tcDefault,
+    stabilityControl: typeof p.stabilityControl === 'boolean' ? p.stabilityControl : d.stabilityControl,
+    racingLineMode: isOneOf(p.racingLineMode, ['off', 'corners-only', 'full'] as const) ? p.racingLineMode : d.racingLineMode,
+    steerDeadzone: clampNum(p.steerDeadzone, 0.02, 0.25, d.steerDeadzone),
+    steerLinearity: clampNum(p.steerLinearity, 1.0, 2.2, d.steerLinearity),
+    steerSensitivity: clampNum(p.steerSensitivity, 0.5, 1.8, d.steerSensitivity),
+    wheelLockDegrees: clampNum(p.wheelLockDegrees, 180, 900, d.wheelLockDegrees),
+    rumbleIntensity: clampNum(p.rumbleIntensity, 0, 1, d.rumbleIntensity),
+    splitPedalAxes: typeof p.splitPedalAxes === 'boolean' ? p.splitPedalAxes : d.splitPedalAxes,
+    showControlsBriefing: typeof p.showControlsBriefing === 'boolean' ? p.showControlsBriefing : d.showControlsBriefing,
+    keybinds: sanitizeKeybinds(p.keybinds),
+
+    graphicsPreset: isOneOf(p.graphicsPreset, ['low', 'medium', 'high', 'ultra'] as const) ? p.graphicsPreset : d.graphicsPreset,
+    renderScale: clampNum(p.renderScale, 0.5, 2.0, d.renderScale),
+    adaptiveDpr: typeof p.adaptiveDpr === 'boolean' ? p.adaptiveDpr : d.adaptiveDpr,
+    shadowQuality: isOneOf(p.shadowQuality, ['off', 'low', 'medium', 'high'] as const) ? p.shadowQuality : d.shadowQuality,
+    particleDensity: isOneOf(p.particleDensity, ['off', 'low', 'medium', 'high'] as const) ? p.particleDensity : d.particleDensity,
+    bloomEnabled: typeof p.bloomEnabled === 'boolean' ? p.bloomEnabled : d.bloomEnabled,
+    tiltShiftEnabled: typeof p.tiltShiftEnabled === 'boolean' ? p.tiltShiftEnabled : d.tiltShiftEnabled,
+    speedBlurEnabled: typeof p.speedBlurEnabled === 'boolean' ? p.speedBlurEnabled : d.speedBlurEnabled,
+    showFpsCounter: typeof p.showFpsCounter === 'boolean' ? p.showFpsCounter : d.showFpsCounter,
+
+    masterVolume: clampNum(p.masterVolume, 0, 1, d.masterVolume),
+    engineVolume: clampNum(p.engineVolume, 0, 1, d.engineVolume),
+    opponentVolume: clampNum(p.opponentVolume, 0, 1, d.opponentVolume),
+    tireSurfaceVolume: clampNum(p.tireSurfaceVolume, 0, 1, d.tireSurfaceVolume),
+    collisionVolume: clampNum(p.collisionVolume, 0, 1, d.collisionVolume),
+    uiRadioVolume: clampNum(p.uiRadioVolume, 0, 1, d.uiRadioVolume),
+    musicVolume: clampNum(p.musicVolume, 0, 1, d.musicVolume),
+    engineerVerbosity: isOneOf(p.engineerVerbosity, ['off', 'minimal', 'full'] as const) ? p.engineerVerbosity : d.engineerVerbosity,
+    radioVoiceEnabled: typeof p.radioVoiceEnabled === 'boolean' ? p.radioVoiceEnabled : d.radioVoiceEnabled,
+
+    fovOffset: clampNum(p.fovOffset, -10, 15, d.fovOffset),
+    lookToApex: clampNum(p.lookToApex, 0, 1, d.lookToApex),
+    cameraShake: clampNum(p.cameraShake, 0, 1, d.cameraShake),
+    chaseHeightOffset: clampNum(p.chaseHeightOffset, -0.5, 1.0, d.chaseHeightOffset),
+    chaseDistanceOffset: clampNum(p.chaseDistanceOffset, -3, 4, d.chaseDistanceOffset),
+
+    hudPreset: isOneOf(p.hudPreset, ['full', 'minimal', 'pro', 'off'] as const) ? p.hudPreset : d.hudPreset,
+    hudScale: clampNum(p.hudScale, 0.75, 1.25, d.hudScale),
+    showVirtualMirror: typeof p.showVirtualMirror === 'boolean' ? p.showVirtualMirror : d.showVirtualMirror,
+    showPedalTrace: typeof p.showPedalTrace === 'boolean' ? p.showPedalTrace : d.showPedalTrace,
+    showCornerCallouts: typeof p.showCornerCallouts === 'boolean' ? p.showCornerCallouts : d.showCornerCallouts,
+    showNametags: typeof p.showNametags === 'boolean' ? p.showNametags : d.showNametags,
+    units: isOneOf(p.units, ['metric', 'imperial'] as const) ? p.units : d.units,
+
+    colorblindMode: isOneOf(p.colorblindMode, ['none', 'protanopia', 'deuteranopia', 'tritanopia'] as const) ? p.colorblindMode : d.colorblindMode,
+    highContrastHud: typeof p.highContrastHud === 'boolean' ? p.highContrastHud : d.highContrastHud,
+    reducedMotion: typeof p.reducedMotion === 'boolean' ? p.reducedMotion : d.reducedMotion,
+    subtitleScale: clampNum(p.subtitleScale, 0.85, 1.4, d.subtitleScale),
+  };
+}
+
 function readStoredSettings(): GameSettings {
   try {
     if (typeof localStorage === 'undefined') {
       return { ...DEFAULT_GAME_SETTINGS, keybinds: { ...DEFAULT_KEYBINDS } };
     }
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) {
       return { ...DEFAULT_GAME_SETTINGS, keybinds: { ...DEFAULT_KEYBINDS } };
     }
-    const parsed = JSON.parse(raw);
-    return {
-      controllerEnabled:
-        typeof parsed?.controllerEnabled === 'boolean'
-          ? parsed.controllerEnabled
-          : DEFAULT_GAME_SETTINGS.controllerEnabled,
-      touchControlsMode: isValidTouchMode(parsed?.touchControlsMode)
-        ? parsed.touchControlsMode
-        : DEFAULT_GAME_SETTINGS.touchControlsMode,
-      touchSteerStyle: isValidTouchSteerStyle(parsed?.touchSteerStyle)
-        ? parsed.touchSteerStyle
-        : DEFAULT_GAME_SETTINGS.touchSteerStyle,
-      transmissionMode: isValidTransmissionMode(parsed?.transmissionMode)
-        ? parsed.transmissionMode
-        : DEFAULT_GAME_SETTINGS.transmissionMode,
-      keybinds: sanitizeKeybinds(parsed?.keybinds),
-    };
+    return sanitizeSettings(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_GAME_SETTINGS, keybinds: { ...DEFAULT_KEYBINDS } };
   }
@@ -186,24 +473,12 @@ export function isControllerInputEnabled(): boolean {
 }
 
 export function setGameSettings(patch: Partial<GameSettings>): GameSettings {
-  activeSettings = {
+  const merged = {
     ...activeSettings,
-    ...(typeof patch.controllerEnabled === 'boolean'
-      ? { controllerEnabled: patch.controllerEnabled }
-      : {}),
-    ...(isValidTouchMode(patch.touchControlsMode)
-      ? { touchControlsMode: patch.touchControlsMode }
-      : {}),
-    ...(isValidTouchSteerStyle(patch.touchSteerStyle)
-      ? { touchSteerStyle: patch.touchSteerStyle }
-      : {}),
-    ...(isValidTransmissionMode(patch.transmissionMode)
-      ? { transmissionMode: patch.transmissionMode }
-      : {}),
-    ...(patch.keybinds
-      ? { keybinds: sanitizeKeybinds({ ...activeSettings.keybinds, ...patch.keybinds }) }
-      : {}),
+    ...patch,
+    keybinds: patch.keybinds ? { ...activeSettings.keybinds, ...patch.keybinds } : activeSettings.keybinds,
   };
+  activeSettings = sanitizeSettings(merged);
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(activeSettings));
@@ -222,3 +497,4 @@ export function subscribeGameSettings(listener: SettingsListener): () => void {
     listeners.delete(listener);
   };
 }
+

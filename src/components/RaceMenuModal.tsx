@@ -57,6 +57,7 @@ import {
   NumberPlateStyle,
   RaceConfig,
   RimFinish,
+  TimeOfDayPreset,
   TireCompound,
   TrackRegion,
   TrackSpec,
@@ -1041,6 +1042,72 @@ export function RaceMenuModal({
                         </label>
                       );
                     })}
+                  </div>
+                )}
+              </div>
+
+              {/* Time-of-Day & Dynamic 24h Endurance Cycle */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-slate-300">Time of Day &amp; Lighting</span>
+                  <span className="text-[10px] text-slate-400">
+                    {(config.timeOfDay ?? 'midday') === 'dynamic-24h'
+                      ? `24h Cycle · ${config.timeScale ?? 30}×`
+                      : 'Headlights auto at dusk/night'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {(
+                    [
+                      { id: 'midday', label: 'Midday' },
+                      { id: 'dawn', label: 'Dawn' },
+                      { id: 'golden-hour', label: 'Golden Hr' },
+                      { id: 'dusk', label: 'Dusk' },
+                      { id: 'night', label: 'Night' },
+                      { id: 'dynamic-24h', label: 'Dynamic 24h' },
+                    ] as Array<{ id: TimeOfDayPreset; label: string }>
+                  ).map((tod) => {
+                    const active = (config.timeOfDay ?? 'midday') === tod.id;
+                    return (
+                      <button
+                        key={tod.id}
+                        type="button"
+                        onClick={() =>
+                          onUpdateConfig({
+                            timeOfDay: tod.id,
+                            ...(tod.id === 'dynamic-24h' && !config.timeScale ? { timeScale: 30 } : {}),
+                          })
+                        }
+                        className={`py-1 px-1.5 rounded text-[10px] font-semibold border cursor-pointer truncate transition-colors ${
+                          active
+                            ? 'bg-amber-500/25 border-amber-400 text-amber-200'
+                            : 'bg-[#141923] border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {tod.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {(config.timeOfDay ?? 'midday') === 'dynamic-24h' && (
+                  <div className="mt-1.5 flex items-center justify-between gap-2 bg-[#121722] border border-white/10 rounded px-2 py-1.5">
+                    <span className="text-[10px] text-slate-400 font-semibold">24h Time Scale</span>
+                    <div className="flex items-center gap-1">
+                      {[1, 10, 30, 60].map((mult) => (
+                        <button
+                          key={mult}
+                          type="button"
+                          onClick={() => onUpdateConfig({ timeScale: mult })}
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border cursor-pointer transition ${
+                            (config.timeScale ?? 30) === mult
+                              ? 'bg-amber-400 text-black border-amber-300'
+                              : 'bg-black/40 text-slate-300 border-white/10 hover:text-white'
+                          }`}
+                        >
+                          {mult}×
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

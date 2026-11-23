@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { CarSpec, LiveryConfig } from '../game/types';
+import { CarSpec, GarageEnvironment, LiveryConfig } from '../game/types';
 import { BuiltCarRig } from './carBuilder';
 import { buildCarRigAsync } from './objCarLoader';
 
@@ -12,6 +12,7 @@ interface GarageViewportProps {
   livery: LiveryConfig;
   angle?: GarageAngle;
   autoRotate?: boolean;
+  environment?: GarageEnvironment;
 }
 
 function detectSoftwareGl(): boolean {
@@ -28,10 +29,18 @@ function detectSoftwareGl(): boolean {
   }
 }
 
-export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = false }: GarageViewportProps) {
+export function GarageViewport({
+  carSpec,
+  livery,
+  angle = 'hero',
+  autoRotate = false,
+  environment = 'display-case',
+}: GarageViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const autoRotateRef = useRef(autoRotate);
   autoRotateRef.current = autoRotate;
+  const environmentRef = useRef<GarageEnvironment>(environment);
+  environmentRef.current = environment;
   const stateRef = useRef<{
     scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
@@ -43,6 +52,13 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
     targetYaw: number;
     pitch: number;
     targetPitch: number;
+    hemi: THREE.HemisphereLight;
+    keyLight: THREE.DirectionalLight;
+    rimLight: THREE.DirectionalLight;
+    floorMat: THREE.MeshStandardMaterial;
+    ringMat: THREE.MeshStandardMaterial;
+    windTunnelGroup: THREE.Group;
+    windStreaks: THREE.Mesh[];
     requestRender: (immediate?: boolean) => void;
   } | null>(null);
 
@@ -142,6 +158,28 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
     const carAnchor = new THREE.Group();
     scene.add(carAnchor);
 
+    // Wind tunnel animated airflow streamlines (visible only in 'wind-tunnel' environment)
+    const windTunnelGroup = new THREE.Group();
+    windTunnelGroup.visible = environmentRef.current === 'wind-tunnel';
+    const windStreakGeo = new THREE.BoxGeometry(0.035, 0.035, 2.2);
+    const windStreakMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.55,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const windStreaks: THREE.Mesh[] = [];
+    for (let i = 0; i < 24; i++) {
+      const m = new THREE.Mesh(windStreakGeo, windStreakMat);
+      const lane = (i % 6) - 2.5;
+      const tier = Math.floor(i / 6);
+      m.position.set(lane * 0.52, 0.35 + tier * 0.38, -6 + ((i * 1.9) % 12));
+      windTunnelGroup.add(m);
+      windStreaks.push(m);
+    }
+    scene.add(windTunnelGroup);
+
     let rafId = 0;
     let timerId = 0;
     let renderBusy = false;
@@ -172,6 +210,14 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
       if (s) {
         if (autoRotateRef.current && !dragging) {
           s.targetYaw += 0.007;
+          renderDirty = true;
+        }
+        if (environmentRef.current === 'wind-tunnel') {
+          for (let i = 0; i < s.windStreaks.length; i++) {
+            const st = s.windStreaks[i];
+            st.position.z -= 0.24;
+            if (st.position.z < -6.5) st.position.z = 6.5;
+          }
           renderDirty = true;
         }
         const factor = isSoftwareGl ? 1 : 0.22;
@@ -227,6 +273,13 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
       targetYaw: 0.72,
       pitch: 0.34,
       targetPitch: 0.34,
+      hemi,
+      keyLight,
+      rimLight,
+      floorMat,
+      ringMat,
+      windTunnelGroup,
+      windStreaks,
       requestRender,
     };
 
@@ -291,6 +344,8 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
       plinthMat.dispose();
       ringGeo.dispose();
       ringMat.dispose();
+      windStreakGeo.dispose();
+      windStreakMat.dispose();
       renderer.dispose();
       if (dom.parentNode === container) container.removeChild(dom);
       stateRef.current = null;
@@ -339,6 +394,63 @@ export function GarageViewport({ carSpec, livery, angle = 'hero', autoRotate = f
     }
     s.requestRender(isSoftwareGlCheck(s));
   }, [angle]);
+
+  // Switch diorama showroom environment live
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s) return;
+    s.windTunnelGroup.visible = environment === 'wind-tunnel';
+    if (environment === 'pit-garage') {
+      s.scene.background = new THREE.Color(0x181c24);
+      s.scene.fog = new THREE.Fog(0x181c24, 14, 34);
+      s.hemi.color.setHex(0xe2e8f0);
+      s.hemi.groundColor.setHex(0x334155);
+      s.keyLight.color.setHex(0xffffff);
+      s.keyLight.intensity = 2.6;
+      s.rimLight.color.setHex(0xf97316);
+      s.rimLight.intensity = 1.4;
+      s.floorMat.color.setHex(0x272d38);
+      s.ringMat.color.setHex(0xf59e0b);
+      s.ringMat.emissive.setHex(0xf59e0b);
+    } else if (environment === 'sunset-grid') {
+      s.scene.background = new THREE.Color(0x2b1929);
+      s.scene.fog = new THREE.Fog(0x3a202d, 10, 30);
+      s.hemi.color.setHex(0xfdba74);
+      s.hemi.groundColor.setHex(0x1e1b4b);
+      s.keyLight.color.setHex(0xff9a44);
+      s.keyLight.intensity = 2.8;
+      s.rimLight.color.setHex(0xf43f5e);
+      s.rimLight.intensity = 1.8;
+      s.floorMat.color.setHex(0x1f1924);
+      s.ringMat.color.setHex(0xf43f5e);
+      s.ringMat.emissive.setHex(0xf43f5e);
+    } else if (environment === 'wind-tunnel') {
+      s.scene.background = new THREE.Color(0x07131f);
+      s.scene.fog = new THREE.Fog(0x07131f, 12, 30);
+      s.hemi.color.setHex(0x7dd3fc);
+      s.hemi.groundColor.setHex(0x0f172a);
+      s.keyLight.color.setHex(0xe0f2fe);
+      s.keyLight.intensity = 2.4;
+      s.rimLight.color.setHex(0x06b6d4);
+      s.rimLight.intensity = 2.0;
+      s.floorMat.color.setHex(0x0c1b2a);
+      s.ringMat.color.setHex(0x38bdf8);
+      s.ringMat.emissive.setHex(0x38bdf8);
+    } else {
+      s.scene.background = new THREE.Color(0x10141c);
+      s.scene.fog = new THREE.Fog(0x10141c, 12, 32);
+      s.hemi.color.setHex(0xcbd5e1);
+      s.hemi.groundColor.setHex(0x1e293b);
+      s.keyLight.color.setHex(0xfff4e6);
+      s.keyLight.intensity = 2.2;
+      s.rimLight.color.setHex(0x60a5fa);
+      s.rimLight.intensity = 1.3;
+      s.floorMat.color.setHex(0x121720);
+      s.ringMat.color.setHex(0xef4444);
+      s.ringMat.emissive.setHex(0xef4444);
+    }
+    s.requestRender(true);
+  }, [environment]);
 
   return (
     <div

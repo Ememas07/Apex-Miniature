@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
-import { TouchSteerStyle } from '../game/settings';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Smartphone, Zap } from 'lucide-react';
+import { getGameSettings, subscribeGameSettings, TouchSteerStyle } from '../game/settings';
 import { computeTouchPadSteer, touchInputStore } from '../game/touchControls';
 
 interface TouchControlsOverlayProps {
@@ -32,6 +32,17 @@ export function TouchControlsOverlay({
   const [gasHeld, setGasHeld] = useState(false);
   const [brakeHeld, setBrakeHeld] = useState(false);
   const [specialHeld, setSpecialHeld] = useState(false);
+  const [tiltValue, setTiltValue] = useState(0);
+  const [tiltNeedsPerm, setTiltNeedsPerm] = useState(false);
+  const [touchOpacity, setTouchOpacity] = useState(() => getGameSettings().touchOpacity);
+  const [autoAccel, setAutoAccel] = useState(() => getGameSettings().touchAutoAccel);
+
+  useEffect(() => {
+    return subscribeGameSettings((next) => {
+      setTouchOpacity(next.touchOpacity);
+      setAutoAccel(next.touchAutoAccel);
+    });
+  }, []);
 
   // Freecam virtual stick visual state
   const [flightStick, setFlightStick] = useState<{ x: number; y: number; active: boolean }>({
@@ -96,6 +107,58 @@ export function TouchControlsOverlay({
       releaseAllControls();
     };
   }, [visible, isFreecam, steerStyle, releaseAllControls]);
+
+  // Auto-Accelerate assist (keeps throttle pressed unless braking)
+  useEffect(() => {
+    if (!visible || isFreecam || isAiRace) return;
+    if (autoAccel) {
+      touchInputStore.setThrottle(brakeHeld ? 0 : 1);
+    } else if (!gasHeld) {
+      touchInputStore.setThrottle(0);
+    }
+  }, [visible, isFreecam, isAiRace, autoAccel, brakeHeld, gasHeld]);
+
+  // Gyroscope / Tilt Steering when steerStyle === 'gyro'
+  useEffect(() => {
+    if (!visible || isFreecam || isAiRace || steerStyle !== 'gyro') {
+      setTiltValue(0);
+      return;
+    }
+    const DOE = window.DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<'granted' | 'denied'>;
+    };
+    if (typeof DOE?.requestPermission === 'function') {
+      setTiltNeedsPerm(true);
+    }
+    const onOrientation = (ev: DeviceOrientationEvent) => {
+      const isLandscape = window.innerWidth > window.innerHeight;
+      const rawDeg = isLandscape ? ev.beta ?? 0 : ev.gamma ?? 0;
+      const clamped = Math.max(-35, Math.min(35, rawDeg));
+      const norm = Math.abs(clamped) < 3.5 ? 0 : clamped / 32;
+      const steerVal = Math.max(-1, Math.min(1, norm));
+      setTiltValue(steerVal);
+      touchInputStore.setSteer(steerVal);
+    };
+    window.addEventListener('deviceorientation', onOrientation);
+    return () => {
+      window.removeEventListener('deviceorientation', onOrientation);
+      touchInputStore.setSteer(0);
+    };
+  }, [visible, isFreecam, isAiRace, steerStyle]);
+
+  const requestTiltPermission = async () => {
+    try {
+      const DOE = window.DeviceOrientationEvent as unknown as {
+        requestPermission?: () => Promise<'granted' | 'denied'>;
+      };
+      if (typeof DOE?.requestPermission === 'function') {
+        const res = await DOE.requestPermission();
+        if (res === 'granted') setTiltNeedsPerm(false);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   // --- Analog Steering Touchpad Handlers ---
   const updateSteerPadFromClientX = useCallback((clientX: number) => {
@@ -403,14 +466,46 @@ export function TouchControlsOverlay({
       data-testid="touch-controls-overlay"
       className={`fixed inset-x-0 bottom-0 z-25 pointer-events-none flex items-end justify-between gap-3 px-3 pb-3 sm:px-6 sm:pb-5 ${opacityClass}`}
       style={{
+        opacity: dimmedByGamepad ? 0.35 : touchOpacity,
         paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))',
         paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0px))',
         paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0px))',
       }}
     >
-      {/* BOTTOM-LEFT: Steering Touchpad OR Split Steering Buttons */}
+      {/* BOTTOM-LEFT: Steering Touchpad OR Split Steering Buttons OR Gyroscope Tilt */}
       <div className="pointer-events-auto flex items-end">
-        {steerStyle === 'pad' ? (
+        {steerStyle === 'gyro' ? (
+          <div className="rounded-2xl bg-[#0b0e13]/75 backdrop-blur-sm border border-sky-400/40 px-4 py-3 flex flex-col items-center gap-1.5 shadow-xl min-w-[144px]">
+            <div className="flex items-center gap-1.5 text-[10px] font-display font-bold uppercase tracking-wider text-sky-300">
+              <Smartphone className="w-3.5 h-3.5" />
+              Gyro Tilt
+            </div>
+            <div className="w-28 h-2 rounded-full bg-slate-800 relative overflow-hidden">
+              <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/30" />
+              <div
+                className="absolute top-0 bottom-0 bg-sky-400 rounded-full"
+                style={{
+                  left: tiltValue >= 0 ? '50%' : `${50 + tiltValue * 50}%`,
+                  width: `${Math.abs(tiltValue) * 50}%`,
+                }}
+              />
+            </div>
+            {tiltNeedsPerm ? (
+              <button
+                type="button"
+                onClick={requestTiltPermission}
+                className="px-2 py-0.5 rounded bg-sky-500 text-slate-950 font-bold text-[10px] uppercase cursor-pointer"
+              >
+                Enable Tilt Sensor
+              </button>
+            ) : (
+              <span className="text-[9px] font-mono text-slate-400">
+                {tiltValue >= 0 ? '+' : ''}
+                {Math.round(tiltValue * 100)}%
+              </span>
+            )}
+          </div>
+        ) : steerStyle === 'pad' ? (
           <div
             ref={steerPadRef}
             data-testid="touch-steer-pad"

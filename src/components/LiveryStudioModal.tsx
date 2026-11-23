@@ -21,10 +21,15 @@ import {
 import { CARS, getCarById } from '../game/cars';
 import {
   CarSpec,
+  DecalLayer,
+  DecalShape,
+  GarageEnvironment,
   HeadlightTint,
   LiveryConfig,
   NumberPlateStyle,
+  PaintFinish,
   RimFinish,
+  WindowTint,
 } from '../game/types';
 import { BuiltCarRig } from '../three/carBuilder';
 import {
@@ -73,7 +78,96 @@ const PLATE_OPTIONS: Array<{ id: NumberPlateStyle; label: string; color: string 
   { id: 'formula-white', label: 'Formula White', color: '#f8fafc' },
 ];
 
-type StudioTab = 'paint' | 'uv-painter' | 'trim';
+const PAINT_FINISH_OPTIONS: Array<{ id: PaintFinish; label: string }> = [
+  { id: 'gloss', label: 'Gloss' },
+  { id: 'metallic', label: 'Metallic' },
+  { id: 'matte', label: 'Matte' },
+  { id: 'satin', label: 'Satin' },
+  { id: 'chrome', label: 'Chrome' },
+  { id: 'carbon-weave', label: 'Carbon' },
+  { id: 'pearlescent', label: 'Pearl' },
+];
+
+const WINDOW_TINT_OPTIONS: Array<{ id: WindowTint; label: string }> = [
+  { id: 'clear', label: 'Clear' },
+  { id: 'smoke', label: 'Smoke' },
+  { id: 'dark', label: 'Dark Limo' },
+  { id: 'mirror', label: 'Mirror' },
+];
+
+const CALIPER_SWATCHES = ['#ef4444', '#facc15', '#22c55e', '#38bdf8', '#f97316', '#e2e8f0', '#111827'];
+
+const DECAL_SHAPES: Array<{ id: DecalShape; label: string }> = [
+  { id: 'stripe', label: 'Stripe' },
+  { id: 'chevron', label: 'Chevron' },
+  { id: 'star', label: 'Star' },
+  { id: 'circle', label: 'Roundel' },
+  { id: 'diamond', label: 'Diamond' },
+  { id: 'checkered', label: 'Checkered' },
+  { id: 'lightning', label: 'Bolt' },
+  { id: 'number-plate', label: 'Plate' },
+  { id: 'text', label: 'Sponsor Text' },
+];
+
+const GARAGE_ENV_OPTIONS: Array<{ id: GarageEnvironment; label: string; bg: number; fog: number; key: number; rim: number }> = [
+  { id: 'display-case', label: 'Display Case', bg: 0x0c1017, fog: 0x0c1017, key: 0xfff8ee, rim: 0x38bdf8 },
+  { id: 'pit-garage', label: 'Pit Garage', bg: 0x11151d, fog: 0x11151d, key: 0xe0f2fe, rim: 0xf59e0b },
+  { id: 'sunset-grid', label: 'Sunset Grid', bg: 0x1f1219, fog: 0x26151c, key: 0xffa06b, rim: 0x6366f1 },
+  { id: 'wind-tunnel', label: 'Wind Tunnel', bg: 0x07131e, fog: 0x07131e, key: 0xbae6fd, rim: 0x22d3ee },
+];
+
+interface SavedLiverySlot {
+  id: string;
+  name: string;
+  savedAt: number;
+  livery: LiveryConfig;
+}
+
+const SAVED_LIVERIES_KEY = 'apex_saved_liveries_v1';
+
+function loadSavedLiveriesForCar(carId: string): SavedLiverySlot[] {
+  try {
+    const raw = localStorage.getItem(SAVED_LIVERIES_KEY);
+    if (!raw) return [];
+    const map = JSON.parse(raw) as Record<string, SavedLiverySlot[]>;
+    return Array.isArray(map[carId]) ? map[carId] : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLiverySlotForCar(carId: string, slots: SavedLiverySlot[]): void {
+  try {
+    const raw = localStorage.getItem(SAVED_LIVERIES_KEY);
+    const map: Record<string, SavedLiverySlot[]> = raw ? JSON.parse(raw) : {};
+    map[carId] = slots.slice(0, 12);
+    localStorage.setItem(SAVED_LIVERIES_KEY, JSON.stringify(map));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function encodeLiveryShareCode(carId: string, livery: LiveryConfig): string {
+  const { customTexture: _omit, ...portable } = livery;
+  const payload = JSON.stringify({ c: carId, l: portable });
+  const encoded = btoa(unescape(encodeURIComponent(payload)));
+  return `APXLIV:${encoded}`;
+}
+
+function decodeLiveryShareCode(code: string): { carId?: string; livery?: Partial<LiveryConfig> } | null {
+  try {
+    const trimmed = code.trim();
+    if (!trimmed.startsWith('APXLIV:')) return null;
+    const json = decodeURIComponent(escape(atob(trimmed.slice(7))));
+    const parsed = JSON.parse(json) as { c?: string; l?: Partial<LiveryConfig> };
+    if (!parsed || typeof parsed.l !== 'object') return null;
+    return { carId: parsed.c, livery: parsed.l };
+  } catch {
+    return null;
+  }
+}
+
+type StudioTab = 'paint' | 'decals' | 'uv-painter' | 'trim';
 type CameraPreset = 'hero' | 'front' | 'side' | 'top' | 'rear';
 
 export function LiveryStudioModal({
@@ -93,6 +187,12 @@ export function LiveryStudioModal({
   const [brushTool, setBrushTool] = useState<'brush' | 'eraser'>('brush');
   const [showUvOverlay, setShowUvOverlay] = useState(true);
   const [hasCustomTexture, setHasCustomTexture] = useState<boolean>(Boolean(initialLivery.customTexture));
+  const [garageEnv, setGarageEnv] = useState<GarageEnvironment>('display-case');
+  const [selectedDecalId, setSelectedDecalId] = useState<string | null>(null);
+  const [savedSlots, setSavedSlots] = useState<SavedLiverySlot[]>(() => loadSavedLiveriesForCar(initialCarId));
+  const [slotNameInput, setSlotNameInput] = useState('');
+  const [shareCodeInput, setShareCodeInput] = useState('');
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
 
   const carSpec = useMemo(() => getCarById(selectedCarId) ?? CARS[0], [selectedCarId]);
   const autoRotateRef = useRef(autoRotate);
@@ -101,9 +201,15 @@ export function LiveryStudioModal({
   wireframeModeRef.current = wireframeMode;
   const skipNextPaintRebuildRef = useRef(false);
 
+  useEffect(() => {
+    setSavedSlots(loadSavedLiveriesForCar(selectedCarId));
+  }, [selectedCarId]);
+
   // 3D Viewport refs
   const viewportRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const keyLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const rimLightRef = useRef<THREE.DirectionalLight | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const carRigRef = useRef<BuiltCarRig | null>(null);
@@ -209,10 +315,12 @@ export function LiveryStudioModal({
     keyLight.shadow.mapSize.set(2048, 2048);
     keyLight.shadow.bias = -0.0004;
     scene.add(keyLight);
+    keyLightRef.current = keyLight;
 
     const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.4);
     rimLight.position.set(-6, 4, -5);
     scene.add(rimLight);
+    rimLightRef.current = rimLight;
 
     const fillLight = new THREE.DirectionalLight(0xf8fafc, 1.0);
     fillLight.position.set(0, 3, 7);
@@ -354,7 +462,22 @@ export function LiveryStudioModal({
     livery.headlightTint,
     livery.windshieldBanner,
     livery.customTexture,
+    livery.paintFinish,
+    livery.caliperColor,
+    livery.windowTint,
+    JSON.stringify(livery.decals ?? []),
   ]);
+
+  // Update Garage Diorama Environment lighting live
+  useEffect(() => {
+    const preset = GARAGE_ENV_OPTIONS.find((e) => e.id === garageEnv) ?? GARAGE_ENV_OPTIONS[0];
+    if (sceneRef.current) {
+      sceneRef.current.background = new THREE.Color(preset.bg);
+      sceneRef.current.fog = new THREE.Fog(preset.fog, 12, 35);
+    }
+    keyLightRef.current?.color.setHex(preset.key);
+    rimLightRef.current?.color.setHex(preset.rim);
+  }, [garageEnv]);
 
   // Toggle wireframe on active rig
   useEffect(() => {
@@ -730,6 +853,23 @@ export function LiveryStudioModal({
                 <Eye className="w-4 h-4" />
                 Wireframe
               </button>
+
+              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-700 rounded-xl p-1 backdrop-blur-md shadow-xl">
+                {GARAGE_ENV_OPTIONS.map((env) => (
+                  <button
+                    key={env.id}
+                    type="button"
+                    onClick={() => setGarageEnv(env.id)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide transition ${
+                      garageEnv === env.id
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {env.label.split(' ')[0]}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Car Name Badge Overlay */}
@@ -759,41 +899,53 @@ export function LiveryStudioModal({
           {/* Right Control & Painting Panel */}
           <div className="w-full lg:w-[460px] min-h-0 border-t lg:border-t-0 lg:border-l border-slate-800 bg-slate-950 flex flex-col overflow-hidden">
             {/* Studio Navigation Tabs */}
-            <div className="flex border-b border-slate-800 bg-slate-900/60 p-2 gap-2">
+            <div className="grid grid-cols-4 border-b border-slate-800 bg-slate-900/60 p-2 gap-1.5">
               <button
                 onClick={() => setActiveTab('paint')}
-                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                className={`py-2 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
                   activeTab === 'paint'
                     ? 'bg-indigo-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
               >
-                <Palette className="w-4 h-4" />
-                Color & Finishes
+                <Palette className="w-3.5 h-3.5" />
+                Paint
+              </button>
+
+              <button
+                onClick={() => setActiveTab('decals')}
+                className={`py-2 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                  activeTab === 'decals'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Decals
               </button>
 
               <button
                 onClick={() => setActiveTab('uv-painter')}
-                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                className={`py-2 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
                   activeTab === 'uv-painter'
                     ? 'bg-indigo-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
               >
-                <Brush className="w-4 h-4" />
-                UV Livery Painter
+                <Brush className="w-3.5 h-3.5" />
+                UV Paint
               </button>
 
               <button
                 onClick={() => setActiveTab('trim')}
-                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                className={`py-2 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
                   activeTab === 'trim'
                     ? 'bg-indigo-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
               >
-                <Sliders className="w-4 h-4" />
-                Number & Trim
+                <Sliders className="w-3.5 h-3.5" />
+                Garage
               </button>
             </div>
 
@@ -997,6 +1149,339 @@ export function LiveryStudioModal({
                       ))}
                     </div>
                   </div>
+
+                  {/* Paint Finish Material */}
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-2 block">
+                      Paint Finish Material
+                    </label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {PAINT_FINISH_OPTIONS.map((fin) => (
+                        <button
+                          key={fin.id}
+                          type="button"
+                          onClick={() => setLivery((prev) => ({ ...prev, paintFinish: fin.id }))}
+                          className={`py-2 px-1.5 rounded-lg border text-[11px] font-bold transition ${
+                            (livery.paintFinish ?? 'gloss') === fin.id
+                              ? 'border-indigo-400 bg-indigo-500/20 text-white'
+                              : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {fin.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Window Tint & Brake Calipers */}
+                  <div className="grid grid-cols-1 gap-4">
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-2 block">
+                        Cockpit Window Tint
+                      </label>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {WINDOW_TINT_OPTIONS.map((wt) => (
+                          <button
+                            key={wt.id}
+                            type="button"
+                            onClick={() => setLivery((prev) => ({ ...prev, windowTint: wt.id }))}
+                            className={`py-1.5 rounded-lg border text-[11px] font-bold transition ${
+                              (livery.windowTint ?? 'smoke') === wt.id
+                                ? 'border-indigo-400 bg-indigo-500/20 text-white'
+                                : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {wt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-2 block">
+                        Brake Caliper Finish
+                      </label>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {CALIPER_SWATCHES.map((hex) => (
+                          <button
+                            key={hex}
+                            type="button"
+                            onClick={() => setLivery((prev) => ({ ...prev, caliperColor: hex }))}
+                            style={{ backgroundColor: hex }}
+                            className={`w-7 h-7 rounded-full border-2 transition ${
+                              (livery.caliperColor ?? '#ef4444').toLowerCase() === hex.toLowerCase()
+                                ? 'border-white scale-110'
+                                : 'border-slate-700'
+                            }`}
+                          />
+                        ))}
+                        <input
+                          type="color"
+                          value={livery.caliperColor ?? '#ef4444'}
+                          onChange={(e) => setLivery((prev) => ({ ...prev, caliperColor: e.target.value }))}
+                          className="w-7 h-7 rounded bg-transparent border border-slate-700 cursor-pointer"
+                          title="Custom Caliper Color"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 1.5: Multi-Layer Decal & Sponsor Stack */}
+              {activeTab === 'decals' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      Decal Layers ({(livery.decals ?? []).length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newDecal: DecalLayer = {
+                          id: `dec-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+                          shape: 'chevron',
+                          x: 0.5,
+                          y: 0.5,
+                          scale: 0.18,
+                          rotation: 0,
+                          color: '#facc15',
+                          mirror: true,
+                          opacity: 1,
+                          text: 'APEX',
+                        };
+                        setLivery((prev) => ({ ...prev, decals: [...(prev.decals ?? []), newDecal] }));
+                        setSelectedDecalId(newDecal.id);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition"
+                    >
+                      + Add Decal Layer
+                    </button>
+                  </div>
+
+                  {(livery.decals ?? []).length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 text-xs text-slate-400 text-center">
+                      No custom decals yet. Click <span className="text-white font-semibold">+ Add Decal Layer</span> to place stripes, chevrons, roundels, or sponsor text with L↔R symmetry mirroring.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {(livery.decals ?? []).map((layer, idx) => {
+                        const active = layer.id === selectedDecalId;
+                        return (
+                          <div
+                            key={layer.id}
+                            onClick={() => setSelectedDecalId(layer.id)}
+                            className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition ${
+                              active
+                                ? 'bg-indigo-500/20 border-indigo-400 text-white'
+                                : 'bg-slate-900/70 border-slate-800 text-slate-300 hover:bg-slate-800/80'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className="w-3.5 h-3.5 rounded-sm border border-white/20 shrink-0"
+                                style={{ backgroundColor: layer.color }}
+                              />
+                              <span className="font-semibold capitalize truncate">
+                                #{idx + 1} {layer.shape === 'text' ? `"${layer.text || 'TEXT'}"` : layer.shape}
+                              </span>
+                              {layer.mirror && (
+                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold">
+                                  L↔R
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLivery((prev) => {
+                                    const arr = [...(prev.decals ?? [])];
+                                    if (idx <= 0) return prev;
+                                    [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+                                    return { ...prev, decals: arr };
+                                  });
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30"
+                                title="Move up"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === (livery.decals ?? []).length - 1}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLivery((prev) => {
+                                    const arr = [...(prev.decals ?? [])];
+                                    if (idx >= arr.length - 1) return prev;
+                                    [arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]];
+                                    return { ...prev, decals: arr };
+                                  });
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30"
+                                title="Move down"
+                              >
+                                ↓
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLivery((prev) => ({
+                                    ...prev,
+                                    decals: (prev.decals ?? []).filter((d) => d.id !== layer.id),
+                                  }));
+                                  if (selectedDecalId === layer.id) setSelectedDecalId(null);
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/40 text-rose-300"
+                                title="Delete layer"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {(() => {
+                    const activeLayer =
+                      (livery.decals ?? []).find((d) => d.id === selectedDecalId) ??
+                      (livery.decals ?? [])[0];
+                    if (!activeLayer) return null;
+                    const patchLayer = (partial: Partial<DecalLayer>) => {
+                      setLivery((prev) => ({
+                        ...prev,
+                        decals: (prev.decals ?? []).map((d) =>
+                          d.id === activeLayer.id ? { ...d, ...partial } : d,
+                        ),
+                      }));
+                    };
+                    return (
+                      <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3 text-xs">
+                        <div className="font-bold uppercase tracking-wider text-indigo-300">
+                          Selected Decal Inspector
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {DECAL_SHAPES.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => patchLayer({ shape: s.id })}
+                              className={`py-1.5 rounded-lg border text-[11px] font-semibold transition ${
+                                activeLayer.shape === s.id
+                                  ? 'border-indigo-400 bg-indigo-500/20 text-white'
+                                  : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {activeLayer.shape === 'text' && (
+                          <div>
+                            <label className="text-[11px] text-slate-400 block mb-1">Sponsor Text</label>
+                            <input
+                              type="text"
+                              maxLength={14}
+                              value={activeLayer.text ?? ''}
+                              onChange={(e) => patchLayer({ text: e.target.value.toUpperCase() })}
+                              className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-white font-bold tracking-wider uppercase"
+                            />
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="flex justify-between text-[11px] text-slate-400">
+                              <span>UV X Pos</span>
+                              <span className="font-mono text-white">{Math.round(activeLayer.x * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0.05}
+                              max={0.95}
+                              step={0.01}
+                              value={activeLayer.x}
+                              onChange={(e) => patchLayer({ x: parseFloat(e.target.value) })}
+                              className="w-full accent-indigo-400"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between text-[11px] text-slate-400">
+                              <span>UV Y Pos</span>
+                              <span className="font-mono text-white">{Math.round(activeLayer.y * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0.05}
+                              max={0.95}
+                              step={0.01}
+                              value={activeLayer.y}
+                              onChange={(e) => patchLayer({ y: parseFloat(e.target.value) })}
+                              className="w-full accent-indigo-400"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between text-[11px] text-slate-400">
+                              <span>Scale</span>
+                              <span className="font-mono text-white">{Math.round(activeLayer.scale * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0.05}
+                              max={0.6}
+                              step={0.01}
+                              value={activeLayer.scale}
+                              onChange={(e) => patchLayer({ scale: parseFloat(e.target.value) })}
+                              className="w-full accent-indigo-400"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between text-[11px] text-slate-400">
+                              <span>Rotation</span>
+                              <span className="font-mono text-white">{Math.round(activeLayer.rotation)}°</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={-180}
+                              max={180}
+                              step={5}
+                              value={activeLayer.rotation}
+                              onChange={(e) => patchLayer({ rotation: parseFloat(e.target.value) })}
+                              className="w-full accent-indigo-400"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-slate-400">Color</span>
+                            <input
+                              type="color"
+                              value={activeLayer.color}
+                              onChange={(e) => patchLayer({ color: e.target.value })}
+                              className="w-7 h-7 rounded bg-transparent border border-slate-700 cursor-pointer"
+                            />
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={activeLayer.mirror}
+                              onChange={(e) => patchLayer({ mirror: e.target.checked })}
+                              className="accent-cyan-400 w-4 h-4"
+                            />
+                            Mirror L↔R Symmetry
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1235,6 +1720,127 @@ export function LiveryStudioModal({
                       }
                       className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm font-semibold tracking-wider uppercase text-slate-100 focus:outline-none focus:border-indigo-500"
                     />
+                  </div>
+
+                  {/* Persistent Livery Garage (Per-Car Saved Slots) */}
+                  <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+                    <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                      Saved Livery Garage ({savedSlots.length}/12)
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        maxLength={24}
+                        placeholder="Slot name (e.g. Le Mans Gold)..."
+                        value={slotNameInput}
+                        onChange={(e) => setSlotNameInput(e.target.value)}
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextSlot: SavedLiverySlot = {
+                            id: `slot-${Date.now()}`,
+                            name: slotNameInput.trim() || `Custom #${savedSlots.length + 1}`,
+                            savedAt: Date.now(),
+                            livery: JSON.parse(JSON.stringify(livery)),
+                          };
+                          const updated = [nextSlot, ...savedSlots].slice(0, 12);
+                          setSavedSlots(updated);
+                          saveLiverySlotForCar(selectedCarId, updated);
+                          setSlotNameInput('');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white"
+                      >
+                        Save Slot
+                      </button>
+                    </div>
+                    {savedSlots.length > 0 && (
+                      <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                        {savedSlots.map((slot) => (
+                          <div
+                            key={slot.id}
+                            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-950/70 border border-slate-800 text-xs"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
+                                style={{ backgroundColor: slot.livery.primaryColor }}
+                              />
+                              <span className="truncate font-semibold text-slate-200">{slot.name}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setLivery({ ...slot.livery })}
+                                className="px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 font-semibold"
+                              >
+                                Load
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = savedSlots.filter((s) => s.id !== slot.id);
+                                  setSavedSlots(updated);
+                                  saveLiverySlotForCar(selectedCarId, updated);
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/40 text-rose-300"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Shareable APXLIV: Code */}
+                  <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                        Shareable Livery Code (APXLIV:)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const code = encodeLiveryShareCode(selectedCarId, livery);
+                          navigator.clipboard?.writeText(code).catch(() => {});
+                          setShareCodeInput(code);
+                          setShareStatus('Copied APXLIV: code to clipboard!');
+                          setTimeout(() => setShareStatus(null), 2400);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-[11px] font-bold text-white"
+                      >
+                        Copy Code
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Paste APXLIV:... code to import"
+                        value={shareCodeInput}
+                        onChange={(e) => setShareCodeInput(e.target.value)}
+                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-[11px] font-mono text-slate-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const decoded = decodeLiveryShareCode(shareCodeInput);
+                          if (!decoded || !decoded.livery) {
+                            setShareStatus('Invalid APXLIV: code.');
+                            return;
+                          }
+                          setLivery((prev) => ({ ...prev, ...decoded.livery }));
+                          setShareStatus('Livery imported successfully!');
+                          setTimeout(() => setShareStatus(null), 2400);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white"
+                      >
+                        Import
+                      </button>
+                    </div>
+                    {shareStatus && <div className="text-[11px] text-emerald-300">{shareStatus}</div>}
                   </div>
                 </div>
               )}

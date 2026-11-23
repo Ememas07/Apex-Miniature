@@ -241,6 +241,9 @@ export interface BuiltCarRig {
   rearWingFlap: THREE.Mesh | null;
   headlightMats: THREE.MeshStandardMaterial[];
   brakeLightMat: THREE.MeshStandardMaterial;
+  brakeRotorMat?: THREE.MeshStandardMaterial;
+  rainLightMat?: THREE.MeshStandardMaterial;
+  headlightCones?: THREE.Mesh[];
   /** Geometry-measured unobstructed hood camera mount in car-local space. */
   hoodMount: HoodMountOffset;
   dispose: () => void;
@@ -2376,33 +2379,55 @@ export function buildDiecastCar(
   const bannerTex = track(createWindshieldBannerTexture(livery.windshieldBanner, livery.secondaryColor, maxAniso));
   const carbonTex = track(createCarbonTexture(maxAniso));
 
+  const finishPreset = (() => {
+    switch (livery.paintFinish ?? 'gloss') {
+      case 'metallic':
+        return { roughness: 0.22, metalness: 0.72, clearcoat: 0.9, clearcoatRoughness: 0.14 };
+      case 'matte':
+        return { roughness: 0.78, metalness: 0.06, clearcoat: 0.0, clearcoatRoughness: 0.85 };
+      case 'satin':
+        return { roughness: 0.44, metalness: 0.35, clearcoat: 0.28, clearcoatRoughness: 0.42 };
+      case 'chrome':
+        return { roughness: 0.08, metalness: 0.96, clearcoat: 1.0, clearcoatRoughness: 0.06 };
+      case 'carbon-weave':
+        return { roughness: 0.36, metalness: 0.32, clearcoat: 0.65, clearcoatRoughness: 0.22 };
+      case 'pearlescent':
+        return { roughness: 0.18, metalness: 0.52, clearcoat: 1.0, clearcoatRoughness: 0.08 };
+      default:
+        return { roughness: 0.24, metalness: 0.18, clearcoat: 1.0, clearcoatRoughness: 0.12 };
+    }
+  })();
+
   const bodyMat = track(
     new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
-      map: liveryTex,
-      roughness: 0.24,
-      metalness: 0.18,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.12,
+      map: livery.paintFinish === 'carbon-weave' ? carbonTex : liveryTex,
+      roughness: finishPreset.roughness,
+      metalness: finishPreset.metalness,
+      clearcoat: finishPreset.clearcoat,
+      clearcoatRoughness: finishPreset.clearcoatRoughness,
+      iridescence: livery.paintFinish === 'pearlescent' ? 0.85 : 0,
+      iridescenceIOR: 1.45,
     }),
   );
 
   const primaryMat = track(
     new THREE.MeshPhysicalMaterial({
       color: new THREE.Color(livery.primaryColor),
-      roughness: 0.24,
-      metalness: 0.18,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.12,
+      roughness: finishPreset.roughness,
+      metalness: finishPreset.metalness,
+      clearcoat: finishPreset.clearcoat,
+      clearcoatRoughness: finishPreset.clearcoatRoughness,
+      iridescence: livery.paintFinish === 'pearlescent' ? 0.85 : 0,
     }),
   );
 
   const secondaryMat = track(
     new THREE.MeshPhysicalMaterial({
       color: new THREE.Color(livery.secondaryColor),
-      roughness: 0.28,
-      metalness: 0.2,
-      clearcoat: 0.85,
+      roughness: Math.min(0.85, finishPreset.roughness + 0.04),
+      metalness: finishPreset.metalness,
+      clearcoat: finishPreset.clearcoat * 0.85,
     }),
   );
 
@@ -2430,7 +2455,23 @@ export function buildDiecastCar(
     }),
   );
 
-  const canopyMat = track(createCarGlassMaterial(0x0a111d, 0.84, 'CANOPY_GLASS'));
+  const canopySpec = (() => {
+    switch (livery.windowTint ?? 'smoke') {
+      case 'clear':
+        return { hex: 0x1e293b, op: 0.52 };
+      case 'dark':
+        return { hex: 0x05080f, op: 0.94 };
+      case 'mirror':
+        return { hex: 0x38bdf8, op: 0.88 };
+      default:
+        return { hex: 0x0a111d, op: 0.84 };
+    }
+  })();
+  const canopyMat = track(createCarGlassMaterial(canopySpec.hex, canopySpec.op, 'CANOPY_GLASS'));
+  if (livery.windowTint === 'mirror') {
+    canopyMat.metalness = 0.92;
+    canopyMat.roughness = 0.06;
+  }
 
   const tireMat = track(
     new THREE.MeshStandardMaterial({
@@ -2459,6 +2500,8 @@ export function buildDiecastCar(
   const rotorMat = track(
     new THREE.MeshStandardMaterial({
       color: 0x3a3f48,
+      emissive: 0xff3b00,
+      emissiveIntensity: 0,
       metalness: 0.92,
       roughness: 0.25,
     }),
@@ -2504,6 +2547,15 @@ export function buildDiecastCar(
       emissive: 0xdc2626,
       emissiveIntensity: 0.75,
       roughness: 0.22,
+    }),
+  );
+
+  const rainLightMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0xff1e1e,
+      emissive: 0xff1e1e,
+      emissiveIntensity: 0.3,
+      roughness: 0.2,
     }),
   );
 
@@ -2567,7 +2619,10 @@ export function buildDiecastCar(
     sharkFinStyle: isProto ? 'tall-proto' : 'none',
   };
 
-  const caliperColorHex = design.caliperColor ?? (isGT4 ? '#0284c7' : isGT3 ? '#ef4444' : isProto ? '#facc15' : '#dc2626');
+  const caliperColorHex =
+    livery.caliperColor ||
+    design.caliperColor ||
+    (isGT4 ? '#0284c7' : isGT3 ? '#ef4444' : isProto ? '#facc15' : '#dc2626');
   const caliperMat = track(
     new THREE.MeshStandardMaterial({
       color: new THREE.Color(caliperColorHex),
@@ -3534,6 +3589,35 @@ export function buildDiecastCar(
     }
   }
 
+  // FIA Rear Rain Light & Night Volumetric Headlight Beam Cones
+  const rainLamp = new THREE.Mesh(track(new THREE.BoxGeometry(0.11, 0.16, 0.05)), rainLightMat);
+  rainLamp.position.set(0, 0.44, -length * 0.49);
+  bodyGroup.add(rainLamp);
+
+  const headlightCones: THREE.Mesh[] = [];
+  if (!isOpenWheel) {
+    const coneGeo = track(new THREE.ConeGeometry(1.35, 11.5, 14, 1, true));
+    coneGeo.rotateX(-Math.PI / 2);
+    coneGeo.translate(0, 0, 5.75);
+    const coneMat = track(
+      new THREE.MeshBasicMaterial({
+        color: headlightHex,
+        transparent: true,
+        opacity: 0.12,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    );
+    for (const side of [-0.56, 0.56]) {
+      const cone = new THREE.Mesh(coneGeo, coneMat);
+      cone.position.set(side, 0.46, length * 0.47);
+      cone.visible = false;
+      bodyGroup.add(cone);
+      headlightCones.push(cone);
+    }
+  }
+
   const realDims = carId ? getRealWorldCarDimensions(carId, classId) : undefined;
   const hoodMount = computeRigHoodMount(root, bodyGroup, classId, realDims);
 
@@ -3546,6 +3630,9 @@ export function buildDiecastCar(
     rearWingFlap,
     headlightMats,
     brakeLightMat,
+    brakeRotorMat: rotorMat,
+    rainLightMat,
+    headlightCones,
     hoodMount,
     dispose: () => {
       disposables.forEach((d) => d.dispose());

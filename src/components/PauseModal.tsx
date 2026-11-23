@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Volume2, VolumeX, ArrowLeft, Settings, Download } from 'lucide-react';
+import { Volume2, VolumeX, ArrowLeft, Settings, Download, Camera, Film, RotateCcw } from 'lucide-react';
 import { formatLapTime } from '../game/physics';
 import { RecordedBcLap, telemetryRecorder } from '../game/telemetryRecorder';
 
@@ -8,6 +8,11 @@ interface PauseModalProps {
   onRestart: () => void;
   onReturnToTitle: () => void;
   onOpenSettings?: () => void;
+  onOpenPhotoMode?: () => void;
+  onOpenReplay?: () => void;
+  onTriggerFlashback?: () => void;
+  replayAvailable?: boolean;
+  flashbackAvailable?: boolean;
   masterVolume?: number;
   onVolumeChange?: (vol: number) => void;
   isMuted?: boolean;
@@ -19,6 +24,11 @@ export function PauseModal({
   onRestart,
   onReturnToTitle,
   onOpenSettings,
+  onOpenPhotoMode,
+  onOpenReplay,
+  onTriggerFlashback,
+  replayAvailable = false,
+  flashbackAvailable = false,
   masterVolume: propVolume,
   onVolumeChange,
   isMuted: propMuted,
@@ -200,6 +210,46 @@ export function PauseModal({
             </button>
             {bcExportMsg && (
               <div className="text-[10px] text-emerald-400 text-center">{bcExportMsg}</div>
+            )}
+          </div>
+        )}
+
+        {(onOpenPhotoMode || onOpenReplay || onTriggerFlashback) && (
+          <div className="grid grid-cols-3 gap-2">
+            {onOpenPhotoMode && (
+              <button
+                type="button"
+                onClick={onOpenPhotoMode}
+                className="py-2 px-2 rounded bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-200 text-xs font-bold flex flex-col items-center gap-1 cursor-pointer"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                Photo (F9)
+              </button>
+            )}
+            {onOpenReplay && (
+              <button
+                type="button"
+                disabled={!replayAvailable}
+                onClick={onOpenReplay}
+                className="py-2 px-2 rounded bg-rose-500/15 hover:bg-rose-500/25 disabled:opacity-35 border border-rose-500/40 text-rose-200 text-xs font-bold flex flex-col items-center gap-1 cursor-pointer"
+              >
+                <Film className="w-3.5 h-3.5" />
+                Replay
+              </button>
+            )}
+            {onTriggerFlashback && (
+              <button
+                type="button"
+                disabled={!flashbackAvailable}
+                onClick={() => {
+                  onTriggerFlashback();
+                  onResume();
+                }}
+                className="py-2 px-2 rounded bg-amber-500/15 hover:bg-amber-500/25 disabled:opacity-35 border border-amber-500/40 text-amber-200 text-xs font-bold flex flex-col items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Rewind -5.5s
+              </button>
             )}
           </div>
         )}
