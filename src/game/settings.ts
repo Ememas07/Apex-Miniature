@@ -172,6 +172,7 @@ export interface GameSettings {
   tiltShiftEnabled: boolean;
   speedBlurEnabled: boolean;
   showFpsCounter: boolean;
+  workerSimulation: boolean;
 
   // 3. Audio Mixer (7 channels, 0..1)
   masterVolume: number;
@@ -246,6 +247,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   tiltShiftEnabled: false,
   speedBlurEnabled: true,
   showFpsCounter: false,
+  workerSimulation: false,
 
   masterVolume: 0.85,
   engineVolume: 0.9,
@@ -479,6 +481,7 @@ function sanitizeSettings(raw: unknown): GameSettings {
     tiltShiftEnabled: typeof p.tiltShiftEnabled === 'boolean' ? p.tiltShiftEnabled : d.tiltShiftEnabled,
     speedBlurEnabled: typeof p.speedBlurEnabled === 'boolean' ? p.speedBlurEnabled : d.speedBlurEnabled,
     showFpsCounter: typeof p.showFpsCounter === 'boolean' ? p.showFpsCounter : d.showFpsCounter,
+    workerSimulation: typeof p.workerSimulation === 'boolean' ? p.workerSimulation : d.workerSimulation,
 
     masterVolume: clampNum(p.masterVolume, 0, 1, d.masterVolume),
     engineVolume: clampNum(p.engineVolume, 0, 1, d.engineVolume),

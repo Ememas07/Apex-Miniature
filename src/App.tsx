@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ControlsBriefingCard,
   hasDismissedBriefing,
@@ -14,7 +14,7 @@ import { TitleOverlay } from './components/TitleOverlay';
 import { TouchControlsOverlay } from './components/TouchControlsOverlay';
 import { getSavedCarSetup } from './game/carSetup';
 import { CAMERA_MODE_ORDER, cycleCameraMode } from './game/camera';
-import { CARS, getCarById, resolveCarSpecial } from './game/cars';
+import { CAR_CLASSES, CARS, getCarById, resolveCarSpecial } from './game/cars';
 import {
   ActiveChampionshipState,
   awardCareerSessionRewards,
@@ -23,11 +23,15 @@ import {
   saveActiveChampionship,
 } from './game/championship';
 import { registerCustomTrackInMemory } from './game/customTracks';
+import { mountGamepadMenuNavigation } from './game/gamepad';
 import {
   ConnectionMode,
+  ExtendedRaceConfig,
+  ExtendedRoomState,
   extractSharedRoomConfigPatch,
   mergeSharedRoomConfig,
   MultiplayerClient,
+  RaceResultReportEntry,
 } from './game/multiplayer';
 import { formatLapTime } from './game/physics';
 import { loadLastRaceConfig, saveLastRaceConfig } from './game/records';
@@ -40,7 +44,12 @@ import {
   subscribeGameSettings,
 } from './game/settings';
 import { isTouchCapableDevice, shouldShowTouchControls } from './game/touchControls';
-import { getTrackById } from './game/tracks';
+import {
+  compileTrack,
+  getTrackById,
+  isTrackGeometryLoaded,
+  preloadTrackGeometry,
+} from './game/tracks';
 import {
   CameraMode,
   CarClassId,
@@ -59,6 +68,11 @@ import {
   TrackSpec,
 } from './game/types';
 import { audioEngine } from './three/audioEngine';
+import {
+  AssetLoadProgress,
+  getAssetLoadProgress,
+  subscribeAssetLoadProgress,
+} from './three/objCarLoader';
 import {
   InRaceTelemetryControls,
   PhotoModeState,
@@ -217,6 +231,16 @@ export default function App() {
   const qualifyingEnabledRef = useRef(raceConfig.qualifyingEnabled);
   qualifyingEnabledRef.current = raceConfig.qualifyingEnabled;
   const lastRaceStartTimeRef = useRef(0);
+  const roomRef = useRef<RoomState | null>(null);
+  roomRef.current = room;
+  const phaseRef = useRef<GamePhase>(phase);
+  phaseRef.current = phase;
+
+  const [assetLoadProgress, setAssetLoadProgress] = useState<AssetLoadProgress>(() =>
+    getAssetLoadProgress(),
+  );
+  const [trackHydrating, setTrackHydrating] = useState<boolean>(false);
+  const [trackHydratedNonce, setTrackHydratedNonce] = useState<number>(0);
 
   // Smooth fade-in / fade-out curtain for main menu & session transitions
   const [screenFading, setScreenFading] = useState<boolean>(() => {
@@ -224,6 +248,7 @@ export default function App() {
     return params.get('autostart') !== '1';
   });
   const fadeTimersRef = useRef<{ mid?: number; end?: number }>({});
+  const fadeIdRef = useRef(0);
 
   useEffect(() => {
     const t = window.setTimeout(() => setScreenFading(false), 120);
@@ -234,15 +259,56 @@ export default function App() {
     };
   }, []);
 
-  const runWithScreenFade = useCallback((applyTransition: () => void) => {
+  useEffect(() => subscribeAssetLoadProgress((next) => setAssetLoadProgress(next)), []);
+
+  useEffect(() => {
+    if (raceConfig.customTrack || isTrackGeometryLoaded(raceConfig.trackId)) {
+      setTrackHydrating(false);
+      return;
+    }
+    let cancelled = false;
+    setTrackHydrating(true);
+    preloadTrackGeometry(raceConfig.trackId)
+      .then(() => {
+        if (!cancelled) setTrackHydratedNonce((n) => n + 1);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setTrackHydrating(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [raceConfig.trackId, raceConfig.customTrack]);
+
+  const runWithScreenFade = useCallback((applyTransition: () => void, trackIdToPreload?: string) => {
     if (fadeTimersRef.current.mid) window.clearTimeout(fadeTimersRef.current.mid);
     if (fadeTimersRef.current.end) window.clearTimeout(fadeTimersRef.current.end);
+    const fadeId = ++fadeIdRef.current;
     setScreenFading(true);
+    const shouldPreload = Boolean(trackIdToPreload) && !isTrackGeometryLoaded(trackIdToPreload!);
+    if (shouldPreload) {
+      setTrackHydrating(true);
+    }
+    const preloadPromise = shouldPreload
+      ? preloadTrackGeometry(trackIdToPreload!)
+          .then(() => {
+            if (fadeIdRef.current === fadeId) setTrackHydratedNonce((n) => n + 1);
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (fadeIdRef.current === fadeId) setTrackHydrating(false);
+          })
+      : Promise.resolve();
+
     fadeTimersRef.current.mid = window.setTimeout(() => {
-      applyTransition();
-      fadeTimersRef.current.end = window.setTimeout(() => {
-        setScreenFading(false);
-      }, 140);
+      void preloadPromise.then(() => {
+        if (fadeIdRef.current !== fadeId) return;
+        applyTransition();
+        fadeTimersRef.current.end = window.setTimeout(() => {
+          if (fadeIdRef.current === fadeId) setScreenFading(false);
+        }, 140);
+      });
     }, 280);
   }, []);
 
@@ -284,13 +350,30 @@ export default function App() {
   useEffect(() => {
     const mp = mpClientRef.current!;
     mp.onRoomUpdate = (nextRoom) => {
+      const prevRoom = roomRef.current;
       setRoom(nextRoom);
       setMpError(null);
       if (nextRoom?.config) {
         if (nextRoom.config.customTrack) {
           registerCustomTrackInMemory(nextRoom.config.customTrack);
         }
-        setRaceConfig((prev) => mergeSharedRoomConfig(prev, nextRoom.config));
+        const extNext = nextRoom as ExtendedRoomState;
+        const mergedRoomCfg: Partial<ExtendedRaceConfig> = {
+          ...extNext.config,
+          ...(extNext.playlist ? { playlist: extNext.playlist } : {}),
+          ...(extNext.playlistEntries ? { playlistEntries: extNext.playlistEntries } : {}),
+          ...(typeof extNext.playlistIndex === 'number' ? { playlistIndex: extNext.playlistIndex } : {}),
+        };
+        setRaceConfig((prev) => mergeSharedRoomConfig(prev, mergedRoomCfg));
+      }
+      if (prevRoom?.started && nextRoom && !nextRoom.started && phaseRef.current === 'gameover') {
+        runWithScreenFade(() => {
+          setFinalSnapshot(null);
+          setQualiBanner(null);
+          setSpectatorCameraMode('spectate');
+          setPhase('title');
+          setMultiplayerOpen(true);
+        });
       }
     };
     mp.onRaceStart = (startedRoom) => {
@@ -303,8 +386,18 @@ export default function App() {
         registerCustomTrackInMemory(startedRoom.config.customTrack);
       }
       if (startedRoom?.config) {
-        setRaceConfig((prev) => mergeSharedRoomConfig(prev, startedRoom.config));
+        const extStarted = startedRoom as ExtendedRoomState;
+        const mergedStartedCfg: Partial<ExtendedRaceConfig> = {
+          ...extStarted.config,
+          ...(extStarted.playlist ? { playlist: extStarted.playlist } : {}),
+          ...(extStarted.playlistEntries ? { playlistEntries: extStarted.playlistEntries } : {}),
+          ...(typeof extStarted.playlistIndex === 'number' ? { playlistIndex: extStarted.playlistIndex } : {}),
+        };
+        setRaceConfig((prev) => mergeSharedRoomConfig(prev, mergedStartedCfg));
       }
+      const nextTrackId = startedRoom?.config?.customTrack
+        ? undefined
+        : startedRoom?.config?.trackId ?? raceConfig.trackId;
       runWithScreenFade(() => {
         setRaceMenuOpen(false);
         setMultiplayerOpen(false);
@@ -321,7 +414,7 @@ export default function App() {
         const targetPhase = useQuali ? 'qualifying' : 'playing';
         setActivePrePausePhase(targetPhase);
         setPhase(targetPhase);
-      });
+      }, nextTrackId);
     };
     mp.onError = (msg) => setMpError(msg);
     mp.onConnectionModeChange = (mode) => setConnectionMode(mode);
@@ -349,12 +442,20 @@ export default function App() {
     }
 
     if (room && room.hostId === mpClientRef.current?.peerId && raceConfig.sessionMode === 'race') {
-      mpClientRef.current.startRace();
+      const mp = mpClientRef.current;
+      if (room.started && phaseRef.current === 'gameover') {
+        mp.returnToLobby();
+        if (mp.room) {
+          mp.room = { ...mp.room, started: false };
+        }
+      }
+      mp.startRace();
       return;
     }
     lastRaceStartTimeRef.current = now;
     const useQuali = raceConfig.sessionMode === 'race' && raceConfig.qualifyingEnabled;
     const targetPhase = useQuali ? 'qualifying' : 'playing';
+    const nextTrackId = raceConfig.customTrack ? undefined : raceConfig.trackId;
     runWithScreenFade(() => {
       setRaceMenuOpen(false);
       setModesHubOpen(false);
@@ -373,8 +474,8 @@ export default function App() {
       setActivePrePausePhase(targetPhase);
       setRunNonce((n) => n + 1);
       setPhase(targetPhase);
-    });
-  }, [raceConfig.qualifyingEnabled, raceConfig.sessionMode, room, runWithScreenFade]);
+    }, nextTrackId);
+  }, [raceConfig.customTrack, raceConfig.qualifyingEnabled, raceConfig.sessionMode, raceConfig.trackId, room, runWithScreenFade]);
 
   const handleStartSinglePlayer = useCallback(
     (patch: Partial<RaceConfig>, forcePhase?: 'playing' | 'qualifying') => {
@@ -392,6 +493,7 @@ export default function App() {
       }
       const useQuali = patch.sessionMode === 'race' && Boolean(patch.qualifyingEnabled);
       const targetPhase = forcePhase ?? (useQuali ? 'qualifying' : 'playing');
+      const nextTrackId = patch.customTrack ? undefined : patch.trackId ?? raceConfig.trackId;
       runWithScreenFade(() => {
         setRaceConfig((prev) => ({ ...prev, ...patch }));
         setRaceMenuOpen(false);
@@ -411,9 +513,9 @@ export default function App() {
         setActivePrePausePhase(targetPhase);
         setRunNonce((n) => n + 1);
         setPhase(targetPhase);
-      });
+      }, nextTrackId);
     },
-    [room, runWithScreenFade],
+    [raceConfig.trackId, room, runWithScreenFade],
   );
 
   const handleLaunchChampionshipStage = useCallback(
@@ -473,10 +575,23 @@ export default function App() {
   );
 
   const handleReturnToTitle = useCallback(() => {
+    const mp = mpClientRef.current;
+    const activeRoom = roomRef.current;
+    const wasInSession = phaseRef.current !== 'title';
+    const returnToMpLobby = Boolean(activeRoom && wasInSession);
+    if (activeRoom && wasInSession && mp && activeRoom.hostId === mp.peerId) {
+      mp.returnToLobby();
+      if (mp.connectionMode !== 'server' && activeRoom.started) {
+        mp.advancePlaylist();
+        const updatedRoom: RoomState = { ...(mp.room ?? activeRoom), started: false };
+        mp.room = updatedRoom;
+        setRoom(updatedRoom);
+      }
+    }
     runWithScreenFade(() => {
       setRaceMenuOpen(false);
       setModesHubOpen(false);
-      setMultiplayerOpen(false);
+      setMultiplayerOpen(returnToMpLobby);
       setCarsShowcaseOpen(false);
       setTracksShowcaseOpen(false);
       setSettingsOpen(false);
@@ -614,10 +729,59 @@ export default function App() {
 
   const handleRaceFinish = useCallback(
     (snapshot: HudSnapshot) => {
+      let effectiveSnapshot = snapshot;
+      if (raceConfig.mandatoryServiceStop && snapshot.sessionMode !== 'ai-race') {
+        let anyPenalized = false;
+        let playerPenaltyAdded = 0;
+        const adjustedStandings = snapshot.standings.map((row) => {
+          if (row.pitStops >= 1) return row;
+          anyPenalized = true;
+          const penaltySec = 25;
+          if (row.isPlayer) playerPenaltyAdded = penaltySec;
+          return {
+            ...row,
+            postRacePenaltySeconds: (row.postRacePenaltySeconds ?? 0) + penaltySec,
+            totalTime: row.totalTime + penaltySec,
+          };
+        });
+        if (anyPenalized) {
+          adjustedStandings.sort((a, b) => {
+            if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
+            if (a.finished !== b.finished) return a.finished ? -1 : 1;
+            if (a.finished && b.finished) return a.totalTime - b.totalTime;
+            return b.totalDistance - a.totalDistance;
+          });
+          const classCounters = new Map<CarClassId, number>();
+          const leaderTime = adjustedStandings[0]?.totalTime ?? 0;
+          const reindexed = adjustedStandings.map((row, idx) => {
+            const clsPos = (classCounters.get(row.classId) ?? 0) + 1;
+            classCounters.set(row.classId, clsPos);
+            return {
+              ...row,
+              position: idx + 1,
+              classPosition: clsPos,
+              intervalToLeader: idx === 0 ? 0 : Math.max(0, row.totalTime - leaderTime),
+            };
+          });
+          const playerAfter = reindexed.find((r) => r.isPlayer);
+          effectiveSnapshot = {
+            ...snapshot,
+            standings: reindexed,
+            position: playerAfter?.position ?? snapshot.position,
+            classPosition: playerAfter?.classPosition ?? snapshot.classPosition,
+            postRacePenaltySeconds: (snapshot.postRacePenaltySeconds ?? 0) + playerPenaltyAdded,
+            raceControlMessage:
+              playerPenaltyAdded > 0
+                ? 'MANDATORY SERVICE STOP MISSED (+25s PENALTY)'
+                : snapshot.raceControlMessage,
+          };
+        }
+      }
+
       let earnedMedal: MedalTier | null = null;
       const activeScenario = getScenarioById(raceConfig.scenarioId ?? raceConfig.licenseId);
       if (activeScenario) {
-        const res = evaluateScenarioResult(activeScenario, snapshot);
+        const res = evaluateScenarioResult(activeScenario, effectiveSnapshot);
         setLastScenarioResult(res);
         if (res.medal) {
           saveChallengeMedal(activeScenario.id, res.medal);
@@ -630,7 +794,7 @@ export default function App() {
       if (raceConfig.championshipId && activeChampionship) {
         const stage = raceConfig.weekendStage ?? 'feature';
         const { nextState, playerPointsEarned } = recordChampionshipSessionResult(activeChampionship, {
-          standings: snapshot.standings,
+          standings: effectiveSnapshot.standings,
           stage,
         });
         saveActiveChampionship(nextState);
@@ -640,18 +804,18 @@ export default function App() {
         setLastChampPoints(null);
       }
 
-      if (snapshot.sessionMode !== 'ai-race') {
-        const playerRow = snapshot.standings.find((s) => s.isPlayer);
-        const fastestLapRow = snapshot.standings.reduce<typeof playerRow | null>((best, r) => {
+      if (effectiveSnapshot.sessionMode !== 'ai-race') {
+        const playerRow = effectiveSnapshot.standings.find((s) => s.isPlayer);
+        const fastestLapRow = effectiveSnapshot.standings.reduce<typeof playerRow | null>((best, r) => {
           if (!r.bestLapTime) return best;
           if (!best || !best.bestLapTime || r.bestLapTime < best.bestLapTime) return r;
           return best;
         }, null);
         const reward = awardCareerSessionRewards({
-          position: playerRow?.position ?? snapshot.position,
-          totalCars: snapshot.totalCars,
-          cleanLaps: snapshot.cleanLapsCount ?? 0,
-          overtakes: snapshot.overtakesCount ?? 0,
+          position: playerRow?.position ?? effectiveSnapshot.position,
+          totalCars: effectiveSnapshot.totalCars,
+          cleanLaps: effectiveSnapshot.cleanLapsCount ?? 0,
+          overtakes: effectiveSnapshot.overtakesCount ?? 0,
           hasFastestLap: Boolean(playerRow && fastestLapRow && playerRow.id === fastestLapRow.id),
           medalEarned: earnedMedal,
         });
@@ -663,10 +827,43 @@ export default function App() {
         setLastCareerReward(null);
       }
 
-      setFinalSnapshot(snapshot);
+      const mp = mpClientRef.current;
+      const activeRoom = roomRef.current;
+      if (mp && activeRoom && activeRoom.hostId === mp.peerId) {
+        const trackLenM = Math.round(
+          compileTrack(raceConfig.customTrack || getTrackById(raceConfig.trackId), 120).totalLength,
+        );
+        const humanResults: RaceResultReportEntry[] = effectiveSnapshot.standings
+          .filter((r) => r.isPlayer || r.isHumanPeer)
+          .map((r) => ({
+            peerId: r.isPlayer ? mp.peerId : r.id,
+            driverName: r.name,
+            carId: r.carId,
+            classId: r.classId,
+            position: r.position,
+            bestLapTime: r.bestLapTime,
+            incidents: r.isPlayer ? (effectiveSnapshot.incidentsCount ?? 0) : 0,
+            cleanLaps: r.isPlayer ? (effectiveSnapshot.cleanLapsCount ?? 0) : 0,
+          }));
+        mp.submitRaceResult(humanResults, trackLenM, true);
+        if (mp.connectionMode !== 'server') {
+          mp.advancePlaylist();
+        }
+      }
+
+      setFinalSnapshot(effectiveSnapshot);
       setPhase('gameover');
     },
-    [activeChampionship, raceConfig.championshipId, raceConfig.licenseId, raceConfig.scenarioId, raceConfig.weekendStage],
+    [
+      activeChampionship,
+      raceConfig.championshipId,
+      raceConfig.customTrack,
+      raceConfig.licenseId,
+      raceConfig.mandatoryServiceStop,
+      raceConfig.scenarioId,
+      raceConfig.trackId,
+      raceConfig.weekendStage,
+    ],
   );
 
   const handleQualifyingFinish = useCallback(
@@ -691,13 +888,14 @@ export default function App() {
       handleLaunchChampionshipStage(activeChampionship, false);
       return;
     }
+    const nextTrackId = raceConfig.customTrack ? undefined : raceConfig.trackId;
     runWithScreenFade(() => {
       setQualiBanner(null);
       setActivePrePausePhase('playing');
       setRunNonce((n) => n + 1);
       setPhase('playing');
-    });
-  }, [activeChampionship, handleLaunchChampionshipStage, raceConfig.championshipId, runWithScreenFade]);
+    }, nextTrackId);
+  }, [activeChampionship, handleLaunchChampionshipStage, raceConfig.championshipId, raceConfig.customTrack, raceConfig.trackId, runWithScreenFade]);
 
   const handleUpdateConfig = (patch: Partial<RaceConfig>) => {
     setRaceConfig((prev) => {
@@ -756,23 +954,149 @@ export default function App() {
     });
   };
 
+  const anyModalOpen =
+    raceMenuOpen ||
+    modesHubOpen ||
+    multiplayerOpen ||
+    carsShowcaseOpen ||
+    tracksShowcaseOpen ||
+    trackStudioOpen ||
+    liveryStudioOpen ||
+    soundStudioOpen ||
+    settingsOpen ||
+    carSetupOpen ||
+    Boolean(phase === 'qualifying' && qualiBanner);
+
+  const gamepadMenuNavActive =
+    gameSettings.controllerEnabled &&
+    ((phase !== 'playing' && phase !== 'qualifying') ||
+      anyModalOpen ||
+      Boolean(photoState?.active) ||
+      Boolean(replayState?.active));
+
+  const gamepadBackHandlerRef = useRef<() => boolean>(() => false);
+  gamepadBackHandlerRef.current = () => {
+    if (settingsOpen) return false;
+    if (carSetupOpen) {
+      setCarSetupOpen(false);
+      return true;
+    }
+    if (soundStudioOpen) {
+      setSoundStudioOpen(false);
+      return true;
+    }
+    if (liveryStudioOpen) {
+      setLiveryStudioOpen(false);
+      return true;
+    }
+    if (trackStudioOpen) {
+      setTrackStudioOpen(false);
+      return true;
+    }
+    if (carsShowcaseOpen) {
+      setCarsShowcaseOpen(false);
+      return true;
+    }
+    if (tracksShowcaseOpen) {
+      setTracksShowcaseOpen(false);
+      return true;
+    }
+    if (multiplayerOpen) {
+      setMultiplayerOpen(false);
+      return true;
+    }
+    if (modesHubOpen) {
+      setModesHubOpen(false);
+      return true;
+    }
+    if (raceMenuOpen) {
+      setRaceMenuOpen(false);
+      return true;
+    }
+    if (phase === 'paused' && !photoState?.active && !replayState?.active) {
+      handleTogglePause();
+      return true;
+    }
+    if (phase === 'gameover') {
+      handleReturnToTitle();
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    if (!gamepadMenuNavActive) return;
+    return mountGamepadMenuNavigation({
+      active: true,
+      onBack: () => gamepadBackHandlerRef.current(),
+    });
+  }, [gamepadMenuNavActive]);
+
   const titleVisible =
     phase === 'title' &&
-    !raceMenuOpen &&
-    !modesHubOpen &&
-    !multiplayerOpen &&
-    !carsShowcaseOpen &&
-    !tracksShowcaseOpen &&
-    !trackStudioOpen &&
-    !liveryStudioOpen &&
-    !soundStudioOpen &&
-    !settingsOpen;
+    !anyModalOpen;
 
   const track = raceConfig.customTrack || getTrackById(raceConfig.trackId);
   const touchControlsActive = shouldShowTouchControls(gameSettings.touchControlsMode, touchCapable);
   const playerCarSpec = getCarById(raceConfig.playerCarId);
   const playerSpecial = resolveCarSpecial(playerCarSpec);
+  const playerClassMeta = CAR_CLASSES[playerCarSpec.classId];
   const isAiRaceSession = raceConfig.sessionMode === 'ai-race';
+
+  const loadingTrackPathD = useMemo(() => {
+    const compiled = compileTrack(track, 72);
+    const xs = compiled.samples.map((s) => s.x);
+    const zs = compiled.samples.map((s) => s.z);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minZ = Math.min(...zs);
+    const maxZ = Math.max(...zs);
+    const span = Math.max(maxX - minX, maxZ - minZ, 1);
+    return (
+      compiled.samples
+        .map((s, idx) => {
+          const px = 14 + ((s.x - minX) / span) * 132;
+          const py = 12 + ((s.z - minZ) / span) * 66;
+          return `${idx === 0 ? 'M' : 'L'}${px.toFixed(1)},${py.toFixed(1)}`;
+        })
+        .join(' ') + ' Z'
+    );
+  }, [track, trackHydratedNonce]);
+
+  const classLoadingTip =
+    playerSpecial.specialType === 'ers-overtake'
+      ? 'Hybrid ERS: Cycle deployment modes (B) and trigger Overtake Boost (Space) on corner exits.'
+      : playerSpecial.specialType === 'active-aero'
+      ? '2026 Active Aero: Toggle low-drag X-Mode (Space) down straights; closes automatically under braking.'
+      : playerSpecial.specialType === 'drs'
+      ? 'DRS Wing: Open rear flap within 1.0s ahead inside detection zones (Space) for extra top speed.'
+      : playerSpecial.specialType === 'v10-overboost'
+      ? 'V10 Overboost: Unleash 19,000 RPM surge (Space) — modulate throttle to protect rear tires.'
+      : playerSpecial.specialType === 'attack-mode'
+      ? 'GEN3 Attack Mode: Drive through off-line activation zones (Space) for temporary AWD boost.'
+      : 'Class Tip: Trail-brake cleanly to the apex and schedule on-track service before tire drop-off.';
+
+  const isSessionAssetLoading =
+    (phase === 'playing' || phase === 'qualifying') &&
+    (trackHydrating || assetLoadProgress.active);
+  const showLoadingOverlay = screenFading || isSessionAssetLoading;
+  const loadingPercent =
+    trackHydrating && !assetLoadProgress.active
+      ? 18
+      : assetLoadProgress.active
+      ? Math.max(12, Math.min(99, assetLoadProgress.percent))
+      : 100;
+  const loadingStatusLabel = trackHydrating
+    ? 'Compiling circuit geometry & elevation…'
+    : assetLoadProgress.phase === 'manifest'
+    ? 'Reading vehicle asset manifest…'
+    : assetLoadProgress.phase === 'downloading'
+    ? `Loading car meshes (${assetLoadProgress.completed}/${Math.max(1, assetLoadProgress.total)})${
+        assetLoadProgress.currentAsset ? ` · ${assetLoadProgress.currentAsset}` : ''
+      }…`
+    : assetLoadProgress.phase === 'compiling'
+    ? 'Pre-warming WebGL shaders…'
+    : 'Grid ready';
 
   return (
     <main className="relative w-full h-full overflow-hidden bg-[#0b0e13]">
@@ -1037,6 +1361,7 @@ export default function App() {
               trackId={raceConfig.trackId}
               customTrack={raceConfig.customTrack}
               playerCarId={raceConfig.playerCarId}
+              mandatoryServiceStop={Boolean(raceConfig.mandatoryServiceStop)}
               muted={muted}
               touchControlsActive={touchControlsActive}
               mfdPage={mfdPage}
@@ -1204,22 +1529,68 @@ export default function App() {
       <OfflineIndicator />
       <LandscapeMobileBanner active={phase === 'playing' || phase === 'qualifying'} />
 
-      {/* Smooth Main Menu / Session Fade-In & Fade-Out Curtain with Circuit Trivia Tip */}
+      {/* Smooth Main Menu / Session Async Loading & Fade Curtain with Circuit Outline & Class Tip */}
       <div
         aria-hidden="true"
         data-testid="screen-fade-overlay"
-        className={`fixed inset-0 z-50 pointer-events-none bg-[#0b0e13] transition-opacity duration-300 ease-in-out flex flex-col items-center justify-center px-6 text-center ${
-          screenFading ? 'opacity-100' : 'opacity-0'
+        className={`fixed inset-0 z-50 pointer-events-none bg-[#0b0e13]/96 backdrop-blur-sm transition-opacity duration-300 ease-in-out flex flex-col items-center justify-center px-6 text-center ${
+          showLoadingOverlay ? 'opacity-100' : 'opacity-0'
         }`}
       >
-        <div className="text-[11px] font-mono uppercase tracking-[0.25em] text-amber-400/90">
-          {track.name} · {track.country}
-        </div>
-        {track.circuitInfo && (
-          <div className="mt-2 max-w-md text-xs text-slate-400 leading-relaxed">
-            {track.circuitInfo}
+        <div className="w-full max-w-md space-y-4">
+          <div className="flex flex-col items-center gap-2">
+            <svg viewBox="0 0 160 90" className="w-40 h-22" aria-hidden="true">
+              <path
+                d={loadingTrackPathD}
+                fill="none"
+                stroke="#1e293b"
+                strokeWidth="7"
+                strokeLinejoin="round"
+              />
+              <path
+                d={loadingTrackPathD}
+                fill="none"
+                stroke="#f59e0b"
+                strokeWidth="2.5"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <div className="text-[11px] font-mono uppercase tracking-[0.25em] text-amber-400/95">
+              {track.name} · {track.country}
+            </div>
+            {track.circuitInfo && (
+              <div className="text-xs text-slate-400 leading-relaxed">{track.circuitInfo}</div>
+            )}
           </div>
-        )}
+
+          <div
+            data-testid="loading-progress-bar"
+            className="rounded-lg bg-[#111722] border border-white/10 p-3 text-left space-y-2 shadow-xl"
+          >
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-slate-300 truncate pr-2">{loadingStatusLabel}</span>
+              <span className="text-amber-300 font-bold tabular-nums">{loadingPercent}%</span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-emerald-400 transition-all duration-150"
+                style={{ width: `${loadingPercent}%` }}
+              />
+            </div>
+            <div className="pt-1 border-t border-white/10 flex items-start gap-2 text-[11px] text-slate-300">
+              <span
+                className="px-1.5 py-0.5 rounded-sm text-[9px] font-display font-bold shrink-0 mt-0.5"
+                style={{
+                  backgroundColor: playerClassMeta.plateColor,
+                  color: playerClassMeta.badgeTextColor,
+                }}
+              >
+                {playerClassMeta.shortName}
+              </span>
+              <span className="leading-snug text-slate-300">{classLoadingTip}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   );

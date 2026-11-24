@@ -923,6 +923,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     checked={settings.showFpsCounter}
                     onChange={(v) => patch({ showFpsCounter: v })}
                   />
+                  <ToggleRow
+                    label="Web Worker Physics Simulation"
+                    description="Run car physics & neural AI inference on a background thread (off by default)"
+                    checked={settings.workerSimulation}
+                    onChange={(v) => patch({ workerSimulation: v })}
+                  />
                 </div>
               </section>
             </div>

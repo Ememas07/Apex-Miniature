@@ -37,6 +37,7 @@ import {
   MfdPage,
   PitServiceAction,
   PitStrategy,
+  SafetyCarPhase,
   TireCompound,
   TrackSpec,
 } from '../game/types';
@@ -69,6 +70,7 @@ interface RaceHUDProps {
   onSetAiErsMode?: (carId: string, mode: ErsMode) => void;
   onCallAiOnTrackService?: (carId: string, action: PitServiceAction, compound?: TireCompound) => void;
   touchControlsActive?: boolean;
+  mandatoryServiceStop?: boolean;
   mfdPage?: MfdPage;
   onCycleMfd?: () => void;
   onCycleTcLevel?: () => void;
@@ -97,6 +99,7 @@ export function RaceHUD({
   onSetAiErsMode,
   onCallAiOnTrackService,
   touchControlsActive = false,
+  mandatoryServiceStop = false,
   mfdPage: externalMfdPage,
   onCycleMfd,
   onCycleTcLevel,
@@ -146,6 +149,33 @@ export function RaceHUD({
   const carSpecial = resolveCarSpecial(activeCar);
   const hasHybridErs = Boolean(hud.hasErs);
   const isManualGears = hud.transmissionMode === 'manual';
+  const isFirstPersonMirrorCam =
+    hud.cameraMode === 'hood' || hud.cameraMode === 'bumper' || hud.cameraMode === 'cockpit';
+  const isHighOrUltraGraphics =
+    gameSettings.graphicsPreset === 'high' || gameSettings.graphicsPreset === 'ultra';
+  const show3dVirtualMirror =
+    gameSettings.showVirtualMirror && !isAiRace && isFirstPersonMirrorCam && isHighOrUltraGraphics;
+  const showTextVirtualMirror =
+    gameSettings.showVirtualMirror &&
+    !isAiRace &&
+    !show3dVirtualMirror &&
+    ((hud.rearCarGapM !== null && hud.rearCarGapM !== undefined) ||
+      Boolean(hud.blindSpot && hud.blindSpot !== 'clear'));
+  const scPhase: SafetyCarPhase =
+    hud.safetyCarPhase ??
+    (hud.vscActive ? 'vsc' : hud.safetyCarActive ? 'deployed' : 'none');
+  const showSafetyCarBanner =
+    hud.countdown <= 0 &&
+    (scPhase !== 'none' ||
+      Boolean(hud.vscActive) ||
+      Boolean(hud.safetyCarActive) ||
+      hud.raceFlag === 'vsc' ||
+      hud.raceFlag === 'safety-car');
+  const isHeavyPenalty =
+    !isAiRace &&
+    hud.countdown <= 0 &&
+    (hud.penaltyType === 'drive-through' || hud.penaltyType === 'stop-and-go');
+  const playerStanding = !isAiRace ? hud.standings.find((s) => s.isPlayer) ?? null : null;
 
   // Relative standings slice for player races (cars immediately ahead and behind)
   const relativeRows = useMemo(() => {
@@ -242,10 +272,36 @@ export function RaceHUD({
           : undefined
       }
     >
-      {/* Section 7 Top-Center Awareness Stack: Virtual Rear-View Bar, Blind-Spot Arrows, Corner Callout & Mecachrome Alert */}
+      {/* Section 7 Top-Center Awareness Stack: 3D Virtual Mirror Bezel / Fallback Rear-View Pill, Corner Callout & Mecachrome Alert */}
       <div className="fixed top-3 left-1/2 -translate-x-1/2 z-25 pointer-events-none flex flex-col items-center gap-1.5 max-w-[92vw]">
-        {gameSettings.showVirtualMirror && !isAiRace && (hud.rearCarGapM !== null && hud.rearCarGapM !== undefined || (hud.blindSpot && hud.blindSpot !== 'clear')) && (
-          <div className="flex items-center gap-2 bg-[#0b0e13]/90 border border-white/20 rounded-md px-3 py-1 shadow-xl">
+        {show3dVirtualMirror && (
+          <div
+            data-testid="virtual-mirror-frame"
+            data-camera-mode={hud.cameraMode}
+            className="relative w-[320px] h-[84px] max-w-[82vw] rounded-md border-2 border-white/35 bg-transparent shadow-[0_6px_28px_rgba(0,0,0,0.75)] overflow-hidden"
+          >
+            {(hud.blindSpot === 'left' || hud.blindSpot === 'both') && (
+              <div className="absolute inset-y-0 left-0 w-1.5 bg-amber-400 animate-pulse" />
+            )}
+            {(hud.blindSpot === 'right' || hud.blindSpot === 'both') && (
+              <div className="absolute inset-y-0 right-0 w-1.5 bg-amber-400 animate-pulse" />
+            )}
+            <div className="absolute top-0.5 left-1.5 px-1 rounded bg-black/60 text-[8px] font-mono uppercase tracking-widest text-slate-300">
+              Rear Mirror
+            </div>
+            {hud.rearCarGapM !== null && hud.rearCarGapM !== undefined && (
+              <div className="absolute top-0.5 right-1.5 px-1.5 rounded bg-black/65 text-[9px] font-telemetry font-bold text-white tabular-nums">
+                {hud.rearCarGapM.toFixed(1)}m
+              </div>
+            )}
+          </div>
+        )}
+
+        {showTextVirtualMirror && (
+          <div
+            data-testid="virtual-mirror-fallback"
+            className="flex items-center gap-2 bg-[#0b0e13]/90 border border-white/20 rounded-md px-3 py-1 shadow-xl"
+          >
             <span
               className={`text-[11px] font-black tracking-wider px-1.5 py-0.5 rounded ${
                 hud.blindSpot === 'left' || hud.blindSpot === 'both'
@@ -778,6 +834,8 @@ export function RaceHUD({
           {!isAiRace &&
             (hud.inSlipstream ||
               hud.penaltyTimeRemaining > 0 ||
+              isHeavyPenalty ||
+              (mandatoryServiceStop && !isHotlapMode && hud.countdown <= 0) ||
               (hud.postRacePenaltySeconds ?? 0) > 0 ||
               hud.warningCount > 0 ||
               hud.pitStopRemaining > 0 ||
@@ -787,6 +845,25 @@ export function RaceHUD({
               (carSpecial.specialType === 'attack-mode' && hud.inAttackModeZone) ||
               (hud.surfaceType && hud.surfaceType !== 'asphalt' && hud.surfaceType !== 'kerb')) && (
               <div className="mt-2 pt-2 short:mt-1 short:pt-1 border-t border-white/10 space-y-1 short:space-y-0.5 text-[11px] short:text-[9px] font-semibold">
+                {mandatoryServiceStop && !isHotlapMode && hud.countdown <= 0 && (
+                  <div
+                    className={
+                      (playerStanding?.pitStops ?? 0) > 0
+                        ? 'text-emerald-400 font-bold'
+                        : 'text-amber-300 font-bold'
+                    }
+                  >
+                    {(playerStanding?.pitStops ?? 0) > 0
+                      ? 'MANDATORY SERVICE: COMPLETED'
+                      : 'MANDATORY ON-TRACK SERVICE REQUIRED'}
+                  </div>
+                )}
+                {isHeavyPenalty && hud.penaltyTimeRemaining <= 0 && (
+                  <div className="text-red-400 font-bold">
+                    {hud.penaltyType === 'stop-and-go' ? 'STOP & GO PENALTY' : 'DRIVE-THROUGH PENALTY'}
+                    {hud.penaltyDeadlineLap != null ? ` (BY LAP ${hud.penaltyDeadlineLap})` : ''}
+                  </div>
+                )}
                 {hud.blueFlagActive && (
                   <div className="text-sky-400 font-bold">BLUE FLAG — YIELD TO FASTER CAR</div>
                 )}
@@ -851,8 +928,12 @@ export function RaceHUD({
             )}
         </div>
 
-        {/* Top-Center: Start Lights Countdown + Launch RPM Gauge, Flags & Yield Penalties */}
-        <div className="flex flex-col items-center gap-1.5 max-w-[360px]">
+        {/* Top-Center: Start Lights Countdown + Launch RPM Gauge, SC/VSC, Flags & Penalties */}
+        <div
+          className={`flex flex-col items-center gap-1.5 max-w-[360px] ${
+            show3dVirtualMirror ? 'mt-[98px]' : ''
+          }`}
+        >
           {hud.countdown > 0 ? (
             <div
               className={`bg-[#0b0e13]/95 border rounded-md px-6 py-3 short:px-3.5 short:py-1.5 text-center shadow-xl ${
@@ -983,6 +1064,138 @@ export function RaceHUD({
               </div>
             </div>
           ) : null}
+
+          {/* Prominent Safety Car / VSC Banner */}
+          {showSafetyCarBanner && (
+            <div
+              data-testid="hud-safety-car-banner"
+              className={`border-2 rounded-md px-4 py-1.5 text-center shadow-2xl min-w-[240px] ${
+                scPhase === 'restarting'
+                  ? 'bg-emerald-950/95 border-emerald-400 text-emerald-100'
+                  : 'bg-amber-950/95 border-amber-400 text-amber-100'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-black tracking-widest uppercase ${
+                    scPhase === 'restarting'
+                      ? 'bg-emerald-400 text-slate-950'
+                      : 'bg-amber-400 text-slate-950 animate-pulse'
+                  }`}
+                >
+                  {scPhase === 'vsc' ? 'VSC' : 'SC'}
+                </span>
+                <span className="text-xs font-display font-extrabold tracking-widest uppercase">
+                  {scPhase === 'vsc'
+                    ? 'VIRTUAL SAFETY CAR'
+                    : scPhase === 'in-this-lap'
+                    ? 'SAFETY CAR IN THIS LAP'
+                    : scPhase === 'restarting'
+                    ? 'SAFETY CAR RESTARTING'
+                    : 'SAFETY CAR DEPLOYED'}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-2 text-[10px] font-telemetry font-bold">
+                <span className="text-amber-200 uppercase font-sans">
+                  {scPhase === 'restarting'
+                    ? 'GREEN FLAG IMMINENT'
+                    : scPhase === 'in-this-lap'
+                    ? 'LIGHTS OUT · NO OVERTAKING'
+                    : scPhase === 'vsc'
+                    ? 'HOLD DELTA · NO OVERTAKING'
+                    : 'SINGLE FILE · NO OVERTAKING'}
+                </span>
+                {hud.neutralizationSpeedCapKmh != null && Number.isFinite(hud.neutralizationSpeedCapKmh) && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded tabular-nums ${
+                      hud.speedKmh > hud.neutralizationSpeedCapKmh + 5
+                        ? 'bg-red-600 text-white animate-pulse'
+                        : 'bg-black/40 text-amber-300 border border-amber-400/35'
+                    }`}
+                  >
+                    MAX{' '}
+                    {(() => {
+                      const cap = formatSpeed(hud.neutralizationSpeedCapKmh, units);
+                      return `${cap.value} ${cap.unit}`;
+                    })()}
+                  </span>
+                )}
+                {hud.safetyCarSpeedKmh != null &&
+                  Number.isFinite(hud.safetyCarSpeedKmh) &&
+                  scPhase !== 'vsc' && (
+                    <span className="px-1.5 py-0.5 rounded bg-black/40 text-slate-200 border border-white/15 tabular-nums">
+                      SC{' '}
+                      {(() => {
+                        const scSpd = formatSpeed(hud.safetyCarSpeedKmh, units);
+                        return `${scSpd.value} ${scSpd.unit}`;
+                      })()}
+                    </span>
+                  )}
+              </div>
+            </div>
+          )}
+
+          {/* Serveable Heavy Penalty HUD Card (Drive-Through / Stop-and-Go) */}
+          {isHeavyPenalty && (() => {
+            const isStopGo = hud.penaltyType === 'stop-and-go';
+            const requiredSec =
+              hud.penaltyServeRequired && hud.penaltyServeRequired > 0
+                ? hud.penaltyServeRequired
+                : isStopGo
+                ? 3.0
+                : 4.0;
+            const progressSec = Math.max(0, Math.min(requiredSec, hud.penaltyServeProgress ?? 0));
+            const progressPct = Math.round((progressSec / requiredSec) * 100);
+            const urgentDeadline =
+              hud.penaltyDeadlineLap != null && hud.lap >= hud.penaltyDeadlineLap;
+            return (
+              <div
+                data-testid="hud-heavy-penalty-card"
+                className="bg-red-950/95 border-2 border-red-500 rounded-md px-4 py-2 shadow-2xl min-w-[250px] max-w-[340px] text-left"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-display font-black tracking-wider uppercase text-red-200">
+                    {isStopGo ? 'STOP & GO PENALTY' : 'DRIVE-THROUGH PENALTY'}
+                  </span>
+                  {hud.penaltyDeadlineLap != null && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-telemetry font-bold uppercase ${
+                        urgentDeadline
+                          ? 'bg-red-600 text-white animate-pulse'
+                          : 'bg-black/45 text-amber-300 border border-amber-400/40'
+                      }`}
+                    >
+                      BY LAP {hud.penaltyDeadlineLap}
+                    </span>
+                  )}
+                </div>
+                {hud.penaltyReason && (
+                  <div className="text-[10px] font-mono uppercase text-rose-300 mt-0.5">
+                    Stewards: {hud.penaltyReason.replace(/-/g, ' ')}
+                  </div>
+                )}
+                <div className="text-[11px] font-semibold text-white mt-1 leading-snug">
+                  {hud.penaltyServeInstruction ||
+                    (isStopGo
+                      ? `Pull off racing line & hold 0 km/h for ${requiredSec.toFixed(1)}s`
+                      : `Hold <= 60 km/h for ${requiredSec.toFixed(1)}s to serve`)}
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="flex-1 h-2 rounded bg-black/50 border border-white/15 overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-75 ${
+                        progressPct > 0 ? 'bg-emerald-400' : 'bg-amber-400'
+                      }`}
+                      style={{ width: `${progressPct}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-telemetry font-bold text-amber-200 tabular-nums shrink-0">
+                    {progressSec.toFixed(1)}/{requiredSec.toFixed(1)}s
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Prominent Yield Penalty Banner (shows exact time and/or position to yield) */}
           {!isAiRace && hud.countdown <= 0 && hud.penaltyTimeRemaining > 0 && hud.pitStopRemaining <= 0 && (
