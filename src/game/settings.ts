@@ -27,6 +27,8 @@ export type KeybindAction =
   | 'camera'
   | 'resetCamera'
   | 'lookBack'
+  | 'lookLeft'
+  | 'lookRight'
   | 'brakeBiasDown'
   | 'brakeBiasUp'
   | 'tcToggle'
@@ -51,6 +53,8 @@ export const DEFAULT_KEYBINDS: KeybindConfig = {
   camera: 'KeyC',
   resetCamera: 'KeyR',
   lookBack: 'KeyV',
+  lookLeft: 'KeyZ',
+  lookRight: 'KeyX',
   brakeBiasDown: 'BracketLeft',
   brakeBiasUp: 'BracketRight',
   tcToggle: 'KeyT',
@@ -73,6 +77,8 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   camera: 'Cycle Camera',
   resetCamera: 'Reset Camera',
   lookBack: 'Look Back (Hold)',
+  lookLeft: 'Glance Left (Hold)',
+  lookRight: 'Glance Right (Hold)',
   brakeBiasDown: 'Brake Bias Rear (-)',
   brakeBiasUp: 'Brake Bias Front (+)',
   tcToggle: 'Cycle Traction Control',
@@ -129,6 +135,7 @@ export interface GameSettings {
   transmissionMode: TransmissionMode;
   tcDefault: 'auto' | TcLevel;
   stabilityControl: boolean;
+  autoRecovery: boolean;
   racingLineMode: RacingLineMode;
   steerDeadzone: number; // 0.02..0.25
   steerLinearity: number; // 1.0..2.2
@@ -175,6 +182,7 @@ export interface GameSettings {
   showPedalTrace: boolean;
   showCornerCallouts: boolean;
   showNametags: boolean;
+  minimapRotate: boolean;
   units: UnitsSystem;
 
   // 6. Accessibility
@@ -196,6 +204,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   transmissionMode: 'auto',
   tcDefault: 'auto',
   stabilityControl: true,
+  autoRecovery: true,
   racingLineMode: 'corners-only',
   steerDeadzone: 0.08,
   steerLinearity: 1.35,
@@ -238,6 +247,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   showPedalTrace: true,
   showCornerCallouts: true,
   showNametags: true,
+  minimapRotate: false,
   units: 'metric',
 
   colorblindMode: 'none',
@@ -396,6 +406,7 @@ function sanitizeSettings(raw: unknown): GameSettings {
     transmissionMode: isOneOf(p.transmissionMode, ['auto', 'semi-auto', 'manual'] as const) ? p.transmissionMode : d.transmissionMode,
     tcDefault,
     stabilityControl: typeof p.stabilityControl === 'boolean' ? p.stabilityControl : d.stabilityControl,
+    autoRecovery: typeof p.autoRecovery === 'boolean' ? p.autoRecovery : d.autoRecovery,
     racingLineMode: isOneOf(p.racingLineMode, ['off', 'corners-only', 'full'] as const) ? p.racingLineMode : d.racingLineMode,
     steerDeadzone: clampNum(p.steerDeadzone, 0.02, 0.25, d.steerDeadzone),
     steerLinearity: clampNum(p.steerLinearity, 1.0, 2.2, d.steerLinearity),
@@ -438,6 +449,7 @@ function sanitizeSettings(raw: unknown): GameSettings {
     showPedalTrace: typeof p.showPedalTrace === 'boolean' ? p.showPedalTrace : d.showPedalTrace,
     showCornerCallouts: typeof p.showCornerCallouts === 'boolean' ? p.showCornerCallouts : d.showCornerCallouts,
     showNametags: typeof p.showNametags === 'boolean' ? p.showNametags : d.showNametags,
+    minimapRotate: typeof p.minimapRotate === 'boolean' ? p.minimapRotate : d.minimapRotate,
     units: isOneOf(p.units, ['metric', 'imperial'] as const) ? p.units : d.units,
 
     colorblindMode: isOneOf(p.colorblindMode, ['none', 'protanopia', 'deuteranopia', 'tritanopia'] as const) ? p.colorblindMode : d.colorblindMode,
