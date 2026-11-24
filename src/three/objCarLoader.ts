@@ -1,6 +1,9 @@
 import * as THREE from 'three';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { CarSpec, HeadlightTint, LiveryConfig, RimFinish } from '../game/types';
 import {
   applySixZoneCarUVs,
@@ -19,17 +22,82 @@ import {
 export interface LowPolyCarManifestEntry {
   id: string;
   folder: string;
-  obj: string;
+  obj: string | null;
   mtl: string | null;
+  glb?: string | null;
 }
 
 interface LowPolyCarManifest {
   cars: LowPolyCarManifestEntry[];
 }
 
+export interface AssetLoadProgress {
+  active: boolean;
+  phase: 'idle' | 'manifest' | 'downloading' | 'compiling' | 'done';
+  completed: number;
+  total: number;
+  percent: number;
+  currentAsset: string | null;
+}
+
+type AssetProgressListener = (progress: AssetLoadProgress) => void;
+
+let assetLoadState: AssetLoadProgress = {
+  active: false,
+  phase: 'idle',
+  completed: 0,
+  total: 0,
+  percent: 0,
+  currentAsset: null,
+};
+
+const assetProgressListeners = new Set<AssetProgressListener>();
+let preloadBatchDepth = 0;
+
+function emitAssetLoadProgress(patch: Partial<AssetLoadProgress>): void {
+  assetLoadState = {
+    ...assetLoadState,
+    ...patch,
+  };
+  const snapshot: AssetLoadProgress = { ...assetLoadState };
+  for (const listener of assetProgressListeners) {
+    try {
+      listener(snapshot);
+    } catch {
+      // Ignore UI listener errors so asset loading never aborts
+    }
+  }
+}
+
+export function getAssetLoadProgress(): AssetLoadProgress {
+  return { ...assetLoadState };
+}
+
+export function subscribeAssetLoadProgress(listener: AssetProgressListener): () => void {
+  assetProgressListeners.add(listener);
+  try {
+    listener({ ...assetLoadState });
+  } catch {
+    // Ignore UI listener errors
+  }
+  return () => {
+    assetProgressListeners.delete(listener);
+  };
+}
+
+let customDracoDecoderPath: string | null = null;
+
+export function setDracoDecoderPath(decoderPath: string): void {
+  customDracoDecoderPath = decoderPath;
+  gltfLoaderPromise = null;
+}
+
+function getBaseUrl(): string {
+  return (import.meta.env?.BASE_URL ?? '/').replace(/\/?$/, '/');
+}
+
 function getModelsBaseUrl(): string {
-  const base = (import.meta.env?.BASE_URL ?? '/').replace(/\/?$/, '/');
-  return `${base}models/lowpoly-cars/`;
+  return `${getBaseUrl()}models/lowpoly-cars/`;
 }
 
 function normalizeCarKey(value: string): string {
@@ -46,7 +114,8 @@ async function fetchManifestMap(): Promise<Map<string, LowPolyCarManifestEntry>>
     const data = (await res.json()) as Partial<LowPolyCarManifest>;
     const entries = Array.isArray(data?.cars) ? data.cars : [];
     for (const entry of entries) {
-      if (!entry || typeof entry.folder !== 'string' || typeof entry.obj !== 'string') continue;
+      if (!entry || typeof entry.folder !== 'string') continue;
+      if (typeof entry.obj !== 'string' && typeof entry.glb !== 'string') continue;
       if (entry.id) {
         map.set(normalizeCarKey(entry.id), entry);
       }
@@ -73,6 +142,7 @@ export function getLowPolyManifestMap(): Promise<Map<string, LowPolyCarManifestE
 export function clearLowPolyModelCache(): void {
   manifestPromise = null;
   templateCache.clear();
+  gltfLoaderPromise = null;
 }
 
 export async function findLowPolyModelForCar(carId: string): Promise<LowPolyCarManifestEntry | null> {
@@ -112,19 +182,139 @@ export async function findLowPolyModelForCar(carId: string): Promise<LowPolyCarM
 }
 
 const templateCache = new Map<string, Promise<THREE.Group>>();
+let gltfLoaderPromise: Promise<GLTFLoader> | null = null;
 
-async function loadObjTemplate(entry: LowPolyCarManifestEntry): Promise<THREE.Group> {
-  const cacheKey = `${entry.folder}/${entry.obj}`;
+function getConfiguredGltfLoader(): Promise<GLTFLoader> {
+  if (gltfLoaderPromise) return gltfLoaderPromise;
+  gltfLoaderPromise = (async () => {
+    const loader = new GLTFLoader();
+    try {
+      await MeshoptDecoder.ready;
+      if (MeshoptDecoder.supported) {
+        loader.setMeshoptDecoder(MeshoptDecoder);
+      }
+    } catch {
+      // Non-fatal: uncompressed GLBs or OBJ fallback will still work
+    }
+    try {
+      const dracoLoader = new DRACOLoader();
+      dracoLoader.setDecoderPath(customDracoDecoderPath ?? `${getBaseUrl()}draco/`);
+      loader.setDRACOLoader(dracoLoader);
+    } catch {
+      // Non-fatal in headless / offline environments without Draco WASM
+    }
+    return loader;
+  })();
+  return gltfLoaderPromise;
+}
+
+async function readResponseBytesWithProgress(
+  res: Response,
+  onFraction?: (fraction: number) => void,
+): Promise<Uint8Array> {
+  const totalHeader = Number(res.headers?.get?.('content-length') || 0);
+  const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
+  if (!reader || !Number.isFinite(totalHeader) || totalHeader <= 0 || !onFraction) {
+    const ab = await res.arrayBuffer();
+    if (onFraction) onFraction(1);
+    return new Uint8Array(ab);
+  }
+
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  let lastReported = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value && value.byteLength > 0) {
+      chunks.push(value);
+      received += value.byteLength;
+      const frac = Math.min(0.98, received / totalHeader);
+      if (frac - lastReported >= 0.04) {
+        lastReported = frac;
+        onFraction(frac);
+      }
+    }
+  }
+
+  const merged = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  onFraction(1);
+  return merged;
+}
+
+async function loadGlbTemplate(
+  entry: LowPolyCarManifestEntry,
+  onFraction?: (fraction: number) => void,
+): Promise<THREE.Group> {
+  if (!entry.glb) {
+    throw new Error(`No GLB entry for "${entry.folder}"`);
+  }
+  const cacheKey = `glb:${entry.folder}/${entry.glb}`;
   const cached = templateCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    if (onFraction) {
+      void cached.then(() => onFraction(1)).catch(() => undefined);
+    }
+    return cached;
+  }
 
   const loaderPromise = (async () => {
     const folderUrl = `${getModelsBaseUrl()}${encodeURIComponent(entry.folder)}/`;
-    const objRes = await fetch(`${folderUrl}${encodeURIComponent(entry.obj)}`);
+    const glbUrl = `${folderUrl}${encodeURIComponent(entry.glb!)}`;
+    const res = await fetch(glbUrl);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch GLB "${entry.glb}" (${res.status})`);
+    }
+    const bytes = await readResponseBytesWithProgress(res, onFraction);
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const loader = await getConfiguredGltfLoader();
+    const gltf = await loader.parseAsync(buffer, folderUrl);
+    const sceneGroup = gltf.scene || new THREE.Group();
+    const isV2 = Boolean(
+      sceneGroup.userData?.apexPipelineV2 ??
+        gltf.userData?.apexPipelineV2 ??
+        gltf.asset?.extras?.apexPipelineV2,
+    );
+    sceneGroup.userData.apexPipelineV2 = isV2;
+    return sceneGroup;
+  })().catch((err) => {
+    templateCache.delete(cacheKey);
+    throw err;
+  });
+
+  templateCache.set(cacheKey, loaderPromise);
+  return loaderPromise;
+}
+
+async function loadObjTemplate(
+  entry: LowPolyCarManifestEntry,
+  onFraction?: (fraction: number) => void,
+): Promise<THREE.Group> {
+  if (!entry.obj) {
+    throw new Error(`No OBJ entry for "${entry.folder}"`);
+  }
+  const cacheKey = `obj:${entry.folder}/${entry.obj}`;
+  const cached = templateCache.get(cacheKey);
+  if (cached) {
+    if (onFraction) {
+      void cached.then(() => onFraction(1)).catch(() => undefined);
+    }
+    return cached;
+  }
+
+  const loaderPromise = (async () => {
+    const folderUrl = `${getModelsBaseUrl()}${encodeURIComponent(entry.folder)}/`;
+    const objRes = await fetch(`${folderUrl}${encodeURIComponent(entry.obj!)}`);
     if (!objRes.ok) {
       throw new Error(`Failed to fetch OBJ "${entry.obj}" (${objRes.status})`);
     }
-    const objText = await objRes.text();
+    const objBytes = await readResponseBytesWithProgress(objRes, onFraction);
+    const objText = new TextDecoder('utf-8').decode(objBytes);
 
     let materialsCreator: MTLLoader.MaterialCreator | null = null;
     if (entry.mtl) {
@@ -156,6 +346,21 @@ async function loadObjTemplate(entry: LowPolyCarManifestEntry): Promise<THREE.Gr
 
   templateCache.set(cacheKey, loaderPromise);
   return loaderPromise;
+}
+
+async function loadModelTemplate(
+  entry: LowPolyCarManifestEntry,
+  onFraction?: (fraction: number) => void,
+): Promise<THREE.Group> {
+  if (entry.glb) {
+    try {
+      return await loadGlbTemplate(entry, onFraction);
+    } catch (glbErr) {
+      if (!entry.obj) throw glbErr;
+      console.warn(`[objCarLoader] GLB load failed for "${entry.folder}", falling back to OBJ:`, glbErr);
+    }
+  }
+  return loadObjTemplate(entry, onFraction);
 }
 
 function resolveRimFinish(finish: RimFinish, primaryColor: string): { color: string; metalness: number; roughness: number } {
@@ -700,147 +905,241 @@ function instantiateObjRig(
   const wheelBox = new THREE.Box3();
   const wheelCenter = new THREE.Vector3();
 
-  template.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.geometry) return;
-
-    const meshName = mesh.name || 'PART';
-    const isWheelMesh = isWheelObjectName(meshName);
+  const registerSingleWheelMesh = (mesh: THREE.Mesh, meshName: string) => {
     const isGlassMesh = GLASS_OBJ_OR_MAT_RE.test(meshName);
     let clonedGeo = track(sanitizeBufferGeometry(mesh.geometry.clone()));
     if (uniformScale !== 1.0) {
       clonedGeo.scale(uniformScale, uniformScale, uniformScale);
     }
-
     const rawMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
 
-    if (isWheelMesh) {
-      // Split out any non-wheel material groups (e.g. stray LED/caliper/body parts) so wheel centroid stays true
-      if (clonedGeo.groups.length > 1) {
-        const wheelGroupIndices: number[] = [];
-        const strayGroupIndices: number[] = [];
-        for (let gi = 0; gi < clonedGeo.groups.length; gi++) {
-          const gMat = rawMats[clonedGeo.groups[gi].materialIndex ?? 0];
-          const gMatName = gMat?.name || '';
-          if (NON_WHEEL_SUBMAT_RE.test(gMatName)) {
-            strayGroupIndices.push(gi);
-          } else {
-            wheelGroupIndices.push(gi);
-          }
-        }
-        if (strayGroupIndices.length > 0 && wheelGroupIndices.length > 0) {
-          const strayExtracted = extractMaterialSubGeometry(clonedGeo, strayGroupIndices, rawMats);
-          if (strayExtracted) {
-            const strayGeo = track(strayExtracted.geo);
-            const strayRawMats = Array.isArray(strayExtracted.mat) ? strayExtracted.mat : [strayExtracted.mat];
-            const strayMapped = strayRawMats.map((m) =>
-              convertSourceMaterial(m, 'BODY', false, matCtx),
-            );
-            const strayMesh = new THREE.Mesh(
-              strayGeo,
-              Array.isArray(strayExtracted.mat) ? strayMapped : strayMapped[0],
-            );
-            strayMesh.name = `${meshName}_BODY_TRIM`;
-            strayMesh.castShadow = true;
-            strayMesh.receiveShadow = true;
-            bodyGroup.add(strayMesh);
-          }
-          const wheelExtracted = extractMaterialSubGeometry(clonedGeo, wheelGroupIndices, rawMats);
-          if (wheelExtracted) {
-            clonedGeo = track(wheelExtracted.geo);
-            const wheelMapped = (Array.isArray(wheelExtracted.mat) ? wheelExtracted.mat : [wheelExtracted.mat]).map(
-              (m) => convertSourceMaterial(m, meshName, true, matCtx),
-            );
-            const finalWheelMat = Array.isArray(wheelExtracted.mat) ? wheelMapped : wheelMapped[0];
-            clonedGeo.computeBoundingBox();
-            wheelBox.copy(clonedGeo.boundingBox!);
-            wheelBox.getCenter(wheelCenter);
-            fullBounds.expandByPoint(wheelBox.min);
-            fullBounds.expandByPoint(wheelBox.max);
-
-            clonedGeo.translate(-wheelCenter.x, -wheelCenter.y, -wheelCenter.z);
-
-            const steeringPivot = new THREE.Group();
-            steeringPivot.name = `${meshName}_STEERING_PIVOT`;
-            steeringPivot.position.copy(wheelCenter);
-
-            const wheelMesh = new THREE.Mesh(clonedGeo, finalWheelMat);
-            wheelMesh.name = meshName;
-            wheelMesh.castShadow = true;
-            wheelMesh.receiveShadow = true;
-
-            const spinGroup = new THREE.Group();
-            spinGroup.name = `${meshName}_SPIN`;
-            spinGroup.add(wheelMesh);
-            steeringPivot.add(spinGroup);
-
-            root.add(steeringPivot);
-            allWheels.push(spinGroup);
-            if (isFrontWheelObjectName(meshName, wheelCenter.z)) {
-              frontWheels.push(steeringPivot);
-            }
-            return;
-          }
+    // Split out any non-wheel material groups (e.g. stray LED/caliper/body parts) so wheel centroid stays true
+    if (clonedGeo.groups.length > 1) {
+      const wheelGroupIndices: number[] = [];
+      const strayGroupIndices: number[] = [];
+      for (let gi = 0; gi < clonedGeo.groups.length; gi++) {
+        const gMat = rawMats[clonedGeo.groups[gi].materialIndex ?? 0];
+        const gMatName = gMat?.name || '';
+        if (NON_WHEEL_SUBMAT_RE.test(gMatName)) {
+          strayGroupIndices.push(gi);
+        } else {
+          wheelGroupIndices.push(gi);
         }
       }
+      if (strayGroupIndices.length > 0 && wheelGroupIndices.length > 0) {
+        const strayExtracted = extractMaterialSubGeometry(clonedGeo, strayGroupIndices, rawMats);
+        if (strayExtracted) {
+          const strayGeo = track(strayExtracted.geo);
+          const strayRawMats = Array.isArray(strayExtracted.mat) ? strayExtracted.mat : [strayExtracted.mat];
+          const strayMapped = strayRawMats.map((m) =>
+            convertSourceMaterial(m, 'BODY', false, matCtx),
+          );
+          const strayMesh = new THREE.Mesh(
+            strayGeo,
+            Array.isArray(strayExtracted.mat) ? strayMapped : strayMapped[0],
+          );
+          strayMesh.name = `${meshName}_BODY_TRIM`;
+          strayMesh.castShadow = true;
+          strayMesh.receiveShadow = true;
+          bodyGroup.add(strayMesh);
+        }
+        const wheelExtracted = extractMaterialSubGeometry(clonedGeo, wheelGroupIndices, rawMats);
+        if (wheelExtracted) {
+          clonedGeo = track(wheelExtracted.geo);
+          const wheelMapped = (Array.isArray(wheelExtracted.mat) ? wheelExtracted.mat : [wheelExtracted.mat]).map(
+            (m) => convertSourceMaterial(m, meshName, true, matCtx),
+          );
+          const finalWheelMat = Array.isArray(wheelExtracted.mat) ? wheelMapped : wheelMapped[0];
+          clonedGeo.computeBoundingBox();
+          wheelBox.copy(clonedGeo.boundingBox!);
+          wheelBox.getCenter(wheelCenter);
+          fullBounds.expandByPoint(wheelBox.min);
+          fullBounds.expandByPoint(wheelBox.max);
 
-      const mappedMats = rawMats.map((m) => convertSourceMaterial(m, meshName, true, matCtx));
-      const finalMat = Array.isArray(mesh.material) ? mappedMats : mappedMats[0];
+          clonedGeo.translate(-wheelCenter.x, -wheelCenter.y, -wheelCenter.z);
+
+          const steeringPivot = new THREE.Group();
+          steeringPivot.name = `${meshName}_STEERING_PIVOT`;
+          steeringPivot.position.copy(wheelCenter);
+
+          const wheelMesh = new THREE.Mesh(clonedGeo, finalWheelMat);
+          wheelMesh.name = meshName;
+          wheelMesh.castShadow = true;
+          wheelMesh.receiveShadow = true;
+
+          const spinGroup = new THREE.Group();
+          spinGroup.name = `${meshName}_SPIN`;
+          spinGroup.add(wheelMesh);
+          steeringPivot.add(spinGroup);
+
+          root.add(steeringPivot);
+          allWheels.push(spinGroup);
+          if (isFrontWheelObjectName(meshName, wheelCenter.z)) {
+            frontWheels.push(steeringPivot);
+          }
+          return;
+        }
+      }
+    }
+
+    const mappedMats = rawMats.map((m) => convertSourceMaterial(m, meshName, true, matCtx));
+    const finalMat = Array.isArray(mesh.material) ? mappedMats : mappedMats[0];
+
+    clonedGeo.computeBoundingBox();
+    if (clonedGeo.boundingBox) {
+      wheelBox.copy(clonedGeo.boundingBox);
+    } else {
+      wheelBox.setFromBufferAttribute(clonedGeo.getAttribute('position') as THREE.BufferAttribute);
+    }
+    wheelBox.getCenter(wheelCenter);
+    fullBounds.expandByPoint(wheelBox.min);
+    fullBounds.expandByPoint(wheelBox.max);
+
+    clonedGeo.translate(-wheelCenter.x, -wheelCenter.y, -wheelCenter.z);
+
+    const steeringPivot = new THREE.Group();
+    steeringPivot.name = `${meshName}_STEERING_PIVOT`;
+    steeringPivot.position.copy(wheelCenter);
+
+    const spinGroup = new THREE.Group();
+    spinGroup.name = `${meshName}_SPIN`;
+    steeringPivot.add(spinGroup);
+
+    const wheelMesh = new THREE.Mesh(clonedGeo, finalMat);
+    wheelMesh.name = meshName;
+    wheelMesh.castShadow = !isGlassMesh;
+    wheelMesh.receiveShadow = !isGlassMesh;
+    spinGroup.add(wheelMesh);
+
+    root.add(steeringPivot);
+    allWheels.push(spinGroup);
+    if (isFrontWheelObjectName(meshName, wheelCenter.z)) {
+      frontWheels.push(steeringPivot);
+    }
+  };
+
+  const registerWheelGroup = (wheelGroup: THREE.Object3D, wheelName: string) => {
+    const partEntries: Array<{ geo: THREE.BufferGeometry; mat: THREE.Material | THREE.Material[]; name: string }> = [];
+    const combinedWheelBox = new THREE.Box3();
+    const tmpBox = new THREE.Box3();
+
+    wheelGroup.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry) return;
+      let clonedGeo = track(sanitizeBufferGeometry(mesh.geometry.clone()));
+      if (uniformScale !== 1.0) {
+        clonedGeo.scale(uniformScale, uniformScale, uniformScale);
+      }
+      const rawMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const allNonWheel = rawMats.length > 0 && rawMats.every((m) => NON_WHEEL_SUBMAT_RE.test(m?.name || ''));
+      if (allNonWheel) {
+        const strayMapped = rawMats.map((m) => convertSourceMaterial(m, 'BODY', false, matCtx));
+        const strayMesh = new THREE.Mesh(clonedGeo, Array.isArray(mesh.material) ? strayMapped : strayMapped[0]);
+        strayMesh.name = `${wheelName}_BODY_TRIM`;
+        strayMesh.castShadow = true;
+        strayMesh.receiveShadow = true;
+        bodyGroup.add(strayMesh);
+        return;
+      }
 
       clonedGeo.computeBoundingBox();
       if (clonedGeo.boundingBox) {
-        wheelBox.copy(clonedGeo.boundingBox);
+        tmpBox.copy(clonedGeo.boundingBox);
       } else {
-        wheelBox.setFromBufferAttribute(clonedGeo.getAttribute('position') as THREE.BufferAttribute);
+        tmpBox.setFromBufferAttribute(clonedGeo.getAttribute('position') as THREE.BufferAttribute);
       }
-      wheelBox.getCenter(wheelCenter);
-      fullBounds.expandByPoint(wheelBox.min);
-      fullBounds.expandByPoint(wheelBox.max);
+      combinedWheelBox.union(tmpBox);
 
-      clonedGeo.translate(-wheelCenter.x, -wheelCenter.y, -wheelCenter.z);
+      const mappedMats = rawMats.map((m) => convertSourceMaterial(m, wheelName, true, matCtx));
+      partEntries.push({
+        geo: clonedGeo,
+        mat: Array.isArray(mesh.material) ? mappedMats : mappedMats[0],
+        name: mesh.name || wheelName,
+      });
+    });
 
-      const steeringPivot = new THREE.Group();
-      steeringPivot.name = `${meshName}_STEERING_PIVOT`;
-      steeringPivot.position.copy(wheelCenter);
+    if (partEntries.length === 0 || combinedWheelBox.isEmpty()) return;
+    combinedWheelBox.getCenter(wheelCenter);
+    fullBounds.expandByPoint(combinedWheelBox.min);
+    fullBounds.expandByPoint(combinedWheelBox.max);
 
-      const spinGroup = new THREE.Group();
-      spinGroup.name = `${meshName}_SPIN`;
-      steeringPivot.add(spinGroup);
+    const steeringPivot = new THREE.Group();
+    steeringPivot.name = `${wheelName}_STEERING_PIVOT`;
+    steeringPivot.position.copy(wheelCenter);
 
-      const wheelMesh = new THREE.Mesh(clonedGeo, finalMat);
-      wheelMesh.name = meshName;
+    const spinGroup = new THREE.Group();
+    spinGroup.name = `${wheelName}_SPIN`;
+    steeringPivot.add(spinGroup);
+
+    for (const part of partEntries) {
+      part.geo.translate(-wheelCenter.x, -wheelCenter.y, -wheelCenter.z);
+      const wheelMesh = new THREE.Mesh(part.geo, part.mat);
+      wheelMesh.name = part.name;
       wheelMesh.castShadow = true;
       wheelMesh.receiveShadow = true;
       spinGroup.add(wheelMesh);
-
-      root.add(steeringPivot);
-      allWheels.push(spinGroup);
-      if (isFrontWheelObjectName(meshName, wheelCenter.z)) {
-        frontWheels.push(steeringPivot);
-      }
-    } else {
-      // Legacy OBJs with out-of-bounds UVs get clean deterministic 6-zone UVs for Livery Studio
-      if (!isV2Pipeline && !isGlassMesh && clonedGeo.groups.length <= 1 && hasOutOfBoundsUVs(clonedGeo)) {
-        const isAero = /wing|spoiler|aero|splitter|diffuser/i.test(meshName);
-        clonedGeo = track(applySixZoneCarUVs(clonedGeo, scaledCarBounds, { isAero }));
-      }
-      const mappedMats = rawMats.map((m) => convertSourceMaterial(m, meshName, false, matCtx));
-      const finalMat = Array.isArray(mesh.material) ? mappedMats : mappedMats[0];
-
-      clonedGeo.computeBoundingBox();
-      if (clonedGeo.boundingBox) {
-        fullBounds.union(clonedGeo.boundingBox);
-      }
-      const isGlass =
-        isGlassMesh ||
-        mappedMats.some((m) => Boolean(m.userData?.isGlass));
-      const bodyMesh = new THREE.Mesh(clonedGeo, finalMat);
-      bodyMesh.name = meshName;
-      bodyMesh.castShadow = !isGlass;
-      bodyMesh.receiveShadow = !isGlass;
-      bodyGroup.add(bodyMesh);
     }
-  });
+
+    root.add(steeringPivot);
+    allWheels.push(spinGroup);
+    if (isFrontWheelObjectName(wheelName, wheelCenter.z)) {
+      frontWheels.push(steeringPivot);
+    }
+  };
+
+  const registerBodyMesh = (mesh: THREE.Mesh, meshName: string, parentName: string) => {
+    const isGlassMesh = GLASS_OBJ_OR_MAT_RE.test(meshName) || GLASS_OBJ_OR_MAT_RE.test(parentName);
+    let clonedGeo = track(sanitizeBufferGeometry(mesh.geometry.clone()));
+    if (uniformScale !== 1.0) {
+      clonedGeo.scale(uniformScale, uniformScale, uniformScale);
+    }
+    const rawMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+    // Legacy OBJs with out-of-bounds UVs get clean deterministic 6-zone UVs for Livery Studio
+    if (!isV2Pipeline && !isGlassMesh && clonedGeo.groups.length <= 1 && hasOutOfBoundsUVs(clonedGeo)) {
+      const isAero = /wing|spoiler|aero|splitter|diffuser/i.test(meshName);
+      clonedGeo = track(applySixZoneCarUVs(clonedGeo, scaledCarBounds, { isAero }));
+    }
+    const mappedMats = rawMats.map((m) => convertSourceMaterial(m, meshName, false, matCtx));
+    const finalMat = Array.isArray(mesh.material) ? mappedMats : mappedMats[0];
+
+    clonedGeo.computeBoundingBox();
+    if (clonedGeo.boundingBox) {
+      fullBounds.union(clonedGeo.boundingBox);
+    }
+    const isGlass =
+      isGlassMesh ||
+      mappedMats.some((m) => Boolean(m.userData?.isGlass));
+    const bodyMesh = new THREE.Mesh(clonedGeo, finalMat);
+    bodyMesh.name = meshName;
+    bodyMesh.castShadow = !isGlass;
+    bodyMesh.receiveShadow = !isGlass;
+    bodyGroup.add(bodyMesh);
+  };
+
+  const visitTemplateNode = (node: THREE.Object3D, parentName: string) => {
+    const nodeName = node.name || '';
+    const mesh = node as THREE.Mesh;
+    if (isWheelObjectName(nodeName)) {
+      if (mesh.isMesh && mesh.geometry) {
+        registerSingleWheelMesh(mesh, nodeName);
+      } else {
+        registerWheelGroup(node, nodeName);
+      }
+      return;
+    }
+    if (mesh.isMesh && mesh.geometry) {
+      registerBodyMesh(mesh, nodeName || parentName || 'PART', parentName);
+      return;
+    }
+    for (const child of node.children) {
+      visitTemplateNode(child, nodeName || parentName);
+    }
+  };
+
+  for (const child of template.children) {
+    visitTemplateNode(child, '');
+  }
 
   // Ground contact shadow matching car footprint
   const size = fullBounds.isEmpty()
@@ -890,43 +1189,433 @@ function instantiateObjRig(
   };
 }
 
+const LOD1_CULL_TRIM_RE =
+  /caliper|disc|rotor|brake|mirror|wiper|antenna|badge|decal|cockpit|interior|exhaust|grille|nut|bolt|light_bulb|glow|trim/i;
+
+export function wrapRigInLOD(
+  rig: BuiltCarRig,
+  carSpec: CarSpec,
+  livery: LiveryConfig,
+): BuiltCarRig {
+  if (rig.root.getObjectByName('CAR_LOD')) {
+    return rig;
+  }
+
+  const lodDisposables: Array<{ dispose: () => void }> = [];
+  const trackLod = <T extends { dispose: () => void }>(res: T): T => {
+    lodDisposables.push(res);
+    return res;
+  };
+
+  // Keep contact shadow quad directly on rig.root so footprint shadow stays active across LODs
+  const childrenToMove: THREE.Object3D[] = [];
+  for (const child of rig.root.children) {
+    const asMesh = child as THREE.Mesh;
+    const isContactShadow =
+      asMesh.isMesh &&
+      child !== rig.bodyGroup &&
+      !Array.isArray(asMesh.material) &&
+      (asMesh.material as THREE.MeshBasicMaterial)?.depthWrite === false;
+    if (!isContactShadow) {
+      childrenToMove.push(child);
+    }
+  }
+
+  const bounds = new THREE.Box3();
+  const tmpBox = new THREE.Box3();
+  for (const child of childrenToMove) {
+    child.updateMatrixWorld(true);
+    tmpBox.setFromObject(child);
+    if (!tmpBox.isEmpty()) {
+      bounds.union(tmpBox);
+    }
+  }
+  const size = bounds.isEmpty()
+    ? new THREE.Vector3(1.9, 1.2, getRealWorldCarLength(carSpec.id, carSpec.classId))
+    : bounds.getSize(new THREE.Vector3());
+  const center = bounds.isEmpty()
+    ? new THREE.Vector3(0, size.y * 0.5, 0)
+    : bounds.getCenter(new THREE.Vector3());
+
+  // Tier 0 (0 - 35m): Full detail body + articulated wheels
+  const lod0 = new THREE.Group();
+  lod0.name = 'LOD0_FULL';
+  for (const child of childrenToMove) {
+    lod0.add(child);
+  }
+
+  // Tier 1 (35 - 110m): Simplified chassis (small trim/caliper/interior culled) + cylinder wheel proxies
+  const lod1 = new THREE.Group();
+  lod1.name = 'LOD1_SIMPLIFIED';
+
+  let largestBodyMesh: THREE.Mesh | null = null;
+  let largestBodyDiag = -1;
+  let keptLod1Count = 0;
+
+  const cloneSimplifiedBodyNode = (src: THREE.Object3D): THREE.Object3D | null => {
+    const mesh = src as THREE.Mesh;
+    if (mesh.isMesh && mesh.geometry) {
+      mesh.geometry.computeBoundingBox();
+      const diag = mesh.geometry.boundingBox
+        ? mesh.geometry.boundingBox.getSize(new THREE.Vector3()).length() *
+          Math.max(Math.abs(mesh.scale.x), Math.abs(mesh.scale.y), Math.abs(mesh.scale.z))
+        : 0;
+      if (diag > largestBodyDiag) {
+        largestBodyDiag = diag;
+        largestBodyMesh = mesh;
+      }
+
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const matNames = mats.map((m) => m?.name || '').join(' ');
+      const isTrim =
+        LOD1_CULL_TRIM_RE.test(mesh.name || '') ||
+        LOD1_CULL_TRIM_RE.test(matNames) ||
+        (diag > 0 && diag < 0.38);
+      if (isTrim) return null;
+
+      const proxyMesh = new THREE.Mesh(mesh.geometry, mesh.material);
+      proxyMesh.name = mesh.name;
+      proxyMesh.position.copy(mesh.position);
+      proxyMesh.rotation.copy(mesh.rotation);
+      proxyMesh.scale.copy(mesh.scale);
+      proxyMesh.castShadow = mesh.castShadow;
+      proxyMesh.receiveShadow = false;
+      keptLod1Count++;
+      return proxyMesh;
+    }
+
+    const group = new THREE.Group();
+    group.name = src.name;
+    group.position.copy(src.position);
+    group.rotation.copy(src.rotation);
+    group.scale.copy(src.scale);
+    for (const child of src.children) {
+      const clonedChild = cloneSimplifiedBodyNode(child);
+      if (clonedChild) group.add(clonedChild);
+    }
+    return group.children.length > 0 ? group : null;
+  };
+
+  const lod1Body = cloneSimplifiedBodyNode(rig.bodyGroup) ?? new THREE.Group();
+  lod1Body.name = 'LOD1_BODY';
+  if (keptLod1Count === 0 && largestBodyMesh) {
+    const fallbackMesh = largestBodyMesh as THREE.Mesh;
+    const proxyMesh = new THREE.Mesh(fallbackMesh.geometry, fallbackMesh.material);
+    proxyMesh.name = fallbackMesh.name;
+    proxyMesh.castShadow = true;
+    proxyMesh.receiveShadow = false;
+    lod1Body.add(proxyMesh);
+  }
+  lod1.add(lod1Body);
+
+  if (rig.allWheels.length > 0) {
+    const unitWheelGeo = trackLod(new THREE.CylinderGeometry(1, 1, 1, 10));
+    unitWheelGeo.rotateZ(Math.PI / 2);
+    const wheelProxyMat = trackLod(
+      new THREE.MeshStandardMaterial({
+        color: 0x1b1d21,
+        roughness: 0.85,
+        metalness: 0.08,
+      }),
+    );
+
+    const seenPivots = new Set<THREE.Object3D>();
+    for (const spinOrWheel of rig.allWheels) {
+      const pivot = spinOrWheel.parent && spinOrWheel.parent !== lod0 ? spinOrWheel.parent : spinOrWheel;
+      if (seenPivots.has(pivot)) continue;
+      seenPivots.add(pivot);
+
+      tmpBox.setFromObject(pivot);
+      const wSize = tmpBox.isEmpty() ? new THREE.Vector3(0.3, 0.65, 0.65) : tmpBox.getSize(new THREE.Vector3());
+      const wCenter = tmpBox.isEmpty() ? pivot.position : tmpBox.getCenter(new THREE.Vector3());
+      const radius = Math.max(0.18, Math.max(wSize.y, wSize.z) * 0.5);
+      const width = Math.max(0.14, wSize.x);
+
+      const wProxy = new THREE.Mesh(unitWheelGeo, wheelProxyMat);
+      wProxy.position.copy(wCenter);
+      wProxy.scale.set(width, radius, radius);
+      wProxy.castShadow = false;
+      wProxy.receiveShadow = false;
+      lod1.add(wProxy);
+    }
+  }
+
+  // Tier 2 (> 110m): Ultra-low-poly proxy silhouette (~60 tris)
+  const lod2 = new THREE.Group();
+  lod2.name = 'LOD2_PROXY';
+  const unitBoxGeo = trackLod(new THREE.BoxGeometry(1, 1, 1));
+  const proxyBodyMat = trackLod(
+    new THREE.MeshStandardMaterial({
+      color: livery.primaryColor || '#dc2626',
+      roughness: 0.38,
+      metalness: 0.2,
+    }),
+  );
+  const proxyCabinMat = trackLod(
+    new THREE.MeshStandardMaterial({
+      color: 0x111827,
+      roughness: 0.25,
+      metalness: 0.15,
+    }),
+  );
+  const proxyWheelMat = trackLod(
+    new THREE.MeshStandardMaterial({
+      color: 0x181a1f,
+      roughness: 0.9,
+      metalness: 0.05,
+    }),
+  );
+
+  const hullMesh = new THREE.Mesh(unitBoxGeo, proxyBodyMat);
+  hullMesh.scale.set(size.x * 0.94, Math.max(0.24, size.y * 0.44), size.z * 0.96);
+  hullMesh.position.set(center.x, Math.max(0.22, bounds.min.y + size.y * 0.34), center.z);
+  lod2.add(hullMesh);
+
+  const cabinMesh = new THREE.Mesh(unitBoxGeo, proxyCabinMat);
+  cabinMesh.scale.set(size.x * 0.58, Math.max(0.18, size.y * 0.30), size.z * 0.40);
+  cabinMesh.position.set(center.x, Math.max(0.42, bounds.min.y + size.y * 0.66), center.z - size.z * 0.04);
+  lod2.add(cabinMesh);
+
+  if (!/ROAD|HATCH|COUPE/i.test(carSpec.classId)) {
+    const wingMesh = new THREE.Mesh(unitBoxGeo, proxyBodyMat);
+    wingMesh.scale.set(size.x * 0.88, 0.08, 0.26);
+    wingMesh.position.set(center.x, Math.max(0.50, bounds.min.y + size.y * 0.74), center.z - size.z * 0.44);
+    lod2.add(wingMesh);
+  }
+
+  for (const zSign of [1, -1]) {
+    const axleBlock = new THREE.Mesh(unitBoxGeo, proxyWheelMat);
+    axleBlock.scale.set(size.x * 0.96, Math.max(0.28, size.y * 0.38), Math.max(0.42, size.z * 0.13));
+    axleBlock.position.set(center.x, bounds.min.y + Math.max(0.16, size.y * 0.20), center.z + zSign * size.z * 0.31);
+    lod2.add(axleBlock);
+  }
+
+  const lod = new THREE.LOD();
+  lod.name = 'CAR_LOD';
+  lod.addLevel(lod0, 0);
+  lod.addLevel(lod1, 35);
+  lod.addLevel(lod2, 110);
+  rig.root.add(lod);
+
+  const origDispose = rig.dispose;
+  rig.dispose = () => {
+    origDispose();
+    for (const d of lodDisposables) {
+      d.dispose();
+    }
+  };
+
+  return rig;
+}
+
 export async function buildCarRigAsync(
   carSpec: CarSpec,
   livery: LiveryConfig,
   maxAniso = 4,
 ): Promise<BuiltCarRig> {
   const modelTarget = carSpec.modelId || carSpec.id;
-  const entry = await findLowPolyModelForCar(modelTarget);
-  if (entry) {
-    try {
-      const template = await loadObjTemplate(entry);
-      return instantiateObjRig(template, carSpec, livery, maxAniso);
-    } catch {
-      // Silently fall back to procedural diecast mesh if OBJ load fails
+  const isStandalone = preloadBatchDepth === 0;
+  if (isStandalone) {
+    emitAssetLoadProgress({
+      active: true,
+      phase: 'manifest',
+      completed: 0,
+      total: 1,
+      percent: 0,
+      currentAsset: modelTarget,
+    });
+  }
+
+  try {
+    const entry = await findLowPolyModelForCar(modelTarget);
+    if (entry) {
+      try {
+        const template = await loadModelTemplate(entry, (fraction) => {
+          if (isStandalone) {
+            emitAssetLoadProgress({
+              active: true,
+              phase: 'downloading',
+              completed: fraction >= 1 ? 1 : 0,
+              total: 1,
+              percent: Math.round(fraction * 100),
+              currentAsset: entry.glb || entry.obj || modelTarget,
+            });
+          }
+        });
+        const rig = instantiateObjRig(template, carSpec, livery, maxAniso);
+        return wrapRigInLOD(rig, carSpec, livery);
+      } catch {
+        // Silently fall back to procedural diecast mesh if GLB/OBJ load fails
+      }
+    }
+    const fallbackRig = buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, maxAniso, carSpec.id);
+    return wrapRigInLOD(fallbackRig, carSpec, livery);
+  } finally {
+    if (isStandalone) {
+      emitAssetLoadProgress({
+        active: false,
+        phase: 'done',
+        completed: 1,
+        total: 1,
+        percent: 100,
+        currentAsset: null,
+      });
     }
   }
-  return buildDiecastCar(carSpec.silhouette, carSpec.classId, livery, maxAniso, carSpec.id);
 }
 
 /**
- * Preloads the low-poly manifest and deduplicated OBJ templates for all car specs in a grid
- * so race start has zero mid-frame asset/shader stalls.
+ * Preloads the low-poly manifest and deduplicated GLB/OBJ templates for all car specs in a grid
+ * so race start has zero mid-frame asset/shader stalls, emitting progress for UI loading overlays.
  */
 export async function preloadCarModels(carSpecs: ReadonlyArray<CarSpec>): Promise<void> {
-  await getLowPolyManifestMap();
   const seenTargets = new Set<string>();
-  const tasks: Promise<void>[] = [];
+  const uniqueTargets: string[] = [];
   for (let i = 0; i < carSpecs.length; i++) {
     const target = carSpecs[i].modelId || carSpecs[i].id;
     if (seenTargets.has(target)) continue;
     seenTargets.add(target);
-    tasks.push(
-      findLowPolyModelForCar(target)
-        .then((entry) => (entry ? loadObjTemplate(entry).then(() => undefined) : undefined))
-        .catch(() => undefined),
-    );
+    uniqueTargets.push(target);
   }
-  await Promise.all(tasks);
+
+  const total = uniqueTargets.length;
+  preloadBatchDepth++;
+  emitAssetLoadProgress({
+    active: true,
+    phase: 'manifest',
+    completed: 0,
+    total,
+    percent: 0,
+    currentAsset: 'manifest.json',
+  });
+
+  try {
+    await getLowPolyManifestMap();
+    if (total === 0) {
+      emitAssetLoadProgress({
+        active: false,
+        phase: 'done',
+        completed: 0,
+        total: 0,
+        percent: 100,
+        currentAsset: null,
+      });
+      return;
+    }
+
+    const fractions = new Map<string, number>();
+    let completed = 0;
+
+    const updateBatchProgress = (assetName: string | null) => {
+      let sum = 0;
+      for (const f of fractions.values()) sum += f;
+      const percent = Math.min(100, Math.round((sum / total) * 100));
+      emitAssetLoadProgress({
+        active: completed < total,
+        phase: completed < total ? 'downloading' : 'done',
+        completed,
+        total,
+        percent,
+        currentAsset: assetName,
+      });
+    };
+
+    emitAssetLoadProgress({
+      active: true,
+      phase: 'downloading',
+      completed: 0,
+      total,
+      percent: 0,
+      currentAsset: uniqueTargets[0] ?? null,
+    });
+
+    await Promise.all(
+      uniqueTargets.map((target) =>
+        findLowPolyModelForCar(target)
+          .then((entry) =>
+            entry
+              ? loadModelTemplate(entry, (frac) => {
+                  fractions.set(target, frac);
+                  updateBatchProgress(entry.glb || entry.obj || target);
+                }).then(() => undefined)
+              : undefined,
+          )
+          .catch(() => undefined)
+          .finally(() => {
+            fractions.set(target, 1);
+            completed++;
+            updateBatchProgress(completed < total ? target : null);
+          }),
+      ),
+    );
+
+    emitAssetLoadProgress({
+      active: false,
+      phase: 'done',
+      completed: total,
+      total,
+      percent: 100,
+      currentAsset: null,
+    });
+  } finally {
+    preloadBatchDepth = Math.max(0, preloadBatchDepth - 1);
+  }
+}
+
+/**
+ * Pre-warms WebGL shaders for all loaded car rigs (including all 3 LOD tiers)
+ * via `renderer.compileAsync` on session boot to prevent first-frame shader hitching.
+ */
+export async function prewarmCarShaderMaterials(
+  renderer: THREE.WebGLRenderer | null | undefined,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  targetObject?: THREE.Object3D,
+): Promise<void> {
+  if (!renderer) return;
+  const compileTarget = targetObject ?? scene;
+  const restoredVisibility: Array<{ obj: THREE.Object3D; visible: boolean }> = [];
+
+  compileTarget.traverse((obj) => {
+    if (obj instanceof THREE.LOD) {
+      for (const level of obj.levels) {
+        if (!level.object.visible) {
+          restoredVisibility.push({ obj: level.object, visible: level.object.visible });
+          level.object.visible = true;
+        }
+      }
+    }
+  });
+
+  const emitCompiling = preloadBatchDepth === 0;
+  if (emitCompiling) {
+    emitAssetLoadProgress({
+      active: true,
+      phase: 'compiling',
+      currentAsset: 'shaders',
+    });
+  }
+
+  try {
+    if (typeof renderer.compileAsync === 'function') {
+      await renderer.compileAsync(compileTarget, camera, targetObject ? scene : undefined);
+    } else if (typeof renderer.compile === 'function') {
+      renderer.compile(compileTarget, camera, targetObject ? scene : undefined);
+    }
+  } catch {
+    // Non-fatal in headless / context-lost environments
+  } finally {
+    for (const item of restoredVisibility) {
+      item.obj.visible = item.visible;
+    }
+    if (emitCompiling) {
+      emitAssetLoadProgress({
+        active: false,
+        phase: 'done',
+        currentAsset: null,
+      });
+    }
+  }
 }
 
 export function applyCustomTextureToRig(

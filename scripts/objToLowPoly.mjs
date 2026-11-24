@@ -23,6 +23,14 @@ try {
 }
 await MeshoptSimplifier.ready;
 
+let MeshoptEncoder = null;
+try {
+  ({ MeshoptEncoder } = await import('meshoptimizer'));
+  if (MeshoptEncoder?.ready) await MeshoptEncoder.ready;
+} catch {
+  MeshoptEncoder = null;
+}
+
 const DEFAULT_INPUT_DIR = 'models/raw-cars';
 const DEFAULT_OUTPUT_DIR = 'models/lowpoly-cars';
 const DEFAULT_TRIS = 12000;
@@ -208,6 +216,8 @@ Options:
   --forward <axis>       Force input forward axis (+z, -z, +x, -x) before aligning to +Z
   --no-normalize         Skip auto-centering, ground alignment, axis & scale normalization
   --legacy               Use previous converter pipeline (3.75m length, legacy UV/glass/simplify)
+  --pack-glb             Pack low-poly .obj/.mtl files into binary .glb (with Meshopt compression) and update manifest.json
+  --no-meshopt           Disable EXT_meshopt_compression when packing .glb files
   -h, --help             Show this help message
 `);
 }
@@ -229,7 +239,10 @@ function parseArgs(argv) {
     forward: null,
     normalize: true,
     legacy: false,
+    packGlb: false,
+    meshopt: true,
     help: false,
+    positionalCount: 0,
   };
 
   const positional = [];
@@ -239,6 +252,10 @@ function parseArgs(argv) {
       opts.help = true;
     } else if (arg === '--legacy') {
       opts.legacy = true;
+    } else if (arg === '--pack-glb') {
+      opts.packGlb = true;
+    } else if (arg === '--no-meshopt') {
+      opts.meshopt = false;
     } else if (arg === '--tris' && i + 1 < argv.length) {
       opts.tris = Math.max(4, Math.floor(Number(argv[++i])));
     } else if (arg.startsWith('--tris=')) {
@@ -294,8 +311,13 @@ function parseArgs(argv) {
     }
   }
 
-  if (positional.length >= 1) opts.inputDir = positional[0];
-  if (positional.length >= 2) opts.outputDir = positional[1];
+  opts.positionalCount = positional.length;
+  if (opts.packGlb && positional.length === 1) {
+    opts.outputDir = positional[0];
+  } else {
+    if (positional.length >= 1) opts.inputDir = positional[0];
+    if (positional.length >= 2) opts.outputDir = positional[1];
+  }
 
   if (!Number.isFinite(opts.tris) || opts.tris <= 0) {
     throw new Error('--tris must be a positive number');
@@ -2586,16 +2608,513 @@ function printSummaryTable(rows) {
   console.log('');
 }
 
-function writeManifest(outputDir) {
+function srgbToLinearChannel(c) {
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(c) ? c : 0));
+  return clamped <= 0.04045 ? clamped / 12.92 : Math.pow((clamped + 0.055) / 1.055, 2.4);
+}
+
+export function packObjToGlb(objPath, mtlPath, outGlbPath, opts = {}) {
+  const useMeshopt = opts.meshopt !== false && Boolean(MeshoptEncoder?.supported);
+  const objText = fs.readFileSync(objPath, 'utf8');
+  const dir = path.dirname(objPath);
+
+  const positions = [];
+  const texcoords = [];
+  const normals = [];
+  const materials = new Map();
+  if (mtlPath && fs.existsSync(mtlPath)) {
+    for (const [k, v] of parseMtlFile(mtlPath).entries()) {
+      materials.set(k, v);
+    }
+  }
+
+  // Map<objName, Map<matName, Array<tri>>>
+  const groups = new Map();
+  let curObjName = 'BODY';
+  let curMatName = 'default';
+  let isV2Pipeline = false;
+
+  const ensureTriList = (objName, matName) => {
+    let matMap = groups.get(objName);
+    if (!matMap) {
+      matMap = new Map();
+      groups.set(objName, matMap);
+    }
+    let list = matMap.get(matName);
+    if (!list) {
+      list = [];
+      matMap.set(matName, list);
+    }
+    return list;
+  };
+
+  let cursor = 0;
+  const len = objText.length;
+  while (cursor < len) {
+    let nl = objText.indexOf('\n', cursor);
+    if (nl === -1) nl = len;
+    const raw = objText.slice(cursor, nl).trim();
+    cursor = nl + 1;
+    if (!raw) continue;
+    if (raw.startsWith('#')) {
+      if (/^#\s*Apex-Pipeline:\s*v2\b/.test(raw)) isV2Pipeline = true;
+      continue;
+    }
+
+    const parts = raw.split(/\s+/);
+    const kw = parts[0];
+    if (kw === 'v' && parts.length >= 4) {
+      const x = Number(parts[1]);
+      const y = Number(parts[2]);
+      const z = Number(parts[3]);
+      positions.push(Number.isFinite(x) ? x : 0, Number.isFinite(y) ? y : 0, Number.isFinite(z) ? z : 0);
+    } else if (kw === 'vt' && parts.length >= 3) {
+      const u = Number(parts[1]);
+      const v = Number(parts[2]);
+      texcoords.push(Number.isFinite(u) ? u : 0, Number.isFinite(v) ? v : 0);
+    } else if (kw === 'vn' && parts.length >= 4) {
+      const nx = Number(parts[1]);
+      const ny = Number(parts[2]);
+      const nz = Number(parts[3]);
+      normals.push(Number.isFinite(nx) ? nx : 0, Number.isFinite(ny) ? ny : 1, Number.isFinite(nz) ? nz : 0);
+    } else if (kw === 'mtllib' && parts.length >= 2) {
+      const refMtl = path.resolve(dir, parts.slice(1).join(' '));
+      if (fs.existsSync(refMtl)) {
+        for (const [k, v] of parseMtlFile(refMtl).entries()) {
+          if (!materials.has(k)) materials.set(k, v);
+        }
+      }
+    } else if ((kw === 'o' || kw === 'g') && parts.length >= 2) {
+      curObjName = parts.slice(1).join('_') || 'BODY';
+    } else if (kw === 'usemtl') {
+      curMatName = parts.slice(1).join('_') || 'default';
+    } else if (kw === 'f' && parts.length >= 4) {
+      const vCount = positions.length / 3;
+      const vtCount = texcoords.length / 2;
+      const vnCount = normals.length / 3;
+      const verts = [];
+      for (let i = 1; i < parts.length; i++) {
+        const segs = parts[i].split('/');
+        let vi = parseInt(segs[0], 10);
+        if (!Number.isFinite(vi)) continue;
+        vi = vi < 0 ? vCount + vi : vi - 1;
+        if (vi < 0 || vi >= vCount) continue;
+
+        let vti = -1;
+        if (segs[1]) {
+          const parsedVt = parseInt(segs[1], 10);
+          if (Number.isFinite(parsedVt)) {
+            vti = parsedVt < 0 ? vtCount + parsedVt : parsedVt - 1;
+            if (vti < 0 || vti >= vtCount) vti = -1;
+          }
+        }
+
+        let vni = -1;
+        if (segs[2]) {
+          const parsedVn = parseInt(segs[2], 10);
+          if (Number.isFinite(parsedVn)) {
+            vni = parsedVn < 0 ? vnCount + parsedVn : parsedVn - 1;
+            if (vni < 0 || vni >= vnCount) vni = -1;
+          }
+        }
+        verts.push({ vi, vti, vni });
+      }
+      if (verts.length < 3) continue;
+      const list = ensureTriList(curObjName, curMatName);
+      const a = verts[0];
+      for (let t = 1; t < verts.length - 1; t++) {
+        const b = verts[t];
+        const c = verts[t + 1];
+        if (a.vi === b.vi || b.vi === c.vi || c.vi === a.vi) continue;
+        list.push(a.vi, a.vti, a.vni, b.vi, b.vti, b.vni, c.vi, c.vti, c.vni);
+      }
+    }
+  }
+
+  const gltfMaterials = [];
+  const gltfMaterialIndex = new Map();
+  const getOrCreateMaterialIndex = (matName) => {
+    const existing = gltfMaterialIndex.get(matName);
+    if (existing !== undefined) return existing;
+    const mtl = materials.get(matName);
+    const kd = mtl?.Kd ?? [0.75, 0.75, 0.75];
+    const alpha =
+      mtl?.d !== null && mtl?.d !== undefined ? Math.max(0, Math.min(1, mtl.d)) : 1.0;
+    const matDef = {
+      name: matName,
+      pbrMetallicRoughness: {
+        baseColorFactor: [
+          +srgbToLinearChannel(kd[0]).toFixed(6),
+          +srgbToLinearChannel(kd[1]).toFixed(6),
+          +srgbToLinearChannel(kd[2]).toFixed(6),
+          +alpha.toFixed(4),
+        ],
+        metallicFactor: 0.12,
+        roughnessFactor: 0.55,
+      },
+      doubleSided: true,
+    };
+    if (alpha < 0.99) {
+      matDef.alphaMode = 'BLEND';
+    }
+    const idx = gltfMaterials.length;
+    gltfMaterials.push(matDef);
+    gltfMaterialIndex.set(matName, idx);
+    return idx;
+  };
+
+  const binChunks = [];
+  let binByteOffset = 0;
+  const bufferViews = [];
+  const accessors = [];
+  let usedMeshopt = false;
+
+  const appendView = (typedArray, count, stride, mode, target) => {
+    const rawBytes = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);
+    let payload = rawBytes;
+    let compressed = false;
+
+    if (useMeshopt && count > 0) {
+      try {
+        const encoded = MeshoptEncoder.encodeGltfBuffer(rawBytes, count, stride, mode);
+        if (encoded && encoded.byteLength > 0 && encoded.byteLength < rawBytes.byteLength) {
+          payload = encoded;
+          compressed = true;
+        }
+      } catch {
+        // Fallback to uncompressed view
+      }
+    }
+
+    const pad = (4 - (binByteOffset % 4)) % 4;
+    if (pad > 0) {
+      binChunks.push(Buffer.alloc(pad));
+      binByteOffset += pad;
+    }
+
+    const offset = binByteOffset;
+    binChunks.push(Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength));
+    binByteOffset += payload.byteLength;
+
+    const bvIndex = bufferViews.length;
+    if (compressed) {
+      usedMeshopt = true;
+      bufferViews.push({
+        buffer: 0,
+        byteLength: rawBytes.byteLength,
+        target,
+        extensions: {
+          EXT_meshopt_compression: {
+            buffer: 0,
+            byteOffset: offset,
+            byteLength: payload.byteLength,
+            count,
+            byteStride: stride,
+            mode,
+            filter: 'NONE',
+          },
+        },
+      });
+    } else {
+      bufferViews.push({
+        buffer: 0,
+        byteOffset: offset,
+        byteLength: rawBytes.byteLength,
+        target,
+      });
+    }
+    return bvIndex;
+  };
+
+  const nodes = [];
+  const meshes = [];
+  const sceneNodeIndices = [];
+  let totalOutTris = 0;
+  let totalOutVerts = 0;
+
+  for (const [objName, matMap] of groups.entries()) {
+    const primitives = [];
+
+    for (const [matName, flatTris] of matMap.entries()) {
+      const triCount = flatTris.length / 9;
+      if (triCount === 0) continue;
+
+      const cornerMap = new Map();
+      const cornerVi = [];
+      const cornerVti = [];
+      const cornerVni = [];
+      const rawIndices = new Uint32Array(triCount * 3);
+      let hasUv = false;
+      let missingNormals = false;
+
+      for (let i = 0; i < triCount * 3; i++) {
+        const base = i * 3;
+        const vi = flatTris[base];
+        const vti = flatTris[base + 1];
+        const vni = flatTris[base + 2];
+        if (vti >= 0) hasUv = true;
+        if (vni < 0) missingNormals = true;
+        const key = `${vi}:${vti}:${vni}`;
+        let idx = cornerMap.get(key);
+        if (idx === undefined) {
+          idx = cornerVi.length;
+          cornerMap.set(key, idx);
+          cornerVi.push(vi);
+          cornerVti.push(vti);
+          cornerVni.push(vni);
+        }
+        rawIndices[i] = idx;
+      }
+
+      const vertCount = cornerVi.length;
+      if (vertCount === 0) continue;
+
+      let posArr = new Float32Array(vertCount * 3);
+      let normArr = new Float32Array(vertCount * 3);
+      let uvArr = hasUv ? new Float32Array(vertCount * 2) : null;
+
+      for (let i = 0; i < vertCount; i++) {
+        const vi = cornerVi[i];
+        posArr[i * 3] = positions[vi * 3];
+        posArr[i * 3 + 1] = positions[vi * 3 + 1];
+        posArr[i * 3 + 2] = positions[vi * 3 + 2];
+
+        const vni = cornerVni[i];
+        if (vni >= 0) {
+          normArr[i * 3] = normals[vni * 3];
+          normArr[i * 3 + 1] = normals[vni * 3 + 1];
+          normArr[i * 3 + 2] = normals[vni * 3 + 2];
+        }
+
+        if (uvArr) {
+          const vti = cornerVti[i];
+          if (vti >= 0) {
+            uvArr[i * 2] = texcoords[vti * 2];
+            uvArr[i * 2 + 1] = texcoords[vti * 2 + 1];
+          }
+        }
+      }
+
+      if (missingNormals) {
+        normArr.fill(0);
+        for (let t = 0; t < rawIndices.length; t += 3) {
+          const i0 = rawIndices[t];
+          const i1 = rawIndices[t + 1];
+          const i2 = rawIndices[t + 2];
+          const ax = posArr[i0 * 3], ay = posArr[i0 * 3 + 1], az = posArr[i0 * 3 + 2];
+          const bx = posArr[i1 * 3], by = posArr[i1 * 3 + 1], bz = posArr[i1 * 3 + 2];
+          const cx = posArr[i2 * 3], cy = posArr[i2 * 3 + 1], cz = posArr[i2 * 3 + 2];
+          const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+          const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+          const nx = e1y * e2z - e1z * e2y;
+          const ny = e1z * e2x - e1x * e2z;
+          const nz = e1x * e2y - e1y * e2x;
+          for (const vi of [i0, i1, i2]) {
+            normArr[vi * 3] += nx;
+            normArr[vi * 3 + 1] += ny;
+            normArr[vi * 3 + 2] += nz;
+          }
+        }
+        for (let i = 0; i < vertCount; i++) {
+          const nx = normArr[i * 3];
+          const ny = normArr[i * 3 + 1];
+          const nz = normArr[i * 3 + 2];
+          const l = Math.hypot(nx, ny, nz) || 1;
+          normArr[i * 3] = nx / l;
+          normArr[i * 3 + 1] = ny / l;
+          normArr[i * 3 + 2] = nz / l;
+        }
+      }
+
+      if (useMeshopt && typeof MeshoptEncoder?.reorderMesh === 'function') {
+        try {
+          const [remap, unique] = MeshoptEncoder.reorderMesh(rawIndices, true, true);
+          if (unique === vertCount && remap.length === vertCount) {
+            const rePos = new Float32Array(vertCount * 3);
+            const reNorm = new Float32Array(vertCount * 3);
+            const reUv = uvArr ? new Float32Array(vertCount * 2) : null;
+            for (let oldIdx = 0; oldIdx < vertCount; oldIdx++) {
+              const newIdx = remap[oldIdx];
+              rePos[newIdx * 3] = posArr[oldIdx * 3];
+              rePos[newIdx * 3 + 1] = posArr[oldIdx * 3 + 1];
+              rePos[newIdx * 3 + 2] = posArr[oldIdx * 3 + 2];
+              reNorm[newIdx * 3] = normArr[oldIdx * 3];
+              reNorm[newIdx * 3 + 1] = normArr[oldIdx * 3 + 1];
+              reNorm[newIdx * 3 + 2] = normArr[oldIdx * 3 + 2];
+              if (reUv && uvArr) {
+                reUv[newIdx * 2] = uvArr[oldIdx * 2];
+                reUv[newIdx * 2 + 1] = uvArr[oldIdx * 2 + 1];
+              }
+            }
+            posArr = rePos;
+            normArr = reNorm;
+            uvArr = reUv;
+          }
+        } catch {
+          // Keep original vertex/index order
+        }
+      }
+
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      for (let i = 0; i < vertCount; i++) {
+        const x = posArr[i * 3];
+        const y = posArr[i * 3 + 1];
+        const z = posArr[i * 3 + 2];
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (z < minZ) minZ = z;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+        if (z > maxZ) maxZ = z;
+      }
+
+      const posBv = appendView(posArr, vertCount, 12, 'ATTRIBUTES', 34962);
+      const posAcc = accessors.length;
+      accessors.push({
+        bufferView: posBv,
+        componentType: 5126, // FLOAT
+        count: vertCount,
+        type: 'VEC3',
+        min: [minX, minY, minZ],
+        max: [maxX, maxY, maxZ],
+      });
+
+      const normBv = appendView(normArr, vertCount, 12, 'ATTRIBUTES', 34962);
+      const normAcc = accessors.length;
+      accessors.push({
+        bufferView: normBv,
+        componentType: 5126,
+        count: vertCount,
+        type: 'VEC3',
+      });
+
+      const attributes = {
+        POSITION: posAcc,
+        NORMAL: normAcc,
+      };
+
+      if (uvArr) {
+        const uvBv = appendView(uvArr, vertCount, 8, 'ATTRIBUTES', 34962);
+        const uvAcc = accessors.length;
+        accessors.push({
+          bufferView: uvBv,
+          componentType: 5126,
+          count: vertCount,
+          type: 'VEC2',
+        });
+        attributes.TEXCOORD_0 = uvAcc;
+      }
+
+      const useUint16 = vertCount < 65535;
+      const idxTyped = useUint16 ? new Uint16Array(rawIndices) : rawIndices;
+      const idxBv = appendView(idxTyped, rawIndices.length, useUint16 ? 2 : 4, 'TRIANGLES', 34963);
+      const idxAcc = accessors.length;
+      accessors.push({
+        bufferView: idxBv,
+        componentType: useUint16 ? 5123 : 5125, // UNSIGNED_SHORT : UNSIGNED_INT
+        count: rawIndices.length,
+        type: 'SCALAR',
+      });
+
+      const matIdx = getOrCreateMaterialIndex(matName);
+      primitives.push({
+        attributes,
+        indices: idxAcc,
+        material: matIdx,
+        mode: 4, // TRIANGLES
+      });
+
+      totalOutTris += triCount;
+      totalOutVerts += vertCount;
+    }
+
+    if (primitives.length === 0) continue;
+    const meshIdx = meshes.length;
+    meshes.push({ name: objName, primitives });
+    const nodeIdx = nodes.length;
+    nodes.push({ name: objName, mesh: meshIdx });
+    sceneNodeIndices.push(nodeIdx);
+  }
+
+  const binPad = (4 - (binByteOffset % 4)) % 4;
+  if (binPad > 0) {
+    binChunks.push(Buffer.alloc(binPad));
+    binByteOffset += binPad;
+  }
+  const binBuffer = Buffer.concat(binChunks);
+
+  const gltf = {
+    asset: {
+      version: '2.0',
+      generator: 'Apex Miniature objToLowPoly.mjs',
+    },
+    scene: 0,
+    scenes: [
+      {
+        nodes: sceneNodeIndices,
+        extras: { apexPipelineV2: isV2Pipeline },
+      },
+    ],
+    nodes,
+    meshes,
+    materials: gltfMaterials,
+    accessors,
+    bufferViews,
+    buffers: [{ byteLength: binBuffer.byteLength }],
+  };
+  if (usedMeshopt) {
+    gltf.extensionsUsed = ['EXT_meshopt_compression'];
+    gltf.extensionsRequired = ['EXT_meshopt_compression'];
+  }
+
+  const jsonRaw = Buffer.from(JSON.stringify(gltf), 'utf8');
+  const jsonPad = (4 - (jsonRaw.byteLength % 4)) % 4;
+  const jsonChunkLen = jsonRaw.byteLength + jsonPad;
+  const binChunkLen = binBuffer.byteLength;
+  const totalGlbLen = 12 + 8 + jsonChunkLen + 8 + binChunkLen;
+
+  const glb = Buffer.allocUnsafe(totalGlbLen);
+  let off = 0;
+  glb.writeUInt32LE(0x46546c67, off); off += 4; // 'glTF'
+  glb.writeUInt32LE(2, off); off += 4;          // version 2
+  glb.writeUInt32LE(totalGlbLen, off); off += 4;
+
+  glb.writeUInt32LE(jsonChunkLen, off); off += 4;
+  glb.writeUInt32LE(0x4e4f534a, off); off += 4; // 'JSON'
+  jsonRaw.copy(glb, off); off += jsonRaw.byteLength;
+  for (let p = 0; p < jsonPad; p++) glb[off++] = 0x20;
+
+  glb.writeUInt32LE(binChunkLen, off); off += 4;
+  glb.writeUInt32LE(0x004e4942, off); off += 4; // 'BIN\0'
+  binBuffer.copy(glb, off);
+
+  fs.mkdirSync(path.dirname(outGlbPath), { recursive: true });
+  fs.writeFileSync(outGlbPath, glb);
+
+  const objBytes = fs.statSync(objPath).size;
+  return {
+    car: path.basename(outGlbPath, '.glb'),
+    tris: totalOutTris,
+    verts: totalOutVerts,
+    objBytes,
+    glbBytes: totalGlbLen,
+    usedMeshopt,
+  };
+}
+
+function packLowPolyCarsDirectory(modelsDir, opts = {}) {
+  if (!fs.existsSync(modelsDir)) return [];
   const dirs = fs
-    .readdirSync(outputDir, { withFileTypes: true })
+    .readdirSync(modelsDir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .filter((e) => (!opts.filter ? true : e.name.toLowerCase().includes(opts.filter)))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const cars = [];
+  const results = [];
   for (const dir of dirs) {
-    const folderPath = path.join(outputDir, dir.name);
-    const files = fs.readdirSync(folderPath);
+    const dirPath = path.join(modelsDir, dir.name);
+    const files = fs.readdirSync(dirPath);
     const preferredObj = `${dir.name}.obj`;
     const objFile = files.includes(preferredObj)
       ? preferredObj
@@ -2610,11 +3129,54 @@ function writeManifest(outputDir) {
         ? matchingMtl
         : (files.find((f) => f.toLowerCase().endsWith('.mtl')) ?? null);
 
+    const outGlbName = objFile.replace(/\.obj$/i, '.glb');
+    const outGlbPath = path.join(dirPath, outGlbName);
+    const objPath = path.join(dirPath, objFile);
+    const mtlPath = mtlFile ? path.join(dirPath, mtlFile) : null;
+
+    const stat = packObjToGlb(objPath, mtlPath, outGlbPath, opts);
+    results.push(stat);
+  }
+  return results;
+}
+
+function writeManifest(outputDir) {
+  const dirs = fs
+    .readdirSync(outputDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const cars = [];
+  for (const dir of dirs) {
+    const folderPath = path.join(outputDir, dir.name);
+    const files = fs.readdirSync(folderPath);
+    const preferredObj = `${dir.name}.obj`;
+    const objFile = files.includes(preferredObj)
+      ? preferredObj
+      : (files.find((f) => f.toLowerCase().endsWith('.obj')) ?? null);
+    const preferredGlb = `${dir.name}.glb`;
+    const matchingGlb = objFile ? objFile.replace(/\.obj$/i, '.glb') : null;
+    const glbFile = files.includes(preferredGlb)
+      ? preferredGlb
+      : matchingGlb && files.includes(matchingGlb)
+        ? matchingGlb
+        : (files.find((f) => f.toLowerCase().endsWith('.glb')) ?? null);
+    if (!objFile && !glbFile) continue;
+
+    const preferredMtl = `${dir.name}.mtl`;
+    const matchingMtl = objFile ? objFile.replace(/\.obj$/i, '.mtl') : null;
+    const mtlFile = files.includes(preferredMtl)
+      ? preferredMtl
+      : matchingMtl && files.includes(matchingMtl)
+        ? matchingMtl
+        : (files.find((f) => f.toLowerCase().endsWith('.mtl')) ?? null);
+
     cars.push({
       id: dir.name.toLowerCase().replace(/_/g, '-'),
       folder: dir.name,
       obj: objFile,
       mtl: mtlFile,
+      glb: glbFile,
     });
   }
 
@@ -2641,6 +3203,23 @@ async function main() {
   const inputDir = path.resolve(process.cwd(), opts.inputDir);
   const outputDir = path.resolve(process.cwd(), opts.outputDir);
 
+  if (opts.packGlb && opts.positionalCount < 2) {
+    fs.mkdirSync(outputDir, { recursive: true });
+    if (MeshoptEncoder?.ready) await MeshoptEncoder.ready;
+    const packed = packLowPolyCarsDirectory(outputDir, opts);
+    writeManifest(outputDir);
+    if (packed.length === 0) {
+      console.log(`No .obj files found to pack in "${outputDir}".`);
+    } else {
+      const totalObj = packed.reduce((s, r) => s + r.objBytes, 0);
+      const totalGlb = packed.reduce((s, r) => s + r.glbBytes, 0);
+      console.log(
+        `Packed ${packed.length} car(s) to .glb (${(totalObj / 1048576).toFixed(2)} MB OBJ -> ${(totalGlb / 1048576).toFixed(2)} MB GLB)`,
+      );
+    }
+    process.exit(0);
+  }
+
   fs.mkdirSync(inputDir, { recursive: true });
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -2656,6 +3235,13 @@ async function main() {
     .sort((a, b) => a.localeCompare(b));
 
   if (carInputFiles.length === 0) {
+    if (opts.packGlb) {
+      if (MeshoptEncoder?.ready) await MeshoptEncoder.ready;
+      const packed = packLowPolyCarsDirectory(outputDir, opts);
+      writeManifest(outputDir);
+      console.log(`Packed ${packed.length} car(s) to .glb in "${outputDir}".`);
+      process.exit(0);
+    }
     console.log(`No .kn5 or .obj files found in "${inputDir}".`);
     console.log(`Drop your Assetto Corsa .kn5 or raw .obj car files into:`);
     console.log(`  ${inputDir}`);
@@ -2685,6 +3271,10 @@ async function main() {
     }
   }
 
+  if (opts.packGlb) {
+    if (MeshoptEncoder?.ready) await MeshoptEncoder.ready;
+    packLowPolyCarsDirectory(outputDir, opts);
+  }
   writeManifest(outputDir);
   printSummaryTable(results);
 }

@@ -4,367 +4,428 @@
       "id": "acura-arx-06",
       "folder": "acura-arx-06",
       "obj": "acura-arx-06.obj",
-      "mtl": "acura-arx-06.mtl"
+      "mtl": "acura-arx-06.mtl",
+      "glb": "acura-arx-06.glb"
     },
     {
       "id": "acura-nsx-gt3",
       "folder": "acura-nsx-gt3",
       "obj": "acura-nsx-gt3.obj",
-      "mtl": "acura-nsx-gt3.mtl"
+      "mtl": "acura-nsx-gt3.mtl",
+      "glb": "acura-nsx-gt3.glb"
     },
     {
       "id": "alpine-a110-gt4",
       "folder": "alpine-a110-gt4",
       "obj": "alpine-a110-gt4.obj",
-      "mtl": "alpine-a110-gt4.mtl"
+      "mtl": "alpine-a110-gt4.mtl",
+      "glb": "alpine-a110-gt4.glb"
     },
     {
       "id": "alpine-a424",
       "folder": "alpine-a424",
       "obj": "alpine-a424.obj",
-      "mtl": "alpine-a424.mtl"
+      "mtl": "alpine-a424.mtl",
+      "glb": "alpine-a424.glb"
     },
     {
       "id": "aston-valkyrie-lmh",
       "folder": "aston-valkyrie-lmh",
       "obj": "aston-valkyrie-lmh.obj",
-      "mtl": "aston-valkyrie-lmh.mtl"
+      "mtl": "aston-valkyrie-lmh.mtl",
+      "glb": "aston-valkyrie-lmh.glb"
     },
     {
       "id": "aston-valkyrie-road",
       "folder": "aston-valkyrie-road",
       "obj": "aston-valkyrie-road.obj",
-      "mtl": "aston-valkyrie-road.mtl"
+      "mtl": "aston-valkyrie-road.mtl",
+      "glb": "aston-valkyrie-road.glb"
     },
     {
       "id": "aston-vantage-gt3",
       "folder": "aston-vantage-gt3",
       "obj": "aston-vantage-gt3.obj",
-      "mtl": "aston-vantage-gt3.mtl"
+      "mtl": "aston-vantage-gt3.mtl",
+      "glb": "aston-vantage-gt3.glb"
     },
     {
       "id": "aston-vantage-gt4",
       "folder": "aston-vantage-gt4",
       "obj": "aston-vantage-gt4.obj",
-      "mtl": "aston-vantage-gt4.mtl"
+      "mtl": "aston-vantage-gt4.mtl",
+      "glb": "aston-vantage-gt4.glb"
     },
     {
       "id": "audi-r8-lms-gt3",
       "folder": "audi-r8-lms-gt3",
       "obj": "audi-r8-lms-gt3.obj",
-      "mtl": "audi-r8-lms-gt3.mtl"
+      "mtl": "audi-r8-lms-gt3.mtl",
+      "glb": "audi-r8-lms-gt3.glb"
     },
     {
       "id": "bentley-continental-gt3",
       "folder": "bentley-continental-gt3",
       "obj": "bentley-continental-gt3.obj",
-      "mtl": "bentley-continental-gt3.mtl"
+      "mtl": "bentley-continental-gt3.mtl",
+      "glb": "bentley-continental-gt3.glb"
     },
     {
       "id": "bmw-m-hybrid-v8",
       "folder": "bmw-m-hybrid-v8",
       "obj": "bmw-m-hybrid-v8.obj",
-      "mtl": "bmw-m-hybrid-v8.mtl"
+      "mtl": "bmw-m-hybrid-v8.mtl",
+      "glb": "bmw-m-hybrid-v8.glb"
     },
     {
       "id": "bmw-m2-cs",
       "folder": "bmw-m2-cs",
       "obj": "bmw-m2-cs.obj",
-      "mtl": "bmw-m2-cs.mtl"
+      "mtl": "bmw-m2-cs.mtl",
+      "glb": "bmw-m2-cs.glb"
     },
     {
       "id": "bmw-m4-gt3",
       "folder": "bmw-m4-gt3",
       "obj": "bmw-m4-gt3.obj",
-      "mtl": "bmw-m4-gt3.mtl"
+      "mtl": "bmw-m4-gt3.mtl",
+      "glb": "bmw-m4-gt3.glb"
     },
     {
       "id": "bmw-m4-gt4",
       "folder": "bmw-m4-gt4",
       "obj": "bmw-m4-gt4.obj",
-      "mtl": "bmw-m4-gt4.mtl"
+      "mtl": "bmw-m4-gt4.mtl",
+      "glb": "bmw-m4-gt4.glb"
     },
     {
       "id": "cadillac-vseries-r",
       "folder": "cadillac-vseries-r",
       "obj": "cadillac-vseries-r.obj",
-      "mtl": "cadillac-vseries-r.mtl"
+      "mtl": "cadillac-vseries-r.mtl",
+      "glb": "cadillac-vseries-r.glb"
     },
     {
       "id": "corvette-z06-coupe",
       "folder": "corvette-z06-coupe",
       "obj": "corvette-z06-coupe.obj",
-      "mtl": "corvette-z06-coupe.mtl"
+      "mtl": "corvette-z06-coupe.mtl",
+      "glb": "corvette-z06-coupe.glb"
     },
     {
       "id": "corvette-z06-gt3r",
       "folder": "corvette-z06-gt3r",
       "obj": "corvette-z06-gt3r.obj",
-      "mtl": "corvette-z06-gt3r.mtl"
+      "mtl": "corvette-z06-gt3r.mtl",
+      "glb": "corvette-z06-gt3r.glb"
     },
     {
       "id": "f1-05-ferrari",
       "folder": "f1-05-ferrari",
       "obj": "f1-05-ferrari.obj",
-      "mtl": "f1-05-ferrari.mtl"
+      "mtl": "f1-05-ferrari.mtl",
+      "glb": "f1-05-ferrari.glb"
     },
     {
       "id": "f1-05-mclaren",
       "folder": "f1-05-mclaren",
       "obj": "f1-05-mclaren.obj",
-      "mtl": "f1-05-mclaren.mtl"
+      "mtl": "f1-05-mclaren.mtl",
+      "glb": "f1-05-mclaren.glb"
     },
     {
       "id": "f1-05-renault",
       "folder": "f1-05-renault",
       "obj": "f1-05-renault.obj",
-      "mtl": "f1-05-renault.mtl"
+      "mtl": "f1-05-renault.mtl",
+      "glb": "f1-05-renault.glb"
     },
     {
       "id": "f1-05-williams",
       "folder": "f1-05-williams",
       "obj": "f1-05-williams.obj",
-      "mtl": "f1-05-williams.mtl"
+      "mtl": "f1-05-williams.mtl",
+      "glb": "f1-05-williams.glb"
     },
     {
       "id": "f1-21-mercedes",
       "folder": "f1-21-mercedes",
       "obj": "f1-21-mercedes.obj",
-      "mtl": "f1-21-mercedes.mtl"
+      "mtl": "f1-21-mercedes.mtl",
+      "glb": "f1-21-mercedes.glb"
     },
     {
       "id": "f1-26-mercedes",
       "folder": "f1-26-mercedes",
       "obj": "f1-26-mercedes.obj",
-      "mtl": "f1-26-mercedes.mtl"
+      "mtl": "f1-26-mercedes.mtl",
+      "glb": "f1-26-mercedes.glb"
     },
     {
       "id": "fe-jaguar-itype7",
       "folder": "fe-jaguar-itype7",
       "obj": "fe-jaguar-itype7.obj",
-      "mtl": "fe-jaguar-itype7.mtl"
+      "mtl": "fe-jaguar-itype7.mtl",
+      "glb": "fe-jaguar-itype7.glb"
     },
     {
       "id": "fe-maserati-folgore",
       "folder": "fe-maserati-folgore",
       "obj": "fe-maserati-folgore.obj",
-      "mtl": "fe-maserati-folgore.mtl"
+      "mtl": "fe-maserati-folgore.mtl",
+      "glb": "fe-maserati-folgore.glb"
     },
     {
       "id": "fe-nissan-e4orce",
       "folder": "fe-nissan-e4orce",
       "obj": "fe-nissan-e4orce.obj",
-      "mtl": "fe-nissan-e4orce.mtl"
+      "mtl": "fe-nissan-e4orce.mtl",
+      "glb": "fe-nissan-e4orce.glb"
     },
     {
       "id": "fe-porsche-99x",
       "folder": "fe-porsche-99x",
       "obj": "fe-porsche-99x.obj",
-      "mtl": "fe-porsche-99x.mtl"
+      "mtl": "fe-porsche-99x.mtl",
+      "glb": "fe-porsche-99x.glb"
     },
     {
       "id": "ferrari-296-gt3",
       "folder": "ferrari-296-gt3",
       "obj": "ferrari-296-gt3.obj",
-      "mtl": "ferrari-296-gt3.mtl"
+      "mtl": "ferrari-296-gt3.mtl",
+      "glb": "ferrari-296-gt3.glb"
     },
     {
       "id": "ferrari-296-gtb",
       "folder": "ferrari-296-gtb",
       "obj": "ferrari-296-gtb.obj",
-      "mtl": "ferrari-296-gtb.mtl"
+      "mtl": "ferrari-296-gtb.mtl",
+      "glb": "ferrari-296-gtb.glb"
     },
     {
       "id": "ferrari-499p",
       "folder": "ferrari-499p",
       "obj": "ferrari-499p.obj",
-      "mtl": "ferrari-499p.mtl"
+      "mtl": "ferrari-499p.mtl",
+      "glb": "ferrari-499p.glb"
     },
     {
       "id": "ferrari-f80",
       "folder": "ferrari-f80",
       "obj": "ferrari-f80.obj",
-      "mtl": "ferrari-f80.mtl"
+      "mtl": "ferrari-f80.mtl",
+      "glb": "ferrari-f80.glb"
     },
     {
       "id": "ferrari-sf90",
       "folder": "ferrari-sf90",
       "obj": "ferrari-sf90.obj",
-      "mtl": "ferrari-sf90.mtl"
+      "mtl": "ferrari-sf90.mtl",
+      "glb": "ferrari-sf90.glb"
     },
     {
       "id": "ford-mustang-gt3",
       "folder": "ford-mustang-gt3",
       "obj": "ford-mustang-gt3.obj",
-      "mtl": "ford-mustang-gt3.mtl"
+      "mtl": "ford-mustang-gt3.mtl",
+      "glb": "ford-mustang-gt3.glb"
     },
     {
       "id": "ford-mustang-gt4",
       "folder": "ford-mustang-gt4",
       "obj": "ford-mustang-gt4.obj",
-      "mtl": "ford-mustang-gt4.mtl"
+      "mtl": "ford-mustang-gt4.mtl",
+      "glb": "ford-mustang-gt4.glb"
     },
     {
       "id": "genesis-gmr-001",
       "folder": "genesis-gmr-001",
       "obj": "genesis-gmr-001.obj",
-      "mtl": "genesis-gmr-001.mtl"
+      "mtl": "genesis-gmr-001.mtl",
+      "glb": "genesis-gmr-001.glb"
     },
     {
       "id": "glickenhaus-scg-007",
       "folder": "glickenhaus-scg-007",
       "obj": "glickenhaus-scg-007.obj",
-      "mtl": "glickenhaus-scg-007.mtl"
+      "mtl": "glickenhaus-scg-007.mtl",
+      "glb": "glickenhaus-scg-007.glb"
     },
     {
       "id": "honda-civic-type-r",
       "folder": "honda-civic-type-r",
       "obj": "honda-civic-type-r.obj",
-      "mtl": "honda-civic-type-r.mtl"
+      "mtl": "honda-civic-type-r.mtl",
+      "glb": "honda-civic-type-r.glb"
     },
     {
       "id": "koenigsegg-jesko",
       "folder": "koenigsegg-jesko",
       "obj": "koenigsegg-jesko.obj",
-      "mtl": "koenigsegg-jesko.mtl"
+      "mtl": "koenigsegg-jesko.mtl",
+      "glb": "koenigsegg-jesko.glb"
     },
     {
       "id": "lamborghini-sc63",
       "folder": "lamborghini-sc63",
       "obj": "lamborghini-sc63.obj",
-      "mtl": "lamborghini-sc63.mtl"
+      "mtl": "lamborghini-sc63.mtl",
+      "glb": "lamborghini-sc63.glb"
     },
     {
       "id": "lamborghini-temerario-gt3",
       "folder": "lamborghini-temerario-gt3",
       "obj": "lamborghini-temerario-gt3.obj",
-      "mtl": "lamborghini-temerario-gt3.mtl"
+      "mtl": "lamborghini-temerario-gt3.mtl",
+      "glb": "lamborghini-temerario-gt3.glb"
     },
     {
       "id": "lexus-rcf-gt3",
       "folder": "lexus-rcf-gt3",
       "obj": "lexus-rcf-gt3.obj",
-      "mtl": "lexus-rcf-gt3.mtl"
+      "mtl": "lexus-rcf-gt3.mtl",
+      "glb": "lexus-rcf-gt3.glb"
     },
     {
       "id": "ligier-js-p217",
       "folder": "ligier-js-p217",
       "obj": "ligier-js-p217.obj",
-      "mtl": "ligier-js-p217.mtl"
+      "mtl": "ligier-js-p217.mtl",
+      "glb": "ligier-js-p217.glb"
     },
     {
       "id": "mclaren-720s-gt3",
       "folder": "mclaren-720s-gt3",
       "obj": "mclaren-720s-gt3.obj",
-      "mtl": "mclaren-720s-gt3.mtl"
+      "mtl": "mclaren-720s-gt3.mtl",
+      "glb": "mclaren-720s-gt3.glb"
     },
     {
       "id": "mclaren-750s",
       "folder": "mclaren-750s",
       "obj": "mclaren-750s.obj",
-      "mtl": "mclaren-750s.mtl"
+      "mtl": "mclaren-750s.mtl",
+      "glb": "mclaren-750s.glb"
     },
     {
       "id": "mclaren-artura-gt4",
       "folder": "mclaren-artura-gt4",
       "obj": "mclaren-artura-gt4.obj",
-      "mtl": "mclaren-artura-gt4.mtl"
+      "mtl": "mclaren-artura-gt4.mtl",
+      "glb": "mclaren-artura-gt4.glb"
     },
     {
       "id": "mclaren-w1",
       "folder": "mclaren-w1",
       "obj": "mclaren-w1.obj",
-      "mtl": "mclaren-w1.mtl"
+      "mtl": "mclaren-w1.mtl",
+      "glb": "mclaren-w1.glb"
     },
     {
       "id": "mercedes-amg-gt3",
       "folder": "mercedes-amg-gt3",
       "obj": "mercedes-amg-gt3.obj",
-      "mtl": "mercedes-amg-gt3.mtl"
+      "mtl": "mercedes-amg-gt3.mtl",
+      "glb": "mercedes-amg-gt3.glb"
     },
     {
       "id": "mercedes-amg-gt4",
       "folder": "mercedes-amg-gt4",
       "obj": "mercedes-amg-gt4.obj",
-      "mtl": "mercedes-amg-gt4.mtl"
+      "mtl": "mercedes-amg-gt4.mtl",
+      "glb": "mercedes-amg-gt4.glb"
     },
     {
       "id": "nissan-gtr-nismo",
       "folder": "nissan-gtr-nismo",
       "obj": "nissan-gtr-nismo.obj",
-      "mtl": "nissan-gtr-nismo.mtl"
+      "mtl": "nissan-gtr-nismo.mtl",
+      "glb": "nissan-gtr-nismo.glb"
     },
     {
       "id": "oreca-07",
       "folder": "oreca-07",
       "obj": "oreca-07.obj",
-      "mtl": "oreca-07.mtl"
+      "mtl": "oreca-07.mtl",
+      "glb": "oreca-07.glb"
     },
     {
       "id": "peugeot-9x8",
       "folder": "peugeot-9x8",
       "obj": "peugeot-9x8.obj",
-      "mtl": "peugeot-9x8.mtl"
+      "mtl": "peugeot-9x8.mtl",
+      "glb": "peugeot-9x8.glb"
     },
     {
       "id": "porsche-911-gt3-r",
       "folder": "porsche-911-gt3-r",
       "obj": "porsche-911-gt3-r.obj",
-      "mtl": "porsche-911-gt3-r.mtl"
+      "mtl": "porsche-911-gt3-r.mtl",
+      "glb": "porsche-911-gt3-r.glb"
     },
     {
       "id": "porsche-911-gt3-rs",
       "folder": "porsche-911-gt3-rs",
       "obj": "porsche-911-gt3-rs.obj",
-      "mtl": "porsche-911-gt3-rs.mtl"
+      "mtl": "porsche-911-gt3-rs.mtl",
+      "glb": "porsche-911-gt3-rs.glb"
     },
     {
       "id": "porsche-918-spyder",
       "folder": "porsche-918-spyder",
       "obj": "porsche-918-spyder.obj",
-      "mtl": "porsche-918-spyder.mtl"
+      "mtl": "porsche-918-spyder.mtl",
+      "glb": "porsche-918-spyder.glb"
     },
     {
       "id": "porsche-963",
       "folder": "porsche-963",
       "obj": "porsche-963.obj",
-      "mtl": "porsche-963.mtl"
+      "mtl": "porsche-963.mtl",
+      "glb": "porsche-963.glb"
     },
     {
       "id": "porsche-963-versionb",
       "folder": "porsche-963_versionb",
       "obj": "porsche-963_versionb.obj",
-      "mtl": "porsche-963_versionb.mtl"
+      "mtl": "porsche-963_versionb.mtl",
+      "glb": "porsche-963_versionb.glb"
     },
     {
       "id": "porsche-cayman-gt4-rs",
       "folder": "porsche-cayman-gt4-rs",
       "obj": "porsche-cayman-gt4-rs.obj",
-      "mtl": "porsche-cayman-gt4-rs.mtl"
+      "mtl": "porsche-cayman-gt4-rs.mtl",
+      "glb": "porsche-cayman-gt4-rs.glb"
     },
     {
       "id": "renault-clio-v6",
       "folder": "renault-clio-v6",
       "obj": "renault-clio-v6.obj",
-      "mtl": "renault-clio-v6.mtl"
+      "mtl": "renault-clio-v6.mtl",
+      "glb": "renault-clio-v6.glb"
     },
     {
       "id": "renault-rs01-gt3",
       "folder": "renault-rs01-gt3",
       "obj": "renault-rs01-gt3.obj",
-      "mtl": "renault-rs01-gt3.mtl"
+      "mtl": "renault-rs01-gt3.mtl",
+      "glb": "renault-rs01-gt3.glb"
     },
     {
       "id": "toyota-gr010",
       "folder": "toyota-gr010",
       "obj": "toyota-gr010.obj",
-      "mtl": "toyota-gr010.mtl"
+      "mtl": "toyota-gr010.mtl",
+      "glb": "toyota-gr010.glb"
     },
     {
       "id": "toyota-supra-gt4",
       "folder": "toyota-supra-gt4",
       "obj": "toyota-supra-gt4.obj",
-      "mtl": "toyota-supra-gt4.mtl"
+      "mtl": "toyota-supra-gt4.mtl",
+      "glb": "toyota-supra-gt4.glb"
     }
   ]
 }

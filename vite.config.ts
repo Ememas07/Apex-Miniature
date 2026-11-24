@@ -8,8 +8,9 @@ import { VitePWA } from 'vite-plugin-pwa';
 interface LowPolyCarManifestEntry {
   id: string;
   folder: string;
-  obj: string;
+  obj: string | null;
   mtl: string | null;
+  glb: string | null;
 }
 
 function scanLowPolyCars(modelsDir: string): LowPolyCarManifestEntry[] {
@@ -26,14 +27,23 @@ function scanLowPolyCars(modelsDir: string): LowPolyCarManifestEntry[] {
     const preferredObj = `${dir.name}.obj`;
     const objFile = files.includes(preferredObj)
       ? preferredObj
-      : files.find((f) => f.toLowerCase().endsWith('.obj'));
-    if (!objFile) continue;
+      : (files.find((f) => f.toLowerCase().endsWith('.obj')) ?? null);
+
+    const preferredGlb = `${dir.name}.glb`;
+    const matchingGlb = objFile ? objFile.replace(/\.obj$/i, '.glb') : null;
+    const glbFile = files.includes(preferredGlb)
+      ? preferredGlb
+      : matchingGlb && files.includes(matchingGlb)
+        ? matchingGlb
+        : (files.find((f) => f.toLowerCase().endsWith('.glb')) ?? null);
+
+    if (!objFile && !glbFile) continue;
 
     const preferredMtl = `${dir.name}.mtl`;
-    const matchingMtl = objFile.replace(/\.obj$/i, '.mtl');
+    const matchingMtl = objFile ? objFile.replace(/\.obj$/i, '.mtl') : null;
     const mtlFile = files.includes(preferredMtl)
       ? preferredMtl
-      : files.includes(matchingMtl)
+      : matchingMtl && files.includes(matchingMtl)
         ? matchingMtl
         : (files.find((f) => f.toLowerCase().endsWith('.mtl')) ?? null);
 
@@ -42,6 +52,7 @@ function scanLowPolyCars(modelsDir: string): LowPolyCarManifestEntry[] {
       folder: dir.name,
       obj: objFile,
       mtl: mtlFile,
+      glb: glbFile,
     });
   }
   return cars;
@@ -83,7 +94,9 @@ function serveLowPolyCarsPlugin(): Plugin {
         'Content-Type',
         ext === '.json'
           ? 'application/json; charset=utf-8'
-          : 'text/plain; charset=utf-8',
+          : ext === '.glb'
+            ? 'model/gltf-binary'
+            : 'text/plain; charset=utf-8',
       );
       fs.createReadStream(resolved).pipe(res);
     });
@@ -105,7 +118,7 @@ function serveLowPolyCarsPlugin(): Plugin {
         const srcFolder = path.join(modelsDir, car.folder);
         const dstFolder = path.join(distModelsDir, car.folder);
         fs.mkdirSync(dstFolder, { recursive: true });
-        for (const file of [car.obj, car.mtl].filter((f): f is string => Boolean(f))) {
+        for (const file of [car.obj, car.mtl, car.glb].filter((f): f is string => Boolean(f))) {
           const srcFile = path.join(srcFolder, file);
           if (fs.existsSync(srcFile)) {
             fs.copyFileSync(srcFile, path.join(dstFolder, file));
