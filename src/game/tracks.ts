@@ -1,7 +1,19 @@
 import * as THREE from 'three';
 import { SceneryTheme, TrackRegion, TrackSpec, TrackWaypoint } from './types';
 import { getCustomTrackById } from './customTracks';
-import { TRACK_SVG_REGISTRY, svgToTrackPoints, REAL_TRACK_METRICS, CCW_CIRCUIT_IDS } from './trackSvgs';
+import {
+  svgToTrackPoints,
+  REAL_TRACK_METRICS,
+  CCW_CIRCUIT_IDS,
+  registerTrackSvgPath,
+} from './trackSvgs';
+import { registerTrackElevation } from './trackElevations';
+import {
+  isNodeSyncCapable,
+  loadTrackDataAsync,
+  readTrackDataSync,
+} from './trackData/loaders';
+import { TRACK_PREVIEW_CURVES } from './trackData/previewCurves';
 
 export const TRACKS: TrackSpec[] = [
   {
@@ -19,7 +31,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["spa-francorchamps"].trackWidth,
     targetLapSeconds: 106,
     corners: 19,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["spa-francorchamps"], { trackId: "spa-francorchamps" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "daytona-road",
@@ -36,7 +48,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["daytona-road"].trackWidth,
     targetLapSeconds: 96,
     corners: 12,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["daytona-road"], { trackId: "daytona-road" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "laguna-seca",
@@ -53,7 +65,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 12,
     targetLapSeconds: 76,
     corners: 11,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["laguna-seca"], { trackId: "laguna-seca" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "le-mans",
@@ -70,7 +82,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["le-mans"].trackWidth,
     targetLapSeconds: 208,
     corners: 21,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["le-mans"], { trackId: "le-mans" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "monza",
@@ -87,7 +99,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["monza"].trackWidth,
     targetLapSeconds: 81,
     corners: 11,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["monza"], { trackId: "monza" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "silverstone",
@@ -104,7 +116,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["silverstone"].trackWidth,
     targetLapSeconds: 87,
     corners: 18,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["silverstone"], { trackId: "silverstone" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "suzuka",
@@ -122,7 +134,7 @@ export const TRACKS: TrackSpec[] = [
     targetLapSeconds: 89,
     corners: 18,
     pitSide: "right",
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["suzuka"], { trackId: "suzuka" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "monaco",
@@ -139,7 +151,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["monaco"].trackWidth,
     targetLapSeconds: 72,
     corners: 19,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["monaco"], { trackId: "monaco" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "cota",
@@ -156,7 +168,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["cota"].trackWidth,
     targetLapSeconds: 94,
     corners: 20,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["cota"], { trackId: "cota" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "sebring",
@@ -173,7 +185,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["sebring"].trackWidth,
     targetLapSeconds: 107,
     corners: 17,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["sebring"], { trackId: "sebring" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "long-beach",
@@ -190,7 +202,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["long-beach"].trackWidth,
     targetLapSeconds: 67,
     corners: 11,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["long-beach"], { trackId: "long-beach" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "detroit-street",
@@ -207,7 +219,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["detroit-street"].trackWidth,
     targetLapSeconds: 62,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["detroit-street"], { trackId: "detroit-street" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "mid-ohio",
@@ -224,7 +236,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 12,
     targetLapSeconds: 74,
     corners: 13,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["mid-ohio"], { trackId: "mid-ohio" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "watkins-glen",
@@ -241,7 +253,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 13,
     targetLapSeconds: 88,
     corners: 11,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["watkins-glen"], { trackId: "watkins-glen" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "mosport",
@@ -258,7 +270,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 12.5,
     targetLapSeconds: 75,
     corners: 10,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["mosport"], { trackId: "mosport" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "lime-rock",
@@ -275,7 +287,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["lime-rock"].trackWidth,
     targetLapSeconds: 50,
     corners: 7,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["lime-rock"], { trackId: "lime-rock" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "road-america",
@@ -292,7 +304,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["road-america"].trackWidth,
     targetLapSeconds: 110,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["road-america"], { trackId: "road-america" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "vir",
@@ -309,7 +321,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 12,
     targetLapSeconds: 98,
     corners: 17,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["vir"], { trackId: "vir" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "indianapolis-road",
@@ -326,7 +338,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["indianapolis-road"].trackWidth,
     targetLapSeconds: 76,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["indianapolis-road"], { trackId: "indianapolis-road" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "road-atlanta",
@@ -343,7 +355,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 12.5,
     targetLapSeconds: 72,
     corners: 12,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["road-atlanta"], { trackId: "road-atlanta" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "montreal",
@@ -360,7 +372,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 13,
     targetLapSeconds: 73,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["montreal"], { trackId: "montreal" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "miami",
@@ -377,7 +389,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["miami"].trackWidth,
     targetLapSeconds: 89,
     corners: 19,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["miami"], { trackId: "miami" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "las-vegas",
@@ -394,7 +406,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["las-vegas"].trackWidth,
     targetLapSeconds: 93,
     corners: 17,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["las-vegas"], { trackId: "las-vegas" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "mexico-city",
@@ -411,7 +423,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["mexico-city"].trackWidth,
     targetLapSeconds: 77,
     corners: 17,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["mexico-city"], { trackId: "mexico-city" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "interlagos",
@@ -428,7 +440,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 13,
     targetLapSeconds: 70,
     corners: 15,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["interlagos"], { trackId: "interlagos" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "imola",
@@ -445,7 +457,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 12.5,
     targetLapSeconds: 75,
     corners: 19,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["imola"], { trackId: "imola" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "barcelona",
@@ -462,7 +474,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 13.5,
     targetLapSeconds: 73,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["barcelona"], { trackId: "barcelona" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "madring",
@@ -479,7 +491,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["madring"].trackWidth,
     targetLapSeconds: 88,
     corners: 20,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["madring"], { trackId: "madring" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "red-bull-ring",
@@ -496,7 +508,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 13,
     targetLapSeconds: 65,
     corners: 10,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["red-bull-ring"], { trackId: "red-bull-ring" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "hungaroring",
@@ -513,7 +525,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 12.5,
     targetLapSeconds: 76,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["hungaroring"], { trackId: "hungaroring" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "zandvoort",
@@ -530,7 +542,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["zandvoort"].trackWidth,
     targetLapSeconds: 71,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["zandvoort"], { trackId: "zandvoort" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "paul-ricard",
@@ -547,7 +559,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["paul-ricard"].trackWidth,
     targetLapSeconds: 92,
     corners: 15,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["paul-ricard"], { trackId: "paul-ricard" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "baku",
@@ -564,7 +576,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["baku"].trackWidth,
     targetLapSeconds: 102,
     corners: 20,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["baku"], { trackId: "baku" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "portimao",
@@ -581,7 +593,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["portimao"].trackWidth,
     targetLapSeconds: 78,
     corners: 15,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["portimao"], { trackId: "portimao" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "fuji",
@@ -598,7 +610,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["fuji"].trackWidth,
     targetLapSeconds: 74,
     corners: 16,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["fuji"], { trackId: "fuji" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "shanghai",
@@ -615,7 +627,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["shanghai"].trackWidth,
     targetLapSeconds: 93,
     corners: 16,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["shanghai"], { trackId: "shanghai" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "singapore",
@@ -632,7 +644,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["singapore"].trackWidth,
     targetLapSeconds: 91,
     corners: 19,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["singapore"], { trackId: "singapore" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "sepang",
@@ -649,7 +661,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["sepang"].trackWidth,
     targetLapSeconds: 92,
     corners: 15,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["sepang"], { trackId: "sepang" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "bahrain",
@@ -666,7 +678,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["bahrain"].trackWidth,
     targetLapSeconds: 90,
     corners: 15,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["bahrain"], { trackId: "bahrain" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "jeddah",
@@ -683,7 +695,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["jeddah"].trackWidth,
     targetLapSeconds: 88,
     corners: 27,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["jeddah"], { trackId: "jeddah" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "lusail",
@@ -700,7 +712,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["lusail"].trackWidth,
     targetLapSeconds: 83,
     corners: 16,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["lusail"], { trackId: "lusail" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "yas-marina",
@@ -717,7 +729,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: REAL_TRACK_METRICS["yas-marina"].trackWidth,
     targetLapSeconds: 83,
     corners: 16,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["yas-marina"], { trackId: "yas-marina" }),
+    waypoints: [] as TrackWaypoint[],
   },
   {
     id: "albert-park",
@@ -734,7 +746,7 @@ export const TRACKS: TrackSpec[] = [
     trackWidth: 13.5,
     targetLapSeconds: 78,
     corners: 14,
-    waypoints: svgToTrackPoints(TRACK_SVG_REGISTRY["albert-park"], { trackId: "albert-park" }),
+    waypoints: [] as TrackWaypoint[],
   },
 ];
 
@@ -784,6 +796,46 @@ const TRACK_LOCATION_META: Record<string, { city: string; circuitLengthKm: numbe
   "albert-park": { city: "Melbourne, Victoria", circuitLengthKm: 5.28, circuitInfo: "Fast, flowing lakeside parkland street track around Albert Park Lake." },
 };
 
+const hydratedWaypointsCache = new Map<string, TrackWaypoint[]>();
+const fallbackWaypointsCache = new Map<string, TrackWaypoint[]>();
+const FALLBACK_PREVIEW_ARRAYS = new WeakSet<TrackWaypoint[]>();
+const inflightTrackHydrations = new Map<string, Promise<TrackSpec>>();
+
+function buildFallbackPreviewWaypoints(trackId: string, trackWidth: number): TrackWaypoint[] {
+  const existing = fallbackWaypointsCache.get(trackId);
+  if (existing) return existing;
+
+  const flat = TRACK_PREVIEW_CURVES[trackId];
+  const pts: TrackWaypoint[] = [];
+  if (flat && flat.length >= 6) {
+    for (let i = 0; i + 1 < flat.length; i += 2) {
+      pts.push({ x: flat[i], y: 0, z: flat[i + 1], width: trackWidth });
+    }
+  } else {
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      pts.push({ x: Math.cos(a) * 200, y: 0, z: Math.sin(a) * 120, width: trackWidth });
+    }
+  }
+  FALLBACK_PREVIEW_ARRAYS.add(pts);
+  fallbackWaypointsCache.set(trackId, pts);
+  return pts;
+}
+
+function hydrateTrackGeometrySync(trackId: string): TrackWaypoint[] | null {
+  const cached = hydratedWaypointsCache.get(trackId);
+  if (cached) return cached;
+
+  const payload = readTrackDataSync(trackId);
+  if (!payload) return null;
+
+  registerTrackSvgPath(trackId, payload.svg);
+  registerTrackElevation(trackId, payload.dem);
+  const wps = svgToTrackPoints(payload.svg, { trackId, demProfile: payload.dem });
+  hydratedWaypointsCache.set(trackId, wps);
+  return wps;
+}
+
 for (const tr of TRACKS) {
   const metric = REAL_TRACK_METRICS[tr.id];
   if (metric) {
@@ -795,6 +847,85 @@ for (const tr of TRACKS) {
     tr.circuitLengthKm = meta.circuitLengthKm;
     tr.circuitInfo = meta.circuitInfo;
   }
+
+  Object.defineProperty(tr, 'waypoints', {
+    enumerable: true,
+    configurable: true,
+    get(): TrackWaypoint[] {
+      const cached = hydratedWaypointsCache.get(tr.id);
+      if (cached) return cached;
+
+      const syncWps = hydrateTrackGeometrySync(tr.id);
+      if (syncWps) return syncWps;
+
+      return buildFallbackPreviewWaypoints(tr.id, tr.trackWidth);
+    },
+    set(value: TrackWaypoint[]) {
+      hydratedWaypointsCache.set(tr.id, value);
+    },
+  });
+}
+
+/**
+ * Returns true if the circuit's full 3D waypoint & DEM geometry is already hydrated in memory.
+ */
+export function isTrackGeometryLoaded(trackId: string): boolean {
+  if (hydratedWaypointsCache.has(trackId)) return true;
+  return Boolean(getCustomTrackById(trackId));
+}
+
+/**
+ * Dynamically loads and caches a single circuit's split geometry + DEM elevation chunk.
+ */
+export async function preloadTrackGeometry(trackId: string): Promise<TrackSpec> {
+  const builtin = TRACKS.find((t) => t.id === trackId);
+  if (!builtin) {
+    const custom = getCustomTrackById(trackId);
+    if (custom) return custom;
+    return preloadTrackGeometry(TRACKS[0].id);
+  }
+
+  if (hydratedWaypointsCache.has(builtin.id)) {
+    return builtin;
+  }
+
+  const syncWps = hydrateTrackGeometrySync(builtin.id);
+  if (syncWps) {
+    return builtin;
+  }
+
+  const inflight = inflightTrackHydrations.get(builtin.id);
+  if (inflight) return inflight;
+
+  const promise = loadTrackDataAsync(builtin.id)
+    .then((payload) => {
+      if (payload && !hydratedWaypointsCache.has(builtin.id)) {
+        registerTrackSvgPath(builtin.id, payload.svg);
+        registerTrackElevation(builtin.id, payload.dem);
+        const wps = svgToTrackPoints(payload.svg, {
+          trackId: builtin.id,
+          demProfile: payload.dem,
+        });
+        hydratedWaypointsCache.set(builtin.id, wps);
+      }
+      return builtin;
+    })
+    .finally(() => {
+      inflightTrackHydrations.delete(builtin.id);
+    });
+
+  inflightTrackHydrations.set(builtin.id, promise);
+  return promise;
+}
+
+export const preloadTrackData = preloadTrackGeometry;
+
+/**
+ * Hydrates all 43 official circuit geometries and DEM elevation tables in parallel.
+ */
+export async function ensureAllTracksLoaded(): Promise<TrackSpec[]> {
+  await Promise.all(TRACKS.map((t) => preloadTrackGeometry(t.id)));
+  return TRACKS;
 }
 
 export function formatTargetLapMMSS(totalSeconds: number): string {
@@ -806,10 +937,19 @@ export function formatTargetLapMMSS(totalSeconds: number): string {
 
 export function getTrackById(id: string): TrackSpec {
   const builtin = TRACKS.find((t) => t.id === id);
-  if (builtin) return builtin;
+  if (builtin) {
+    if (!isNodeSyncCapable() && !hydratedWaypointsCache.has(builtin.id)) {
+      void preloadTrackGeometry(builtin.id).catch(() => {});
+    }
+    return builtin;
+  }
   const custom = getCustomTrackById(id);
   if (custom) return custom;
-  return TRACKS[0];
+  const fallback = TRACKS[0];
+  if (!isNodeSyncCapable() && !hydratedWaypointsCache.has(fallback.id)) {
+    void preloadTrackGeometry(fallback.id).catch(() => {});
+  }
+  return fallback;
 }
 
 export function getTracksByRegion(region: TrackRegion | 'All' | 'Flagship'): TrackSpec[] {
@@ -979,6 +1119,14 @@ function hermiteCatmullRomVal(
  */
 export function compileTrack(spec: TrackSpec, sampleCount = 720): CompiledTrack {
   let ptsArr = spec.waypoints;
+  if (FALLBACK_PREVIEW_ARRAYS.has(ptsArr)) {
+    const hydrated = hydratedWaypointsCache.get(spec.id) ?? hydrateTrackGeometrySync(spec.id);
+    if (hydrated) {
+      ptsArr = hydrated;
+    } else if (!isNodeSyncCapable() && !spec.isCustom && sampleCount >= 200) {
+      void preloadTrackGeometry(spec.id).catch(() => {});
+    }
+  }
   if (
     spec.startNodeIndex !== undefined &&
     spec.startNodeIndex > 0 &&
