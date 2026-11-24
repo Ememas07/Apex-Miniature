@@ -10,6 +10,7 @@ import {
 export interface SpatialOpponentAudioInput {
   id: string;
   x: number;
+  y?: number;
   z: number;
   vx: number;
   vz: number;
@@ -19,12 +20,27 @@ export interface SpatialOpponentAudioInput {
   isElectric?: boolean;
 }
 
+export interface SpatialListenerCameraPose {
+  x: number;
+  y: number;
+  z: number;
+  forwardX: number;
+  forwardY: number;
+  forwardZ: number;
+  upX?: number;
+  upY?: number;
+  upZ?: number;
+}
+
 interface OpponentVoice {
   osc: OscillatorNode;
   subOsc: OscillatorNode;
   filter: BiquadFilterNode;
-  panner: StereoPannerNode;
+  panner3d: PannerNode | null;
+  stereoFallback: StereoPannerNode | null;
   gain: GainNode;
+  wasActive: boolean;
+  lastOppId: string | null;
 }
 
 export class MotorsportAudioEngine {
@@ -40,9 +56,12 @@ export class MotorsportAudioEngine {
   private musicBus: GainNode | null = null;
   private sfxBus: GainNode | null = null;
   private cabinFilter: BiquadFilterNode | null = null;
+  private tunnelPreFilter: BiquadFilterNode | null = null;
+  private tunnelConvolver: ConvolverNode | null = null;
   private tunnelDelay: DelayNode | null = null;
   private tunnelFeedback: GainNode | null = null;
   private tunnelWetGain: GainNode | null = null;
+  private customListenerUntil = 0;
   private windSource: AudioBufferSourceNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private windGain: GainNode | null = null;
@@ -219,31 +238,63 @@ export class MotorsportAudioEngine {
       cabinFilter.connect(master);
       this.cabinFilter = cabinFilter;
 
-      // Subtle tunnel reverb tail send
-      const tDelay = ctx.createDelay(0.5);
-      tDelay.delayTime.value = 0.085;
-      const tFeedback = ctx.createGain();
-      tFeedback.gain.value = 0.36;
+      // Concrete tunnel / street-canyon reverb send via procedural ConvolverNode (with DelayNode fallback)
       const tWet = ctx.createGain();
       tWet.gain.value = 0;
-      tDelay.connect(tFeedback);
-      tFeedback.connect(tDelay);
-      tDelay.connect(tWet);
-      tWet.connect(master);
-      this.tunnelDelay = tDelay;
-      this.tunnelFeedback = tFeedback;
+      tWet.connect(cabinFilter);
       this.tunnelWetGain = tWet;
+
+      let tunnelSendInput: AudioNode | null = null;
+      if (typeof ctx.createConvolver === 'function') {
+        try {
+          const preFilter = ctx.createBiquadFilter();
+          preFilter.type = 'lowpass';
+          preFilter.frequency.value = 3400;
+          preFilter.Q.value = 0.65;
+
+          const convolver = ctx.createConvolver();
+          convolver.normalize = true;
+          convolver.buffer = this.buildTunnelImpulseResponse(ctx);
+
+          preFilter.connect(convolver);
+          convolver.connect(tWet);
+
+          this.tunnelPreFilter = preFilter;
+          this.tunnelConvolver = convolver;
+          tunnelSendInput = preFilter;
+        } catch {
+          this.tunnelPreFilter = null;
+          this.tunnelConvolver = null;
+        }
+      }
+
+      if (!tunnelSendInput) {
+        const tDelay = ctx.createDelay(0.5);
+        tDelay.delayTime.value = 0.085;
+        const tFeedback = ctx.createGain();
+        tFeedback.gain.value = 0.36;
+        tDelay.connect(tFeedback);
+        tFeedback.connect(tDelay);
+        tDelay.connect(tWet);
+        this.tunnelDelay = tDelay;
+        this.tunnelFeedback = tFeedback;
+        tunnelSendInput = tDelay;
+      }
 
       const engineBus = ctx.createGain();
       engineBus.gain.value = this.mixerVolumes.engine;
       engineBus.connect(cabinFilter);
-      engineBus.connect(tDelay);
+      engineBus.connect(tunnelSendInput);
       this.engineBus = engineBus;
 
       const opponentBus = ctx.createGain();
       opponentBus.gain.value = this.mixerVolumes.opponents;
       opponentBus.connect(cabinFilter);
+      opponentBus.connect(tunnelSendInput);
       this.opponentBus = opponentBus;
+
+      // Initialize AudioListener in Three.js right-handed space
+      this.applyListenerTransform(0, 0, 0, 0, 0, 1, 0, 1, 0, true);
 
       const sfxCompressor = ctx.createDynamicsCompressor();
       sfxCompressor.threshold.setValueAtTime(-6, ctx.currentTime);
@@ -628,7 +679,7 @@ export class MotorsportAudioEngine {
         this.surfaceGain = sGain;
       }
 
-      // 4-voice spatial opponent engine synthesizer pool with Doppler + stereo pan
+      // 4-voice spatial opponent engine synthesizer pool with Doppler + 3D HRTF PannerNode (stereo fallback)
       this.opponentVoices = [];
       for (let i = 0; i < 4; i++) {
         const osc = ctx.createOscillator();
@@ -641,18 +692,62 @@ export class MotorsportAudioEngine {
         filter.type = 'lowpass';
         filter.frequency.value = 900;
         filter.Q.value = 1.5;
-        const panner = ctx.createStereoPanner();
-        panner.pan.value = 0;
         const gain = ctx.createGain();
         gain.gain.value = 0;
+
+        let panner3d: PannerNode | null = null;
+        let stereoFallback: StereoPannerNode | null = null;
+
+        if (typeof ctx.createPanner === 'function') {
+          try {
+            panner3d = ctx.createPanner();
+            try {
+              panner3d.panningModel = 'HRTF';
+            } catch {
+              panner3d.panningModel = 'equalpower';
+            }
+            panner3d.distanceModel = 'inverse';
+            panner3d.refDistance = 4;
+            panner3d.maxDistance = 62;
+            // Attenuation is shaped explicitly on voice.gain to preserve smooth 62m fade and fallback parity
+            panner3d.rolloffFactor = 0;
+            panner3d.coneInnerAngle = 360;
+            panner3d.coneOuterAngle = 360;
+            panner3d.coneOuterGain = 0;
+          } catch {
+            panner3d = null;
+          }
+        }
+
+        if (!panner3d) {
+          stereoFallback = ctx.createStereoPanner();
+          stereoFallback.pan.value = 0;
+        }
+
         osc.connect(filter);
         subOsc.connect(filter);
-        filter.connect(panner);
-        panner.connect(gain);
+        if (panner3d) {
+          filter.connect(panner3d);
+          panner3d.connect(gain);
+        } else if (stereoFallback) {
+          filter.connect(stereoFallback);
+          stereoFallback.connect(gain);
+        } else {
+          filter.connect(gain);
+        }
         gain.connect(this.opponentBus ?? master);
         osc.start();
         subOsc.start();
-        this.opponentVoices.push({ osc, subOsc, filter, panner, gain });
+        this.opponentVoices.push({
+          osc,
+          subOsc,
+          filter,
+          panner3d,
+          stereoFallback,
+          gain,
+          wasActive: false,
+          lastOppId: null,
+        });
       }
 
       // Subtle atmospheric menu pad synth (silent during racing)
@@ -793,6 +888,209 @@ export class MotorsportAudioEngine {
     this.musicPadGain.gain.setTargetAtTime(active && !this.muted ? 0.055 : 0, now, 0.45);
   }
 
+  /**
+   * Generates a lightweight stereo impulse response modeling concrete tunnel & street-canyon reflections.
+   */
+  private buildTunnelImpulseResponse(ctx: AudioContext): AudioBuffer {
+    const sampleRate = Math.max(8000, ctx.sampleRate || 44100);
+    const durationSec = 0.9;
+    const length = Math.max(1, Math.floor(sampleRate * durationSec));
+    const buffer = ctx.createBuffer(2, length, sampleRate);
+
+    // Deterministic LCG PRNG so IR generation is fast and allocation-free
+    let seed = 0x517cc1b7;
+    const nextNoise = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return (seed / 0x80000000) - 1;
+    };
+
+    // Discrete early slap-back reflections off parallel concrete walls & ceiling
+    const earlyTaps: Array<{ timeSec: number; gainL: number; gainR: number }> = [
+      { timeSec: 0.011, gainL: 0.62, gainR: 0.54 },
+      { timeSec: 0.019, gainL: 0.48, gainR: 0.58 },
+      { timeSec: 0.029, gainL: 0.42, gainR: 0.36 },
+      { timeSec: 0.043, gainL: 0.31, gainR: 0.35 },
+      { timeSec: 0.061, gainL: 0.24, gainR: 0.21 },
+      { timeSec: 0.083, gainL: 0.16, gainR: 0.18 },
+    ];
+
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buffer.getChannelData(ch);
+      let lp = 0;
+      for (let i = 0; i < length; i++) {
+        const t = i / sampleRate;
+        const fadeIn = Math.min(1, t / 0.008);
+        const decay = Math.exp(-t * 5.8);
+        // Progressive high-frequency absorption by concrete surfaces
+        const damp = Math.max(0.14, 0.42 - t * 0.28);
+        lp = lp + damp * (nextNoise() - lp);
+        data[i] = lp * fadeIn * decay * 0.45;
+      }
+
+      for (const tap of earlyTaps) {
+        const tapOffsetSec = tap.timeSec + (ch === 1 ? 0.0017 : 0);
+        const idx = Math.floor(tapOffsetSec * sampleRate);
+        if (idx >= 0 && idx < length) {
+          const amp = ch === 0 ? tap.gainL : tap.gainR;
+          data[idx] += amp;
+          if (idx + 1 < length) data[idx + 1] += amp * 0.45;
+          if (idx + 2 < length) data[idx + 2] -= amp * 0.2;
+        }
+      }
+    }
+
+    return buffer;
+  }
+
+  private applyListenerTransform(
+    x: number,
+    y: number,
+    z: number,
+    fx: number,
+    fy: number,
+    fz: number,
+    ux: number,
+    uy: number,
+    uz: number,
+    immediate = false,
+  ): void {
+    if (!this.ctx) return;
+    const listener = this.ctx.listener;
+    if (!listener) return;
+
+    const px = Number.isFinite(x) ? x : 0;
+    const py = Number.isFinite(y) ? y : 0;
+    const pz = Number.isFinite(z) ? z : 0;
+
+    let fwdX = Number.isFinite(fx) ? fx : 0;
+    let fwdY = Number.isFinite(fy) ? fy : 0;
+    let fwdZ = Number.isFinite(fz) ? fz : 1;
+    const fwdLen = Math.hypot(fwdX, fwdY, fwdZ);
+    if (fwdLen > 1e-4) {
+      fwdX /= fwdLen;
+      fwdY /= fwdLen;
+      fwdZ /= fwdLen;
+    } else {
+      fwdX = 0;
+      fwdY = 0;
+      fwdZ = 1;
+    }
+
+    let upX = Number.isFinite(ux) ? ux : 0;
+    let upY = Number.isFinite(uy) ? uy : 1;
+    let upZ = Number.isFinite(uz) ? uz : 0;
+    const upLen = Math.hypot(upX, upY, upZ);
+    if (upLen > 1e-4) {
+      upX /= upLen;
+      upY /= upLen;
+      upZ /= upLen;
+    } else {
+      upX = 0;
+      upY = 1;
+      upZ = 0;
+    }
+
+    const now = this.ctx.currentTime;
+    if (
+      listener.positionX &&
+      listener.positionY &&
+      listener.positionZ &&
+      listener.forwardX &&
+      listener.forwardY &&
+      listener.forwardZ &&
+      listener.upX &&
+      listener.upY &&
+      listener.upZ
+    ) {
+      if (immediate) {
+        listener.positionX.setValueAtTime(px, now);
+        listener.positionY.setValueAtTime(py, now);
+        listener.positionZ.setValueAtTime(pz, now);
+        listener.forwardX.setValueAtTime(fwdX, now);
+        listener.forwardY.setValueAtTime(fwdY, now);
+        listener.forwardZ.setValueAtTime(fwdZ, now);
+        listener.upX.setValueAtTime(upX, now);
+        listener.upY.setValueAtTime(upY, now);
+        listener.upZ.setValueAtTime(upZ, now);
+      } else {
+        listener.positionX.setTargetAtTime(px, now, 0.02);
+        listener.positionY.setTargetAtTime(py, now, 0.02);
+        listener.positionZ.setTargetAtTime(pz, now, 0.02);
+        listener.forwardX.setTargetAtTime(fwdX, now, 0.02);
+        listener.forwardY.setTargetAtTime(fwdY, now, 0.02);
+        listener.forwardZ.setTargetAtTime(fwdZ, now, 0.02);
+        listener.upX.setTargetAtTime(upX, now, 0.02);
+        listener.upY.setTargetAtTime(upY, now, 0.02);
+        listener.upZ.setTargetAtTime(upZ, now, 0.02);
+      }
+      return;
+    }
+
+    const legacy = listener as unknown as {
+      setPosition?: (x: number, y: number, z: number) => void;
+      setOrientation?: (
+        fx: number,
+        fy: number,
+        fz: number,
+        ux: number,
+        uy: number,
+        uz: number,
+      ) => void;
+    };
+    legacy.setPosition?.(px, py, pz);
+    legacy.setOrientation?.(fwdX, fwdY, fwdZ, upX, upY, upZ);
+  }
+
+  private applyPannerPosition(
+    panner: PannerNode,
+    x: number,
+    y: number,
+    z: number,
+    now: number,
+    immediate: boolean,
+  ): void {
+    const px = Number.isFinite(x) ? x : 0;
+    const py = Number.isFinite(y) ? y : 0;
+    const pz = Number.isFinite(z) ? z : 0;
+
+    if (panner.positionX && panner.positionY && panner.positionZ) {
+      if (immediate) {
+        panner.positionX.setValueAtTime(px, now);
+        panner.positionY.setValueAtTime(py, now);
+        panner.positionZ.setValueAtTime(pz, now);
+      } else {
+        panner.positionX.setTargetAtTime(px, now, 0.018);
+        panner.positionY.setTargetAtTime(py, now, 0.018);
+        panner.positionZ.setTargetAtTime(pz, now, 0.018);
+      }
+      return;
+    }
+
+    const legacy = panner as unknown as {
+      setPosition?: (x: number, y: number, z: number) => void;
+    };
+    legacy.setPosition?.(px, py, pz);
+  }
+
+  /**
+   * Syncs the Web Audio 3D AudioListener directly from active focus camera coordinates and orientation.
+   */
+  public updateListenerPose(pose: SpatialListenerCameraPose): void {
+    if (!this.initialized || !this.ctx) return;
+    this.customListenerUntil = this.ctx.currentTime + 0.05;
+    this.applyListenerTransform(
+      pose.x,
+      pose.y,
+      pose.z,
+      pose.forwardX,
+      pose.forwardY,
+      pose.forwardZ,
+      pose.upX ?? 0,
+      pose.upY ?? 1,
+      pose.upZ ?? 0,
+    );
+  }
+
   public updateOpponentEngines(
     opponents: SpatialOpponentAudioInput[],
     listenerX: number,
@@ -800,11 +1098,30 @@ export class MotorsportAudioEngine {
     listenerVx: number,
     listenerVz: number,
     listenerHeading: number,
+    listenerCamera?: Partial<SpatialListenerCameraPose>,
   ): void {
     if (!this.initialized || !this.ctx || this.muted || this.opponentVoices.length === 0) return;
     const now = this.ctx.currentTime;
-    const rightX = Math.cos(listenerHeading);
-    const rightZ = -Math.sin(listenerHeading);
+    const defaultFwdX = Math.sin(listenerHeading);
+    const defaultFwdZ = Math.cos(listenerHeading);
+
+    if (listenerCamera || now >= this.customListenerUntil) {
+      this.applyListenerTransform(
+        listenerCamera?.x ?? listenerX,
+        listenerCamera?.y ?? 0,
+        listenerCamera?.z ?? listenerZ,
+        listenerCamera?.forwardX ?? defaultFwdX,
+        listenerCamera?.forwardY ?? 0,
+        listenerCamera?.forwardZ ?? defaultFwdZ,
+        listenerCamera?.upX ?? 0,
+        listenerCamera?.upY ?? 1,
+        listenerCamera?.upZ ?? 0,
+      );
+    }
+
+    // Three.js right vector = forward x up = (-cos(heading), 0, sin(heading)) for StereoPanner fallback
+    const rightX = -Math.cos(listenerHeading);
+    const rightZ = Math.sin(listenerHeading);
 
     const ranked = opponents
       .map((opp) => {
@@ -822,13 +1139,14 @@ export class MotorsportAudioEngine {
       const item = ranked[i];
       if (!item) {
         voice.gain.gain.setTargetAtTime(0, now, 0.06);
+        voice.wasActive = false;
+        voice.lastOppId = null;
         continue;
       }
       const { opp, dx, dz, dist } = item;
       const safeDist = Math.max(2.5, dist);
-      // Distance attenuation + stereo pan
+      // Distance attenuation
       const atten = Math.max(0, Math.min(1, 1 - (safeDist - 3) / 58));
-      const pan = Math.max(-0.92, Math.min(0.92, (dx * rightX + dz * rightZ) / Math.max(6, safeDist)));
 
       // Doppler shift based on radial closing velocity (speed of sound = 343 m/s)
       const invD = 1 / safeDist;
@@ -850,8 +1168,18 @@ export class MotorsportAudioEngine {
         now,
         0.04,
       );
-      voice.panner.pan.setTargetAtTime(pan, now, 0.035);
+
+      if (voice.panner3d) {
+        const snap = !voice.wasActive || voice.lastOppId !== opp.id;
+        this.applyPannerPosition(voice.panner3d, opp.x, opp.y ?? 0, opp.z, now, snap);
+      } else if (voice.stereoFallback) {
+        const pan = Math.max(-0.92, Math.min(0.92, (dx * rightX + dz * rightZ) / Math.max(6, safeDist)));
+        voice.stereoFallback.pan.setTargetAtTime(pan, now, 0.035);
+      }
+
       voice.gain.gain.setTargetAtTime(atten * atten * (opp.isElectric ? 0.08 : 0.13), now, 0.04);
+      voice.wasActive = true;
+      voice.lastOppId = opp.id;
     }
   }
 
@@ -861,6 +1189,8 @@ export class MotorsportAudioEngine {
     surface?: TrackSurfaceType;
     inCockpit?: boolean;
     inTunnel?: boolean;
+    streetCanyon?: number;
+    reverbMix?: number;
   }): void {
     if (!this.initialized || !this.ctx || this.muted) return;
     const now = this.ctx.currentTime;
@@ -893,7 +1223,11 @@ export class MotorsportAudioEngine {
       this.cabinFilter.frequency.setTargetAtTime(params.inCockpit ? 3800 : 18000, now, 0.08);
     }
     if (this.tunnelWetGain) {
-      this.tunnelWetGain.gain.setTargetAtTime(params.inTunnel ? 0.32 : 0, now, 0.12);
+      const canyonMix = Math.max(0, Math.min(1, params.streetCanyon ?? 0)) * 0.22;
+      const customMix =
+        params.reverbMix !== undefined ? Math.max(0, Math.min(0.5, params.reverbMix)) : canyonMix;
+      const targetWet = params.inTunnel ? 0.36 : customMix;
+      this.tunnelWetGain.gain.setTargetAtTime(targetWet, now, 0.12);
     }
   }
 
@@ -1617,9 +1951,24 @@ export class MotorsportAudioEngine {
         try {
           v.osc.stop();
           v.subOsc.stop();
+          v.panner3d?.disconnect();
+          v.stereoFallback?.disconnect();
+          v.gain.disconnect();
         } catch {}
       }
       this.opponentVoices = [];
+      try {
+        this.tunnelPreFilter?.disconnect();
+        this.tunnelConvolver?.disconnect();
+        this.tunnelDelay?.disconnect();
+        this.tunnelFeedback?.disconnect();
+        this.tunnelWetGain?.disconnect();
+      } catch {}
+      this.tunnelPreFilter = null;
+      this.tunnelConvolver = null;
+      this.tunnelDelay = null;
+      this.tunnelFeedback = null;
+      this.tunnelWetGain = null;
       this.ctx?.close();
     } catch {
       // ignore
