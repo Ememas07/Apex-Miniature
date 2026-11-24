@@ -41,14 +41,16 @@ export interface RaceResultReportEntry {
 
 export interface ExtendedRaceConfig extends RaceConfig {
   mandatoryServiceStop?: boolean;
-  playlist?: PlaylistEntry[];
+  playlist?: string[];
+  playlistEntries?: PlaylistEntry[];
   playlistIndex?: number;
 }
 
 export interface ExtendedRoomState extends RoomState {
   config: Partial<ExtendedRaceConfig>;
   bannedPeerIds?: string[];
-  playlist?: PlaylistEntry[];
+  playlist?: string[];
+  playlistEntries?: PlaylistEntry[];
   playlistIndex?: number;
   leaderboard?: ServerLeaderboardEntry[];
 }
@@ -1311,7 +1313,9 @@ export class MultiplayerClient {
       return;
     }
     const extRoom = this.room as ExtendedRoomState;
-    const playlist = normalizePlaylist(extRoom.config?.playlist ?? extRoom.playlist);
+    const playlist = normalizePlaylist(
+      extRoom.config?.playlistEntries ?? extRoom.playlistEntries ?? extRoom.config?.playlist ?? extRoom.playlist,
+    );
     const currentIndex = Number(extRoom.config?.playlistIndex ?? extRoom.playlistIndex ?? 0);
     const { nextIndex, entry, votedTrackId } = resolveNextPlaylistIndex(playlist, currentIndex, this.room.trackVotes);
     const nextTrackId = entry?.trackId ?? votedTrackId ?? extRoom.config?.trackId;

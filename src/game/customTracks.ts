@@ -1,14 +1,16 @@
-import { SceneryTheme, TrackRegion, TrackSpec, TrackWaypoint } from './types';
+import { SceneryTheme, TrackRegion, TrackSpec, TrackSurfaceType, TrackWaypoint } from './types';
 
-export type SegmentSurfaceType = 'grass' | 'asphalt' | 'gravel' | 'sand' | 'astroturf';
-export type SegmentPropType = 'none' | 'grandstand' | 'trees' | 'bridge' | 'tunnel' | 'barriers';
+export type SegmentSurfaceType = 'grass' | 'asphalt' | 'gravel' | 'concrete-runoff' | 'astroturf';
+export type SegmentPropType = 'none' | 'grandstand' | 'trees' | 'bridge' | 'tunnel';
 
-export const VALID_SEGMENT_SURFACES: readonly SegmentSurfaceType[] = [
+export const VALID_SEGMENT_SURFACES: readonly TrackSurfaceType[] = [
   'grass',
   'asphalt',
   'gravel',
-  'sand',
+  'concrete-runoff',
   'astroturf',
+  'kerb',
+  'sausage-kerb',
 ];
 
 export const VALID_SEGMENT_PROPS: readonly SegmentPropType[] = [
@@ -17,18 +19,15 @@ export const VALID_SEGMENT_PROPS: readonly SegmentPropType[] = [
   'trees',
   'bridge',
   'tunnel',
-  'barriers',
 ];
 
 export interface StudioTrackWaypoint extends TrackWaypoint {
-  surfaceLeft?: SegmentSurfaceType;
-  surfaceRight?: SegmentSurfaceType;
+  surfaceLeft?: TrackSurfaceType;
+  surfaceRight?: TrackSurfaceType;
   propType?: SegmentPropType;
 }
 
-export interface StudioTrackSpec extends Omit<TrackSpec, 'waypoints'> {
-  waypoints: StudioTrackWaypoint[];
-}
+export type StudioTrackSpec = TrackSpec;
 
 export interface CommunityTrackEntry {
   id: string;
@@ -42,7 +41,7 @@ export interface CommunityTrackEntry {
   upvotes: number;
   createdAt: number;
   updatedAt: number;
-  trackSpec: StudioTrackSpec;
+  trackSpec: TrackSpec;
 }
 
 export const CUSTOM_TRACKS_STORAGE_KEY = 'apex_miniature_custom_tracks';
@@ -347,13 +346,13 @@ export function createCustomTrackSpec(
     trackWidth?: number;
     kerbPrimary?: string;
     kerbSecondary?: string;
-    waypoints: StudioTrackWaypoint[];
+    waypoints: TrackWaypoint[];
     startNodeIndex?: number;
     pitSide?: 'left' | 'right';
   },
-): StudioTrackSpec {
+): TrackSpec {
   const id = opts.id || `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  const waypoints: StudioTrackWaypoint[] = opts.waypoints.map((wp) => ({ ...wp }));
+  const waypoints: TrackWaypoint[] = opts.waypoints.map((wp) => ({ ...wp }));
 
   // Rotate waypoints if startNodeIndex is designated
   if (opts.startNodeIndex !== undefined && opts.startNodeIndex > 0 && opts.startNodeIndex < waypoints.length) {
@@ -551,9 +550,9 @@ export function exportTrackToShareCode(track: StudioTrackSpec | TrackSpec): stri
   }
 }
 
-function normalizeSegmentSurface(raw: unknown): SegmentSurfaceType | undefined {
+function normalizeSegmentSurface(raw: unknown): TrackSurfaceType | undefined {
   if (typeof raw !== 'string') return undefined;
-  const val = raw.trim() as SegmentSurfaceType;
+  const val = raw.trim() as TrackSurfaceType;
   return (VALID_SEGMENT_SURFACES as readonly string[]).includes(val) ? val : undefined;
 }
 
@@ -566,7 +565,7 @@ function normalizeSegmentProp(raw: unknown): SegmentPropType | undefined {
 /**
  * Import custom track from JSON string or share code
  */
-export function importTrackFromString(inputStr: string): { success: boolean; track?: StudioTrackSpec; error?: string } {
+export function importTrackFromString(inputStr: string): { success: boolean; track?: TrackSpec; error?: string } {
   const trimmed = inputStr.trim();
   if (!trimmed) {
     return { success: false, error: 'Input code is empty.' };
@@ -590,10 +589,7 @@ export function importTrackFromString(inputStr: string): { success: boolean; tra
         const surfaceLeft = normalizeSegmentSurface(row[6]);
         const surfaceRight = normalizeSegmentSurface(row[7]);
         const propType = normalizeSegmentProp(row[8]);
-        const sceneryProp =
-          propType && propType !== 'barriers'
-            ? (propType as TrackWaypoint['sceneryProp'])
-            : undefined;
+        const sceneryProp = propType;
         const primarySurface = surfaceLeft ?? surfaceRight;
         const runoff =
           primarySurface === 'asphalt' || primarySurface === 'grass' || primarySurface === 'gravel'
@@ -708,7 +704,7 @@ function evalCatmullSegment(
  * Returns splice insertion index (`i + 1`) and interpolated waypoint properties.
  */
 export function findTrackSegmentInsertIndex(
-  waypoints: StudioTrackWaypoint[],
+  waypoints: TrackWaypoint[],
   targetX: number,
   targetZ: number,
   defaultTrackWidth = 17,
@@ -716,7 +712,7 @@ export function findTrackSegmentInsertIndex(
   insertIndex: number;
   segmentIndex: number;
   distance: number;
-  waypoint: StudioTrackWaypoint;
+  waypoint: TrackWaypoint;
 } {
   const n = waypoints.length;
   if (n < 2) {
@@ -761,8 +757,8 @@ export function findTrackSegmentInsertIndex(
     }
   }
 
-  const a = waypoints[bestSeg];
-  const b = waypoints[(bestSeg + 1) % n];
+  const a = waypoints[bestSeg] as StudioTrackWaypoint;
+  const b = waypoints[(bestSeg + 1) % n] as StudioTrackWaypoint;
   const y = Math.round(((a.y ?? 0) + ((b.y ?? 0) - (a.y ?? 0)) * bestLocalT) * 10) / 10;
   const width = Math.round(
     (a.width ?? defaultTrackWidth) + ((b.width ?? defaultTrackWidth) - (a.width ?? defaultTrackWidth)) * bestLocalT,
@@ -771,24 +767,26 @@ export function findTrackSegmentInsertIndex(
   const tension =
     Math.round(((a.tension ?? 0.5) + ((b.tension ?? 0.5) - (a.tension ?? 0.5)) * bestLocalT) * 100) / 100;
 
+  const wpOut: StudioTrackWaypoint = {
+    x: Math.round(targetX),
+    y,
+    z: Math.round(targetZ),
+    width,
+    banking,
+    tension,
+    ...(a.surfaceLeft ? { surfaceLeft: a.surfaceLeft } : {}),
+    ...(a.surfaceRight ? { surfaceRight: a.surfaceRight } : {}),
+    ...(a.propType ? { propType: a.propType } : {}),
+    ...(a.sceneryProp ? { sceneryProp: a.sceneryProp } : {}),
+    ...(a.runoff ? { runoff: a.runoff } : {}),
+    ...(a.drsZone ? { drsZone: a.drsZone } : {}),
+  };
+
   return {
     insertIndex: bestSeg + 1,
     segmentIndex: bestSeg,
     distance: Math.sqrt(bestDistSq),
-    waypoint: {
-      x: Math.round(targetX),
-      y,
-      z: Math.round(targetZ),
-      width,
-      banking,
-      tension,
-      ...(a.surfaceLeft ? { surfaceLeft: a.surfaceLeft } : {}),
-      ...(a.surfaceRight ? { surfaceRight: a.surfaceRight } : {}),
-      ...(a.propType ? { propType: a.propType } : {}),
-      ...(a.sceneryProp ? { sceneryProp: a.sceneryProp } : {}),
-      ...(a.runoff ? { runoff: a.runoff } : {}),
-      ...(a.drsZone ? { drsZone: a.drsZone } : {}),
-    },
+    waypoint: wpOut,
   };
 }
 

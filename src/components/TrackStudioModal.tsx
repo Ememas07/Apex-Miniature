@@ -62,7 +62,7 @@ const SURFACE_BRUSH_META: Record<SegmentSurfaceType, { label: string; color: str
   grass: { label: 'Turf / Grass', color: 'rgba(34, 197, 94, 0.34)', badge: '#22c55e' },
   asphalt: { label: 'Asphalt Runoff', color: 'rgba(100, 116, 139, 0.42)', badge: '#94a3b8' },
   gravel: { label: 'Gravel Trap', color: 'rgba(217, 119, 6, 0.38)', badge: '#f59e0b' },
-  sand: { label: 'Desert Sand', color: 'rgba(234, 179, 8, 0.36)', badge: '#eab308' },
+  'concrete-runoff': { label: 'Concrete Runoff', color: 'rgba(203, 213, 225, 0.34)', badge: '#cbd5e1' },
   astroturf: { label: 'Astroturf', color: 'rgba(16, 185, 129, 0.38)', badge: '#10b981' },
 };
 
@@ -72,7 +72,6 @@ const PROP_BRUSH_META: Record<SegmentPropType, { label: string; short: string; c
   trees: { label: 'Tree Grove', short: 'TR', color: '#22c55e' },
   bridge: { label: 'Bridge', short: 'BR', color: '#06b6d4' },
   tunnel: { label: 'Tunnel', short: 'TN', color: '#a855f7' },
-  barriers: { label: 'Barriers', short: 'WL', color: '#ef4444' },
 };
 
 function GalleryTrackMini({ track }: { track: TrackSpec }) {
@@ -306,7 +305,7 @@ export function TrackStudioModal({
       const patch: Partial<StudioTrackWaypoint> = {};
       if (paintTarget === 'propType') {
         patch.propType = paintProp;
-        patch.sceneryProp = paintProp === 'barriers' ? 'none' : paintProp;
+        patch.sceneryProp = paintProp;
       } else {
         if (paintTarget === 'surfaceLeft' || paintTarget === 'both') {
           patch.surfaceLeft = paintSurface;
@@ -656,15 +655,16 @@ export function TrackStudioModal({
           const s0 = samples[i];
           const s1 = samples[(i + 1) % samples.length];
           const segIdx = Math.min(nWps - 1, Math.floor(s0.t * nWps));
-          const wp = trackSpec.waypoints[segIdx];
+          const wp = trackSpec.waypoints[segIdx] as StudioTrackWaypoint | undefined;
           const hw0 = s0.width ? s0.width * 0.5 : trackSpec.trackWidth * 0.5;
           const hw1 = s1.width ? s1.width * 0.5 : trackSpec.trackWidth * 0.5;
           const shoulderW = 4.6;
 
+          const fallbackSurf: SegmentSurfaceType = trackSpec.scenery === 'desert' ? 'gravel' : 'grass';
           const leftSurf: SegmentSurfaceType =
-            wp?.surfaceLeft ?? (wp?.runoff as SegmentSurfaceType | undefined) ?? (trackSpec.scenery === 'desert' ? 'sand' : 'grass');
+            ((wp?.surfaceLeft ?? wp?.runoff ?? fallbackSurf) as SegmentSurfaceType);
           const rightSurf: SegmentSurfaceType =
-            wp?.surfaceRight ?? (wp?.runoff as SegmentSurfaceType | undefined) ?? (trackSpec.scenery === 'desert' ? 'sand' : 'grass');
+            ((wp?.surfaceRight ?? wp?.runoff ?? fallbackSurf) as SegmentSurfaceType);
 
           // Left shoulder (-nx)
           const lInner0 = toScreen(s0.x - s0.nx * hw0, s0.z - s0.nz * hw0);
@@ -751,7 +751,7 @@ export function TrackStudioModal({
 
         // Per-segment propType trackside badges
         for (let idx = 0; idx < nWps; idx++) {
-          const wp = trackSpec.waypoints[idx];
+          const wp = trackSpec.waypoints[idx] as StudioTrackWaypoint;
           const prop = wp.propType ?? wp.sceneryProp;
           if (!prop || prop === 'none') continue;
           const meta = PROP_BRUSH_META[prop];
@@ -1589,7 +1589,7 @@ export function TrackStudioModal({
     return () => clearTimeout(timer);
   }, [compiledTrack, trackSpec.scenery]);
 
-  const selectedWp = trackSpec.waypoints[selectedNodeIndex] ?? trackSpec.waypoints[0];
+  const selectedWp = (trackSpec.waypoints[selectedNodeIndex] ?? trackSpec.waypoints[0]) as StudioTrackWaypoint;
   const isStartFinish = selectedNodeIndex === (trackSpec.startNodeIndex ?? 0);
 
   return (
@@ -2256,7 +2256,7 @@ export function TrackStudioModal({
                       <option value="grass">Turf / Grass</option>
                       <option value="asphalt">Asphalt Apron</option>
                       <option value="gravel">Gravel Trap</option>
-                      <option value="sand">Desert Sand</option>
+                      <option value="concrete-runoff">Concrete Runoff</option>
                       <option value="astroturf">Astroturf</option>
                     </select>
                   </div>
@@ -2277,7 +2277,7 @@ export function TrackStudioModal({
                       <option value="grass">Turf / Grass</option>
                       <option value="asphalt">Asphalt Apron</option>
                       <option value="gravel">Gravel Trap</option>
-                      <option value="sand">Desert Sand</option>
+                      <option value="concrete-runoff">Concrete Runoff</option>
                       <option value="astroturf">Astroturf</option>
                     </select>
                   </div>
@@ -2290,7 +2290,7 @@ export function TrackStudioModal({
                         const val = e.target.value as SegmentPropType;
                         updateWaypoint(selectedNodeIndex, {
                           propType: val,
-                          sceneryProp: val === 'barriers' ? 'none' : val,
+                          sceneryProp: val,
                         });
                       }}
                       className="w-full px-2 py-1 rounded bg-black/40 border border-white/15 text-slate-200 text-xs outline-none"
@@ -2300,7 +2300,6 @@ export function TrackStudioModal({
                       <option value="trees">Tree Grove</option>
                       <option value="bridge">Sponsor Bridge</option>
                       <option value="tunnel">Tunnel Portal</option>
-                      <option value="barriers">Concrete Barriers</option>
                     </select>
                   </div>
                 </div>

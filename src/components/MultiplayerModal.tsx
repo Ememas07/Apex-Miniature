@@ -279,8 +279,23 @@ export function MultiplayerModal({
   const extRoom = room as ExtendedRoomState | null;
   const mandatoryServiceStop = Boolean(extConfig.mandatoryServiceStop);
   const playlist = useMemo(
-    () => normalizePlaylist(extRoom?.config?.playlist ?? extRoom?.playlist ?? extConfig.playlist),
-    [extRoom?.config?.playlist, extRoom?.playlist, extConfig.playlist],
+    () =>
+      normalizePlaylist(
+        extRoom?.config?.playlistEntries ??
+          extRoom?.playlistEntries ??
+          extConfig.playlistEntries ??
+          extRoom?.config?.playlist ??
+          extRoom?.playlist ??
+          extConfig.playlist,
+      ),
+    [
+      extRoom?.config?.playlistEntries,
+      extRoom?.playlistEntries,
+      extConfig.playlistEntries,
+      extRoom?.config?.playlist,
+      extRoom?.playlist,
+      extConfig.playlist,
+    ],
   );
   const playlistIndex = Math.max(
     0,
@@ -302,13 +317,18 @@ export function MultiplayerModal({
       totalLaps: config.totalLaps > 0 ? config.totalLaps : 5,
       ...(config.customTrack ? { customTrack: config.customTrack } : {}),
     };
-    updateExtendedConfig({ playlist: [...playlist, entry] });
+    const next = [...playlist, entry];
+    updateExtendedConfig({
+      playlist: next.map((p) => p.trackId),
+      playlistEntries: next,
+    });
   };
 
   const handleRemovePlaylistItem = (indexToRemove: number) => {
     const next = playlist.filter((_, i) => i !== indexToRemove);
     updateExtendedConfig({
-      playlist: next,
+      playlist: next.map((p) => p.trackId),
+      playlistEntries: next,
       playlistIndex: Math.min(playlistIndex, Math.max(0, next.length - 1)),
     });
   };
@@ -1061,7 +1081,7 @@ export function MultiplayerModal({
                       {playlist.length > 0 && (
                         <button
                           type="button"
-                          onClick={() => updateExtendedConfig({ playlist: [], playlistIndex: 0 })}
+                          onClick={() => updateExtendedConfig({ playlist: [], playlistEntries: [], playlistIndex: 0 })}
                           className="px-2 py-1 rounded bg-[#181f2c] hover:bg-rose-950/60 border border-white/10 text-[11px] text-slate-400 hover:text-rose-200 cursor-pointer"
                         >
                           Clear

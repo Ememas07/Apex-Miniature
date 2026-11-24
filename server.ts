@@ -15,13 +15,17 @@ import {
 import {
   CommunityTrackEntry,
   STARTER_TEMPLATES,
+  SegmentPropType,
   StudioTrackSpec,
+  StudioTrackWaypoint,
+  VALID_SEGMENT_PROPS,
+  VALID_SEGMENT_SURFACES,
   analyzeTrackGeometry,
   createCustomTrackSpec,
   isValidTrackSpecObject,
 } from './src/game/customTracks';
 import { compileTrack, getTrackById } from './src/game/tracks';
-import { TrackSpec } from './src/game/types';
+import { SceneryTheme, TrackSpec, TrackSurfaceType } from './src/game/types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -252,10 +256,32 @@ function recordValidatedFastestLap(entry: ServerLeaderboardEntry): { accepted: b
   return { accepted: true, minValidSeconds };
 }
 
+const VALID_SCENERY_THEMES: readonly SceneryTheme[] = [
+  'stadium',
+  'forest',
+  'desert',
+  'street-night',
+  'coastal',
+  'parkland',
+];
+
+function sanitizePlaylistEntries(raw: unknown): PlaylistEntry[] {
+  return normalizePlaylist(raw);
+}
+
 function sanitizeRoomConfig(rawConfig: Record<string, unknown>): Record<string, unknown> {
   const cfg = { ...rawConfig };
+  if ('playlistEntries' in cfg) {
+    const entries = sanitizePlaylistEntries(cfg.playlistEntries);
+    cfg.playlistEntries = entries;
+    cfg.playlist = entries.map((e) => e.trackId);
+  }
   if ('playlist' in cfg) {
-    cfg.playlist = normalizePlaylist(cfg.playlist);
+    const entries = sanitizePlaylistEntries(cfg.playlist);
+    cfg.playlist = entries.map((e) => e.trackId);
+    if (!('playlistEntries' in cfg) && Array.isArray(rawConfig.playlist) && rawConfig.playlist.some((x) => typeof x === 'object')) {
+      cfg.playlistEntries = entries;
+    }
   }
   if ('playlistIndex' in cfg) {
     const idx = Number(cfg.playlistIndex);
@@ -269,7 +295,7 @@ function sanitizeRoomConfig(rawConfig: Record<string, unknown>): Record<string, 
 
 function advanceRoomTrackOrPlaylist(room: RoomRecord): boolean {
   const cfg = room.config as Record<string, unknown>;
-  const playlist: PlaylistEntry[] = normalizePlaylist(cfg.playlist);
+  const playlist: PlaylistEntry[] = normalizePlaylist(cfg.playlistEntries ?? cfg.playlist);
   const currentIdx = Number.isFinite(Number(cfg.playlistIndex)) ? Math.max(0, Math.floor(Number(cfg.playlistIndex))) : 0;
   const hasVotes = Object.keys(room.trackVotes).length > 0;
   if (!hasVotes && playlist.length === 0) {
@@ -354,6 +380,7 @@ function serializeRoom(room: RoomRecord) {
     players[p.peerId] = p;
   }
   const trackId = String(cfg?.trackId || 'monza');
+  const entries = normalizePlaylist(cfg?.playlistEntries ?? cfg?.playlist);
   return {
     code: room.code,
     hostId: room.hostId,
@@ -365,7 +392,8 @@ function serializeRoom(room: RoomRecord) {
     peers: peersList,
     players,
     bannedPeerIds: Array.from(room.bannedPeerIds),
-    playlist: normalizePlaylist(cfg?.playlist),
+    playlist: entries.map((e) => e.trackId),
+    playlistEntries: entries,
     playlistIndex: Number.isFinite(Number(cfg?.playlistIndex)) ? Math.max(0, Math.floor(Number(cfg?.playlistIndex))) : 0,
     leaderboard: getTrackLeaderboard(trackId).slice(0, 20),
     chatMessages: room.chatMessages,
@@ -533,8 +561,52 @@ async function startServer() {
         res.status(400).json({ error: 'Invalid track payload: must include name and at least 4 waypoints.' });
         return;
       }
+      if (rawTrack.waypoints.length > 250) {
+        res.status(400).json({ error: 'Track exceeds maximum of 250 waypoints.' });
+        return;
+      }
       const cleanName = sanitizeText(rawTrack.name, 40) || 'Community Circuit';
       const author = sanitizeText(body.author ?? rawTrack.author, 24) || 'Track Designer';
+      const rawScenery = typeof rawTrack.scenery === 'string' ? rawTrack.scenery.trim() : '';
+      const scenery: SceneryTheme = (VALID_SCENERY_THEMES as readonly string[]).includes(rawScenery)
+        ? (rawScenery as SceneryTheme)
+        : 'stadium';
+      const sanitizedWaypoints: StudioTrackWaypoint[] = rawTrack.waypoints.map((wp) => {
+        const w = wp as unknown as Record<string, unknown>;
+        const x = Number.isFinite(Number(w.x)) ? Math.max(-5000, Math.min(5000, Number(w.x))) : 0;
+        const y = Number.isFinite(Number(w.y)) ? Math.max(-50, Math.min(100, Number(w.y))) : 0;
+        const z = Number.isFinite(Number(w.z)) ? Math.max(-5000, Math.min(5000, Number(w.z))) : 0;
+        const cleanWp: StudioTrackWaypoint = { x, y, z };
+        if (typeof w.width === 'number' && Number.isFinite(w.width)) {
+          cleanWp.width = Math.max(10, Math.min(30, w.width));
+        }
+        if (typeof w.banking === 'number' && Number.isFinite(w.banking)) {
+          cleanWp.banking = Math.max(-25, Math.min(25, w.banking));
+        }
+        if (typeof w.tension === 'number' && Number.isFinite(w.tension)) {
+          cleanWp.tension = Math.max(0.1, Math.min(0.95, w.tension));
+        }
+        if (typeof w.surfaceLeft === 'string' && (VALID_SEGMENT_SURFACES as readonly string[]).includes(w.surfaceLeft)) {
+          cleanWp.surfaceLeft = w.surfaceLeft as TrackSurfaceType;
+        }
+        if (typeof w.surfaceRight === 'string' && (VALID_SEGMENT_SURFACES as readonly string[]).includes(w.surfaceRight)) {
+          cleanWp.surfaceRight = w.surfaceRight as TrackSurfaceType;
+        }
+        if (typeof w.propType === 'string' && (VALID_SEGMENT_PROPS as readonly string[]).includes(w.propType)) {
+          cleanWp.propType = w.propType as SegmentPropType;
+        }
+        if (typeof w.sceneryProp === 'string' && (VALID_SEGMENT_PROPS as readonly string[]).includes(w.sceneryProp)) {
+          cleanWp.sceneryProp = w.sceneryProp as SegmentPropType;
+        }
+        if (w.runoff === 'asphalt' || w.runoff === 'grass' || w.runoff === 'gravel') {
+          cleanWp.runoff = w.runoff;
+        }
+        if (typeof w.drsZone === 'boolean') {
+          cleanWp.drsZone = w.drsZone;
+        }
+        return cleanWp;
+      });
+
       const now = Date.now();
       const rawId = sanitizeText(rawTrack.id, 64);
       const needsFreshId = !rawId || rawId.startsWith('template-') || communityTracks.has(rawId);
@@ -544,7 +616,7 @@ async function startServer() {
         id,
         name: cleanName,
         country: sanitizeText(rawTrack.country, 24) || 'Global',
-        scenery: (rawTrack.scenery as TrackSpec['scenery']) || 'stadium',
+        scenery,
         trackWidth:
           typeof rawTrack.trackWidth === 'number' && Number.isFinite(rawTrack.trackWidth)
             ? Math.max(12, Math.min(24, rawTrack.trackWidth))
@@ -556,7 +628,7 @@ async function startServer() {
           typeof rawTrack.startNodeIndex === 'number' && Number.isFinite(rawTrack.startNodeIndex)
             ? Math.max(0, Math.floor(rawTrack.startNodeIndex))
             : 0,
-        waypoints: rawTrack.waypoints,
+        waypoints: sanitizedWaypoints,
       });
       if (Array.isArray(rawTrack.sectorSplits) && rawTrack.sectorSplits.length === 2) {
         builtSpec.sectorSplits = [Number(rawTrack.sectorSplits[0]) || 0.33, Number(rawTrack.sectorSplits[1]) || 0.67];
