@@ -582,7 +582,9 @@ export default function App() {
     if (activeRoom && wasInSession && mp && activeRoom.hostId === mp.peerId) {
       mp.returnToLobby();
       if (mp.connectionMode !== 'server' && activeRoom.started) {
-        mp.advancePlaylist();
+        if (phaseRef.current !== 'gameover') {
+          mp.advancePlaylist();
+        }
         const updatedRoom: RoomState = { ...(mp.room ?? activeRoom), started: false };
         mp.room = updatedRoom;
         setRoom(updatedRoom);
