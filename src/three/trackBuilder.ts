@@ -2008,6 +2008,7 @@ export function buildTrackEnvironment(
       baseInst.computeBoundingSphere();
       bollardPostInst.instanceMatrix.needsUpdate = true;
       bollardPostInst.computeBoundingSphere();
+      bollardPostInst.frustumCulled = false;
       bollardPostInst.castShadow = true;
       group.add(baseInst, bollardPostInst);
     }

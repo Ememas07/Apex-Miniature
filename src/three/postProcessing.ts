@@ -175,10 +175,12 @@ const MiniaturePostShader = {
           col.r = mix(col.r, rCh, edge * uChromaticStreak * 0.65);
           col.b = mix(col.b, bCh, edge * uChromaticStreak * 0.65);
 
-          float ang = atan(dir.y, dir.x);
-          float streakWave = pow(abs(sin(ang * 44.0 + fract(radDist * 3.0) * 0.35)), 14.0);
           float outerMask = smoothstep(0.36, 0.76, radDist);
-          col += vec3(0.85, 0.93, 1.0) * (streakWave * outerMask * uChromaticStreak * 0.085);
+          if (outerMask > 0.001) {
+            float ang = atan(dir.y, dir.x);
+            float streakWave = pow(max(abs(sin(ang * 44.0 + fract(radDist * 3.0) * 0.35)), 0.0001), 14.0);
+            col += vec3(0.85, 0.93, 1.0) * (streakWave * outerMask * uChromaticStreak * 0.085);
+          }
         }
       }
 
