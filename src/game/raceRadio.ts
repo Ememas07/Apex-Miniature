@@ -22,6 +22,7 @@ export class RaceEngineerRadio {
   private verbosity: EngineerVerbosity = 'full';
   private volume = 0.85;
   private muted = false;
+  private voiceEnabled = false;
   private currentSubtitle: string | null = null;
   private subtitleExpiresAt = 0;
   private lastSpokenAt = -10;
@@ -39,10 +40,18 @@ export class RaceEngineerRadio {
     this.onRadioChirp = onRadioChirp;
   }
 
-  public configure(opts: { verbosity: EngineerVerbosity; volume: number; muted: boolean }): void {
+  public configure(opts: {
+    verbosity: EngineerVerbosity;
+    volume: number;
+    muted: boolean;
+    voiceEnabled?: boolean;
+  }): void {
     this.verbosity = opts.verbosity;
     this.volume = Math.max(0, Math.min(1, opts.volume));
     this.muted = opts.muted;
+    if (typeof opts.voiceEnabled === 'boolean') {
+      this.voiceEnabled = opts.voiceEnabled;
+    }
   }
 
   public reset(): void {
@@ -85,7 +94,7 @@ export class RaceEngineerRadio {
     this.currentSubtitle = text;
     this.subtitleExpiresAt = nowSec + 3.6;
 
-    if (!this.muted && this.volume > 0.02) {
+    if (this.voiceEnabled && !this.muted && this.volume > 0.02) {
       this.onRadioChirp?.();
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         try {

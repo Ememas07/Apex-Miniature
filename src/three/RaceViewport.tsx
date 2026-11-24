@@ -367,7 +367,7 @@ export function RaceViewport(props: RaceViewportProps) {
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    renderer.toneMappingExposure = 1.0;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -389,10 +389,10 @@ export function RaceViewport(props: RaceViewportProps) {
     const camera = new THREE.PerspectiveCamera(52, w / h, 0.12, 950);
 
     // Warm Sun + Cool Sky Hemisphere Fill
-    const hemi = new THREE.HemisphereLight(0xbbe1ff, 0x2f3b2f, 0.78);
+    const hemi = new THREE.HemisphereLight(0xbbe1ff, 0x2f3b2f, 0.68);
     scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff1d6, 1.9);
+    const sun = new THREE.DirectionalLight(0xfff1d6, 1.55);
     sun.position.set(120, 180, 90);
     sun.castShadow = !isSoftwareGl;
     sun.shadow.mapSize.set(1024, 1024);
@@ -406,7 +406,7 @@ export function RaceViewport(props: RaceViewportProps) {
     scene.add(sun);
     scene.add(sun.target);
 
-    const rim = new THREE.DirectionalLight(0x93c5fd, 0.65);
+    const rim = new THREE.DirectionalLight(0x93c5fd, 0.4);
     rim.position.set(-140, 80, -120);
     scene.add(rim);
 
@@ -425,6 +425,7 @@ export function RaceViewport(props: RaceViewportProps) {
       verbosity: initSettings.engineerVerbosity,
       volume: initSettings.uiRadioVolume,
       muted: propsRef.current.muted,
+      voiceEnabled: initSettings.radioVoiceEnabled,
     });
 
     // Pooled InstancedMesh for Slipstream Airflow Trails & Rain
@@ -1804,6 +1805,7 @@ export function RaceViewport(props: RaceViewportProps) {
         verbosity: next.engineerVerbosity,
         volume: next.uiRadioVolume,
         muted: propsRef.current.muted,
+        voiceEnabled: next.radioVoiceEnabled,
       });
       if (!isSoftwareGl) {
         const dprCap = Math.min(window.devicePixelRatio, next.renderScale);

@@ -1,147 +1,170 @@
-# Apex Miniature — `v9_2` Physics-Aware AI Policy Training Guide
+# Apex Miniature — AI Training Guide (New Per-Class & Unified ANB1 `.bin` Models)
 
-This guide walks you through training the **`v9_2`** neural driving policy against the new advanced physics engine on your **AMD Ryzen 7 9800X3D + NVIDIA RTX 4060 (8GB)** rig.
-
----
-
-## 1. What Makes `v9_2` Different from `v9`?
-
-- **59-Input Physics-Aware Observation Vector** (vs. 43 inputs in `v5`–`v9`):
-  - **43 canonical features**: track lookahead curvature, heading/lateral errors, 8-sector traffic radar, speed/slip, car BoP capability.
-  - **16 new advanced physics features**:
-    1. Per-corner 4-wheel average tire wear & front/rear thermal balance
-    2. Tire overheating / cold-bite delta & max flat-spot / graining severity
-    3. Front & rear brake temperatures + brake fade factor
-    4. Brake wheel lock-up intensity
-    5. Dirty air / turbulent wake strength ahead
-    6. Local track wetness & standing-water puddle intensity
-    7. Track rubbering grip evolution
-    8. Surface classification penalty (gravel, grass, sausage kerb, astroturf)
-    9. Elevation crest unloading / dip compression load factor
-    10. Localized mechanical damage (front wing, rear wing, engine, suspension + steering pull)
-    11. Blue Flag yielding & Safety Car / VSC speed-limit compliance
-- **Upgraded Network**: `59 → 192 → 192 → 192 → 3` ResMLP with LayerNorm, Observation Normalization (`ObsNorm`), and orthogonal initialization.
-- **Domain Randomization in `headlessEnv.ts`**: Episodes randomize dry/wet tracks (30% wet), drying line vs. off-line puddles, track rubbering, track temperature, realistic vs. light damage, ABS (`off` / `low`), and realistic car setup variations.
-- **Zero-Friction Game Integration**: As soon as `src/game/aiPolicyWeights_v9_2.json` (and its `.bin` companion) is written by the trainer, refresh or rebuild the game — **`v9_2`** automatically unlocks in the **AI Policy Mix** panel!
+This guide covers everything you need to train, warm-start, benchmark, and ship the **new binary (`ANB1 .bin`) neural driving models** using `scripts/trainPPO.py` and `scripts/benchAndAudit.py`.
 
 ---
 
-## 2. Why Your Hardware (9800X3D + RTX 4060) Is Ideal
+## 1. Current Model Lineup & What Goes Where
 
-- **Ryzen 7 9800X3D (8 cores / 16 threads, 96MB 3D V-Cache)**: Physics simulation runs across multiple parallel Node.js (`tsx`) worker processes via binary IPC. The 9800X3D's massive L3 cache keeps the track spline tables and 96 concurrent cars hot in cache. `12` workers with `96` parallel envs saturates the CPU cleanly while leaving headroom for Windows + Python + CUDA.
-- **NVIDIA RTX 4060 (8GB VRAM)**: Handles the batched `49,152`-sample PPO updates (`96 envs × 512 steps`) in milliseconds using TF32/high-precision FP32 Tensor Cores (`torch.set_float32_matmul_precision("high")`), using < 1.2 GB VRAM.
+All runtime policies live in `public/models/policies/` as compact `ANB1` binary files. Vite automatically generates `/models/policies/manifest.json` from that folder (both in dev and on `npm run build`), so **any new `.bin` file saved there is picked up automatically by the game**.
+
+### A. Per-Class Pace Specialists (`--variant class_pace`, default)
+- **Architecture**: 59-dim physics-aware observations → `3 × 192` ResMLP with LayerNorm + ObsNorm → **signed zero-overlap pedal** (`steer`, signed `throttle/brake`)
+- **Saved to**: `public/models/policies/class_<slug>.bin` (best backup in `audit/class_<slug>.best.bin`)
+- **All 10 Car Classes**:
+  | Class ID | Output Binary | Status |
+  | :--- | :--- | :--- |
+  | `HYPERCAR_GTP` | `class_hypercar_gtp.bin` | Trained (good warm-start base) |
+  | `LMP2` | `class_lmp2.bin` | Needs training |
+  | `GT3` | `class_gt3.bin` | Needs training |
+  | `GT4` | `class_gt4.bin` | Needs training |
+  | `F1_2026` | `class_f1_2026.bin` | Needs training |
+  | `F1_2021` | `class_f1_2021.bin` | Needs training |
+  | `F1_2005` | `class_f1_2005.bin` | Needs training |
+  | `FORMULA_E` | `class_formula_e.bin` | Needs training |
+  | `TRACK_COUPE` | `class_track_coupe.bin` | Needs training |
+  | `SUPERCAR` | `class_supercar.bin` | Needs training |
+
+### B. Unified Multi-Class & Specialist Models
+- **`v1`** → `public/models/policies/aiPolicyWeights_v1.bin` — 59-dim Physics Master (`3 × 192` ResMLP, dry/wet, wear, brakes, damage)
+- **`v2`** → `public/models/policies/aiPolicyWeights_v2.bin` — 59-dim Racecraft & Turn-1 Master (tight packs, multi-class traffic, blue flags, cold-tire braking)
+- **`starts`** → `public/models/policies/aiPolicyWeights_starts.bin` — 43-dim Grid Launch & Turn-1 Specialist (`2 × 128` ResMLP, standing & rolling starts)
 
 ---
 
-## 3. One-Time Setup (Windows PowerShell)
+## 2. One-Time Environment Setup (Windows PowerShell)
 
-Open **PowerShell** in the project root folder (the folder containing `package.json`).
+Run these commands from the project root folder (where `package.json` lives):
 
-### Step A — Verify Node.js & Install Project Dependencies
 ```powershell
-node -v        # Should be v20.x or v22.x
+# 1. Install Node.js dependencies (Node 20+ or 22+)
 npm install
-```
 
-### Step B — Create a Python Virtual Environment (Python 3.11 or 3.12 recommended)
-```powershell
+# 2. Create & activate Python 3.12 virtual environment
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-*(If PowerShell blocks script activation, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once and retry.)*
+# (If blocked by execution policy, run once: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned)
 
-### Step C — Install PyTorch with CUDA 12.4 + NumPy
-```powershell
+# 3. Install NumPy + CUDA-enabled PyTorch (for NVIDIA RTX GPUs)
 python -m pip install --upgrade pip
 pip install numpy
 pip install torch --index-url https://download.pytorch.org/whl/cu124
-```
 
-### Step D — Verify Your RTX 4060 Is Visible to PyTorch
-```powershell
-python -c "import torch; print('CUDA:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')"
-```
-Expected output: `CUDA: True NVIDIA GeForce RTX 4060`
-
----
-
-## 4. Running `v9_2` Training
-
-Always activate the virtual environment first (`.\.venv\Scripts\Activate.ps1`).
-
-### 1) Fast Smoke Test (~15–20 minutes, 400 updates)
-Verifies workers, binary IPC, GPU speed, and checkpoint saving before committing to a long run:
-```powershell
-python scripts/trainV9_2.py --quick
-```
-
-### 2) Full Recommended `v9_2` Training Run (~2–3 hours, 2,500 updates)
-```powershell
-python scripts/trainV9_2.py
-```
-Default parameters tuned for 9800X3D + RTX 4060:
-- `--envs 96`
-- `--workers 12`
-- `--steps 512` (49,152 physics policy steps per update)
-- `--updates 2500` (~122M total policy steps across 3 curriculum phases!)
-- `--device cuda`
-
-### 3) Pausing & Resuming Later
-Press `Ctrl+C` safely at any time — the trainer writes `src/game/aiPolicyWeights_v9_2.json` atomically whenever a new best composite score is reached. To resume from where you left off:
-```powershell
-python scripts/trainV9_2.py --resume --updates 1500
-```
-
-### 4) Pushing Harder (Optional Tuning for Your 9800X3D)
-If Task Manager shows CPU usage under 80% during rollouts, you can bump workers and envs:
-```powershell
-python scripts/trainV9_2.py --envs 112 --workers 14 --updates 3000
-```
-
-### 5) Targeted Fine-Tuning on Specific Tracks or Cars
-```powershell
-python scripts/trainV9_2.py --resume --updates 600 --tracks monaco suzuka spa-francorchamps
+# 4. Confirm CUDA GPU visibility
+python -c "import torch; print('CUDA:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 ```
 
 ---
 
-## 5. Monitoring Progress & Using `v9_2` In-Game
+## 3. Training Workflows (Step-by-Step)
 
-- **Live Console Logs**: Prints mean speed (km/h), off-track %, crash %, lap completion count, and best composite score every update.
-- **Saved Outputs**:
-  - `src/game/aiPolicyWeights_v9_2.json` — Loaded automatically by the game.
-  - `src/game/aiPolicyWeights_v9_2.best.json` — Backup of highest-scoring checkpoint.
-  - `src/game/aiPolicyWeights_v9_2.bin` — Compact binary `ANB1` weights.
-  - `audit/ppo_metrics_v9_2.jsonl` — Full training history log.
-- **Using in Apex Miniature**:
-  1. Once `src/game/aiPolicyWeights_v9_2.json` exists, restart `npm run dev` (or run `npm run build`).
-  2. Open **Race Setup → AI Driving Model Mix**.
-  3. **`v9_2`** will now show as active — drag its slider to `100%` (or blend with `v9`)!
+Always activate `.venv` first (`.\.venv\Scripts\Activate.ps1`). Use `python -u` so logs flush immediately.
+
+### Step 1 — Quick Smoke Test (verify pipeline & GPU speed)
+Runs 400 updates (~10–15 min) on a single class:
+```powershell
+python -u scripts/trainPPO.py --car-class GT3 --quick --device cuda
+```
+
+### Step 2 — Train Individual Per-Class Models (Recommended: Transfer from `class_hypercar_gtp.bin`)
+Warm-starting new classes from your already-trained `class_hypercar_gtp.bin` skips the slow early "learning to stay on track" phase and converges much faster:
+
+```powershell
+# Example: train GT3 (warm-started from Hypercar GTP)
+python -u scripts/trainPPO.py --car-class GT3 --init-from public/models/policies/class_hypercar_gtp.bin --updates 1500 --device cuda
+
+# Example: train F1 2026
+python -u scripts/trainPPO.py --car-class F1_2026 --init-from public/models/policies/class_hypercar_gtp.bin --updates 1500 --device cuda
+
+# Example: train LMP2
+python -u scripts/trainPPO.py --car-class LMP2 --init-from public/models/policies/class_hypercar_gtp.bin --updates 1500 --device cuda
+```
+
+Repeat for the remaining classes (`GT4`, `F1_2021`, `F1_2005`, `FORMULA_E`, `TRACK_COUPE`, `SUPERCAR`), or use the batch command below.
+
+### Step 3 — Overnight Batch: Train All 10 Classes Sequentially
+```powershell
+python -u scripts/trainPPO.py --car-class all --updates 1500 --device cuda
+```
+*(By default, any class that already has a `.bin` file will resume from it rather than starting from zero. Add `--scratch` only if you want to discard existing weights for a target.)*
+
+### Optional A — Behavioral Cloning (BC) Warm-Start from Human Telemetry
+If you recorded human laps (`.jsonl` telemetry files in the project root or `audit/human_demos.jsonl`), you can pre-train the actor via sector-filtered Behavioral Cloning before PPO fine-tuning:
+
+```powershell
+python -u scripts/trainPPO.py `
+  --car-class HYPERCAR_GTP `
+  --bc-dataset telemetry_spa-francorchamps_ferrari-499p.jsonl `
+  --bc-epochs 18 `
+  --bc-anchor-coef 0.08 `
+  --updates 1500 `
+  --device cuda
+```
+
+### Optional B — Two-Stage Track Mastery (Single-Track Solo → All Tracks)
+To dial in pure pace on one flagship circuit first, then generalize to all 43 circuits:
+```powershell
+# Stage 1: Solo full-lap pace on Spa
+python -u scripts/trainPPO.py --car-class GT3 --solo-only --tracks spa-francorchamps --updates 800 --device cuda
+
+# Stage 2: Generalize across all tracks & traffic
+python -u scripts/trainPPO.py --car-class GT3 --init-from public/models/policies/class_gt3.bin --updates 1500 --device cuda
+```
+
+### Optional C — Retrain / Fine-Tune Unified `v1`, `v2`, or `starts`
+```powershell
+# Retrain v2 (multi-class racecraft, Turn-1 discipline, wet crossovers)
+python -u scripts/trainPPO.py --variant v2 --updates 2500 --device cuda
+
+# Retrain v1 (physics master)
+python -u scripts/trainPPO.py --variant v1 --updates 2500 --device cuda
+
+# Retrain starts (standing/rolling grid launches)
+python -u scripts/trainPPO.py --variant starts --updates 1200 --device cuda
+
+# Train both v1 and v2 sequentially
+python -u scripts/trainPPO.py --variant all --device cuda
+```
 
 ---
 
-## 6. Copy-Paste Prompt for Web-Search Gemini (Guided Setup & Troubleshooting)
+## 4. Pausing, Resuming & Hardware Tuning
 
-If you hit any Windows, Python, CUDA, or Node.js issue while setting up or running training, copy and paste this prompt into **Gemini (with Web Search enabled)**:
+- **Safe Pause**: Press `Ctrl+C` at any time. Checkpoints are written atomically to `public/models/policies/<model>.bin` (and best backup in `audit/`).
+- **Resume**: Run the exact same command **without** `--scratch` and `--init-from`; `trainPPO.py` automatically loads the existing `.bin` and continues training.
+- **Default Hardware Settings** (tuned for Ryzen 7 9800X3D + RTX 4060):
+  - `class_pace`: `--envs 64 --workers 12 --steps 1024 --updates 1500`
+  - `v1` / `v2`: `--envs 96 --workers 12 --steps 512 --updates 2500`
+  - `starts`: `--envs 48 --workers 8 --steps 512 --updates 1200`
+- **If CPU usage is below ~80%**, increase `--workers` / `--envs` (e.g. `--workers 14 --envs 80`). If RAM/CPU is saturated, lower `--workers 8 --envs 48`.
+- **Fallback IPC**: Binary IPC is enabled by default for maximum speed. Only add `--no-binary-ipc` if debugging pipe issues.
 
-```text
-I am training a custom PyTorch PPO reinforcement learning AI driver ("v9_2") for my local TypeScript/Vite racing game ("Apex Miniature").
+---
 
-My PC specs:
-- OS: Windows 11 (PowerShell)
-- CPU: AMD Ryzen 7 9800X3D (8 cores / 16 threads, 96MB 3D V-Cache)
-- GPU: NVIDIA GeForce RTX 4060 (8GB VRAM)
+## 5. Benchmarking & Auditing Trained Models
 
-How the training pipeline works:
-- Launcher script: `scripts/trainV9_2.py` (wraps `scripts/trainPPO.py --variant v9_2`)
-- Physics workers: Spawns 12 parallel `npx tsx scripts/headlessEnv.ts --binary-ipc` Node.js child processes communicating over binary stdin/stdout pipes.
-- Model: 59-dim input -> 3x192 ResMLP with LayerNorm + ObsNorm -> 3 continuous actions (steer, throttle, brake), trained on CUDA (`--device cuda`).
-- Output files: `src/game/aiPolicyWeights_v9_2.json` and `.bin`.
+After training a model, run deterministic benchmarks with `scripts/benchAndAudit.py` to check lap times, off-track %, crash %, and average speed:
 
-Please walk me step-by-step through:
-1. Checking my NVIDIA driver / CUDA version and installing the right CUDA-enabled PyTorch wheel for my RTX 4060 on Windows PowerShell inside a `.venv` (use web search to confirm the latest stable PyTorch CUDA wheel URL for Python 3.12 if needed).
-2. Verifying `node`, `npx tsx`, and `python scripts/trainV9_2.py --quick` run cleanly without Windows pipe/encoding/execution-policy errors.
-3. Interpreting the PPO output logs (explained variance, KL divergence, mean speed km/h, crash %) and troubleshooting any error message I paste to you next.
+```powershell
+# Audit a single class across benchmark circuits
+python -u scripts/benchAndAudit.py --car-class GT3
 
-Wait for me to paste my current terminal output or error after giving the initial setup checklist.
+# Audit a single class on one specific track
+python -u scripts/benchAndAudit.py --car-class HYPERCAR_GTP --tracks spa-francorchamps
+
+# Audit all trained per-class models
+python -u scripts/benchAndAudit.py --all-classes
+
+# Audit unified v1 / v2 / starts models
+python -u scripts/benchAndAudit.py --all
 ```
+
+Reports and JSON metrics are saved under `audit/`.
+
+---
+
+## 6. Loading the New Models In-Game
+
+1. Confirm your new `.bin` files exist in `public/models/policies/` (for example `class_gt3.bin`, `class_f1_2026.bin`, etc.).
+2. Refresh the browser in `npm run dev` (or run `npm run build` for production) — the Vite policy manifest plugin automatically updates `/models/policies/manifest.json`.
+3. Open **Race Setup → AI Policy Mix** to verify the newly trained class models are active and select your preferred mix.

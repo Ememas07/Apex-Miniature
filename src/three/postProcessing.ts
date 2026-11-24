@@ -24,9 +24,9 @@ export const DEFAULT_POST_CONFIG: PostProcessConfig = {
   tiltShiftStrength: 0.55,
   tiltShiftFocusY: 0.5,
   exposure: 1.0,
-  contrast: 1.04,
-  saturation: 1.06,
-  vignette: 0.18,
+  contrast: 1.02,
+  saturation: 1.02,
+  vignette: 0.14,
   speedIntensity: 0,
   filter: 'none',
 };
@@ -177,9 +177,9 @@ export class RacePostProcessor {
 
       const bloomPass = new UnrealBloomPass(
         new THREE.Vector2(Math.max(1, Math.floor(width / 2)), Math.max(1, Math.floor(height / 2))),
-        0.38, // subtle tasteful glow on brake lights, sparks, exhaust flames & floodlights
-        0.42,
-        0.86, // high threshold so normal sunlit car paint never blows out
+        0.16, // subtle glow strictly on emissive brake lights, sparks, flames & night floodlights
+        0.25,
+        1.28, // high HDR threshold so sunlit barriers, kerbs & white paint never bloom
       );
       composer.addPass(bloomPass);
 

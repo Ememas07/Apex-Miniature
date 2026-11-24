@@ -825,10 +825,11 @@ export function buildTrackEnvironment(
   const kerbTex = track(createKerbTexture(compiled.spec.kerbPrimary, compiled.spec.kerbSecondary, maxAniso));
   const kerbMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      color: 0xe2e8f0,
       map: kerbTex,
-      roughness: 0.55,
-      metalness: 0.05,
+      roughness: 0.84,
+      metalness: 0.02,
+      envMapIntensity: 0.25,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
@@ -898,26 +899,26 @@ export function buildTrackEnvironment(
     canvas.height = 128;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // Lower concrete jersey wall
-      ctx.fillStyle = '#cbd5e1';
+      // Lower weathered concrete jersey wall
+      ctx.fillStyle = '#9aa5b1';
       ctx.fillRect(0, 62, 256, 66);
       // Subtle concrete seam & grime band near base
-      ctx.fillStyle = '#94a3b8';
+      ctx.fillStyle = '#7b8794';
       ctx.fillRect(0, 104, 256, 24);
-      ctx.fillStyle = '#64748b';
+      ctx.fillStyle = '#52606d';
       ctx.fillRect(0, 60, 256, 5);
-      // Upper steel rail with crisp alternating safety panels
-      ctx.fillStyle = '#f8fafc';
+      // Upper matte steel rail with alternating safety panels
+      ctx.fillStyle = '#cbd5e1';
       ctx.fillRect(0, 0, 128, 60);
-      ctx.fillStyle = compiled.spec.kerbPrimary || '#dc2626';
+      ctx.fillStyle = compiled.spec.kerbPrimary || '#b91c1c';
       ctx.fillRect(128, 0, 128, 60);
-      // Dark steel shadow groove & top highlight
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.25)';
+      // Dark steel shadow groove & muted top cap (no bright specular glare strip)
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
       ctx.fillRect(0, 28, 256, 5);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.35)';
       ctx.fillRect(0, 0, 256, 4);
       // Concrete vertical expansion joints
-      ctx.fillStyle = 'rgba(51, 65, 85, 0.32)';
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.35)';
       ctx.fillRect(0, 62, 3, 66);
       ctx.fillRect(128, 62, 3, 66);
     }
@@ -932,10 +933,11 @@ export function buildTrackEnvironment(
   const barrierTex = track(createSolidBarrierTexture());
   const barrierMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      color: 0xdbe2ea,
       map: barrierTex,
-      roughness: 0.58,
-      metalness: 0.18,
+      roughness: 0.9,
+      metalness: 0.04,
+      envMapIntensity: 0.2,
     }),
   );
 
@@ -1084,7 +1086,7 @@ export function buildTrackEnvironment(
   const postMat = track(new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6, metalness: 0.5 }));
   const boardFaceMats = boardDists.map((dist) => {
     const tex = track(createBrakingBoardTexture(dist, maxAniso));
-    return track(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4, metalness: 0.05 }));
+    return track(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.78, metalness: 0.02, envMapIntensity: 0.25 }));
   });
 
   const totalSamples = compiled.samples.length;
