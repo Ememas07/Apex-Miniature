@@ -14,17 +14,37 @@ import {
   validateDriverNumber,
 } from './cars';
 import { CarClassId, LiveryConfig, TrackSpec, TrackWaypoint } from './types';
-import { TRACKS, compileTrack, getTrackById, projectOntoTrack, sampleTrackAtT } from './tracks';
+import {
+  TRACKS,
+  compileTrack,
+  getTrackById,
+  isTrackGeometryLoaded,
+  preloadTrackData,
+  preloadTrackGeometry,
+  projectOntoTrack,
+  sampleTrackAtT,
+} from './tracks';
 import {
   GamepadController,
+  GamepadMenuNavigator,
+  WHEEL_CALIBRATION_PRESETS,
+  WHEEL_PRESET_ORDER,
   applySteeringCurve,
   blendDrivingInputs,
+  computeWheelSteer,
+  detectPedalAxisMode,
+  detectWheelPresetFromGamepadId,
+  getWheelPresetConfig,
+  readWheelPedals,
 } from './gamepad';
 import {
   CUSTOM_TRACK_TEMPLATES,
   NODE_COLLIDER_RADIUS_MULTIPLIER,
   NODE_HIT_RADIUS_PX,
+  VALID_SEGMENT_PROPS,
+  VALID_SEGMENT_SURFACES,
   analyzeTrackGeometry,
+  createCustomTrackSpec,
   exportTrackToJson,
   exportTrackToShareCode,
   findClosestWaypointHit2D,
@@ -63,15 +83,44 @@ import {
   resolveAcousticProfile,
 } from './audio';
 import {
+  ExtendedRoomState,
+  MAX_VALID_LAP_SPEED_MS,
+  MultiplayerClient,
   decodeBinaryTelemetry,
   encodeBinaryTelemetry,
   getDeploymentBasePath,
-  getWebSocketUrl,
   getRoomRestUrl,
-  MultiplayerClient,
+  getWebSocketUrl,
+  isValidFastestLapTime,
+  normalizePlaylist,
+  resolveNextPlaylistIndex,
+  resolveWinningVotedTrack,
 } from './multiplayer';
 import { RaceReplayRecorder } from './replay';
-import { applyGraphicsPreset, formatSpeed, formatTemp } from './settings';
+import { applyGraphicsPreset, applyWheelPreset, formatSpeed, formatTemp } from './settings';
+import {
+  DRIVE_THROUGH_HOLD_SECONDS,
+  DRIVE_THROUGH_MAX_SPEED_MS,
+  DRIVE_THROUGH_POST_RACE_SECONDS,
+  SAFETY_CAR_CATCHUP_CAP_KMH,
+  SAFETY_CAR_MAX_PACE_KMH,
+  SAFETY_CAR_MIN_PACE_KMH,
+  STOP_AND_GO_HOLD_SECONDS,
+  STOP_AND_GO_POST_RACE_SECONDS,
+  VSC_SPEED_CAP_KMH,
+  VSC_SPEED_CAP_MS,
+  computeSafetyCarPaceMs,
+  computeSingleFileBunchingSpeedMs,
+  computeTrackSpecialZones,
+  createRaceControlState,
+  evaluateHeavyPenaltyAssignment,
+  evaluateHeavyPenaltyLapEscalation,
+  evaluateOnTrackPenaltyServe,
+  stepRaceControl,
+} from './raceSystems';
+import { MotorsportAudioEngine } from '../three/audioEngine';
+import { buildDiecastCar, buildSafetyCarMesh, buildSafetyCarRig } from '../three/carBuilder';
+import { wrapRigInLOD } from '../three/objCarLoader';
 
 test('All requested car classes are unlocked and populated', () => {
   assert.equal(getCarsByClass(CarClassId.HYPERCAR_GTP).length, 12);
@@ -4199,6 +4248,860 @@ test('Upcoming Corner Callout, Binary Telemetry Round-Trip & Settings/Units Form
   const lowPreset = applyGraphicsPreset('low');
   assert.equal(lowPreset.shadowQuality, 'off');
   assert.equal(lowPreset.bloomEnabled, false);
+});
+
+test('Batch A: Safety Car & VSC deployment, speed caps, single-file bunching, wave-by & green restart', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const zones = computeTrackSpecialZones(monza);
+  const f121 = getCarById('f1-21-mercedes');
+
+  const cars = [0, 1, 2, 3].map((slot) =>
+    createCarSimState({
+      id: `sc-car-${slot}`,
+      name: `Driver ${slot}`,
+      isPlayer: slot === 0,
+      carId: f121.id,
+      livery: f121.defaultLivery,
+      gridSlot: slot,
+      compiledTrack: monza,
+      compound: 'soft',
+    }),
+  );
+
+  // Place leader ahead, two cars in a cluster incident, and a lapped car between leader and SC
+  cars[0].lap = 2;
+  cars[0].trackT = 0.40;
+  cars[0].totalDistance = 1.40;
+  cars[0].speed = 65;
+
+  cars[1].lap = 2;
+  cars[1].trackT = 0.25;
+  cars[1].totalDistance = 1.25;
+  cars[1].speed = 32;
+  cars[1].lastCollisionImpact = 16.5;
+
+  cars[2].lap = 2;
+  cars[2].trackT = 0.252;
+  cars[2].totalDistance = 1.24;
+  cars[2].speed = 30;
+  cars[2].lastCollisionImpact = 15.5;
+
+  cars[3].lap = 1;
+  cars[3].trackT = 0.42;
+  cars[3].totalDistance = 0.42; // lapped between leader (0.40) and SC (~0.42+)
+  cars[3].speed = 40;
+
+  const rc = createRaceControlState();
+  stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
+
+  // 2-car non-extreme crash triggers VSC first
+  assert.equal(rc.safetyCar.phase, 'vsc');
+  assert.equal(rc.globalFlag, 'vsc');
+  assert.equal(rc.neutralizationSpeedCapMs, VSC_SPEED_CAP_MS);
+  assert.equal(cars[0].drsEligible, false);
+
+  // Verify physics enforces VSC speed cap when accelerating above VSC_SPEED_CAP_MS
+  const sp0 = sampleTrackAtT(monza, cars[0].trackT);
+  cars[0].x = sp0.x;
+  cars[0].y = sp0.y;
+  cars[0].z = sp0.z;
+  cars[0].heading = Math.atan2(sp0.tx, sp0.tz);
+  cars[0].speed = VSC_SPEED_CAP_MS + 25;
+  for (let i = 0; i < 60; i++) {
+    stepCarPhysics(
+      cars[0],
+      { throttle: 1, brake: 0, steer: 0, specialPressed: false },
+      monza,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: cars },
+    );
+  }
+  assert.ok(
+    cars[0].speed <= VSC_SPEED_CAP_MS + 1.5,
+    `Expected VSC physics cap ~${VSC_SPEED_CAP_KMH} km/h, got ${(cars[0].speed * 3.6).toFixed(1)} km/h`,
+  );
+
+  // Escalate to Full Safety Car by adding stopped cars in the cluster
+  cars[1].speed = 0.5;
+  cars[2].speed = 0.5;
+  stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
+  assert.equal(rc.safetyCar.phase, 'deployed');
+  assert.equal(rc.safetyCar.active, true);
+  assert.equal(rc.globalFlag, 'safety-car');
+  assert.ok(
+    rc.safetyCar.speedMs * 3.6 >= SAFETY_CAR_MIN_PACE_KMH - 0.1 &&
+      rc.safetyCar.speedMs * 3.6 <= SAFETY_CAR_MAX_PACE_KMH + 0.1,
+  );
+  assert.ok(cars[0].safetyCarBunchingGapM !== null && cars[0].safetyCarBunchingGapM !== undefined);
+
+  // Place lapped car ahead of leader and behind SC -> receives wave-by cap
+  cars[3].trackT = (cars[0].trackT + 0.005) % 1;
+  cars[3].totalDistance = 0.42;
+  stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
+  assert.ok(
+    (cars[3].neutralizationSpeedCapMs ?? 0) * 3.6 >= SAFETY_CAR_CATCHUP_CAP_KMH - 0.5,
+    'Lapped car between leader and SC should receive wave-by speed cap',
+  );
+
+  // Clear incident cars and advance past minDuration -> 'in-this-lap' -> green flag restart
+  cars[1].speed = 35;
+  cars[2].speed = 35;
+  cars[1].lastCollisionImpact = 0;
+  cars[2].lastCollisionImpact = 0;
+  let sawInThisLap = false;
+  for (let step = 0; step < 160; step++) {
+    stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
+    if (rc.safetyCar.phase === 'in-this-lap') sawInThisLap = true;
+    if (rc.safetyCar.phase === 'none') break;
+  }
+  assert.equal(sawInThisLap, true, 'Expected Safety Car to pass through in-this-lap phase');
+  assert.equal(rc.safetyCar.phase, 'none');
+  assert.equal(rc.safetyCar.active, false);
+  assert.equal(rc.globalFlag, 'green');
+  assert.ok(rc.safetyCar.greenRestartFlashTimer > 0);
+  assert.equal(rc.neutralizationSpeedCapMs, null);
+
+  // Direct pace/bunching pure helpers sanity
+  const scPace = computeSafetyCarPaceMs(monza, 0.05, 22);
+  assert.ok(scPace * 3.6 >= SAFETY_CAR_MIN_PACE_KMH && scPace * 3.6 <= SAFETY_CAR_MAX_PACE_KMH);
+  const catchup = computeSingleFileBunchingSpeedMs({ scSpeedMs: scPace, gapAheadM: 50, targetGapM: 14 });
+  assert.ok(catchup > scPace);
+});
+
+test('Batch A: Serveable drive-through & stop-and-go heavy penalties and 3-lap/finish escalation', () => {
+  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
+  const zones = computeTrackSpecialZones(monza);
+  const gt3 = getCarById('porsche-911-gt3-r');
+
+  // 1. Assignment thresholds
+  assert.equal(
+    evaluateHeavyPenaltyAssignment({ severeCutCount: 2, avoidablePuntCount: 0, currentLap: 1 }),
+    null,
+  );
+  const dtAssign = evaluateHeavyPenaltyAssignment({ severeCutCount: 3, avoidablePuntCount: 0, currentLap: 2 });
+  assert.equal(dtAssign?.penaltyType, 'drive-through');
+  assert.equal(dtAssign?.deadlineLap, 5);
+
+  const sgAssign = evaluateHeavyPenaltyAssignment({
+    severeCutCount: 0,
+    avoidablePuntCount: 1,
+    latestCollisionImpact: 27,
+    currentLap: 2,
+  });
+  assert.equal(sgAssign?.penaltyType, 'stop-and-go');
+  assert.equal(sgAssign?.postRaceEscalationSeconds, STOP_AND_GO_POST_RACE_SECONDS);
+
+  // 2. Drive-through on-track serve: <=60 km/h for 4.0s clears; exceeding 60 km/h resets progress
+  const dtRes1 = evaluateOnTrackPenaltyServe({
+    penaltyType: 'drive-through',
+    speedMs: DRIVE_THROUGH_MAX_SPEED_MS - 1.0,
+    lateralOffset: 0,
+    trackHalfWidth: 9,
+    holdProgressSeconds: 2.5,
+    dt: 0.5,
+  });
+  assert.equal(dtRes1.isServing, true);
+  assert.equal(dtRes1.holdProgressSeconds, 3.0);
+  assert.equal(dtRes1.completed, false);
+
+  const dtSpeedReset = evaluateOnTrackPenaltyServe({
+    penaltyType: 'drive-through',
+    speedMs: DRIVE_THROUGH_MAX_SPEED_MS + 4.0,
+    lateralOffset: 0,
+    trackHalfWidth: 9,
+    holdProgressSeconds: dtRes1.holdProgressSeconds,
+    dt: 0.2,
+  });
+  assert.equal(dtSpeedReset.isServing, false);
+  assert.equal(dtSpeedReset.holdProgressSeconds, 0);
+
+  const dtDone = evaluateOnTrackPenaltyServe({
+    penaltyType: 'drive-through',
+    speedMs: 12.0,
+    lateralOffset: 0,
+    trackHalfWidth: 9,
+    holdProgressSeconds: DRIVE_THROUGH_HOLD_SECONDS - 0.25,
+    dt: 0.3,
+  });
+  assert.equal(dtDone.completed, true);
+
+  // 3. Stop-and-go on-track serve inside stepCarPhysics: off-line & stationary for 3.0s
+  const car = createCarSimState({
+    id: 'sg-car',
+    name: 'Penalized',
+    isPlayer: true,
+    carId: gt3.id,
+    livery: gt3.defaultLivery,
+    gridSlot: 0,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  car.penaltyType = 'stop-and-go';
+  car.penaltyReason = 'corner-cut';
+  car.heavyPenaltyIssuedLap = 1;
+  car.heavyPenaltyDeadlineLap = 4;
+  car.speed = 0;
+  const sp = sampleTrackAtT(monza, 0.05);
+  const halfW = (sp.width ?? monza.spec.trackWidth) * 0.5;
+  const offLineLat = halfW * 0.65;
+  car.trackT = 0.05;
+  car.lateralOffset = offLineLat;
+  car.x = sp.x + sp.nx * offLineLat;
+  car.y = sp.y;
+  car.z = sp.z + sp.nz * offLineLat;
+  car.heading = Math.atan2(sp.tx, sp.tz);
+
+  for (let i = 0; i < Math.ceil(STOP_AND_GO_HOLD_SECONDS * 60) + 10; i++) {
+    stepCarPhysics(
+      car,
+      { throttle: 0, brake: 0, steer: 0, specialPressed: false },
+      monza,
+      1 / 60,
+      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
+    );
+  }
+  assert.equal(car.penaltyType, null, 'Stop-and-go penalty should clear after 3.0s stationary off-line');
+  assert.equal(car.heavyPenaltyHoldProgress, 0);
+
+  // 4. Unserved 3-lap escalation & DSQ (>= 50s post-race) via stepRaceControl + helper
+  const escCar = createCarSimState({
+    id: 'esc-car',
+    name: 'Scofflaw',
+    isPlayer: true,
+    carId: gt3.id,
+    livery: gt3.defaultLivery,
+    gridSlot: 1,
+    compiledTrack: monza,
+    compound: 'soft',
+  });
+  escCar.lap = 1;
+  escCar.heavyPenaltySevereCutCount = 3;
+  const rc = createRaceControlState();
+  stepRaceControl(rc, [escCar], monza, zones, 0.1, { totalLaps: 6, isRace: true });
+  assert.equal(escCar.penaltyType, 'drive-through');
+  assert.equal(escCar.heavyPenaltyDeadlineLap, 4);
+
+  // Advance to deadline lap unserved -> escalates to +15s post-race
+  escCar.lap = 4;
+  escCar.speed = 45;
+  stepRaceControl(rc, [escCar], monza, zones, 0.1, { totalLaps: 6, isRace: true });
+  assert.equal(escCar.penaltyType, null);
+  assert.equal(escCar.postRacePenaltySeconds, DRIVE_THROUGH_POST_RACE_SECONDS);
+
+  // Second unserved stop-and-go pushes total >= 50s -> DSQ
+  const dsqCheck = evaluateHeavyPenaltyLapEscalation({
+    penaltyType: 'stop-and-go',
+    currentLap: 5,
+    issuedLap: 2,
+    deadlineLap: 5,
+    finished: false,
+    existingPostRaceSeconds: 25,
+  });
+  assert.equal(dsqCheck.escalated, true);
+  assert.equal(dsqCheck.totalPostRaceSeconds, 50);
+  assert.equal(dsqCheck.disqualified, true);
+});
+
+test('Batch C: MotorsportAudioEngine 3D HRTF Panner & ConvolverNode with StereoPanner/DelayNode fallbacks', () => {
+  const prevWindow = (globalThis as { window?: unknown }).window;
+
+  const makeParam = (initial = 0) => ({
+    value: initial,
+    calls: [] as Array<{ fn: string; val: number }>,
+    setValueAtTime(v: number) {
+      this.value = v;
+      this.calls.push({ fn: 'setValueAtTime', val: v });
+    },
+    setTargetAtTime(v: number) {
+      this.value = v;
+      this.calls.push({ fn: 'setTargetAtTime', val: v });
+    },
+    linearRampToValueAtTime(v: number) {
+      this.value = v;
+      this.calls.push({ fn: 'linearRampToValueAtTime', val: v });
+    },
+    exponentialRampToValueAtTime(v: number) {
+      this.value = v;
+      this.calls.push({ fn: 'exponentialRampToValueAtTime', val: v });
+    },
+  });
+
+  const makeMockAudioCtx = (opts: {
+    hasConvolver: boolean;
+    hasPanner: boolean;
+    rejectHrtf?: boolean;
+  }) => {
+    const createdPanners: Array<{ panningModel: string; positionX: ReturnType<typeof makeParam> }> = [];
+    const createdStereoPanners: Array<{ pan: ReturnType<typeof makeParam> }> = [];
+    let convolverCount = 0;
+    let delayCount = 0;
+
+    const listener = {
+      positionX: makeParam(),
+      positionY: makeParam(),
+      positionZ: makeParam(),
+      forwardX: makeParam(),
+      forwardY: makeParam(),
+      forwardZ: makeParam(-1),
+      upX: makeParam(),
+      upY: makeParam(1),
+      upZ: makeParam(),
+    };
+
+    class MockAudioContext {
+      currentTime = 1.0;
+      state = 'running';
+      sampleRate = 44100;
+      destination = {};
+      listener = listener;
+      resume = async () => {};
+      close = async () => {};
+      createDynamicsCompressor() {
+        return { threshold: makeParam(), knee: makeParam(), ratio: makeParam(), attack: makeParam(), release: makeParam(), connect() {}, disconnect() {} };
+      }
+      createGain() {
+        return { gain: makeParam(1), connect() {}, disconnect() {} };
+      }
+      createBiquadFilter() {
+        return { type: 'lowpass', frequency: makeParam(1000), Q: makeParam(1), gain: makeParam(0), connect() {}, disconnect() {} };
+      }
+      createAnalyser() {
+        return { fftSize: 256, smoothingTimeConstant: 0.8, connect() {}, disconnect() {} };
+      }
+      createWaveShaper() {
+        return { curve: null, oversample: 'none', connect() {}, disconnect() {} };
+      }
+      createPeriodicWave() {
+        return {};
+      }
+      createOscillator() {
+        return { type: 'sawtooth', frequency: makeParam(100), setPeriodicWave() {}, connect() {}, start() {}, stop() {}, disconnect() {} };
+      }
+      createBuffer(_c: number, len: number) {
+        return { getChannelData: () => new Float32Array(len) };
+      }
+      createBufferSource() {
+        return { buffer: null, loop: false, playbackRate: makeParam(1), connect() {}, start() {}, stop() {}, disconnect() {} };
+      }
+      createDelay() {
+        delayCount++;
+        return { delayTime: makeParam(0), connect() {}, disconnect() {} };
+      }
+      createStereoPanner() {
+        const sp = { pan: makeParam(0), connect() {}, disconnect() {} };
+        createdStereoPanners.push(sp);
+        return sp;
+      }
+      createConvolver = opts.hasConvolver
+        ? () => {
+            convolverCount++;
+            return { normalize: true, buffer: null, connect() {}, disconnect() {} };
+          }
+        : undefined;
+      createPanner = opts.hasPanner
+        ? () => {
+            let model = 'equalpower';
+            const panner = {
+              get panningModel() {
+                return model;
+              },
+              set panningModel(v: string) {
+                if (opts.rejectHrtf && v === 'HRTF') {
+                  throw new Error('HRTF unsupported');
+                }
+                model = v;
+              },
+              distanceModel: 'inverse',
+              refDistance: 4,
+              maxDistance: 62,
+              rolloffFactor: 0,
+              coneInnerAngle: 360,
+              coneOuterAngle: 360,
+              coneOuterGain: 0,
+              positionX: makeParam(),
+              positionY: makeParam(),
+              positionZ: makeParam(),
+              connect() {},
+              disconnect() {},
+            };
+            createdPanners.push(panner);
+            return panner;
+          }
+        : undefined;
+    }
+
+    return {
+      MockAudioContext,
+      listener,
+      createdPanners,
+      createdStereoPanners,
+      getCounts: () => ({ convolverCount, delayCount }),
+    };
+  };
+
+  try {
+    // 1. Full 3D HRTF Panner + ConvolverNode path
+    const fullMock = makeMockAudioCtx({ hasConvolver: true, hasPanner: true });
+    (globalThis as { window?: unknown }).window = { AudioContext: fullMock.MockAudioContext };
+    const engineFull = new MotorsportAudioEngine();
+    engineFull.init();
+    assert.equal(fullMock.getCounts().convolverCount, 1);
+    assert.equal(fullMock.createdPanners.length, 4);
+    assert.equal(fullMock.createdPanners[0].panningModel, 'HRTF');
+
+    engineFull.updateListenerPose({
+      x: 10,
+      y: 3,
+      z: -20,
+      forwardX: 0,
+      forwardY: 0,
+      forwardZ: 1,
+      upX: 0,
+      upY: 1,
+      upZ: 0,
+    });
+    assert.equal(fullMock.listener.positionX.value, 10);
+    assert.equal(fullMock.listener.positionZ.value, -20);
+
+    engineFull.updateOpponentEngines(
+      [{ id: 'opp1', x: 24, y: 1.5, z: -12, vx: 40, vz: 5, speedMs: 42, rpmNormalized: 0.72, isElectric: false }],
+      10,
+      -20,
+      38,
+      0,
+      0,
+    );
+    assert.equal(fullMock.createdPanners[0].positionX.value, 24);
+    engineFull.updateEnvironmentFoley({ speedKmh: 180, wetness: 0, inTunnel: true });
+    engineFull.dispose();
+
+    // 2. Fallback to equalpower when HRTF throws
+    const eqMock = makeMockAudioCtx({ hasConvolver: true, hasPanner: true, rejectHrtf: true });
+    (globalThis as { window?: unknown }).window = { AudioContext: eqMock.MockAudioContext };
+    const engineEq = new MotorsportAudioEngine();
+    engineEq.init();
+    assert.equal(eqMock.createdPanners.length, 4);
+    assert.equal(eqMock.createdPanners[0].panningModel, 'equalpower');
+    engineEq.dispose();
+
+    // 3. Fallback to StereoPannerNode + DelayNode when createPanner & createConvolver are absent
+    const fbMock = makeMockAudioCtx({ hasConvolver: false, hasPanner: false });
+    (globalThis as { window?: unknown }).window = { AudioContext: fbMock.MockAudioContext };
+    const engineFb = new MotorsportAudioEngine();
+    engineFb.init();
+    assert.equal(fbMock.getCounts().convolverCount, 0);
+    assert.equal(fbMock.getCounts().delayCount, 1);
+    assert.equal(fbMock.createdStereoPanners.length, 4);
+    engineFb.updateOpponentEngines(
+      [{ id: 'opp2', x: 18, z: -10, vx: 30, vz: 0, speedMs: 30, rpmNormalized: 0.6, isElectric: true }],
+      0,
+      0,
+      25,
+      0,
+      0,
+    );
+    assert.ok(Math.abs(fbMock.createdStereoPanners[0].pan.value) > 0);
+    engineFb.dispose();
+  } finally {
+    (globalThis as { window?: unknown }).window = prevWindow;
+  }
+});
+
+test('Batch D: Wheel calibration presets, axis mapping & GamepadMenuNavigator DOM navigation', () => {
+  assert.deepEqual(WHEEL_PRESET_ORDER, [
+    'default',
+    'logitech-g29',
+    'thrustmaster-t300',
+    'fanatec-dd',
+    'generic-combined',
+  ]);
+  for (const id of WHEEL_PRESET_ORDER) {
+    const preset = WHEEL_CALIBRATION_PRESETS[id];
+    assert.equal(getWheelPresetConfig(id).id, id);
+    const settingsPatch = applyWheelPreset(id);
+    assert.equal(settingsPatch.wheelPreset, id);
+    assert.equal(settingsPatch.wheelLockDegrees, preset.config.wheelLockDegrees);
+    assert.equal(settingsPatch.splitPedalAxes, preset.config.splitPedalAxes);
+    assert.equal(settingsPatch.combinedPedalAxis, preset.config.combinedPedalAxis);
+  }
+
+  assert.equal(detectWheelPresetFromGamepadId('Logitech G29 Driving Force Racing Wheel'), 'logitech-g29');
+  assert.equal(detectWheelPresetFromGamepadId('Thrustmaster T300RS Racing Wheel'), 'thrustmaster-t300');
+  assert.equal(detectWheelPresetFromGamepadId('Fanatec CSL DD Wheel Base'), 'fanatec-dd');
+  assert.equal(detectWheelPresetFromGamepadId('Hori Racing Wheel Apex'), 'generic-combined');
+  assert.equal(detectWheelPresetFromGamepadId('Xbox Wireless Controller'), null);
+
+  assert.equal(
+    detectPedalAxisMode({ id: 'Standard Gamepad', mapping: 'standard', axes: [0, 0, 0, 0], buttons: [] }),
+    'triggers',
+  );
+  assert.equal(
+    detectPedalAxisMode({ id: 'Logitech G29', mapping: '', axes: [0, 0, 1, 0, 0, 1], buttons: [] }),
+    'split',
+  );
+  assert.equal(
+    detectPedalAxisMode({ id: 'Unknown Wheel', mapping: '', axes: [0, 0, 0], buttons: [] }),
+    'combined',
+  );
+
+  // Wheel steering lock & invertSteerAxis
+  const g29 = getWheelPresetConfig('logitech-g29').config;
+  const normalSteer = computeWheelSteer(0.5, g29);
+  const invertedSteer = computeWheelSteer(0.5, { ...g29, invertSteerAxis: true });
+  assert.ok(normalSteer.steer > 0);
+  assert.ok(Math.abs(normalSteer.steer + invertedSteer.steer) < 1e-6);
+
+  // Split & combined pedals reading
+  const splitOut = readWheelPedals([0, 0, -1, 0, 0, 1], [], {
+    triggerDeadzone: 0.04,
+    splitPedalAxes: true,
+    combinedPedalAxis: false,
+  });
+  assert.equal(splitOut.mode, 'split');
+  assert.ok(splitOut.throttle > 0.95);
+  assert.equal(splitOut.brake, 0);
+
+  const combinedOut = readWheelPedals([0, 0.75], [], {
+    triggerDeadzone: 0.04,
+    splitPedalAxes: false,
+    combinedPedalAxis: true,
+  });
+  assert.equal(combinedOut.mode, 'combined');
+  assert.equal(combinedOut.throttle, 0);
+  assert.ok(combinedOut.brake > 0.7);
+
+  // GamepadMenuNavigator focus movement, range step, A activate & B back
+  type MockBtn = {
+    tagName: string;
+    type?: string;
+    disabled?: boolean;
+    hidden?: boolean;
+    min?: string;
+    max?: string;
+    step?: string;
+    value?: string;
+    rect: { left: number; top: number; width: number; height: number; right: number; bottom: number };
+    focused: boolean;
+    clicked: number;
+    focus: () => void;
+    click: () => void;
+    scrollIntoView: () => void;
+    getBoundingClientRect: () => MockBtn['rect'];
+    getAttribute: () => string | null;
+    dispatchEvent: () => boolean;
+  };
+  let activeEl: MockBtn | null = null;
+  const makeBtn = (top: number, left = 10, tagName = 'BUTTON', type?: string): MockBtn => {
+    const el: MockBtn = {
+      tagName,
+      type,
+      min: '0',
+      max: '100',
+      step: '10',
+      value: '50',
+      rect: { left, top, width: 120, height: 32, right: left + 120, bottom: top + 32 },
+      focused: false,
+      clicked: 0,
+      focus() {
+        activeEl = el;
+        el.focused = true;
+      },
+      click() {
+        el.clicked++;
+      },
+      scrollIntoView() {},
+      getBoundingClientRect() {
+        return el.rect;
+      },
+      getAttribute() {
+        return null;
+      },
+      dispatchEvent() {
+        return true;
+      },
+    };
+    return el;
+  };
+  const btn1 = makeBtn(20);
+  const btn2 = makeBtn(80);
+  const rangeEl = makeBtn(140, 10, 'INPUT', 'range');
+  activeEl = btn1;
+  const mockRoot = {
+    querySelectorAll: (selector: string) =>
+      selector.includes('data-gamepad-scope') ? [] : [btn1, btn2, rangeEl],
+  } as unknown as ParentNode;
+  let backCalls = 0;
+  let activatedTarget: unknown = null;
+
+  const nav = new GamepadMenuNavigator({
+    root: mockRoot,
+    getActiveElement: () => activeEl as unknown as HTMLElement | null,
+    onBack: () => {
+      backCalls++;
+      return true;
+    },
+    onActivate: (el) => {
+      activatedTarget = el;
+      return false;
+    },
+  });
+
+  const makePad = (opts: { down?: boolean; right?: boolean; a?: boolean; b?: boolean }) => [
+    {
+      index: 0,
+      connected: true,
+      axes: [0, 0],
+      buttons: Array.from({ length: 16 }, (_, idx) => {
+        const pressed =
+          (idx === 0 && Boolean(opts.a)) ||
+          (idx === 1 && Boolean(opts.b)) ||
+          (idx === 13 && Boolean(opts.down)) ||
+          (idx === 15 && Boolean(opts.right));
+        return { pressed, value: pressed ? 1 : 0 };
+      }),
+    },
+  ];
+
+  // Move down: btn1 -> btn2
+  const move1 = nav.step(100, makePad({ down: true }));
+  assert.equal(move1?.type, 'move');
+  assert.equal(activeEl, btn2);
+
+  // Release then move down again: btn2 -> rangeEl
+  nav.step(150, makePad({}));
+  nav.step(200, makePad({ down: true }));
+  assert.equal(activeEl, rangeEl);
+
+  // Right on range input steps value 50 -> 60
+  nav.step(250, makePad({}));
+  nav.step(300, makePad({ right: true }));
+  assert.equal(rangeEl.value, '60');
+
+  // A/Cross activates focused element
+  const act = nav.step(350, makePad({ a: true }));
+  assert.equal(act?.type, 'activate');
+  assert.equal(activatedTarget, rangeEl);
+  assert.equal(rangeEl.clicked, 1);
+
+  // B/Circle calls onBack
+  nav.step(400, makePad({}));
+  const back = nav.step(450, makePad({ b: true }));
+  assert.equal(back?.type, 'back');
+  assert.equal(backCalls, 1);
+
+  // Inactive navigator returns null
+  nav.setActive(false);
+  assert.equal(nav.isActive(), false);
+  assert.equal(nav.step(500, makePad({ down: true })), null);
+});
+
+test('Batch E: Multiplayer ban/playlist/lap sanity bounds & APXTRK segment painting round-trip', () => {
+  // 1. Lap sanity bounds (max 135 m/s)
+  assert.equal(MAX_VALID_LAP_SPEED_MS, 135);
+  const monzaLen = 5793;
+  assert.equal(isValidFastestLapTime(monzaLen / 135 - 0.5, monzaLen), false);
+  assert.equal(isValidFastestLapTime(monzaLen / 135 + 1.0, monzaLen), true);
+  assert.equal(isValidFastestLapTime(0, monzaLen), false);
+  assert.equal(isValidFastestLapTime(Number.NaN, monzaLen), false);
+
+  // 2. Playlist normalization, vote override & wraparound
+  const playlist = normalizePlaylist([
+    'monza',
+    { trackId: 'spa', trackName: 'Spa-Francorchamps', totalLaps: 5 },
+    { trackId: 'suzuka', totalLaps: 3 },
+  ]);
+  assert.equal(playlist.length, 3);
+  assert.equal(resolveWinningVotedTrack({ p1: 'suzuka', p2: 'suzuka', p3: 'monza' }), 'suzuka');
+  const nextVoted = resolveNextPlaylistIndex(playlist, 0, { p1: 'suzuka' });
+  assert.equal(nextVoted.nextIndex, 2);
+  assert.equal(nextVoted.votedTrackId, 'suzuka');
+  const nextSeq = resolveNextPlaylistIndex(playlist, 2);
+  assert.equal(nextSeq.nextIndex, 0);
+  assert.equal(nextSeq.entry?.trackId, 'monza');
+
+  // 3. MultiplayerClient banPeer / unbanPeer / advancePlaylist local state updates
+  const client = new MultiplayerClient();
+  const mockRoom: ExtendedRoomState = {
+    code: 'APEX01',
+    hostId: client.peerId,
+    isPublic: true,
+    started: false,
+    config: { trackId: 'monza', totalLaps: 3, playlist: ['monza', 'spa'], playlistIndex: 0 },
+    peers: [
+      {
+        peerId: client.peerId,
+        name: 'Host',
+        carId: 'ferrari-499p',
+        classId: CarClassId.HYPERCAR_GTP,
+        livery: CARS[0].defaultLivery,
+        ready: true,
+        isHost: true,
+        isSpectator: false,
+        pingMs: 0,
+        eloRating: 1200,
+        safetyRating: 90,
+      },
+      {
+        peerId: 'griefer-1',
+        name: 'Griefer',
+        carId: 'porsche-963',
+        classId: CarClassId.HYPERCAR_GTP,
+        livery: CARS[0].defaultLivery,
+        ready: true,
+        isHost: false,
+        isSpectator: false,
+        pingMs: 40,
+        eloRating: 1100,
+        safetyRating: 50,
+      },
+    ],
+    players: {},
+    chatMessages: [],
+    trackVotes: {},
+    bannedPeerIds: [],
+    playlist: ['monza', 'spa'],
+    playlistIndex: 0,
+  };
+  client.room = mockRoom;
+  client.banPeer('griefer-1');
+  assert.deepEqual((client.room as ExtendedRoomState).bannedPeerIds, ['griefer-1']);
+  assert.equal(client.room.peers.some((p) => p.peerId === 'griefer-1'), false);
+
+  client.unbanPeer('griefer-1');
+  assert.deepEqual((client.room as ExtendedRoomState).bannedPeerIds, []);
+
+  client.advancePlaylist();
+  assert.equal((client.room as ExtendedRoomState).playlistIndex, 1);
+  assert.equal(client.room.config.trackId, 'spa');
+
+  // 4. APXTRK share code round-trip preserves painted segment metadata
+  assert.ok(VALID_SEGMENT_SURFACES.includes('concrete-runoff'));
+  assert.ok(VALID_SEGMENT_PROPS.includes('tunnel'));
+  const paintedSpec = createCustomTrackSpec({
+    id: 'painted-test',
+    name: 'Painted Circuit',
+    country: 'Test',
+    scenery: 'stadium',
+    trackWidth: 18,
+    kerbPrimary: '#ef4444',
+    kerbSecondary: '#f8fafc',
+    waypoints: [
+      { x: 0, y: 0, z: -180, banking: 4, width: 20, surfaceLeft: 'concrete-runoff', surfaceRight: 'gravel', propType: 'grandstand', drsZone: true },
+      { x: 220, y: 8, z: 0, banking: 2, width: 18, surfaceLeft: 'astroturf', surfaceRight: 'trees' as never, propType: 'tunnel' },
+      { x: 0, y: 0, z: 180, banking: 0, width: 17, surfaceLeft: 'asphalt', surfaceRight: 'grass', propType: 'bridge' },
+      { x: -220, y: 0, z: 0, banking: 3, width: 17, propType: 'trees' },
+    ],
+  });
+  const code = exportTrackToShareCode(paintedSpec);
+  assert.ok(code.startsWith('APXTRK:'));
+  const imported = importTrackFromString(code);
+  assert.equal(imported.success, true);
+  const wps = imported.track!.waypoints;
+  assert.equal(wps[0].surfaceLeft, 'concrete-runoff');
+  assert.equal(wps[0].surfaceRight, 'gravel');
+  assert.equal(wps[0].propType, 'grandstand');
+  assert.equal(wps[0].drsZone, true);
+  assert.equal(wps[1].surfaceLeft, 'astroturf');
+  assert.equal(wps[1].surfaceRight, undefined); // invalid surface filtered cleanly
+  assert.equal(wps[1].propType, 'tunnel');
+  assert.equal(wps[2].propType, 'bridge');
+
+  const inserted = findTrackSegmentInsertIndex(wps, 110, -90, 18);
+  assert.ok(inserted.insertIndex >= 1 && inserted.insertIndex <= wps.length);
+  assert.ok(inserted.waypoint.surfaceLeft !== undefined || inserted.waypoint.propType !== undefined);
+});
+
+test('Batch F: preloadTrackGeometry lazy hydration & track data alias', async () => {
+  assert.equal(preloadTrackData, preloadTrackGeometry);
+  const target = TRACKS.find((t) => t.id === 'suzuka') ?? TRACKS[0];
+  const hydrated = await preloadTrackGeometry(target.id);
+  assert.equal(hydrated.id, target.id);
+  assert.equal(isTrackGeometryLoaded(target.id), true);
+  assert.ok(hydrated.waypoints.length >= 50);
+
+  const fetched = getTrackById(target.id);
+  const compiled = compileTrack(fetched, 240);
+  assert.ok(compiled.totalLength > 1000);
+});
+
+test('Batch A & F: SafetyCarRig lightbar phases & wrapRigInLOD 3-tier LOD wrapping', () => {
+  const prevDocument = (globalThis as { document?: unknown }).document;
+  const noopGrad = () => ({ addColorStop: () => {} });
+  const ctx2d = new Proxy(
+    {
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      font: '',
+      textAlign: 'center',
+      textBaseline: 'middle',
+      globalAlpha: 1,
+      shadowColor: '',
+      shadowBlur: 0,
+      createRadialGradient: noopGrad,
+      createLinearGradient: noopGrad,
+      measureText: () => ({ width: 20 }),
+      getImageData: (_x: number, _y: number, w: number, h: number) => ({
+        data: new Uint8ClampedArray(Math.max(1, w * h * 4)),
+      }),
+      createImageData: (w: number, h: number) => ({
+        data: new Uint8ClampedArray(Math.max(1, w * h * 4)),
+      }),
+    } as Record<string, unknown>,
+    {
+      get(target, prop) {
+        if (prop in target) return target[prop as string];
+        return () => {};
+      },
+    },
+  );
+  (globalThis as { document?: unknown }).document = {
+    createElement: () => ({
+      width: 128,
+      height: 128,
+      getContext: () => ctx2d,
+    }),
+  };
+
+  try {
+    // 1. SafetyCarRig
+    const scRig = buildSafetyCarRig();
+    const scAlias = buildSafetyCarMesh();
+    assert.equal(scRig.allWheels.length, 4);
+    assert.equal(scRig.frontWheels.length, 2);
+    assert.ok(scRig.root.children.length >= 1);
+
+    scRig.update('deployed', 0.04);
+    const deployedLeft = scRig.lightbarLeftMat.emissiveIntensity;
+    const deployedRight = scRig.lightbarRightMat.emissiveIntensity;
+    assert.notEqual(deployedLeft, deployedRight, 'Deployed SC lightbar should alternate left/right amber');
+    assert.ok(deployedLeft > 2.0);
+
+    scRig.update('in-this-lap', 0.05);
+    assert.equal(scRig.lightbarCenterMat.color.getHex(), 0x22c55e);
+
+    scRig.update('none', 0.0);
+    assert.ok(scRig.lightbarCenterMat.emissiveIntensity < 0.2);
+
+    scRig.dispose();
+    scAlias.dispose();
+
+    // 2. wrapRigInLOD
+    const spec = getCarById('porsche-963');
+    const rawRig = buildDiecastCar(spec.silhouette, spec.classId, spec.defaultLivery, 1, spec.id);
+    const lodRig = wrapRigInLOD(rawRig, spec, spec.defaultLivery);
+    const lodNode = lodRig.root.getObjectByName('CAR_LOD');
+    assert.ok(lodNode, 'Expected CAR_LOD node inside wrapped rig');
+    assert.ok((lodNode as { levels?: unknown[] }).levels?.length === 3, 'Expected 3 LOD tiers (0m, 35m, 110m)');
+
+    // Idempotent guard
+    const secondWrap = wrapRigInLOD(lodRig, spec, spec.defaultLivery);
+    assert.equal(secondWrap, lodRig);
+
+    lodRig.dispose();
+  } finally {
+    (globalThis as { document?: unknown }).document = prevDocument;
+  }
 });
 
 
