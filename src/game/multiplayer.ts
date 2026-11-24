@@ -7,7 +7,127 @@ import {
   RaceConfig,
   RoomPeer,
   RoomState,
+  TrackSpec,
 } from './types';
+
+export interface PlaylistEntry {
+  trackId: string;
+  trackName?: string;
+  totalLaps?: number;
+  customTrack?: TrackSpec;
+}
+
+export interface ServerLeaderboardEntry {
+  trackId: string;
+  classId?: CarClassId | string;
+  peerId: string;
+  driverName: string;
+  carId: string;
+  lapTimeSeconds: number;
+  trackLengthMeters: number;
+  recordedAt: number;
+}
+
+export interface RaceResultReportEntry {
+  peerId: string;
+  driverName?: string;
+  carId?: string;
+  classId?: CarClassId | string;
+  position: number;
+  bestLapTime?: number | null;
+  incidents?: number;
+  cleanLaps?: number;
+}
+
+export interface ExtendedRaceConfig extends RaceConfig {
+  mandatoryServiceStop?: boolean;
+  playlist?: PlaylistEntry[];
+  playlistIndex?: number;
+}
+
+export interface ExtendedRoomState extends RoomState {
+  config: Partial<ExtendedRaceConfig>;
+  bannedPeerIds?: string[];
+  playlist?: PlaylistEntry[];
+  playlistIndex?: number;
+  leaderboard?: ServerLeaderboardEntry[];
+}
+
+export const MAX_VALID_LAP_SPEED_MS = 135;
+
+export function isValidFastestLapTime(elapsedSeconds: number, trackLengthMeters: number): boolean {
+  if (!Number.isFinite(elapsedSeconds) || !Number.isFinite(trackLengthMeters)) return false;
+  if (elapsedSeconds <= 0 || trackLengthMeters <= 0) return false;
+  return elapsedSeconds >= trackLengthMeters / MAX_VALID_LAP_SPEED_MS;
+}
+
+export function normalizePlaylist(raw: unknown): PlaylistEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PlaylistEntry[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const tid = item.trim().slice(0, 64);
+      if (tid) out.push({ trackId: tid });
+    } else if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>;
+      const tid = typeof obj.trackId === 'string' ? obj.trackId.trim().slice(0, 64) : '';
+      if (!tid) continue;
+      const entry: PlaylistEntry = { trackId: tid };
+      if (typeof obj.trackName === 'string' && obj.trackName.trim()) {
+        entry.trackName = obj.trackName.trim().slice(0, 48);
+      }
+      if (typeof obj.totalLaps === 'number' && Number.isFinite(obj.totalLaps) && obj.totalLaps >= 1) {
+        entry.totalLaps = Math.max(1, Math.min(50, Math.round(obj.totalLaps)));
+      }
+      if (obj.customTrack && typeof obj.customTrack === 'object') {
+        entry.customTrack = obj.customTrack as TrackSpec;
+      }
+      out.push(entry);
+    }
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+export function resolveWinningVotedTrack(trackVotes?: Record<string, string>): string | null {
+  if (!trackVotes || typeof trackVotes !== 'object') return null;
+  const counts = new Map<string, number>();
+  for (const rawTid of Object.values(trackVotes)) {
+    const tid = typeof rawTid === 'string' ? rawTid.trim() : '';
+    if (!tid) continue;
+    counts.set(tid, (counts.get(tid) ?? 0) + 1);
+  }
+  let bestId: string | null = null;
+  let bestCount = 0;
+  for (const [tid, count] of counts.entries()) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestId = tid;
+    }
+  }
+  return bestId;
+}
+
+export function resolveNextPlaylistIndex(
+  playlist: PlaylistEntry[],
+  currentIndex: number,
+  trackVotes?: Record<string, string>,
+): { nextIndex: number; entry: PlaylistEntry | null; votedTrackId: string | null } {
+  const votedTrackId = resolveWinningVotedTrack(trackVotes);
+  if (votedTrackId) {
+    const matchIdx = playlist.findIndex((p) => p.trackId === votedTrackId);
+    if (matchIdx >= 0) {
+      return { nextIndex: matchIdx, entry: playlist[matchIdx], votedTrackId };
+    }
+    return { nextIndex: Math.max(0, currentIndex), entry: null, votedTrackId };
+  }
+  if (playlist.length === 0) {
+    return { nextIndex: 0, entry: null, votedTrackId: null };
+  }
+  const safeCur = Number.isFinite(currentIndex) && currentIndex >= 0 ? Math.floor(currentIndex) : 0;
+  const nextIndex = (safeCur + 1) % playlist.length;
+  return { nextIndex, entry: playlist[nextIndex] ?? null, votedTrackId: null };
+}
 
 export interface PeerTelemetryPacket {
   x: number;
@@ -47,12 +167,29 @@ export interface AiSyncCarState {
 export type ConnectionMode = 'server' | 'local-relay' | 'connecting' | 'disconnected';
 
 const ONLINE_PROFILE_STORAGE_KEY = 'apex-miniature-online-profile-v1';
+const SESSION_TOKEN_STORAGE_KEY = 'apex-miniature-mp-session-token-v1';
 const BINARY_MAGIC_0 = 0x41; // 'A'
 const BINARY_MAGIC_1 = 0x58; // 'X'
 const INTERP_DELAY_MS = 90;
 const MAX_EXTRAPOLATION_MS = 320;
 const STALE_GHOST_MS = 1200;
 const HIGH_PING_GHOST_MS = 350;
+
+export function loadOrCreateSessionToken(): string {
+  const gen = () => `tok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  if (typeof window === 'undefined') return gen();
+  try {
+    const existing = window.localStorage.getItem(SESSION_TOKEN_STORAGE_KEY);
+    if (existing && existing.trim().length >= 8) {
+      return existing.trim().slice(0, 64);
+    }
+    const created = gen();
+    window.localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return gen();
+  }
+}
 
 const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder() : null;
@@ -252,6 +389,21 @@ export function getPublicRoomsRestUrl(): string {
   return `${basePath}api/rooms`;
 }
 
+export function getLeaderboardRestUrl(trackId?: string): string {
+  const basePath = getDeploymentBasePath();
+  const base = `${basePath}api/leaderboard`;
+  if (trackId && trackId.trim()) {
+    return `${base}?trackId=${encodeURIComponent(trackId.trim())}`;
+  }
+  return base;
+}
+
+let activeMultiplayerClient: MultiplayerClient | null = null;
+
+export function getActiveMultiplayerClient(): MultiplayerClient | null {
+  return activeMultiplayerClient;
+}
+
 /**
  * Strips client-local car and livery fields so shared room broadcasts never overwrite
  * another player's locally chosen car or paint in the multiplayer lobby or on race start.
@@ -286,6 +438,7 @@ export class MultiplayerClient {
   private isStartingRace = false;
 
   public peerId: string;
+  public sessionToken: string;
   public room: RoomState | null = null;
   public connected = false;
   public connectionMode: ConnectionMode = 'disconnected';
@@ -301,12 +454,16 @@ export class MultiplayerClient {
   public onChatMessage?: (msg: ChatMessage) => void;
   public onAiSync?: (cars: AiSyncCarState[], serverTime: number) => void;
   public onKicked?: (reason: string) => void;
+  public onBanned?: (reason: string) => void;
+  public onLeaderboardUpdate?: (entries: ServerLeaderboardEntry[]) => void;
 
   public peerTelemetry = new Map<string, PeerTelemetryPacket>();
   public peerSnapshots = new Map<string, TimedTelemetrySnapshot[]>();
 
   constructor() {
     this.peerId = `drv-${Math.random().toString(36).slice(2, 9)}`;
+    this.sessionToken = loadOrCreateSessionToken();
+    activeMultiplayerClient = this;
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         this.channel = new BroadcastChannel('apex-miniature-multiplayer-relay');
@@ -467,6 +624,16 @@ export class MultiplayerClient {
         }
       } else if (type === 'relay:room_join') {
         if (this.room && this.room.hostId === this.peerId && this.room.code === msg.code) {
+          const extRoom = this.room as ExtendedRoomState;
+          const joinPeerId = String(msg.peerId);
+          if (Array.isArray(extRoom.bannedPeerIds) && extRoom.bannedPeerIds.includes(joinPeerId)) {
+            this.broadcastRelay({
+              type: 'relay:room_banned',
+              code: this.room.code,
+              targetPeerId: joinPeerId,
+            });
+            return;
+          }
           const joiningPeer: RoomPeer = {
             peerId: String(msg.peerId),
             name: String(msg.name || 'Guest Driver').slice(0, 24),
@@ -552,6 +719,18 @@ export class MultiplayerClient {
           }
           this.room = { ...this.room, peers: updatedPeers };
           this.onRoomUpdate?.(this.room);
+        }
+      } else if (type === 'relay:room_banned') {
+        if (msg.targetPeerId === this.peerId && this.room?.code === msg.code) {
+          const reason = 'You have been banned from this lobby.';
+          this.room = null;
+          this.peerTelemetry.clear();
+          this.peerSnapshots.clear();
+          this.chatMessages = [];
+          this.onRoomUpdate?.(null);
+          this.onBanned?.(reason);
+          this.onKicked?.(reason);
+          this.onError?.(reason);
         }
       }
     };
@@ -740,13 +919,26 @@ export class MultiplayerClient {
             }
           } else if (type === 'room:kicked') {
             const reason = String(msg.reason || 'Removed from lobby');
+            const isBanned = Boolean(msg.banned);
             this.room = null;
             this.peerTelemetry.clear();
             this.peerSnapshots.clear();
             this.chatMessages = [];
             this.onRoomUpdate?.(null);
+            if (isBanned) this.onBanned?.(reason);
             this.onKicked?.(reason);
             this.onError?.(reason);
+          } else if (type === 'race:leaderboard_update') {
+            const entries = Array.isArray(msg.entries) ? (msg.entries as ServerLeaderboardEntry[]) : [];
+            if (this.room) {
+              const updated: ExtendedRoomState = {
+                ...(this.room as ExtendedRoomState),
+                leaderboard: entries,
+              };
+              this.room = updated;
+              this.onRoomUpdate?.(this.room);
+            }
+            this.onLeaderboardUpdate?.(entries);
           } else if (type === 'room:error') {
             this.onError?.(String(msg.message || 'Multiplayer error'));
           } else if (type === 'race:peer_telemetry') {
@@ -830,6 +1022,7 @@ export class MultiplayerClient {
     const payload = JSON.stringify({
       type: 'room:create',
       peerId: this.peerId,
+      sessionToken: this.sessionToken,
       name: hostPeer.name,
       carId: hostPeer.carId,
       classId: hostPeer.classId,
@@ -923,6 +1116,7 @@ export class MultiplayerClient {
       type: 'room:join',
       code: normalizedCode,
       peerId: this.peerId,
+      sessionToken: this.sessionToken,
       name: guestPeer.name,
       carId: guestPeer.carId,
       classId: guestPeer.classId,
@@ -1071,6 +1265,120 @@ export class MultiplayerClient {
     if (!this.room || this.room.hostId !== this.peerId) return;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'room:kick', targetPeerId }));
+    }
+  }
+
+  banPeer(targetPeerId: string) {
+    if (!this.room || this.room.hostId !== this.peerId || !targetPeerId || targetPeerId === this.peerId) return;
+    const extRoom = this.room as ExtendedRoomState;
+    const prevBans = Array.isArray(extRoom.bannedPeerIds) ? extRoom.bannedPeerIds : [];
+    const nextBans = prevBans.includes(targetPeerId) ? prevBans : [...prevBans, targetPeerId];
+    const nextPeers = this.room.peers.filter((p) => p.peerId !== targetPeerId);
+    const nextPlayers = { ...(this.room.players || {}) };
+    delete nextPlayers[targetPeerId];
+    const updated: ExtendedRoomState = {
+      ...extRoom,
+      bannedPeerIds: nextBans,
+      peers: nextPeers,
+      players: nextPlayers,
+    };
+    this.room = updated;
+    this.broadcastRelay({ type: 'relay:room_banned', code: updated.code, targetPeerId });
+    this.broadcastRelay({ type: 'relay:room_state', room: updated });
+    this.onRoomUpdate?.(updated);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'room:ban', targetPeerId }));
+    }
+  }
+
+  unbanPeer(targetPeerId: string) {
+    if (!this.room || this.room.hostId !== this.peerId || !targetPeerId) return;
+    const extRoom = this.room as ExtendedRoomState;
+    const nextBans = (extRoom.bannedPeerIds ?? []).filter((id) => id !== targetPeerId);
+    const updated: ExtendedRoomState = { ...extRoom, bannedPeerIds: nextBans };
+    this.room = updated;
+    this.broadcastRelay({ type: 'relay:room_state', room: updated });
+    this.onRoomUpdate?.(updated);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'room:unban', targetPeerId }));
+    }
+  }
+
+  advancePlaylist() {
+    if (!this.room || this.room.hostId !== this.peerId) return;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'room:advance_playlist' }));
+      return;
+    }
+    const extRoom = this.room as ExtendedRoomState;
+    const playlist = normalizePlaylist(extRoom.config?.playlist ?? extRoom.playlist);
+    const currentIndex = Number(extRoom.config?.playlistIndex ?? extRoom.playlistIndex ?? 0);
+    const { nextIndex, entry, votedTrackId } = resolveNextPlaylistIndex(playlist, currentIndex, this.room.trackVotes);
+    const nextTrackId = entry?.trackId ?? votedTrackId ?? extRoom.config?.trackId;
+    if (!nextTrackId) return;
+    const nextConfig: Partial<ExtendedRaceConfig> = {
+      ...extRoom.config,
+      trackId: nextTrackId,
+      customTrack: entry?.customTrack,
+      ...(entry?.totalLaps ? { totalLaps: entry.totalLaps } : {}),
+      playlistIndex: nextIndex,
+    };
+    const updated: ExtendedRoomState = {
+      ...extRoom,
+      trackVotes: {},
+      playlistIndex: nextIndex,
+      config: nextConfig,
+    };
+    this.room = updated;
+    this.broadcastRelay({ type: 'relay:room_state', room: updated });
+    this.onRoomUpdate?.(updated);
+  }
+
+  reportLapComplete(
+    elapsedSeconds: number,
+    trackLengthMeters?: number,
+    trackId?: string,
+    carId?: string,
+    classId?: CarClassId,
+  ) {
+    if (!this.room) return;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          type: 'race:lap_complete',
+          elapsed: elapsedSeconds,
+          trackLength: trackLengthMeters,
+          trackId: trackId ?? this.room.config?.trackId,
+          carId,
+          classId,
+        }),
+      );
+    }
+  }
+
+  submitRaceResult(results: RaceResultReportEntry[], trackLengthMeters?: number, advancePlaylist = true) {
+    if (!this.room || this.room.hostId !== this.peerId) return;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          type: 'race:submit_result',
+          results,
+          trackLength: trackLengthMeters,
+          trackId: this.room.config?.trackId,
+          advancePlaylist,
+        }),
+      );
+    }
+  }
+
+  async fetchLeaderboard(trackId?: string): Promise<ServerLeaderboardEntry[]> {
+    try {
+      const res = await fetch(getLeaderboardRestUrl(trackId), { cache: 'no-cache' });
+      if (!res.ok) return [];
+      const data = (await res.json()) as { entries?: ServerLeaderboardEntry[] };
+      return Array.isArray(data.entries) ? data.entries : [];
+    } catch {
+      return [];
     }
   }
 

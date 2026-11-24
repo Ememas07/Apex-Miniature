@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Ban,
   Check,
   CheckCircle,
   Clock,
@@ -9,18 +10,23 @@ import {
   Eye,
   Flag,
   Globe,
+  ListOrdered,
   Lock,
   LogOut,
   MessageSquare,
+  Plus,
   RefreshCw,
   Search,
   Send,
   Shield,
   Shuffle,
+  SkipForward,
   Sun,
+  Trash2,
   UserX,
   Users,
   Wifi,
+  Wrench,
   X,
   Zap,
 } from 'lucide-react';
@@ -32,7 +38,15 @@ import {
   validateDriverNumber,
 } from '../game/cars';
 import { getSavedCustomTracks } from '../game/customTracks';
-import { ConnectionMode, loadOnlineProfile } from '../game/multiplayer';
+import {
+  ConnectionMode,
+  ExtendedRaceConfig,
+  ExtendedRoomState,
+  PlaylistEntry,
+  getActiveMultiplayerClient,
+  loadOnlineProfile,
+  normalizePlaylist,
+} from '../game/multiplayer';
 import { generateRandomScenario } from '../game/randomScenario';
 import { TRACKS, compileTrack, filterTracks, formatTargetLapMMSS, getTrackById } from '../game/tracks';
 import {
@@ -65,6 +79,7 @@ interface MultiplayerModalProps {
   onStartFromLobby: () => void;
   onSendChat?: (text: string) => void;
   onKickPeer?: (targetPeerId: string) => void;
+  onBanPeer?: (targetPeerId: string) => void;
   onVoteTrack?: (trackId: string) => void;
   onUpdatePeer?: (payload: {
     carId?: string;
@@ -143,6 +158,7 @@ export function MultiplayerModal({
   onStartFromLobby,
   onSendChat,
   onKickPeer,
+  onBanPeer,
   onVoteTrack,
   onUpdatePeer,
   onClose,
@@ -258,6 +274,60 @@ export function MultiplayerModal({
   const selectedTrack = config.customTrack || getTrackById(config.trackId);
   const playerCar = getCarById(config.playerCarId);
   const playerClassMeta = CAR_CLASSES[playerCar.classId];
+
+  const extConfig = config as ExtendedRaceConfig;
+  const extRoom = room as ExtendedRoomState | null;
+  const mandatoryServiceStop = Boolean(extConfig.mandatoryServiceStop);
+  const playlist = useMemo(
+    () => normalizePlaylist(extRoom?.config?.playlist ?? extRoom?.playlist ?? extConfig.playlist),
+    [extRoom?.config?.playlist, extRoom?.playlist, extConfig.playlist],
+  );
+  const playlistIndex = Math.max(
+    0,
+    Math.min(
+      Math.max(0, playlist.length - 1),
+      Number(extRoom?.config?.playlistIndex ?? extRoom?.playlistIndex ?? extConfig.playlistIndex ?? 0) || 0,
+    ),
+  );
+  const bannedPeerIds = extRoom?.bannedPeerIds ?? [];
+
+  const updateExtendedConfig = (patch: Partial<ExtendedRaceConfig>) => {
+    onUpdateConfig(patch as Partial<RaceConfig>);
+  };
+
+  const handleAddSelectedTrackToPlaylist = () => {
+    const entry: PlaylistEntry = {
+      trackId: selectedTrack.id,
+      trackName: selectedTrack.shortName || selectedTrack.name,
+      totalLaps: config.totalLaps > 0 ? config.totalLaps : 5,
+      ...(config.customTrack ? { customTrack: config.customTrack } : {}),
+    };
+    updateExtendedConfig({ playlist: [...playlist, entry] });
+  };
+
+  const handleRemovePlaylistItem = (indexToRemove: number) => {
+    const next = playlist.filter((_, i) => i !== indexToRemove);
+    updateExtendedConfig({
+      playlist: next,
+      playlistIndex: Math.min(playlistIndex, Math.max(0, next.length - 1)),
+    });
+  };
+
+  const handleBanPeerClick = (targetPeerId: string) => {
+    if (onBanPeer) {
+      onBanPeer(targetPeerId);
+      return;
+    }
+    getActiveMultiplayerClient()?.banPeer(targetPeerId);
+  };
+
+  const handleUnbanPeerClick = (targetPeerId: string) => {
+    getActiveMultiplayerClient()?.unbanPeer(targetPeerId);
+  };
+
+  const handleAdvancePlaylistClick = () => {
+    getActiveMultiplayerClient()?.advancePlaylist();
+  };
 
   const isHost = Boolean(room && room.hostId === myPeerId);
   const myPeer = room?.peers.find((p) => p.peerId === myPeerId);
@@ -767,13 +837,26 @@ export function MultiplayerModal({
                           startType: (config.startType ?? 'standing') === 'rolling' ? 'standing' : 'rolling',
                         })
                       }
-                      className={`col-span-2 py-1.5 px-2.5 rounded border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                      className={`py-1.5 px-2.5 rounded border text-xs font-semibold cursor-pointer whitespace-nowrap ${
                         config.startType === 'rolling'
                           ? 'bg-amber-500/20 border-amber-400 text-amber-200'
                           : 'bg-[#151a24] border-white/15 text-slate-300'
                       }`}
                     >
-                      Start: {config.startType === 'rolling' ? 'Rolling Start' : 'Standing Start'}
+                      Start: {config.startType === 'rolling' ? 'Rolling' : 'Standing'}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="btn-mp-mandatory-service"
+                      onClick={() => updateExtendedConfig({ mandatoryServiceStop: !mandatoryServiceStop })}
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2.5 rounded border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                        mandatoryServiceStop
+                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                          : 'bg-[#151a24] border-white/15 text-slate-300'
+                      }`}
+                    >
+                      <Wrench className="w-3 h-3" />
+                      Service: {mandatoryServiceStop ? 'Mandatory' : 'Optional'}
                     </button>
                   </div>
                 </div>
@@ -957,6 +1040,61 @@ export function MultiplayerModal({
                     );
                   })}
                 </div>
+
+                {/* Multi-Track Championship Playlist Builder */}
+                <div className="pt-3 border-t border-white/10 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                      <ListOrdered className="w-3.5 h-3.5 text-amber-400" />
+                      Multi-Track Playlist ({playlist.length})
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        data-testid="btn-add-playlist-track"
+                        onClick={handleAddSelectedTrackToPlaylist}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-amber-600/25 hover:bg-amber-600/40 border border-amber-400/40 text-[11px] font-semibold text-amber-200 cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add {selectedTrack.shortName}
+                      </button>
+                      {playlist.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => updateExtendedConfig({ playlist: [], playlistIndex: 0 })}
+                          className="px-2 py-1 rounded bg-[#181f2c] hover:bg-rose-950/60 border border-white/10 text-[11px] text-slate-400 hover:text-rose-200 cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {playlist.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {playlist.map((item, idx) => {
+                        const label = item.trackName || getTrackById(item.trackId).shortName || item.trackId;
+                        return (
+                          <span
+                            key={`${item.trackId}-${idx}`}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#161c28] border border-white/10 text-[11px] text-slate-200"
+                          >
+                            <span className="font-telemetry text-amber-400 font-bold">R{idx + 1}</span>
+                            <span>{label}</span>
+                            {item.totalLaps && <span className="text-slate-500">· {item.totalLaps}L</span>}
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePlaylistItem(idx)}
+                              aria-label={`Remove round ${idx + 1}`}
+                              className="text-slate-400 hover:text-rose-300 cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1102,6 +1240,18 @@ export function MultiplayerModal({
                               <UserX className="w-3.5 h-3.5" />
                             </button>
                           )}
+                          {isHost && p.peerId !== myPeerId && (
+                            <button
+                              type="button"
+                              data-testid={`btn-ban-peer-${p.peerId}`}
+                              onClick={() => handleBanPeerClick(p.peerId)}
+                              title={`Ban ${p.name} from rejoining this session`}
+                              aria-label={`Ban ${p.name}`}
+                              className="p-1 rounded bg-red-950/80 hover:bg-red-700/80 border border-red-500/40 text-red-200 cursor-pointer"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -1234,6 +1384,22 @@ export function MultiplayerModal({
                   <span className="tabular-nums">
                     {aiFillCount === 0 ? 'Humans Only' : `${aiFillCount} AI Fill`}
                   </span>
+                  {mandatoryServiceStop && (
+                    <>
+                      <span aria-hidden="true" className="text-slate-600">·</span>
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[10px] font-bold">
+                        Mandatory Service Stop
+                      </span>
+                    </>
+                  )}
+                  {playlist.length > 0 && (
+                    <>
+                      <span aria-hidden="true" className="text-slate-600">·</span>
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[10px] font-bold">
+                        Playlist R{playlistIndex + 1}/{playlist.length}
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 {isHost && (
@@ -1342,13 +1508,25 @@ export function MultiplayerModal({
                                 startType: (config.startType ?? 'standing') === 'rolling' ? 'standing' : 'rolling',
                               })
                             }
-                            className={`col-span-2 py-1 px-2 rounded border text-xs font-semibold cursor-pointer ${
+                            className={`py-1 px-2 rounded border text-xs font-semibold cursor-pointer ${
                               config.startType === 'rolling'
                                 ? 'bg-amber-500/20 border-amber-400 text-amber-200'
                                 : 'bg-[#151a24] border-white/15 text-slate-300'
                             }`}
                           >
                             Start: {config.startType === 'rolling' ? 'Rolling' : 'Standing'}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="btn-lobby-mandatory-service"
+                            onClick={() => updateExtendedConfig({ mandatoryServiceStop: !mandatoryServiceStop })}
+                            className={`py-1 px-2 rounded border text-xs font-semibold cursor-pointer ${
+                              mandatoryServiceStop
+                                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                                : 'bg-[#151a24] border-white/15 text-slate-300'
+                            }`}
+                          >
+                            Service: {mandatoryServiceStop ? 'Mandatory' : 'Off'}
                           </button>
                         </div>
                       </div>
@@ -1398,6 +1576,89 @@ export function MultiplayerModal({
                         }}
                         className="w-full accent-red-600 cursor-pointer"
                       />
+                    </div>
+
+                    {/* Host Playlist Rotation & Ban Management */}
+                    <div className="pt-3 border-t border-white/10 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                          <ListOrdered className="w-3.5 h-3.5 text-amber-400" />
+                          Championship Playlist ({playlist.length})
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={handleAddSelectedTrackToPlaylist}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-600/25 hover:bg-amber-600/40 border border-amber-400/40 text-[11px] font-semibold text-amber-200 cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" />
+                            Add Current
+                          </button>
+                          {playlist.length > 0 && (
+                            <button
+                              type="button"
+                              data-testid="btn-advance-playlist"
+                              onClick={handleAdvancePlaylistClick}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded bg-sky-600/25 hover:bg-sky-600/40 border border-sky-400/40 text-[11px] font-semibold text-sky-200 cursor-pointer"
+                            >
+                              <SkipForward className="w-3 h-3" />
+                              Next Round
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {playlist.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {playlist.map((item, idx) => {
+                            const label = item.trackName || getTrackById(item.trackId).shortName || item.trackId;
+                            const isCurrent = idx === playlistIndex;
+                            return (
+                              <span
+                                key={`${item.trackId}-${idx}`}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] ${
+                                  isCurrent
+                                    ? 'bg-amber-500/20 border-amber-400 text-amber-200 font-semibold'
+                                    : 'bg-[#161c28] border-white/10 text-slate-300'
+                                }`}
+                              >
+                                <span className="font-telemetry">R{idx + 1}</span>
+                                <span>{label}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePlaylistItem(idx)}
+                                  aria-label={`Remove playlist round ${idx + 1}`}
+                                  className="text-slate-400 hover:text-rose-300 cursor-pointer ml-0.5"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" />
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {bannedPeerIds.length > 0 && (
+                        <div className="pt-2 border-t border-white/10 space-y-1.5">
+                          <span className="text-[11px] font-semibold text-rose-300 flex items-center gap-1">
+                            <Ban className="w-3 h-3" />
+                            Session Ban List ({bannedPeerIds.length})
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {bannedPeerIds.map((bid) => (
+                              <button
+                                key={bid}
+                                type="button"
+                                onClick={() => handleUnbanPeerClick(bid)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/30 text-[10px] text-rose-200 cursor-pointer"
+                                title={`Unban ${bid}`}
+                              >
+                                <span>{bid}</span>
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

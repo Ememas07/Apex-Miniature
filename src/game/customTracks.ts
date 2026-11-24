@@ -1,5 +1,50 @@
 import { SceneryTheme, TrackRegion, TrackSpec, TrackWaypoint } from './types';
 
+export type SegmentSurfaceType = 'grass' | 'asphalt' | 'gravel' | 'sand' | 'astroturf';
+export type SegmentPropType = 'none' | 'grandstand' | 'trees' | 'bridge' | 'tunnel' | 'barriers';
+
+export const VALID_SEGMENT_SURFACES: readonly SegmentSurfaceType[] = [
+  'grass',
+  'asphalt',
+  'gravel',
+  'sand',
+  'astroturf',
+];
+
+export const VALID_SEGMENT_PROPS: readonly SegmentPropType[] = [
+  'none',
+  'grandstand',
+  'trees',
+  'bridge',
+  'tunnel',
+  'barriers',
+];
+
+export interface StudioTrackWaypoint extends TrackWaypoint {
+  surfaceLeft?: SegmentSurfaceType;
+  surfaceRight?: SegmentSurfaceType;
+  propType?: SegmentPropType;
+}
+
+export interface StudioTrackSpec extends Omit<TrackSpec, 'waypoints'> {
+  waypoints: StudioTrackWaypoint[];
+}
+
+export interface CommunityTrackEntry {
+  id: string;
+  name: string;
+  author: string;
+  country: string;
+  scenery: SceneryTheme;
+  lengthMeters: number;
+  corners: number;
+  targetLapSeconds: number;
+  upvotes: number;
+  createdAt: number;
+  updatedAt: number;
+  trackSpec: StudioTrackSpec;
+}
+
 export const CUSTOM_TRACKS_STORAGE_KEY = 'apex_miniature_custom_tracks';
 
 // In-memory runtime cache for custom tracks (includes tracks received via multiplayer)
@@ -302,13 +347,13 @@ export function createCustomTrackSpec(
     trackWidth?: number;
     kerbPrimary?: string;
     kerbSecondary?: string;
-    waypoints: TrackWaypoint[];
+    waypoints: StudioTrackWaypoint[];
     startNodeIndex?: number;
     pitSide?: 'left' | 'right';
   },
-): TrackSpec {
+): StudioTrackSpec {
   const id = opts.id || `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  const waypoints = [...opts.waypoints];
+  const waypoints: StudioTrackWaypoint[] = opts.waypoints.map((wp) => ({ ...wp }));
 
   // Rotate waypoints if startNodeIndex is designated
   if (opts.startNodeIndex !== undefined && opts.startNodeIndex > 0 && opts.startNodeIndex < waypoints.length) {
@@ -463,7 +508,7 @@ export function exportTrackToJson(track: TrackSpec): string {
 /**
  * Export track to compact share code
  */
-export function exportTrackToShareCode(track: TrackSpec): string {
+export function exportTrackToShareCode(track: StudioTrackSpec | TrackSpec): string {
   const minimal = {
     id: track.id,
     n: track.name,
@@ -473,16 +518,27 @@ export function exportTrackToShareCode(track: TrackSpec): string {
     kp: track.kerbPrimary,
     ks: track.kerbSecondary,
     ps: track.pitSide,
-    pts: track.waypoints.map((p) => {
-      const row = [
+    pts: (track.waypoints as StudioTrackWaypoint[]).map((p) => {
+      const row: Array<number | string> = [
         Math.round(p.x * 10) / 10,
         Math.round((p.y || 0) * 10) / 10,
         Math.round(p.z * 10) / 10,
         p.banking ? Math.round(p.banking * 10) / 10 : 0,
         p.width ? Math.round(p.width * 10) / 10 : 0,
       ];
-      if (p.tension !== undefined && Math.abs(p.tension - 0.5) > 0.01) {
-        row.push(Math.round(p.tension * 100) / 100);
+      const hasCustomMeta = Boolean(
+        p.surfaceLeft || p.surfaceRight || p.propType || p.sceneryProp || p.runoff || p.drsZone,
+      );
+      if (hasCustomMeta || (p.tension !== undefined && Math.abs(p.tension - 0.5) > 0.01)) {
+        row.push(Math.round((p.tension ?? 0.5) * 100) / 100);
+      }
+      if (hasCustomMeta) {
+        row.push(p.surfaceLeft || p.runoff || '');
+        row.push(p.surfaceRight || p.runoff || '');
+        row.push(p.propType || p.sceneryProp || '');
+        if (p.drsZone) {
+          row.push(1);
+        }
       }
       return row;
     }),
@@ -495,10 +551,22 @@ export function exportTrackToShareCode(track: TrackSpec): string {
   }
 }
 
+function normalizeSegmentSurface(raw: unknown): SegmentSurfaceType | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const val = raw.trim() as SegmentSurfaceType;
+  return (VALID_SEGMENT_SURFACES as readonly string[]).includes(val) ? val : undefined;
+}
+
+function normalizeSegmentProp(raw: unknown): SegmentPropType | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const val = raw.trim() as SegmentPropType;
+  return (VALID_SEGMENT_PROPS as readonly string[]).includes(val) ? val : undefined;
+}
+
 /**
  * Import custom track from JSON string or share code
  */
-export function importTrackFromString(inputStr: string): { success: boolean; track?: TrackSpec; error?: string } {
+export function importTrackFromString(inputStr: string): { success: boolean; track?: StudioTrackSpec; error?: string } {
   const trimmed = inputStr.trim();
   if (!trimmed) {
     return { success: false, error: 'Input code is empty.' };
@@ -518,14 +586,34 @@ export function importTrackFromString(inputStr: string): { success: boolean; tra
       if (!data || !Array.isArray(data.pts)) {
         return { success: false, error: 'Invalid share code payload.' };
       }
-      const waypoints: TrackWaypoint[] = data.pts.map((row: number[]) => ({
-        x: row[0],
-        y: row[1] || 0,
-        z: row[2],
-        banking: row[3] || undefined,
-        width: row[4] || undefined,
-        tension: typeof row[5] === 'number' ? row[5] : undefined,
-      }));
+      const waypoints: StudioTrackWaypoint[] = data.pts.map((row: Array<number | string>) => {
+        const surfaceLeft = normalizeSegmentSurface(row[6]);
+        const surfaceRight = normalizeSegmentSurface(row[7]);
+        const propType = normalizeSegmentProp(row[8]);
+        const sceneryProp =
+          propType && propType !== 'barriers'
+            ? (propType as TrackWaypoint['sceneryProp'])
+            : undefined;
+        const primarySurface = surfaceLeft ?? surfaceRight;
+        const runoff =
+          primarySurface === 'asphalt' || primarySurface === 'grass' || primarySurface === 'gravel'
+            ? primarySurface
+            : undefined;
+        return {
+          x: Number(row[0]),
+          y: Number(row[1]) || 0,
+          z: Number(row[2]),
+          banking: Number(row[3]) || undefined,
+          width: Number(row[4]) || undefined,
+          tension: typeof row[5] === 'number' ? row[5] : undefined,
+          ...(surfaceLeft ? { surfaceLeft } : {}),
+          ...(surfaceRight ? { surfaceRight } : {}),
+          ...(propType ? { propType } : {}),
+          ...(sceneryProp ? { sceneryProp } : {}),
+          ...(runoff ? { runoff } : {}),
+          ...(row[9] === 1 ? { drsZone: true } : {}),
+        };
+      });
       const spec = createCustomTrackSpec({
         id: data.id || `custom-${Date.now().toString(36)}`,
         name: data.n || 'Imported Track',
@@ -620,7 +708,7 @@ function evalCatmullSegment(
  * Returns splice insertion index (`i + 1`) and interpolated waypoint properties.
  */
 export function findTrackSegmentInsertIndex(
-  waypoints: TrackWaypoint[],
+  waypoints: StudioTrackWaypoint[],
   targetX: number,
   targetZ: number,
   defaultTrackWidth = 17,
@@ -628,7 +716,7 @@ export function findTrackSegmentInsertIndex(
   insertIndex: number;
   segmentIndex: number;
   distance: number;
-  waypoint: TrackWaypoint;
+  waypoint: StudioTrackWaypoint;
 } {
   const n = waypoints.length;
   if (n < 2) {
@@ -694,7 +782,93 @@ export function findTrackSegmentInsertIndex(
       width,
       banking,
       tension,
+      ...(a.surfaceLeft ? { surfaceLeft: a.surfaceLeft } : {}),
+      ...(a.surfaceRight ? { surfaceRight: a.surfaceRight } : {}),
+      ...(a.propType ? { propType: a.propType } : {}),
+      ...(a.sceneryProp ? { sceneryProp: a.sceneryProp } : {}),
+      ...(a.runoff ? { runoff: a.runoff } : {}),
+      ...(a.drsZone ? { drsZone: a.drsZone } : {}),
     },
   };
+}
+
+function getTracksApiBasePath(): string {
+  if (typeof window === 'undefined') return '/';
+  let p = window.location.pathname || '/';
+  if (/\.[a-zA-Z0-9]+$/.test(p)) {
+    p = p.replace(/\/[^/]*$/, '');
+  }
+  if (!p.startsWith('/')) p = '/' + p;
+  if (!p.endsWith('/')) p = p + '/';
+  return p.replace(/\/+/g, '/');
+}
+
+export function getCommunityTracksRestUrl(): string {
+  return `${getTracksApiBasePath()}api/tracks`;
+}
+
+export async function fetchCommunityTracks(opts?: {
+  query?: string;
+  sort?: 'top' | 'newest';
+}): Promise<CommunityTrackEntry[]> {
+  try {
+    const params = new URLSearchParams();
+    if (opts?.query && opts.query.trim()) params.set('q', opts.query.trim());
+    if (opts?.sort) params.set('sort', opts.sort);
+    const qs = params.toString();
+    const url = `${getCommunityTracksRestUrl()}${qs ? `?${qs}` : ''}`;
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { tracks?: CommunityTrackEntry[] };
+    return Array.isArray(data.tracks) ? data.tracks : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function publishTrackToGallery(
+  track: StudioTrackSpec | TrackSpec,
+  author?: string,
+): Promise<{ success: boolean; track?: CommunityTrackEntry; error?: string }> {
+  try {
+    const res = await fetch(getCommunityTracksRestUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ track, author: author?.trim() || 'Track Designer' }),
+    });
+    const data = (await res.json()) as { success?: boolean; track?: CommunityTrackEntry; error?: string };
+    if (!res.ok || !data.track) {
+      return { success: false, error: data.error || 'Failed to publish track' };
+    }
+    return { success: true, track: data.track };
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error publishing track' };
+  }
+}
+
+export async function upvoteCommunityTrack(
+  trackId: string,
+  voterId?: string,
+): Promise<{ success: boolean; upvotes?: number; track?: CommunityTrackEntry; error?: string }> {
+  try {
+    const url = `${getCommunityTracksRestUrl()}/${encodeURIComponent(trackId)}/upvote`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voterId }),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      upvotes?: number;
+      track?: CommunityTrackEntry;
+      error?: string;
+    };
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to upvote track' };
+    }
+    return { success: true, upvotes: data.upvotes ?? data.track?.upvotes, track: data.track };
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error upvoting track' };
+  }
 }
 

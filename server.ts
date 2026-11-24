@@ -5,12 +5,30 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer as createViteServer } from 'vite';
+import {
+  PlaylistEntry,
+  ServerLeaderboardEntry,
+  isValidFastestLapTime,
+  normalizePlaylist,
+  resolveNextPlaylistIndex,
+} from './src/game/multiplayer';
+import {
+  CommunityTrackEntry,
+  STARTER_TEMPLATES,
+  StudioTrackSpec,
+  analyzeTrackGeometry,
+  createCustomTrackSpec,
+  isValidTrackSpecObject,
+} from './src/game/customTracks';
+import { compileTrack, getTrackById } from './src/game/tracks';
+import { TrackSpec } from './src/game/types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 interface PeerRecord {
   peerId: string;
+  sessionToken?: string;
   name: string;
   carId: string;
   classId?: string;
@@ -40,9 +58,13 @@ interface RoomRecord {
   lobbyName: string;
   config: Record<string, unknown>;
   peers: Map<string, PeerRecord>;
+  bannedPeerIds: Set<string>;
+  bannedSessionTokens: Set<string>;
+  bannedTokenByPeer: Map<string, string>;
   chatMessages: ChatEntry[];
   trackVotes: Record<string, string>; // peerId -> trackId
   started: boolean;
+  raceRoundAdvancedForCurrentStart: boolean;
   createdAt: number;
   lastActivityAt: number;
 }
@@ -54,6 +76,231 @@ interface TrackedSocket extends WebSocket {
 const rooms = new Map<string, RoomRecord>();
 const ROOM_IDLE_TTL_MS = 45 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 25_000;
+
+const AUDIT_DIR = path.resolve(__dirname, 'audit');
+const LEADERBOARD_FILE = path.join(AUDIT_DIR, 'mp_leaderboard.json');
+const COMMUNITY_TRACKS_FILE = path.join(AUDIT_DIR, 'community_tracks.json');
+
+const leaderboardEntries: ServerLeaderboardEntry[] = [];
+const communityTracks = new Map<string, CommunityTrackEntry>();
+const trackUpvoters = new Map<string, Set<string>>();
+
+function ensureAuditDir() {
+  if (!fs.existsSync(AUDIT_DIR)) {
+    fs.mkdirSync(AUDIT_DIR, { recursive: true });
+  }
+}
+
+function loadServerStores() {
+  try {
+    if (fs.existsSync(LEADERBOARD_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(LEADERBOARD_FILE, 'utf-8'));
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          if (item && typeof item.trackId === 'string' && typeof item.lapTimeSeconds === 'number') {
+            leaderboardEntries.push(item as ServerLeaderboardEntry);
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore corrupt/unavailable leaderboard file
+  }
+
+  try {
+    if (fs.existsSync(COMMUNITY_TRACKS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(COMMUNITY_TRACKS_FILE, 'utf-8'));
+      if (Array.isArray(raw)) {
+        for (const entry of raw) {
+          if (entry && typeof entry.id === 'string' && isValidTrackSpecObject(entry.trackSpec)) {
+            communityTracks.set(entry.id, entry as CommunityTrackEntry);
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore corrupt/unavailable community tracks file
+  }
+
+  if (communityTracks.size === 0) {
+    const now = Date.now();
+    for (let i = 0; i < Math.min(2, STARTER_TEMPLATES.length); i++) {
+      const tmpl = STARTER_TEMPLATES[i];
+      const spec = createCustomTrackSpec({
+        id: `community-${tmpl.id}`,
+        name: tmpl.name,
+        country: 'Global',
+        scenery: tmpl.scenery,
+        trackWidth: tmpl.trackWidth,
+        kerbPrimary: tmpl.kerbPrimary,
+        kerbSecondary: tmpl.kerbSecondary,
+        waypoints: tmpl.waypoints,
+      });
+      const analysis = analyzeTrackGeometry(spec.waypoints, spec.trackWidth);
+      communityTracks.set(spec.id, {
+        id: spec.id,
+        name: spec.name,
+        author: 'Apex Motorsport',
+        country: spec.country,
+        scenery: spec.scenery,
+        lengthMeters: analysis.totalLengthMeters,
+        corners: analysis.cornerCount,
+        targetLapSeconds: spec.targetLapSeconds,
+        upvotes: 12 - i * 4,
+        createdAt: now - (i + 1) * 3_600_000,
+        updatedAt: now - (i + 1) * 3_600_000,
+        trackSpec: spec,
+      });
+    }
+  }
+}
+
+function saveLeaderboardStore() {
+  try {
+    ensureAuditDir();
+    fs.writeFileSync(LEADERBOARD_FILE, JSON.stringify(leaderboardEntries.slice(0, 300), null, 2), 'utf-8');
+  } catch {
+    // ignore disk errors
+  }
+}
+
+function saveCommunityTracksStore() {
+  try {
+    ensureAuditDir();
+    fs.writeFileSync(
+      COMMUNITY_TRACKS_FILE,
+      JSON.stringify(Array.from(communityTracks.values()), null, 2),
+      'utf-8',
+    );
+  } catch {
+    // ignore disk errors
+  }
+}
+
+loadServerStores();
+
+function resolveServerTrackLength(
+  trackId: string,
+  customTrack?: unknown,
+  fallbackLength?: number,
+): number {
+  if (isValidTrackSpecObject(customTrack)) {
+    try {
+      const compiled = compileTrack(customTrack as TrackSpec);
+      if (Number.isFinite(compiled.totalLength) && compiled.totalLength >= 200) {
+        return compiled.totalLength;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  const builtIn = getTrackById(trackId);
+  if (builtIn && builtIn.id === trackId) {
+    try {
+      const compiled = compileTrack(builtIn);
+      if (Number.isFinite(compiled.totalLength) && compiled.totalLength >= 200) {
+        return compiled.totalLength;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (typeof fallbackLength === 'number' && Number.isFinite(fallbackLength) && fallbackLength >= 400) {
+    return fallbackLength;
+  }
+  try {
+    const compiled = compileTrack(builtIn);
+    if (Number.isFinite(compiled.totalLength) && compiled.totalLength >= 200) {
+      return compiled.totalLength;
+    }
+  } catch {
+    // ignore
+  }
+  return 1500;
+}
+
+function getTrackLeaderboard(trackId?: string, classId?: string): ServerLeaderboardEntry[] {
+  return leaderboardEntries
+    .filter((e) => (!trackId || e.trackId === trackId) && (!classId || e.classId === classId))
+    .sort((a, b) => a.lapTimeSeconds - b.lapTimeSeconds)
+    .slice(0, 50);
+}
+
+function recordValidatedFastestLap(entry: ServerLeaderboardEntry): { accepted: boolean; minValidSeconds: number } {
+  const minValidSeconds = entry.trackLengthMeters / 135;
+  if (!isValidFastestLapTime(entry.lapTimeSeconds, entry.trackLengthMeters)) {
+    return { accepted: false, minValidSeconds };
+  }
+  const existingIdx = leaderboardEntries.findIndex(
+    (e) =>
+      e.trackId === entry.trackId &&
+      e.peerId === entry.peerId &&
+      (e.classId || '') === (entry.classId || ''),
+  );
+  if (existingIdx >= 0) {
+    if (entry.lapTimeSeconds < leaderboardEntries[existingIdx].lapTimeSeconds) {
+      leaderboardEntries[existingIdx] = entry;
+    }
+  } else {
+    leaderboardEntries.push(entry);
+  }
+  leaderboardEntries.sort((a, b) => a.lapTimeSeconds - b.lapTimeSeconds);
+  if (leaderboardEntries.length > 300) {
+    leaderboardEntries.length = 300;
+  }
+  saveLeaderboardStore();
+  return { accepted: true, minValidSeconds };
+}
+
+function sanitizeRoomConfig(rawConfig: Record<string, unknown>): Record<string, unknown> {
+  const cfg = { ...rawConfig };
+  if ('playlist' in cfg) {
+    cfg.playlist = normalizePlaylist(cfg.playlist);
+  }
+  if ('playlistIndex' in cfg) {
+    const idx = Number(cfg.playlistIndex);
+    cfg.playlistIndex = Number.isFinite(idx) && idx >= 0 ? Math.floor(idx) : 0;
+  }
+  if ('mandatoryServiceStop' in cfg) {
+    cfg.mandatoryServiceStop = Boolean(cfg.mandatoryServiceStop);
+  }
+  return cfg;
+}
+
+function advanceRoomTrackOrPlaylist(room: RoomRecord): boolean {
+  const cfg = room.config as Record<string, unknown>;
+  const playlist: PlaylistEntry[] = normalizePlaylist(cfg.playlist);
+  const currentIdx = Number.isFinite(Number(cfg.playlistIndex)) ? Math.max(0, Math.floor(Number(cfg.playlistIndex))) : 0;
+  const hasVotes = Object.keys(room.trackVotes).length > 0;
+  if (!hasVotes && playlist.length === 0) {
+    return false;
+  }
+
+  const { nextIndex, entry, votedTrackId } = resolveNextPlaylistIndex(playlist, currentIdx, room.trackVotes);
+  room.trackVotes = {};
+
+  if (entry) {
+    cfg.playlistIndex = nextIndex;
+    cfg.trackId = entry.trackId;
+    cfg.customTrack = entry.customTrack;
+    if (entry.totalLaps) {
+      cfg.totalLaps = entry.totalLaps;
+    }
+    const label = entry.trackName || getTrackById(entry.trackId).shortName || entry.trackId;
+    pushSystemChat(room, `Playlist Round ${nextIndex + 1}/${playlist.length}: ${label}.`);
+    return true;
+  }
+
+  if (votedTrackId) {
+    cfg.trackId = votedTrackId;
+    cfg.customTrack = undefined;
+    const label = getTrackById(votedTrackId).shortName || votedTrackId;
+    pushSystemChat(room, `Circuit vote winner: ${label}.`);
+    return true;
+  }
+
+  return false;
+}
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -88,6 +335,7 @@ function isValidTelemetryData(data: unknown): boolean {
 }
 
 function serializeRoom(room: RoomRecord) {
+  const cfg = room.config as Record<string, unknown>;
   const peersList = Array.from(room.peers.values()).map((p) => ({
     peerId: p.peerId,
     name: p.name,
@@ -105,16 +353,21 @@ function serializeRoom(room: RoomRecord) {
   for (const p of peersList) {
     players[p.peerId] = p;
   }
+  const trackId = String(cfg?.trackId || 'monza');
   return {
     code: room.code,
     hostId: room.hostId,
     name: room.lobbyName,
     isPublic: room.isPublic,
     config: room.config,
-    customTrack: (room.config as Record<string, unknown>)?.customTrack,
+    customTrack: cfg?.customTrack,
     started: room.started,
     peers: peersList,
     players,
+    bannedPeerIds: Array.from(room.bannedPeerIds),
+    playlist: normalizePlaylist(cfg?.playlist),
+    playlistIndex: Number.isFinite(Number(cfg?.playlistIndex)) ? Math.max(0, Math.floor(Number(cfg?.playlistIndex))) : 0,
+    leaderboard: getTrackLeaderboard(trackId).slice(0, 20),
     chatMessages: room.chatMessages,
     trackVotes: room.trackVotes,
   };
@@ -203,6 +456,162 @@ async function startServer() {
       return;
     }
     res.json(serializeRoom(room));
+  });
+
+  app.get(['/api/leaderboard', '/Apex-Miniature/api/leaderboard'], (req, res) => {
+    const trackId = typeof req.query.trackId === 'string' ? sanitizeText(req.query.trackId, 64) : undefined;
+    const classId = typeof req.query.classId === 'string' ? sanitizeText(req.query.classId, 24) : undefined;
+    res.json({ entries: getTrackLeaderboard(trackId, classId) });
+  });
+
+  app.post(['/api/leaderboard', '/Apex-Miniature/api/leaderboard'], (req, res) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const trackId = sanitizeText(body.trackId, 64) || 'monza';
+    const elapsed = Number(body.elapsed ?? body.lapTimeSeconds);
+    const trackLength = resolveServerTrackLength(
+      trackId,
+      body.customTrack,
+      Number.isFinite(Number(body.trackLength)) ? Number(body.trackLength) : undefined,
+    );
+    const entry: ServerLeaderboardEntry = {
+      trackId,
+      classId: sanitizeText(body.classId, 24) || 'HYPERCAR_GTP',
+      peerId: sanitizeText(body.peerId, 32) || `anon-${Math.random().toString(36).slice(2, 8)}`,
+      driverName: sanitizeText(body.driverName, 24) || 'Driver',
+      carId: sanitizeText(body.carId, 48) || 'ferrari-499p',
+      lapTimeSeconds: elapsed,
+      trackLengthMeters: Math.round(trackLength),
+      recordedAt: Date.now(),
+    };
+    const result = recordValidatedFastestLap(entry);
+    if (!result.accepted) {
+      res.status(400).json({
+        error: `Lap time failed minimum physics sanity check (${elapsed}s < ${(result.minValidSeconds).toFixed(2)}s for ${Math.round(trackLength)}m).`,
+        minValidSeconds: result.minValidSeconds,
+      });
+      return;
+    }
+    res.status(201).json({ success: true, entry, entries: getTrackLeaderboard(trackId) });
+  });
+
+  app.get(['/api/tracks', '/Apex-Miniature/api/tracks'], (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+    const sort = req.query.sort === 'newest' ? 'newest' : 'top';
+    let list = Array.from(communityTracks.values());
+    if (q) {
+      list = list.filter(
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          t.author.toLowerCase().includes(q) ||
+          t.country.toLowerCase().includes(q) ||
+          t.scenery.toLowerCase().includes(q),
+      );
+    }
+    list.sort((a, b) =>
+      sort === 'newest'
+        ? b.createdAt - a.createdAt
+        : b.upvotes - a.upvotes || b.createdAt - a.createdAt,
+    );
+    res.json({ tracks: list });
+  });
+
+  app.get(['/api/tracks/:id', '/Apex-Miniature/api/tracks/:id'], (req, res) => {
+    const id = sanitizeText(req.params.id, 64);
+    const entry = communityTracks.get(id);
+    if (!entry) {
+      res.status(404).json({ error: 'Community track not found' });
+      return;
+    }
+    res.json({ track: entry });
+  });
+
+  app.post(['/api/tracks', '/Apex-Miniature/api/tracks'], (req, res) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const rawTrack = (body.track && typeof body.track === 'object' ? body.track : body) as Record<string, unknown>;
+      if (!isValidTrackSpecObject(rawTrack)) {
+        res.status(400).json({ error: 'Invalid track payload: must include name and at least 4 waypoints.' });
+        return;
+      }
+      const cleanName = sanitizeText(rawTrack.name, 40) || 'Community Circuit';
+      const author = sanitizeText(body.author ?? rawTrack.author, 24) || 'Track Designer';
+      const now = Date.now();
+      const rawId = sanitizeText(rawTrack.id, 64);
+      const needsFreshId = !rawId || rawId.startsWith('template-') || communityTracks.has(rawId);
+      const id = needsFreshId ? `trk-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}` : rawId;
+
+      const builtSpec: StudioTrackSpec = createCustomTrackSpec({
+        id,
+        name: cleanName,
+        country: sanitizeText(rawTrack.country, 24) || 'Global',
+        scenery: (rawTrack.scenery as TrackSpec['scenery']) || 'stadium',
+        trackWidth:
+          typeof rawTrack.trackWidth === 'number' && Number.isFinite(rawTrack.trackWidth)
+            ? Math.max(12, Math.min(24, rawTrack.trackWidth))
+            : 17,
+        kerbPrimary: sanitizeText(rawTrack.kerbPrimary, 16) || '#ef4444',
+        kerbSecondary: sanitizeText(rawTrack.kerbSecondary, 16) || '#f8fafc',
+        pitSide: rawTrack.pitSide === 'right' ? 'right' : 'left',
+        startNodeIndex:
+          typeof rawTrack.startNodeIndex === 'number' && Number.isFinite(rawTrack.startNodeIndex)
+            ? Math.max(0, Math.floor(rawTrack.startNodeIndex))
+            : 0,
+        waypoints: rawTrack.waypoints,
+      });
+      if (Array.isArray(rawTrack.sectorSplits) && rawTrack.sectorSplits.length === 2) {
+        builtSpec.sectorSplits = [Number(rawTrack.sectorSplits[0]) || 0.33, Number(rawTrack.sectorSplits[1]) || 0.67];
+      }
+
+      const analysis = analyzeTrackGeometry(builtSpec.waypoints, builtSpec.trackWidth);
+      const entry: CommunityTrackEntry = {
+        id,
+        name: builtSpec.name,
+        author,
+        country: builtSpec.country,
+        scenery: builtSpec.scenery,
+        lengthMeters: analysis.totalLengthMeters,
+        corners: analysis.cornerCount,
+        targetLapSeconds: builtSpec.targetLapSeconds,
+        upvotes: 1,
+        createdAt: now,
+        updatedAt: now,
+        trackSpec: builtSpec,
+      };
+      communityTracks.set(id, entry);
+      saveCommunityTracksStore();
+      res.status(201).json({ success: true, track: entry });
+    } catch (e: unknown) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to publish community track' });
+    }
+  });
+
+  app.post(['/api/tracks/:id/upvote', '/Apex-Miniature/api/tracks/:id/upvote'], (req, res) => {
+    const id = sanitizeText(req.params.id, 64);
+    const entry = communityTracks.get(id);
+    if (!entry) {
+      res.status(404).json({ error: 'Community track not found' });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    const voterId = sanitizeText(body.voterId, 64);
+    if (voterId) {
+      let voters = trackUpvoters.get(id);
+      if (!voters) {
+        voters = new Set();
+        trackUpvoters.set(id, voters);
+      }
+      if (!voters.has(voterId)) {
+        voters.add(voterId);
+        entry.upvotes += 1;
+        entry.updatedAt = Date.now();
+        saveCommunityTracksStore();
+      }
+    } else {
+      entry.upvotes += 1;
+      entry.updatedAt = Date.now();
+      saveCommunityTracksStore();
+    }
+    res.json({ success: true, upvotes: entry.upvotes, track: entry });
   });
 
   const server = http.createServer(app);
@@ -384,6 +793,7 @@ async function startServer() {
         cleanup();
         const code = generateRoomCode();
         const peerId = sanitizeText(msg.peerId, 32) || `p-${Math.random().toString(36).slice(2, 8)}`;
+        const sessionToken = sanitizeText(msg.sessionToken, 64) || undefined;
         const hostName = sanitizeText(msg.name, 24) || 'Host Driver';
         const isPublic = msg.isPublic !== false;
         const lobbyName = sanitizeText(msg.lobbyName, 36) || `${hostName}'s Paddock`;
@@ -393,16 +803,21 @@ async function startServer() {
           hostId: peerId,
           isPublic,
           lobbyName,
-          config: (msg.config as Record<string, unknown>) || {},
+          config: sanitizeRoomConfig((msg.config as Record<string, unknown>) || {}),
           peers: new Map(),
+          bannedPeerIds: new Set(),
+          bannedSessionTokens: new Set(),
+          bannedTokenByPeer: new Map(),
           chatMessages: [],
           trackVotes: {},
           started: false,
+          raceRoundAdvancedForCurrentStart: false,
           createdAt: now,
           lastActivityAt: now,
         };
         room.peers.set(peerId, {
           peerId,
+          sessionToken,
           name: hostName,
           carId: sanitizeText(msg.carId, 48) || 'ferrari-499p',
           classId: sanitizeText(msg.classId, 24) || 'HYPERCAR_GTP',
@@ -429,14 +844,29 @@ async function startServer() {
           ws.send(JSON.stringify({ type: 'room:error', message: `Room "${code}" not found.` }));
           return;
         }
-        cleanup();
         const peerId = sanitizeText(msg.peerId, 32) || `p-${Math.random().toString(36).slice(2, 8)}`;
+        const sessionToken = sanitizeText(msg.sessionToken, 64) || undefined;
+        if (
+          room.bannedPeerIds.has(peerId) ||
+          (sessionToken && room.bannedSessionTokens.has(sessionToken))
+        ) {
+          ws.send(
+            JSON.stringify({
+              type: 'room:error',
+              code: 'BANNED',
+              message: 'You have been banned from this room by the Race Director.',
+            }),
+          );
+          return;
+        }
+        cleanup();
         const guestName = sanitizeText(msg.name, 24) || 'Guest Driver';
         // Join-in-progress automatically places joiner as spectator unless room hasn't started
         const wantsSpectator = Boolean(msg.isSpectator) || room.started;
         // Idempotent guard: overwrite existing socket for same peerId
         room.peers.set(peerId, {
           peerId,
+          sessionToken,
           name: guestName,
           carId: sanitizeText(msg.carId, 48) || 'porsche-963',
           classId: sanitizeText(msg.classId, 24) || 'HYPERCAR_GTP',
@@ -470,7 +900,7 @@ async function startServer() {
           if (clean) room.lobbyName = clean;
         }
         if (msg.config && typeof msg.config === 'object') {
-          room.config = { ...room.config, ...(msg.config as Record<string, unknown>) };
+          room.config = sanitizeRoomConfig({ ...room.config, ...(msg.config as Record<string, unknown>) });
         }
         broadcastRoom(room, { type: 'room:state', room: serializeRoom(room) });
       } else if (type === 'room:peer_update') {
@@ -491,6 +921,7 @@ async function startServer() {
         }
       } else if (type === 'room:start' && room.hostId === currentPeerId) {
         room.started = true;
+        room.raceRoundAdvancedForCurrentStart = false;
         room.trackVotes = {};
         broadcastRoom(room, { type: 'room:started', room: serializeRoom(room), serverTime: Date.now() }, currentPeerId);
       } else if (type === 'room:return_to_lobby' && room.hostId === currentPeerId) {
@@ -498,7 +929,14 @@ async function startServer() {
         for (const p of room.peers.values()) {
           p.ready = p.isHost;
         }
+        if (!room.raceRoundAdvancedForCurrentStart) {
+          advanceRoomTrackOrPlaylist(room);
+          room.raceRoundAdvancedForCurrentStart = true;
+        }
         pushSystemChat(room, 'Host returned the session to the paddock.');
+        broadcastRoom(room, { type: 'room:state', room: serializeRoom(room) });
+      } else if (type === 'room:advance_playlist' && room.hostId === currentPeerId) {
+        advanceRoomTrackOrPlaylist(room);
         broadcastRoom(room, { type: 'room:state', room: serializeRoom(room) });
       } else if (type === 'room:chat') {
         const peer = room.peers.get(currentPeerId);
@@ -537,6 +975,147 @@ async function startServer() {
             broadcastRoom(room, { type: 'room:state', room: serializeRoom(room) });
           }
         }
+      } else if (type === 'room:ban' && room.hostId === currentPeerId) {
+        const targetId = sanitizeText(msg.targetPeerId, 32);
+        if (targetId && targetId !== currentPeerId) {
+          room.bannedPeerIds.add(targetId);
+          const target = room.peers.get(targetId);
+          if (target) {
+            if (target.sessionToken) {
+              room.bannedSessionTokens.add(target.sessionToken);
+              room.bannedTokenByPeer.set(targetId, target.sessionToken);
+            }
+            if (target.ws.readyState === WebSocket.OPEN) {
+              target.ws.send(
+                JSON.stringify({
+                  type: 'room:kicked',
+                  banned: true,
+                  reason: 'Banned from this lobby by Race Director',
+                }),
+              );
+            }
+            room.peers.delete(targetId);
+            delete room.trackVotes[targetId];
+            pushSystemChat(room, `${target.name} was banned by Race Director.`);
+          } else {
+            pushSystemChat(room, `Driver ${targetId} was added to room ban list.`);
+          }
+          broadcastRoom(room, { type: 'room:state', room: serializeRoom(room) });
+        }
+      } else if (type === 'room:unban' && room.hostId === currentPeerId) {
+        const targetId = sanitizeText(msg.targetPeerId, 32);
+        if (targetId) {
+          room.bannedPeerIds.delete(targetId);
+          const mappedToken = room.bannedTokenByPeer.get(targetId);
+          if (mappedToken) {
+            room.bannedSessionTokens.delete(mappedToken);
+            room.bannedTokenByPeer.delete(targetId);
+          }
+          pushSystemChat(room, `Ban lifted for ${targetId}.`);
+          broadcastRoom(room, { type: 'room:state', room: serializeRoom(room) });
+        }
+      } else if (type === 'race:lap_complete') {
+        const peer = room.peers.get(currentPeerId);
+        if (!peer || peer.isSpectator) return;
+        const cfg = room.config as Record<string, unknown>;
+        const trackId = sanitizeText(msg.trackId, 64) || String(cfg?.trackId || 'monza');
+        const trackLength = resolveServerTrackLength(
+          trackId,
+          cfg?.customTrack,
+          typeof msg.trackLength === 'number' ? msg.trackLength : undefined,
+        );
+        const elapsed = Number(msg.elapsed);
+        const entry: ServerLeaderboardEntry = {
+          trackId,
+          classId: sanitizeText(msg.classId, 24) || peer.classId || 'HYPERCAR_GTP',
+          peerId: peer.peerId,
+          driverName: peer.name,
+          carId: sanitizeText(msg.carId, 48) || peer.carId,
+          lapTimeSeconds: elapsed,
+          trackLengthMeters: Math.round(trackLength),
+          recordedAt: Date.now(),
+        };
+        const check = recordValidatedFastestLap(entry);
+        if (!check.accepted) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                type: 'room:error',
+                code: 'INVALID_LAP_TIME',
+                message: `Lap rejected by server sanity check (${elapsed}s < ${check.minValidSeconds.toFixed(2)}s min).`,
+              }),
+            );
+          }
+          return;
+        }
+        broadcastRoom(room, {
+          type: 'race:leaderboard_update',
+          trackId,
+          entries: getTrackLeaderboard(trackId).slice(0, 20),
+        });
+      } else if (type === 'race:submit_result' && room.hostId === currentPeerId) {
+        const cfg = room.config as Record<string, unknown>;
+        const trackId = sanitizeText(msg.trackId, 64) || String(cfg?.trackId || 'monza');
+        const trackLength = resolveServerTrackLength(
+          trackId,
+          cfg?.customTrack,
+          typeof msg.trackLength === 'number' ? msg.trackLength : undefined,
+        );
+        const rawResults = Array.isArray(msg.results) ? (msg.results as Array<Record<string, unknown>>) : [];
+        const totalRacers = Math.max(2, rawResults.length);
+        let rejectedAny = false;
+
+        for (const r of rawResults) {
+          const targetPeerId = sanitizeText(r.peerId, 32);
+          if (!targetPeerId) continue;
+          const bestLap = r.bestLapTime;
+          if (bestLap !== undefined && bestLap !== null) {
+            const elapsed = Number(bestLap);
+            if (!isValidFastestLapTime(elapsed, trackLength)) {
+              rejectedAny = true;
+              continue;
+            }
+          }
+          const peer = room.peers.get(targetPeerId);
+          if (bestLap !== undefined && bestLap !== null) {
+            recordValidatedFastestLap({
+              trackId,
+              classId: sanitizeText(r.classId, 24) || peer?.classId || 'HYPERCAR_GTP',
+              peerId: targetPeerId,
+              driverName: sanitizeText(r.driverName, 24) || peer?.name || 'Driver',
+              carId: sanitizeText(r.carId, 48) || peer?.carId || 'ferrari-499p',
+              lapTimeSeconds: Number(bestLap),
+              trackLengthMeters: Math.round(trackLength),
+              recordedAt: Date.now(),
+            });
+          }
+          if (peer) {
+            const pos = Math.max(1, Math.min(totalRacers, Number(r.position) || totalRacers));
+            const incidents = Math.max(0, Number(r.incidents) || 0);
+            const cleanLaps = Math.max(0, Number(r.cleanLaps) || 0);
+            const normalizedPerf = 1 - (pos - 1) / (totalRacers - 1);
+            const eloDelta = Math.round((normalizedPerf - 0.5) * 44);
+            const srDelta = Math.round(cleanLaps * 1.5 - incidents * 4);
+            peer.elo = Math.max(400, Math.min(3500, peer.elo + eloDelta));
+            peer.safetyRating = Math.max(0, Math.min(100, peer.safetyRating + srDelta));
+          }
+        }
+
+        if (rejectedAny && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: 'room:error',
+              code: 'INVALID_LAP_TIME',
+              message: `One or more results failed minimum lap-time sanity check (min ${(trackLength / 135).toFixed(2)}s). Leaderboard & Elo updates skipped for invalid entries.`,
+            }),
+          );
+        }
+
+        if (msg.advancePlaylist !== false && !room.raceRoundAdvancedForCurrentStart) {
+          advanceRoomTrackOrPlaylist(room);
+          room.raceRoundAdvancedForCurrentStart = true;
+        }
+        broadcastRoom(room, { type: 'room:state', room: serializeRoom(room) });
       } else if (type === 'race:ai_sync' && room.hostId === currentPeerId) {
         // Host-authoritative AI traffic state relay
         broadcastRoom(

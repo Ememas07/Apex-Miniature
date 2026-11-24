@@ -4,16 +4,24 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   CUSTOM_TRACK_TEMPLATES,
+  CommunityTrackEntry,
   NODE_COLLIDER_RADIUS_MULTIPLIER,
   NODE_HIT_RADIUS_PX,
+  SegmentPropType,
+  SegmentSurfaceType,
+  StudioTrackSpec,
+  StudioTrackWaypoint,
   TrackGeometryAnalysis,
   analyzeTrackGeometry,
   exportTrackToJson,
   exportTrackToShareCode,
+  fetchCommunityTracks,
   findClosestWaypointHit2D,
   findTrackSegmentInsertIndex,
   importTrackFromString,
+  publishTrackToGallery,
   saveCustomTrack,
+  upvoteCommunityTrack,
 } from '../game/customTracks';
 import { CompiledTrack, compileTrack } from '../game/tracks';
 import { SceneryTheme, TrackSpec, TrackWaypoint } from '../game/types';
@@ -50,6 +58,48 @@ const ENVIRONMENT_PRESETS: Array<{ id: SceneryTheme; label: string; desc: string
 const KERB_PRIMARY_OPTIONS = ['#dc2626', '#2563eb', '#16a34a', '#0f172a', '#ea580c'];
 const KERB_SECONDARY_OPTIONS = ['#ffffff', '#facc15', '#38bdf8', '#e2e8f0'];
 
+const SURFACE_BRUSH_META: Record<SegmentSurfaceType, { label: string; color: string; badge: string }> = {
+  grass: { label: 'Turf / Grass', color: 'rgba(34, 197, 94, 0.34)', badge: '#22c55e' },
+  asphalt: { label: 'Asphalt Runoff', color: 'rgba(100, 116, 139, 0.42)', badge: '#94a3b8' },
+  gravel: { label: 'Gravel Trap', color: 'rgba(217, 119, 6, 0.38)', badge: '#f59e0b' },
+  sand: { label: 'Desert Sand', color: 'rgba(234, 179, 8, 0.36)', badge: '#eab308' },
+  astroturf: { label: 'Astroturf', color: 'rgba(16, 185, 129, 0.38)', badge: '#10b981' },
+};
+
+const PROP_BRUSH_META: Record<SegmentPropType, { label: string; short: string; color: string }> = {
+  none: { label: 'Auto / None', short: '', color: '#64748b' },
+  grandstand: { label: 'Grandstand', short: 'GS', color: '#3b82f6' },
+  trees: { label: 'Tree Grove', short: 'TR', color: '#22c55e' },
+  bridge: { label: 'Bridge', short: 'BR', color: '#06b6d4' },
+  tunnel: { label: 'Tunnel', short: 'TN', color: '#a855f7' },
+  barriers: { label: 'Barriers', short: 'WL', color: '#ef4444' },
+};
+
+function GalleryTrackMini({ track }: { track: TrackSpec }) {
+  const compiled = compileTrack(track, 64);
+  const xs = compiled.samples.map((s) => s.x);
+  const zs = compiled.samples.map((s) => s.z);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minZ = Math.min(...zs);
+  const maxZ = Math.max(...zs);
+  const span = Math.max(maxX - minX, maxZ - minZ, 1);
+  const d =
+    compiled.samples
+      .map((s, i) => {
+        const px = 8 + ((s.x - minX) / span) * 84;
+        const py = 8 + ((s.z - minZ) / span) * 64;
+        return `${i === 0 ? 'M' : 'L'}${px.toFixed(1)},${py.toFixed(1)}`;
+      })
+      .join(' ') + ' Z';
+  return (
+    <svg viewBox="0 0 100 80" className="w-16 h-12 shrink-0" aria-hidden="true">
+      <path d={d} fill="none" stroke="#334155" strokeWidth="5" strokeLinejoin="round" />
+      <path d={d} fill="none" stroke={track.kerbPrimary || '#ef4444'} strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function TrackStudioModal({
   initialTrack,
   onClose,
@@ -57,7 +107,7 @@ export function TrackStudioModal({
   onTestDrive,
 }: TrackStudioModalProps) {
   // Working track definition
-  const [trackSpec, setTrackSpec] = useState<TrackSpec>(() => {
+  const [trackSpec, setTrackSpec] = useState<StudioTrackSpec>(() => {
     if (initialTrack) {
       return JSON.parse(JSON.stringify(initialTrack));
     }
@@ -65,7 +115,21 @@ export function TrackStudioModal({
   });
 
   const [selectedNodeIndex, setSelectedNodeIndex] = useState<number>(0);
-  const [editorMode, setEditorMode] = useState<'select' | 'add'>('select');
+  const [editorMode, setEditorMode] = useState<'select' | 'add' | 'paint'>('select');
+  const [paintTarget, setPaintTarget] = useState<'surfaceLeft' | 'surfaceRight' | 'both' | 'propType'>('surfaceLeft');
+  const [paintSurface, setPaintSurface] = useState<SegmentSurfaceType>('gravel');
+  const [paintProp, setPaintProp] = useState<SegmentPropType>('grandstand');
+  const isPaintingRef = useRef(false);
+
+  const [galleryModalOpen, setGalleryModalOpen] = useState(false);
+  const [galleryTracks, setGalleryTracks] = useState<CommunityTrackEntry[]>([]);
+  const [galleryLoading, setGalleryLoading] = useState(false);
+  const [gallerySearch, setGallerySearch] = useState('');
+  const [gallerySort, setGallerySort] = useState<'top' | 'newest'>('top');
+  const [galleryAuthor, setGalleryAuthor] = useState('Track Designer');
+  const [galleryStatus, setGalleryStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [upvotingId, setUpvotingId] = useState<string | null>(null);
+  const voterIdRef = useRef<string>(`voter-${Math.random().toString(36).slice(2, 10)}`);
   const [hoveredNode2d, setHoveredNode2d] = useState<number | null>(null);
   const [hoveredNode3d, setHoveredNode3d] = useState<number | null>(null);
   const [cursor2d, setCursor2d] = useState<'default' | 'grab' | 'grabbing' | 'move' | 'crosshair'>('default');
@@ -223,7 +287,7 @@ export function TrackStudioModal({
 
   // Update track waypoint
   const updateWaypoint = useCallback(
-    (index: number, patch: Partial<TrackWaypoint>) => {
+    (index: number, patch: Partial<StudioTrackWaypoint>) => {
       setTrackSpec((prev) => {
         if (index < 0 || index >= prev.waypoints.length) return prev;
         const nextWps = [...prev.waypoints];
@@ -232,6 +296,32 @@ export function TrackStudioModal({
       });
     },
     [],
+  );
+
+  const paintSegmentAtWorldPos = useCallback(
+    (worldX: number, worldZ: number) => {
+      const segHit = findTrackSegmentInsertIndex(trackSpec.waypoints, worldX, worldZ, trackSpec.trackWidth);
+      if (segHit.distance > trackSpec.trackWidth * 2.6 + 34) return;
+      const idx = segHit.segmentIndex;
+      const patch: Partial<StudioTrackWaypoint> = {};
+      if (paintTarget === 'propType') {
+        patch.propType = paintProp;
+        patch.sceneryProp = paintProp === 'barriers' ? 'none' : paintProp;
+      } else {
+        if (paintTarget === 'surfaceLeft' || paintTarget === 'both') {
+          patch.surfaceLeft = paintSurface;
+        }
+        if (paintTarget === 'surfaceRight' || paintTarget === 'both') {
+          patch.surfaceRight = paintSurface;
+        }
+        if (paintSurface === 'asphalt' || paintSurface === 'grass' || paintSurface === 'gravel') {
+          patch.runoff = paintSurface;
+        }
+      }
+      updateWaypoint(idx, patch);
+      setSelectedNodeIndex(idx);
+    },
+    [paintProp, paintSurface, paintTarget, trackSpec.trackWidth, trackSpec.waypoints, updateWaypoint],
   );
 
   // Insert waypoint at an explicit index
@@ -337,7 +427,7 @@ export function TrackStudioModal({
     preview3dRef.current?.resetCamera(compileTrack(tmpl).totalLength, cameraView3d);
   };
 
-  const buildFinalizedTrack = useCallback((): TrackSpec => {
+  const buildFinalizedTrack = useCallback((): StudioTrackSpec => {
     const isTemplateId = !trackSpec.id || trackSpec.id.startsWith('template-');
     const cleanName = trackSpec.name.trim() || 'Custom Circuit';
     const shortName =
@@ -359,6 +449,71 @@ export function TrackStudioModal({
       createdAt: Date.now(),
     };
   }, [trackSpec, analysis.estimatedLapSeconds, analysis.cornerCount]);
+
+  const refreshGallery = useCallback(
+    async (queryOverride?: string, sortOverride?: 'top' | 'newest') => {
+      setGalleryLoading(true);
+      try {
+        const tracks = await fetchCommunityTracks({
+          query: queryOverride ?? gallerySearch,
+          sort: sortOverride ?? gallerySort,
+        });
+        setGalleryTracks(tracks);
+      } finally {
+        setGalleryLoading(false);
+      }
+    },
+    [gallerySearch, gallerySort],
+  );
+
+  useEffect(() => {
+    if (galleryModalOpen) {
+      refreshGallery();
+    }
+  }, [galleryModalOpen, gallerySort, refreshGallery]);
+
+  const handlePublishToGallery = async () => {
+    setGalleryStatus(null);
+    const finalized = buildFinalizedTrack();
+    const res = await publishTrackToGallery(finalized, galleryAuthor);
+    if (!res.success || !res.track) {
+      setGalleryStatus({ ok: false, text: res.error || 'Could not publish track.' });
+      return;
+    }
+    setGalleryStatus({ ok: true, text: `Published "${res.track.name}" to the Community Gallery!` });
+    refreshGallery();
+  };
+
+  const handleUpvoteGalleryTrack = async (entryId: string) => {
+    setUpvotingId(entryId);
+    try {
+      const res = await upvoteCommunityTrack(entryId, voterIdRef.current);
+      if (res.success && typeof res.upvotes === 'number') {
+        setGalleryTracks((prev) =>
+          prev.map((t) => (t.id === entryId ? { ...t, upvotes: res.upvotes! } : t)),
+        );
+      }
+    } finally {
+      setUpvotingId(null);
+    }
+  };
+
+  const handleCloneCommunityTrack = (entry: CommunityTrackEntry) => {
+    pushHistorySnapshot(trackSpec);
+    const cloned: StudioTrackSpec = {
+      ...JSON.parse(JSON.stringify(entry.trackSpec)),
+      id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      name: `${entry.name.slice(0, 26)} (Remix)`,
+      isCustom: true,
+      createdAt: Date.now(),
+    };
+    setTrackSpec(cloned);
+    setSelectedNodeIndex(0);
+    setPan({ x: 0, y: 0 });
+    setZoom(1.0);
+    setGalleryModalOpen(false);
+    preview3dRef.current?.resetCamera(compileTrack(cloned).totalLength, cameraView3d);
+  };
 
   // Save track handler
   const handleSave = () => {
@@ -395,7 +550,7 @@ export function TrackStudioModal({
   // Keep default 2D cursor synchronized with editorMode when idle
   useEffect(() => {
     if (draggingNodeRef.current === null && !isPanningRef.current && hoveredNode2d === null) {
-      setCursor2d(editorMode === 'add' ? 'crosshair' : 'default');
+      setCursor2d(editorMode === 'add' || editorMode === 'paint' ? 'crosshair' : 'default');
     }
     if (hoveredNode3d === null) {
       setCursor3d((prev) => (prev === 'grabbing' || prev === 'move' ? prev : editorMode === 'add' ? 'crosshair' : 'default'));
@@ -493,18 +648,52 @@ export function TrackStudioModal({
 
       // Draw compiled smooth track spline ribbon
       if (compiledTrack.samples.length > 1) {
-        // Runoff apron outline
-        ctx.beginPath();
-        for (let i = 0; i < compiledTrack.samples.length; i++) {
-          const s = compiledTrack.samples[i];
-          const hw = (s.width ? s.width * 0.5 : trackSpec.trackWidth * 0.5) + 3.5;
-          const pt = toScreen(s.x + s.nx * hw, s.z + s.nz * hw);
-          if (i === 0) ctx.moveTo(pt.sx, pt.sy);
-          else ctx.lineTo(pt.sx, pt.sy);
+        const samples = compiledTrack.samples;
+        const nWps = Math.max(1, trackSpec.waypoints.length);
+
+        // Per-segment painted left/right surface shoulders (surfaceLeft / surfaceRight)
+        for (let i = 0; i < samples.length; i++) {
+          const s0 = samples[i];
+          const s1 = samples[(i + 1) % samples.length];
+          const segIdx = Math.min(nWps - 1, Math.floor(s0.t * nWps));
+          const wp = trackSpec.waypoints[segIdx];
+          const hw0 = s0.width ? s0.width * 0.5 : trackSpec.trackWidth * 0.5;
+          const hw1 = s1.width ? s1.width * 0.5 : trackSpec.trackWidth * 0.5;
+          const shoulderW = 4.6;
+
+          const leftSurf: SegmentSurfaceType =
+            wp?.surfaceLeft ?? (wp?.runoff as SegmentSurfaceType | undefined) ?? (trackSpec.scenery === 'desert' ? 'sand' : 'grass');
+          const rightSurf: SegmentSurfaceType =
+            wp?.surfaceRight ?? (wp?.runoff as SegmentSurfaceType | undefined) ?? (trackSpec.scenery === 'desert' ? 'sand' : 'grass');
+
+          // Left shoulder (-nx)
+          const lInner0 = toScreen(s0.x - s0.nx * hw0, s0.z - s0.nz * hw0);
+          const lOuter0 = toScreen(s0.x - s0.nx * (hw0 + shoulderW), s0.z - s0.nz * (hw0 + shoulderW));
+          const lOuter1 = toScreen(s1.x - s1.nx * (hw1 + shoulderW), s1.z - s1.nz * (hw1 + shoulderW));
+          const lInner1 = toScreen(s1.x - s1.nx * hw1, s1.z - s1.nz * hw1);
+          ctx.beginPath();
+          ctx.moveTo(lInner0.sx, lInner0.sy);
+          ctx.lineTo(lOuter0.sx, lOuter0.sy);
+          ctx.lineTo(lOuter1.sx, lOuter1.sy);
+          ctx.lineTo(lInner1.sx, lInner1.sy);
+          ctx.closePath();
+          ctx.fillStyle = SURFACE_BRUSH_META[leftSurf]?.color ?? 'rgba(59,72,61,0.25)';
+          ctx.fill();
+
+          // Right shoulder (+nx)
+          const rInner0 = toScreen(s0.x + s0.nx * hw0, s0.z + s0.nz * hw0);
+          const rOuter0 = toScreen(s0.x + s0.nx * (hw0 + shoulderW), s0.z + s0.nz * (hw0 + shoulderW));
+          const rOuter1 = toScreen(s1.x + s1.nx * (hw1 + shoulderW), s1.z + s1.nz * (hw1 + shoulderW));
+          const rInner1 = toScreen(s1.x + s1.nx * hw1, s1.z + s1.nz * hw1);
+          ctx.beginPath();
+          ctx.moveTo(rInner0.sx, rInner0.sy);
+          ctx.lineTo(rOuter0.sx, rOuter0.sy);
+          ctx.lineTo(rOuter1.sx, rOuter1.sy);
+          ctx.lineTo(rInner1.sx, rInner1.sy);
+          ctx.closePath();
+          ctx.fillStyle = SURFACE_BRUSH_META[rightSurf]?.color ?? 'rgba(59,72,61,0.25)';
+          ctx.fill();
         }
-        ctx.closePath();
-        ctx.fillStyle = trackSpec.scenery === 'desert' ? 'rgba(196,156,110,0.18)' : 'rgba(59,72,61,0.22)';
-        ctx.fill();
 
         // Main asphalt ribbon
         ctx.beginPath();
@@ -559,6 +748,30 @@ export function TrackStudioModal({
         ctx.strokeStyle = '#facc15';
         ctx.lineWidth = 2.5;
         ctx.stroke();
+
+        // Per-segment propType trackside badges
+        for (let idx = 0; idx < nWps; idx++) {
+          const wp = trackSpec.waypoints[idx];
+          const prop = wp.propType ?? wp.sceneryProp;
+          if (!prop || prop === 'none') continue;
+          const meta = PROP_BRUSH_META[prop];
+          if (!meta || !meta.short) continue;
+          const sampleIdx = Math.min(nSamples - 1, Math.floor(((idx + 0.5) / nWps) * nSamples));
+          const s = samples[sampleIdx];
+          const hw = (s.width ? s.width * 0.5 : trackSpec.trackWidth * 0.5) + 9;
+          const pt = toScreen(s.x + s.nx * hw, s.z + s.nz * hw);
+          ctx.save();
+          ctx.fillStyle = meta.color;
+          ctx.beginPath();
+          ctx.roundRect(pt.sx - 10, pt.sy - 7, 20, 14, 3);
+          ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 8px Oxanium, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(meta.short, pt.sx, pt.sy + 0.5);
+          ctx.restore();
+        }
       }
 
       // Draw Start/Finish line indicator
@@ -680,12 +893,23 @@ export function TrackStudioModal({
       return;
     }
 
-    // Left-Click (0): Node Selection, Dragging & Placement Only (NEVER pans camera)
+    // Left-Click (0): Segment Painting, Node Selection, Dragging & Placement
     if (e.button !== 0) return;
 
     const centerX = canvas.width * 0.5 + pan.x;
     const centerY = canvas.height * 0.5 + pan.y;
     const scale = zoom * 1.35;
+
+    if (editorMode === 'paint') {
+      e.stopPropagation();
+      pushHistorySnapshot(trackSpec);
+      isPaintingRef.current = true;
+      const worldX = (mouseX - centerX) / scale;
+      const worldZ = (mouseY - centerY) / scale;
+      paintSegmentAtWorldPos(worldX, worldZ);
+      setCursor2d('crosshair');
+      return;
+    }
 
     const startWindowDrag = (nodeIdx: number) => {
       pushHistorySnapshot(trackSpec);
@@ -769,6 +993,17 @@ export function TrackStudioModal({
     if (!canvas) return;
     const { mouseX, mouseY } = get2dPointerCoords(e, canvas);
 
+    if (isPaintingRef.current && editorMode === 'paint' && (e.buttons & 1) !== 0) {
+      const centerX = canvas.width * 0.5 + pan.x;
+      const centerY = canvas.height * 0.5 + pan.y;
+      const scale = zoom * 1.35;
+      const worldX = (mouseX - centerX) / scale;
+      const worldZ = (mouseY - centerY) / scale;
+      paintSegmentAtWorldPos(worldX, worldZ);
+      setCursor2d('crosshair');
+      return;
+    }
+
     if (draggingNodeRef.current !== null) {
       const idx = draggingNodeRef.current;
       const centerX = canvas.width * 0.5 + pan.x;
@@ -810,12 +1045,13 @@ export function TrackStudioModal({
       NODE_HIT_RADIUS_PX,
     );
     setHoveredNode2d(hoverIdx !== -1 ? hoverIdx : null);
-    setCursor2d(hoverIdx !== -1 ? 'grab' : editorMode === 'add' ? 'crosshair' : 'default');
+    setCursor2d(hoverIdx !== -1 ? 'grab' : editorMode === 'add' || editorMode === 'paint' ? 'crosshair' : 'default');
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvas2dRef.current;
     if (!canvas) return;
+    isPaintingRef.current = false;
     if (draggingNodeRef.current !== null || isPanningRef.current) {
       try {
         canvas.releasePointerCapture(e.pointerId);
@@ -838,7 +1074,7 @@ export function TrackStudioModal({
       NODE_HIT_RADIUS_PX,
     );
     setHoveredNode2d(hoverIdx !== -1 ? hoverIdx : null);
-    setCursor2d(hoverIdx !== -1 ? 'grab' : editorMode === 'add' ? 'crosshair' : 'default');
+    setCursor2d(hoverIdx !== -1 ? 'grab' : editorMode === 'add' || editorMode === 'paint' ? 'crosshair' : 'default');
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -1408,6 +1644,18 @@ export function TrackStudioModal({
 
           <button
             type="button"
+            data-testid="btn-studio-community-gallery"
+            onClick={() => {
+              setGalleryStatus(null);
+              setGalleryModalOpen(true);
+            }}
+            className="px-3 py-1.5 text-xs bg-amber-600/25 hover:bg-amber-600/40 border border-amber-400/40 rounded font-semibold text-amber-200 cursor-pointer"
+          >
+            Community Gallery
+          </button>
+
+          <button
+            type="button"
             data-testid="btn-studio-export-import"
             onClick={() => {
               setImportError(null);
@@ -1495,6 +1743,16 @@ export function TrackStudioModal({
                   }`}
                 >
                   + Add Node
+                </button>
+                <button
+                  type="button"
+                  data-testid="btn-studio-mode-paint"
+                  onClick={() => setEditorMode('paint')}
+                  className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer transition-colors ${
+                    editorMode === 'paint' ? 'bg-amber-500 text-black' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Paint Segments
                 </button>
               </div>
 
@@ -1602,6 +1860,78 @@ export function TrackStudioModal({
                 </div>
               )}
             </div>
+
+            {/* Segment Paint Brush Bar */}
+            {editorMode === 'paint' && (
+              <div
+                data-testid="studio-paint-palette"
+                className="pointer-events-auto flex flex-wrap items-center gap-2 bg-[#121824]/95 border border-amber-400/40 px-3 py-1.5 rounded-lg text-xs shadow-lg"
+              >
+                <span className="text-amber-300 font-bold uppercase tracking-wider text-[10px]">Brush:</span>
+                <div className="flex rounded bg-black/40 border border-white/10 p-0.5">
+                  {(
+                    [
+                      ['surfaceLeft', 'Left Edge'],
+                      ['surfaceRight', 'Right Edge'],
+                      ['both', 'Both Edges'],
+                      ['propType', 'Props'],
+                    ] as const
+                  ).map(([tId, tLabel]) => (
+                    <button
+                      key={tId}
+                      type="button"
+                      onClick={() => setPaintTarget(tId)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-semibold cursor-pointer ${
+                        paintTarget === tId ? 'bg-amber-500 text-black' : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {tLabel}
+                    </button>
+                  ))}
+                </div>
+
+                {paintTarget === 'propType' ? (
+                  <div className="flex flex-wrap gap-1">
+                    {(Object.keys(PROP_BRUSH_META) as SegmentPropType[]).map((prop) => (
+                      <button
+                        key={prop}
+                        type="button"
+                        onClick={() => setPaintProp(prop)}
+                        className={`px-2 py-0.5 rounded border text-[11px] font-semibold cursor-pointer ${
+                          paintProp === prop
+                            ? 'border-white text-white'
+                            : 'border-white/10 bg-black/30 text-slate-300 hover:text-white'
+                        }`}
+                        style={paintProp === prop ? { backgroundColor: PROP_BRUSH_META[prop].color } : undefined}
+                      >
+                        {PROP_BRUSH_META[prop].label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {(Object.keys(SURFACE_BRUSH_META) as SegmentSurfaceType[]).map((surf) => (
+                      <button
+                        key={surf}
+                        type="button"
+                        onClick={() => setPaintSurface(surf)}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-semibold cursor-pointer ${
+                          paintSurface === surf
+                            ? 'border-white bg-white/15 text-white'
+                            : 'border-white/10 bg-black/30 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: SURFACE_BRUSH_META[surf].badge }}
+                        />
+                        {SURFACE_BRUSH_META[surf].label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <canvas
@@ -1907,17 +2237,62 @@ export function TrackStudioModal({
                   </div>
                 </div>
 
-                {/* Studio 2.0 Per-Node Scenery Prop, Runoff & DRS Zone */}
+                {/* Studio 2.0 Per-Node Scenery Prop, Runoff & Segment Surfaces */}
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <div>
-                    <label className="text-[11px] text-slate-400 block mb-1">Trackside Prop</label>
+                    <label className="text-[11px] text-slate-400 block mb-1">Left Surface</label>
                     <select
-                      value={selectedWp.sceneryProp ?? 'none'}
-                      onChange={(e) =>
+                      aria-label="Segment Left Surface"
+                      value={selectedWp.surfaceLeft ?? selectedWp.runoff ?? 'grass'}
+                      onChange={(e) => {
+                        const val = e.target.value as SegmentSurfaceType;
                         updateWaypoint(selectedNodeIndex, {
-                          sceneryProp: e.target.value as TrackWaypoint['sceneryProp'],
-                        })
-                      }
+                          surfaceLeft: val,
+                          ...(val === 'asphalt' || val === 'grass' || val === 'gravel' ? { runoff: val } : {}),
+                        });
+                      }}
+                      className="w-full px-2 py-1 rounded bg-black/40 border border-white/15 text-slate-200 text-xs outline-none"
+                    >
+                      <option value="grass">Turf / Grass</option>
+                      <option value="asphalt">Asphalt Apron</option>
+                      <option value="gravel">Gravel Trap</option>
+                      <option value="sand">Desert Sand</option>
+                      <option value="astroturf">Astroturf</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">Right Surface</label>
+                    <select
+                      aria-label="Segment Right Surface"
+                      value={selectedWp.surfaceRight ?? selectedWp.runoff ?? 'grass'}
+                      onChange={(e) => {
+                        const val = e.target.value as SegmentSurfaceType;
+                        updateWaypoint(selectedNodeIndex, {
+                          surfaceRight: val,
+                          ...(val === 'asphalt' || val === 'grass' || val === 'gravel' ? { runoff: val } : {}),
+                        });
+                      }}
+                      className="w-full px-2 py-1 rounded bg-black/40 border border-white/15 text-slate-200 text-xs outline-none"
+                    >
+                      <option value="grass">Turf / Grass</option>
+                      <option value="asphalt">Asphalt Apron</option>
+                      <option value="gravel">Gravel Trap</option>
+                      <option value="sand">Desert Sand</option>
+                      <option value="astroturf">Astroturf</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[11px] text-slate-400 block mb-1">Segment Trackside Prop</label>
+                    <select
+                      aria-label="Segment Prop Type"
+                      value={selectedWp.propType ?? selectedWp.sceneryProp ?? 'none'}
+                      onChange={(e) => {
+                        const val = e.target.value as SegmentPropType;
+                        updateWaypoint(selectedNodeIndex, {
+                          propType: val,
+                          sceneryProp: val === 'barriers' ? 'none' : val,
+                        });
+                      }}
                       className="w-full px-2 py-1 rounded bg-black/40 border border-white/15 text-slate-200 text-xs outline-none"
                     >
                       <option value="none">Auto / None</option>
@@ -1925,22 +2300,7 @@ export function TrackStudioModal({
                       <option value="trees">Tree Grove</option>
                       <option value="bridge">Sponsor Bridge</option>
                       <option value="tunnel">Tunnel Portal</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-slate-400 block mb-1">Runoff Surface</label>
-                    <select
-                      value={selectedWp.runoff ?? 'grass'}
-                      onChange={(e) =>
-                        updateWaypoint(selectedNodeIndex, {
-                          runoff: e.target.value as TrackWaypoint['runoff'],
-                        })
-                      }
-                      className="w-full px-2 py-1 rounded bg-black/40 border border-white/15 text-slate-200 text-xs outline-none"
-                    >
-                      <option value="grass">Turf / Grass</option>
-                      <option value="asphalt">Asphalt Apron</option>
-                      <option value="gravel">Gravel Trap</option>
+                      <option value="barriers">Concrete Barriers</option>
                     </select>
                   </div>
                 </div>
@@ -2197,6 +2557,159 @@ export function TrackStudioModal({
               >
                 Validate & Load Circuit
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Community Track Gallery Modal Overlay */}
+      {galleryModalOpen && (
+        <div
+          data-testid="studio-community-gallery-modal"
+          role="dialog"
+          aria-label="Community Track Gallery"
+          className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4"
+        >
+          <div className="w-full max-w-3xl max-h-[88dvh] bg-[#111722] border border-white/15 rounded-xl flex flex-col overflow-hidden shadow-2xl">
+            <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+              <div>
+                <h3 className="font-display font-bold text-base text-white">Community Track Gallery</h3>
+                <p className="text-xs text-slate-400">
+                  Browse community-built circuits, upvote favorites, clone into Studio, or publish your own.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setGalleryModalOpen(false)}
+                aria-label="Close Community Gallery"
+                className="text-slate-400 hover:text-white cursor-pointer px-2 py-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Publish Current Track Bar */}
+            <div className="px-5 py-3 bg-[#0c111a] border-b border-white/10 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                <input
+                  type="text"
+                  maxLength={24}
+                  value={galleryAuthor}
+                  onChange={(e) => setGalleryAuthor(e.target.value)}
+                  placeholder="Author name..."
+                  aria-label="Gallery Author Name"
+                  className="px-2.5 py-1.5 rounded bg-black/40 border border-white/15 text-xs text-white w-40 outline-none focus:border-amber-400"
+                />
+                <span className="text-xs text-slate-400 truncate">
+                  Current: <strong className="text-white">{trackSpec.name}</strong> ({analysis.totalLengthMeters}m)
+                </span>
+              </div>
+              <button
+                type="button"
+                data-testid="btn-gallery-publish"
+                onClick={handlePublishToGallery}
+                className="px-3.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-xs font-display font-bold text-white cursor-pointer"
+              >
+                Publish Current Track
+              </button>
+            </div>
+
+            {galleryStatus && (
+              <div
+                className={`px-5 py-2 text-xs border-b border-white/10 ${
+                  galleryStatus.ok ? 'bg-emerald-950/50 text-emerald-300' : 'bg-rose-950/50 text-rose-300'
+                }`}
+              >
+                {galleryStatus.text}
+              </div>
+            )}
+
+            {/* Browse Filter Bar */}
+            <div className="px-5 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+                <input
+                  type="text"
+                  value={gallerySearch}
+                  onChange={(e) => setGallerySearch(e.target.value)}
+                  placeholder="Search circuits, authors, themes..."
+                  className="flex-1 max-w-xs px-3 py-1.5 rounded bg-black/40 border border-white/15 text-xs text-white outline-none focus:border-sky-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => refreshGallery(gallerySearch, gallerySort)}
+                  className="px-2.5 py-1.5 rounded bg-white/10 hover:bg-white/20 text-xs text-slate-200 cursor-pointer"
+                >
+                  Search
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setGallerySort('top')}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer ${
+                    gallerySort === 'top' ? 'bg-amber-500 text-black' : 'bg-white/10 text-slate-300'
+                  }`}
+                >
+                  Top Voted
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGallerySort('newest')}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer ${
+                    gallerySort === 'newest' ? 'bg-amber-500 text-black' : 'bg-white/10 text-slate-300'
+                  }`}
+                >
+                  Newest
+                </button>
+              </div>
+            </div>
+
+            {/* Tracks List */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-2.5">
+              {galleryLoading ? (
+                <div className="text-center text-xs text-slate-400 py-8">Loading community circuits...</div>
+              ) : galleryTracks.length === 0 ? (
+                <div className="text-center text-xs text-slate-400 py-8">
+                  No community tracks found. Publish your circuit above!
+                </div>
+              ) : (
+                galleryTracks.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 p-3 rounded-lg bg-[#151c2a] border border-white/10"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <GalleryTrackMini track={entry.trackSpec} />
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-white truncate">{entry.name}</div>
+                        <div className="text-[11px] text-slate-400 truncate">
+                          by <span className="text-sky-300 font-semibold">{entry.author}</span> · {entry.scenery} ·{' '}
+                          {entry.lengthMeters}m · {entry.corners} turns · ~{entry.targetLapSeconds}s
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        data-testid={`btn-upvote-track-${entry.id}`}
+                        disabled={upvotingId === entry.id}
+                        onClick={() => handleUpvoteGalleryTrack(entry.id)}
+                        className="px-2.5 py-1.5 rounded bg-amber-600/25 hover:bg-amber-600/40 border border-amber-400/40 text-xs font-telemetry font-bold text-amber-200 cursor-pointer"
+                      >
+                        ▲ {entry.upvotes}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`btn-clone-track-${entry.id}`}
+                        onClick={() => handleCloneCommunityTrack(entry)}
+                        className="px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-xs font-semibold text-white cursor-pointer"
+                      >
+                        Clone to Studio
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
