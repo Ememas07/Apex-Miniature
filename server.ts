@@ -239,7 +239,8 @@ async function startServer() {
   }, HEARTBEAT_INTERVAL_MS);
   sweepTimer.unref?.();
 
-  const viteHmrEnabled = process.env.NODE_ENV !== 'production' && process.env.DISABLE_HMR !== 'true';
+  const isDev = process.env.NODE_ENV !== 'production';
+  const viteHmrEnabled = isDev && process.env.DISABLE_HMR !== 'true';
 
   server.on('upgrade', (request, socket, head) => {
     const pathname = new URL(request.url || '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
@@ -247,7 +248,7 @@ async function startServer() {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
-    } else if (!viteHmrEnabled) {
+    } else if (!isDev) {
       socket.destroy();
     }
   });
@@ -580,11 +581,12 @@ async function startServer() {
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (isDev) {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: viteHmrEnabled ? { server } : false,
+        ws: { server },
+        hmr: viteHmrEnabled,
       },
       appType: 'spa',
     });
