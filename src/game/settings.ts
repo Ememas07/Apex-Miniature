@@ -2,7 +2,17 @@
  * Persistent client-side gameplay, graphics, audio, camera, HUD & accessibility settings (localStorage-backed).
  */
 
+import {
+  getWheelPresetConfig,
+  SteeringLockCurve,
+  WHEEL_CALIBRATION_PRESETS,
+  WHEEL_PRESET_ORDER,
+  WheelPresetId,
+} from './gamepad';
 import { EngineerVerbosity, TcLevel } from './types';
+
+export type { SteeringLockCurve, WheelPresetId };
+export { WHEEL_CALIBRATION_PRESETS, WHEEL_PRESET_ORDER };
 
 export type TouchControlsMode = 'auto' | 'always' | 'off';
 export type TouchSteerStyle = 'pad' | 'buttons' | 'gyro';
@@ -141,8 +151,14 @@ export interface GameSettings {
   steerLinearity: number; // 1.0..2.2
   steerSensitivity: number; // 0.5..1.8
   wheelLockDegrees: number; // 180..900
+  wheelPreset: WheelPresetId;
+  steeringLockCurve: SteeringLockCurve;
   rumbleIntensity: number; // 0..1
   splitPedalAxes: boolean;
+  combinedPedalAxis: boolean;
+  invertSteerAxis: boolean;
+  invertThrottleAxis: boolean;
+  invertBrakeAxis: boolean;
   showControlsBriefing: boolean;
   keybinds: KeybindConfig;
 
@@ -210,8 +226,14 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   steerLinearity: 1.35,
   steerSensitivity: 1.0,
   wheelLockDegrees: 360,
+  wheelPreset: 'default',
+  steeringLockCurve: 'standard',
   rumbleIntensity: 0.75,
   splitPedalAxes: false,
+  combinedPedalAxis: false,
+  invertSteerAxis: false,
+  invertThrottleAxis: false,
+  invertBrakeAxis: false,
   showControlsBriefing: true,
   keybinds: { ...DEFAULT_KEYBINDS },
 
@@ -255,6 +277,24 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   reducedMotion: false,
   subtitleScale: 1.0,
 };
+
+export function applyWheelPreset(preset: WheelPresetId): Partial<GameSettings> {
+  const entry = getWheelPresetConfig(preset);
+  return {
+    wheelPreset: entry.id,
+    steerDeadzone: entry.config.steerDeadzone,
+    steerLinearity: entry.config.steerLinearity,
+    steerSensitivity: entry.config.steerSensitivity,
+    wheelLockDegrees: entry.config.wheelLockDegrees,
+    steeringLockCurve: entry.config.steeringLockCurve,
+    rumbleIntensity: entry.config.rumbleIntensity,
+    splitPedalAxes: entry.config.splitPedalAxes,
+    combinedPedalAxis: entry.config.combinedPedalAxis,
+    invertSteerAxis: entry.config.invertSteerAxis,
+    invertThrottleAxis: entry.config.invertThrottleAxis,
+    invertBrakeAxis: entry.config.invertBrakeAxis,
+  };
+}
 
 export function applyGraphicsPreset(preset: GraphicsPreset): Partial<GameSettings> {
   switch (preset) {
@@ -412,8 +452,21 @@ function sanitizeSettings(raw: unknown): GameSettings {
     steerLinearity: clampNum(p.steerLinearity, 1.0, 2.2, d.steerLinearity),
     steerSensitivity: clampNum(p.steerSensitivity, 0.5, 1.8, d.steerSensitivity),
     wheelLockDegrees: clampNum(p.wheelLockDegrees, 180, 900, d.wheelLockDegrees),
+    wheelPreset: isOneOf(p.wheelPreset, WHEEL_PRESET_ORDER) ? p.wheelPreset : d.wheelPreset,
+    steeringLockCurve: isOneOf(p.steeringLockCurve, ['standard', 'linear', 'progressive', 's-curve'] as const)
+      ? p.steeringLockCurve
+      : d.steeringLockCurve,
     rumbleIntensity: clampNum(p.rumbleIntensity, 0, 1, d.rumbleIntensity),
     splitPedalAxes: typeof p.splitPedalAxes === 'boolean' ? p.splitPedalAxes : d.splitPedalAxes,
+    combinedPedalAxis:
+      typeof p.combinedPedalAxis === 'boolean'
+        ? p.splitPedalAxes === true
+          ? false
+          : p.combinedPedalAxis
+        : d.combinedPedalAxis,
+    invertSteerAxis: typeof p.invertSteerAxis === 'boolean' ? p.invertSteerAxis : d.invertSteerAxis,
+    invertThrottleAxis: typeof p.invertThrottleAxis === 'boolean' ? p.invertThrottleAxis : d.invertThrottleAxis,
+    invertBrakeAxis: typeof p.invertBrakeAxis === 'boolean' ? p.invertBrakeAxis : d.invertBrakeAxis,
     showControlsBriefing: typeof p.showControlsBriefing === 'boolean' ? p.showControlsBriefing : d.showControlsBriefing,
     keybinds: sanitizeKeybinds(p.keybinds),
 

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import {
   applyGraphicsPreset,
+  applyWheelPreset,
   ColorblindMode,
   DEFAULT_GAME_SETTINGS,
   DEFAULT_KEYBINDS,
@@ -32,12 +33,21 @@ import {
   RacingLineMode,
   setGameSettings,
   ShadowQuality,
+  SteeringLockCurve,
   subscribeGameSettings,
   TouchControlsMode,
   TouchSteerStyle,
   TransmissionMode,
   UnitsSystem,
+  WHEEL_CALIBRATION_PRESETS,
+  WHEEL_PRESET_ORDER,
 } from '../game/settings';
+import {
+  computeWheelSteer,
+  detectWheelPresetFromGamepadId,
+  readWheelPedals,
+  selectActiveGamepad,
+} from '../game/gamepad';
 import { EngineerVerbosity, TcLevel } from '../game/types';
 import { isTouchCapableDevice } from '../game/touchControls';
 import { audioEngine } from '../three/audioEngine';
@@ -193,33 +203,19 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     let rafId = 0;
     const poll = () => {
       try {
-        const pads = navigator.getGamepads?.() ?? [];
-        let found: Gamepad | null = null;
-        for (let i = 0; i < pads.length; i++) {
-          if (pads[i]?.connected) {
-            found = pads[i];
-            break;
-          }
-        }
+        const pads = Array.from(navigator.getGamepads?.() ?? []);
+        const found = selectActiveGamepad(pads, null);
         if (found) {
           const s = settingsRef.current;
-          const rawSteer = found.axes[0] ?? 0;
-          const abs = Math.abs(rawSteer);
-          const dz = s.steerDeadzone;
-          let shaped = 0;
-          if (abs > dz) {
-            const norm = Math.min(1, (abs - dz) / Math.max(0.05, 1 - dz));
-            shaped = Math.sign(rawSteer) * Math.min(1, Math.pow(norm, s.steerLinearity) * s.steerSensitivity);
-          }
-          let throttle = found.buttons[7]?.value ?? 0;
-          let brake = found.buttons[6]?.value ?? 0;
-          if (s.splitPedalAxes && found.axes.length >= 3) {
-            const axThrottle = Math.max(0, Math.min(1, (1 - (found.axes[1] ?? 1)) * 0.5));
-            const axBrake = Math.max(0, Math.min(1, (1 - (found.axes[2] ?? 1)) * 0.5));
-            throttle = Math.max(throttle, axThrottle);
-            brake = Math.max(brake, axBrake);
-          }
-          setLiveAxes({ steer: shaped, throttle, brake });
+          const { steer } = computeWheelSteer((found.axes ?? [])[0] ?? 0, s);
+          const pedals = readWheelPedals(found.axes ?? [], found.buttons ?? [], {
+            triggerDeadzone: 0.04,
+            splitPedalAxes: s.splitPedalAxes,
+            combinedPedalAxis: s.combinedPedalAxis,
+            invertThrottleAxis: s.invertThrottleAxis,
+            invertBrakeAxis: s.invertBrakeAxis,
+          });
+          setLiveAxes({ steer, throttle: pedals.throttle, brake: pedals.brake });
           if (!detectedGamepad) setDetectedGamepad(found.id || `Controller #${found.index + 1}`);
         }
       } catch {
@@ -320,6 +316,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        data-gamepad-scope="settings-modal"
         className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl bg-[#0c1018] border border-white/15 shadow-2xl overflow-hidden text-white"
         onClick={(e) => e.stopPropagation()}
       >
@@ -461,28 +460,144 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     <Gamepad2 className="w-4 h-4" />
                     Gamepad & Racing Wheel
                   </div>
-                  <span
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border ${
-                      detectedGamepad
-                        ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-300'
-                        : 'bg-white/5 border-white/10 text-white/50'
-                    }`}
-                  >
-                    {detectedGamepad ? `Connected: ${detectedGamepad.slice(0, 42)}` : 'No controller detected'}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(() => {
+                      const matchedPreset = detectWheelPresetFromGamepadId(detectedGamepad);
+                      if (!matchedPreset || matchedPreset === settings.wheelPreset) return null;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => patch(applyWheelPreset(matchedPreset))}
+                          className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 text-amber-200 transition"
+                        >
+                          Apply {WHEEL_CALIBRATION_PRESETS[matchedPreset].shortLabel}
+                        </button>
+                      );
+                    })()}
+                    <span
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border ${
+                        detectedGamepad
+                          ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-white/50'
+                      }`}
+                    >
+                      {detectedGamepad ? `Connected: ${detectedGamepad.slice(0, 42)}` : 'No controller detected'}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Named Wheel Calibration Presets */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-white/60">
+                      Wheel & Controller Calibration Preset
+                    </span>
+                    <span className="text-[10px] font-mono uppercase text-amber-300/80">
+                      {WHEEL_CALIBRATION_PRESETS[settings.wheelPreset]?.pedalMode ?? 'triggers'} mode
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                    {WHEEL_PRESET_ORDER.map((presetId) => {
+                      const preset = WHEEL_CALIBRATION_PRESETS[presetId];
+                      const active = settings.wheelPreset === presetId;
+                      return (
+                        <button
+                          key={presetId}
+                          type="button"
+                          onClick={() => patch(applyWheelPreset(presetId))}
+                          className={`px-2 py-2 rounded-lg text-[11px] font-bold border transition text-center ${
+                            active
+                              ? 'bg-amber-400 text-black border-amber-300 shadow'
+                              : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {preset.shortLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[11px] text-white/45">
+                    {WHEEL_CALIBRATION_PRESETS[settings.wheelPreset]?.description}
+                  </div>
+                </div>
+
+                {/* Steering Lock Curve */}
+                <div>
+                  <div className="text-[11px] font-bold text-white/60 mb-1.5">Steering Lock Curve</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                    {(
+                      [
+                        { id: 'standard', label: 'Standard' },
+                        { id: 'linear', label: 'Linear 1:1' },
+                        { id: 'progressive', label: 'Progressive' },
+                        { id: 's-curve', label: 'S-Curve' },
+                      ] as Array<{ id: SteeringLockCurve; label: string }>
+                    ).map((curve) => (
+                      <button
+                        key={curve.id}
+                        type="button"
+                        onClick={() => patch({ steeringLockCurve: curve.id })}
+                        className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase border transition ${
+                          settings.steeringLockCurve === curve.id
+                            ? 'bg-amber-400 text-black border-amber-300'
+                            : 'bg-white/5 text-white/75 border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {curve.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <ToggleRow
-                    label="Enable Gamepad / Wheel Input"
+                    label="Enable Gamepad / Wheel"
+                    description="Allow controller & steering wheel input"
                     checked={settings.controllerEnabled}
                     onChange={(v) => patch({ controllerEnabled: v })}
                   />
                   <ToggleRow
-                    label="Split Wheel Pedal Axes"
-                    description="Map dedicated racing pedal axes instead of triggers"
+                    label="Split Pedal Axes"
+                    description="Separate gas & brake wheel axes"
                     checked={settings.splitPedalAxes}
-                    onChange={(v) => patch({ splitPedalAxes: v })}
+                    onChange={(v) =>
+                      patch({
+                        splitPedalAxes: v,
+                        combinedPedalAxis: v ? false : settings.combinedPedalAxis,
+                      })
+                    }
+                  />
+                  <ToggleRow
+                    label="Combined Pedal Axis"
+                    description="Single shared gas (-1) / brake (+1) axis"
+                    checked={settings.combinedPedalAxis}
+                    onChange={(v) =>
+                      patch({
+                        combinedPedalAxis: v,
+                        splitPedalAxes: v ? false : settings.splitPedalAxes,
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <ToggleRow
+                    label="Invert Steering Axis"
+                    description="Flip left/right wheel polarity"
+                    checked={settings.invertSteerAxis}
+                    onChange={(v) => patch({ invertSteerAxis: v })}
+                  />
+                  <ToggleRow
+                    label="Invert Throttle Axis"
+                    description="Flip pedal rest/pressed direction"
+                    checked={settings.invertThrottleAxis}
+                    onChange={(v) => patch({ invertThrottleAxis: v })}
+                  />
+                  <ToggleRow
+                    label="Invert Brake Axis"
+                    description="Flip brake pedal polarity"
+                    checked={settings.invertBrakeAxis}
+                    onChange={(v) => patch({ invertBrakeAxis: v })}
                   />
                 </div>
 
