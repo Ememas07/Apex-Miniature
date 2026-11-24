@@ -14,6 +14,16 @@ import {
   createStartLineTexture,
 } from './proceduralTextures';
 
+export interface TrackPropCarState {
+  x: number;
+  y?: number;
+  z: number;
+  vx?: number;
+  vz?: number;
+  speed?: number;
+  lap?: number;
+}
+
 export interface BuiltTrackScene {
   group: THREE.Group;
   skyColor: number;
@@ -22,7 +32,208 @@ export interface BuiltTrackScene {
   roadMat: THREE.MeshStandardMaterial;
   updateMarshalFlags: (flagState: string, timeSec: number, yellowSectors?: number[]) => void;
   setNightLights: (nightIntensity: number) => void;
+  updateTrackProps?: (dt: number, carStates?: TrackPropCarState[], isFinalLap?: boolean) => void;
   dispose: () => void;
+}
+
+export type TrackSceneHandle = BuiltTrackScene;
+
+type TrackDisposable = <T extends { dispose: () => void }>(item: T) => T;
+
+interface AnimatedLandmarkHandles {
+  ferrisWheel?: {
+    wheel: THREE.Group;
+    gondolas: THREE.Group[];
+  };
+  blimp?: {
+    group: THREE.Group;
+    centerX: number;
+    centerZ: number;
+    baseY: number;
+    rx: number;
+    rz: number;
+    angle: number;
+  };
+  helicopter?: {
+    group: THREE.Group;
+    mainRotor: THREE.Object3D;
+    tailRotor: THREE.Object3D;
+    centerX: number;
+    centerZ: number;
+    baseY: number;
+    rx: number;
+    rz: number;
+    angle: number;
+  };
+}
+
+function buildFerrisWheelLandmark(
+  track: TrackDisposable,
+  isNight: boolean,
+): { root: THREE.Group; wheel: THREE.Group; gondolas: THREE.Group[] } {
+  const root = new THREE.Group();
+  const frameMat = track(
+    new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.45, metalness: 0.5 }),
+  );
+  const rimMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      emissive: isNight ? 0x38bdf8 : 0x0f172a,
+      emissiveIntensity: isNight ? 1.4 : 0.05,
+      roughness: 0.35,
+      metalness: 0.4,
+    }),
+  );
+
+  const radius = 15;
+  const hubY = 18.5;
+  const legGeo = track(new THREE.CylinderGeometry(0.45, 0.7, 20.5, 6));
+  for (const sideZ of [-2.4, 2.4]) {
+    for (const sideX of [-1, 1]) {
+      const leg = new THREE.Mesh(legGeo, frameMat);
+      leg.position.set(sideX * 4.6, hubY * 0.5, sideZ);
+      leg.rotation.z = sideX * 0.24;
+      root.add(leg);
+    }
+  }
+
+  const wheel = new THREE.Group();
+  wheel.position.set(0, hubY, 0);
+
+  const rimGeo = track(new THREE.TorusGeometry(radius, 0.42, 6, 28));
+  for (const rimZ of [-1.1, 1.1]) {
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.position.z = rimZ;
+    wheel.add(rim);
+  }
+
+  const spokeGeo = track(new THREE.CylinderGeometry(0.14, 0.14, radius * 2, 5));
+  for (let i = 0; i < 6; i++) {
+    const spoke = new THREE.Mesh(spokeGeo, frameMat);
+    spoke.rotation.z = (i / 6) * Math.PI;
+    wheel.add(spoke);
+  }
+
+  const gondolas: THREE.Group[] = [];
+  const cabinGeo = track(new THREE.BoxGeometry(1.9, 1.7, 2.2));
+  const cabinColors = [0xef4444, 0xfacc15, 0x38bdf8, 0x22c55e, 0xf97316, 0xa855f7];
+  const cabinMats = cabinColors.map((hex) =>
+    track(
+      new THREE.MeshStandardMaterial({
+        color: hex,
+        emissive: isNight ? hex : 0x000000,
+        emissiveIntensity: isNight ? 0.65 : 0,
+        roughness: 0.4,
+      }),
+    ),
+  );
+  const gondolaCount = 12;
+  for (let i = 0; i < gondolaCount; i++) {
+    const ang = (i / gondolaCount) * Math.PI * 2;
+    const pivot = new THREE.Group();
+    pivot.position.set(Math.cos(ang) * radius, Math.sin(ang) * radius, 0);
+    const cabin = new THREE.Mesh(cabinGeo, cabinMats[i % cabinMats.length]);
+    cabin.position.y = -1.1;
+    pivot.add(cabin);
+    wheel.add(pivot);
+    gondolas.push(pivot);
+  }
+
+  root.add(wheel);
+  return { root, wheel, gondolas };
+}
+
+function buildBlimpLandmark(track: TrackDisposable, isNight: boolean): THREE.Group {
+  const group = new THREE.Group();
+  const hullGeo = track(new THREE.SphereGeometry(5.5, 16, 12));
+  hullGeo.scale(1.0, 0.88, 2.75);
+  const hullMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      emissive: isNight ? 0x1e293b : 0x000000,
+      emissiveIntensity: isNight ? 0.5 : 0,
+      roughness: 0.45,
+      metalness: 0.15,
+    }),
+  );
+  const hull = new THREE.Mesh(hullGeo, hullMat);
+  group.add(hull);
+
+  const bandGeo = track(new THREE.CylinderGeometry(5.55, 5.55, 4.2, 16, 1, true));
+  bandGeo.rotateX(Math.PI * 0.5);
+  const bandMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0xe11d48,
+      emissive: isNight ? 0xe11d48 : 0x000000,
+      emissiveIntensity: isNight ? 0.8 : 0,
+      roughness: 0.4,
+      side: THREE.DoubleSide,
+    }),
+  );
+  group.add(new THREE.Mesh(bandGeo, bandMat));
+
+  const finGeo = track(new THREE.BoxGeometry(0.3, 4.4, 3.8));
+  const finMat = track(new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.5 }));
+  const topFin = new THREE.Mesh(finGeo, finMat);
+  topFin.position.set(0, 3.6, -10.5);
+  group.add(topFin);
+  const sideFinGeo = track(new THREE.BoxGeometry(4.6, 0.3, 3.6));
+  const sideFin = new THREE.Mesh(sideFinGeo, finMat);
+  sideFin.position.set(0, 0, -10.5);
+  group.add(sideFin);
+
+  const cabinGeo = track(new THREE.BoxGeometry(2.1, 1.6, 5.2));
+  const cabinMat = track(new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4 }));
+  const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+  cabin.position.set(0, -4.9, 1.0);
+  group.add(cabin);
+
+  return group;
+}
+
+function buildHelicopterLandmark(
+  track: TrackDisposable,
+  isNight: boolean,
+): { group: THREE.Group; mainRotor: THREE.Object3D; tailRotor: THREE.Object3D } {
+  const group = new THREE.Group();
+  const bodyMat = track(
+    new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.45 }),
+  );
+  const accentMat = track(
+    new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: isNight ? 0x38bdf8 : 0x000000,
+      emissiveIntensity: isNight ? 0.9 : 0,
+      roughness: 0.3,
+    }),
+  );
+  const rotorMat = track(new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4, metalness: 0.6 }));
+
+  const body = new THREE.Mesh(track(new THREE.BoxGeometry(2.4, 2.0, 5.4)), bodyMat);
+  group.add(body);
+
+  const canopy = new THREE.Mesh(track(new THREE.BoxGeometry(2.2, 1.3, 2.0)), accentMat);
+  canopy.position.set(0, 0.1, 2.4);
+  group.add(canopy);
+
+  const boom = new THREE.Mesh(track(new THREE.BoxGeometry(0.55, 0.65, 5.6)), bodyMat);
+  boom.position.set(0, 0.35, -5.0);
+  group.add(boom);
+
+  const mainRotor = new THREE.Group();
+  mainRotor.position.set(0, 1.35, 0);
+  const blade1 = new THREE.Mesh(track(new THREE.BoxGeometry(10.8, 0.08, 0.42)), rotorMat);
+  const blade2 = new THREE.Mesh(track(new THREE.BoxGeometry(0.42, 0.08, 10.8)), rotorMat);
+  mainRotor.add(blade1, blade2);
+  group.add(mainRotor);
+
+  const tailRotor = new THREE.Group();
+  tailRotor.position.set(0.4, 0.6, -7.6);
+  const tBlade = new THREE.Mesh(track(new THREE.BoxGeometry(0.08, 2.4, 0.25)), rotorMat);
+  tailRotor.add(tBlade);
+  group.add(tailRotor);
+
+  return { group, mainRotor, tailRotor };
 }
 
 function getSceneryPalette(scenery: SceneryTheme): {
@@ -153,6 +364,7 @@ export function buildTrackEnvironment(
   // so steep elevation circuits (Spa, Laguna Seca, Portimao) never exhibit sunken trenches or cliff walls.
   let minTrackX = Infinity, maxTrackX = -Infinity, minTrackZ = Infinity, maxTrackZ = -Infinity;
   let minTrackY = Infinity;
+  let maxTrackY = -Infinity;
   for (let i = 0; i < compiled.samples.length; i++) {
     const s = compiled.samples[i];
     if (s.x < minTrackX) minTrackX = s.x;
@@ -160,6 +372,7 @@ export function buildTrackEnvironment(
     if (s.z < minTrackZ) minTrackZ = s.z;
     if (s.z > maxTrackZ) maxTrackZ = s.z;
     if (s.y < minTrackY) minTrackY = s.y;
+    if (s.y > maxTrackY) maxTrackY = s.y;
   }
   const gridSpanX = Math.max(1600, (maxTrackX - minTrackX) + 540);
   const gridSpanZ = Math.max(1600, (maxTrackZ - minTrackZ) + 540);
@@ -1256,7 +1469,17 @@ export function buildTrackEnvironment(
     group.add(pitBuildingGroup);
   }
 
-  // Main Grandstand opposite Pit Lane
+  // Main Grandstand opposite Pit Lane + animated crowd reference
+  let crowdInst: THREE.InstancedMesh | null = null;
+  const crowdSpectators: Array<{
+    x: number;
+    y: number;
+    z: number;
+    baseScaleY: number;
+    phase: number;
+    speedMult: number;
+  }> = [];
+
   const standX = sf.x - sf.nx * pitSideSign * (halfW + 13);
   const standZ = sf.z - sf.nz * pitSideSign * (halfW + 13);
   if (isSafe(standX, standZ, 5.2)) {
@@ -1280,9 +1503,21 @@ export function buildTrackEnvironment(
     for (let i = 0; i < specCount; i++) {
       const row = Math.floor(i / 24);
       const col = i % 24;
-      dummy.position.set(-3.2 + row * 1.4, 5.75, -16 + col * 1.4);
+      const sx = -3.2 + row * 1.4;
+      const sy = 5.75;
+      const sz = -16 + col * 1.4;
+      const baseScaleY = 0.9 + (i % 3) * 0.15;
+      crowdSpectators.push({
+        x: sx,
+        y: sy,
+        z: sz,
+        baseScaleY,
+        phase: (i * 0.61) % (Math.PI * 2),
+        speedMult: 6.5 + (i % 5) * 0.75,
+      });
+      dummy.position.set(sx, sy, sz);
       dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, 0.9 + (i % 3) * 0.15, 1);
+      dummy.scale.set(1, baseScaleY, 1);
       dummy.updateMatrix();
       specInst.setMatrixAt(i, dummy.matrix);
       colorObj.setHex(specColors[(i * 7) % specColors.length]);
@@ -1292,6 +1527,94 @@ export function buildTrackEnvironment(
     if (specInst.instanceColor) specInst.instanceColor.needsUpdate = true;
     specInst.computeBoundingSphere();
     standGroup.add(specInst);
+    crowdInst = specInst;
+  }
+
+  // 8b. Instanced Timing Tower near Start/Finish
+  {
+    const towerCandidates = [
+      { longOff: 24, side: pitSideSign, latOff: halfW + 13.5 },
+      { longOff: -24, side: pitSideSign, latOff: halfW + 13.5 },
+      { longOff: 25, side: -pitSideSign, latOff: halfW + 14.5 },
+      { longOff: -25, side: -pitSideSign, latOff: halfW + 14.5 },
+    ];
+    for (const cand of towerCandidates) {
+      const tx = sf.x + sf.tx * cand.longOff + sf.nx * cand.side * cand.latOff;
+      const tz = sf.z + sf.tz * cand.longOff + sf.nz * cand.side * cand.latOff;
+      if (!isSafe(tx, tz, 3.0)) continue;
+
+      const towerGroup = new THREE.Group();
+      towerGroup.position.set(tx, sf.y, tz);
+      towerGroup.rotation.y = sfAngle;
+
+      const plinthGeo = track(new THREE.BoxGeometry(3.2, 1.4, 3.2));
+      const coreGeo = track(new THREE.BoxGeometry(2.0, 18.0, 2.0));
+      const towerMat = track(
+        new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4, metalness: 0.65 }),
+      );
+      const plinth = new THREE.Mesh(plinthGeo, towerMat);
+      plinth.position.y = 0.7;
+      plinth.castShadow = true;
+      towerGroup.add(plinth);
+
+      const core = new THREE.Mesh(coreGeo, towerMat);
+      core.position.y = 9.0;
+      core.castShadow = true;
+      towerGroup.add(core);
+
+      // Instanced LED position/timing tiers stacked up the pylon
+      const tierCount = 16;
+      const tierGeo = track(new THREE.BoxGeometry(2.28, 0.68, 2.28));
+      const tierMat = track(
+        new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          emissive: 0x1e293b,
+          emissiveIntensity: palette.isNight ? 1.15 : 0.45,
+          roughness: 0.3,
+          metalness: 0.2,
+        }),
+      );
+      const tierInst = new THREE.InstancedMesh(tierGeo, tierMat, tierCount);
+      const tierColors = [
+        0xa855f7, // fastest purple
+        0x22c55e, // green sector
+        0xf8fafc,
+        0xef4444,
+        0x38bdf8,
+        0xfacc15,
+        0xf8fafc,
+        0xf97316,
+      ];
+      for (let t = 0; t < tierCount; t++) {
+        dummy.position.set(0, 2.5 + t * 0.96, 0);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        tierInst.setMatrixAt(t, dummy.matrix);
+        colorObj.setHex(tierColors[t % tierColors.length]);
+        tierInst.setColorAt(t, colorObj);
+      }
+      tierInst.instanceMatrix.needsUpdate = true;
+      if (tierInst.instanceColor) tierInst.instanceColor.needsUpdate = true;
+      tierInst.computeBoundingSphere();
+      towerGroup.add(tierInst);
+
+      const crownGeo = track(new THREE.BoxGeometry(2.6, 0.7, 2.6));
+      const crownMat = track(
+        new THREE.MeshStandardMaterial({
+          color: 0xe11d48,
+          emissive: 0xe11d48,
+          emissiveIntensity: palette.isNight ? 1.5 : 0.45,
+          roughness: 0.25,
+        }),
+      );
+      const crown = new THREE.Mesh(crownGeo, crownMat);
+      crown.position.y = 18.35;
+      towerGroup.add(crown);
+
+      group.add(towerGroup);
+      break;
+    }
   }
 
   // 9. Scenery Perimeter Landmarks (Trees / Desert Rocks / Night Towers)
@@ -1545,6 +1868,421 @@ export function buildTrackEnvironment(
     }
   }
 
+  // 13. Knockable Chicane Apex Bollards (Pooled rigid impulse + reset per lap)
+  interface BollardState {
+    baseX: number;
+    baseY: number;
+    baseZ: number;
+    baseQuat: THREE.Quaternion;
+    x: number;
+    y: number;
+    z: number;
+    vx: number;
+    vy: number;
+    vz: number;
+    rotX: number;
+    rotZ: number;
+    angVx: number;
+    angVz: number;
+    knocked: boolean;
+    active: boolean;
+  }
+
+  const bollards: BollardState[] = [];
+  let bollardPostInst: THREE.InstancedMesh | null = null;
+  {
+    const MAX_BOLLARDS = 18;
+    const minSpacing = 18;
+    const minReverseSamples = Math.max(3, Math.round(16 / distScale));
+    const maxReverseSamples = Math.max(6, Math.round(82 / distScale));
+    const placed: Array<{ x: number; z: number }> = [];
+
+    const tryAddBollard = (idx: number) => {
+      if (bollards.length >= MAX_BOLLARDS) return;
+      const s = compiled.samples[idx];
+      if (s.y > 4.2 || s.t < 0.03 || s.t > 0.97) return;
+      const side = s.curvature > 0 ? 1 : -1;
+      const bank = s.banking || 0;
+      const cosB = Math.cos(bank);
+      const sinB = Math.sin(bank);
+      const curHalfW = s.width ? s.width * 0.5 : halfW;
+      const apexOffset = curHalfW + 0.35;
+      const bx = s.x + s.nx * side * apexOffset * cosB;
+      const by = s.y + 0.04 + side * apexOffset * sinB;
+      const bz = s.z + s.nz * side * apexOffset * cosB;
+
+      for (const p of placed) {
+        if ((p.x - bx) * (p.x - bx) + (p.z - bz) * (p.z - bz) < minSpacing * minSpacing) {
+          return;
+        }
+      }
+
+      setBankedTrackTransform(bx, by + 0.44, bz, s, bank);
+      placed.push({ x: bx, z: bz });
+      bollards.push({
+        baseX: bx,
+        baseY: by,
+        baseZ: bz,
+        baseQuat: dummy.quaternion.clone(),
+        x: bx,
+        y: by + 0.44,
+        z: bz,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        rotX: 0,
+        rotZ: 0,
+        angVx: 0,
+        angVz: 0,
+        knocked: false,
+        active: false,
+      });
+    };
+
+    // Pass 1: Detect S-bend chicane curvature reversals
+    for (let i = 1; i < totalSamples - 1; i++) {
+      const prevC = compiled.samples[i - 1].curvature;
+      const curC = compiled.samples[i].curvature;
+      const nextC = compiled.samples[i + 1].curvature;
+      const isPeak =
+        Math.abs(curC) >= Math.abs(prevC) &&
+        Math.abs(curC) >= Math.abs(nextC) &&
+        Math.abs(curC) > 0.02;
+      if (!isPeak) continue;
+
+      let hasOppositeSign = false;
+      for (let off = minReverseSamples; off <= maxReverseSamples; off++) {
+        const fwd = compiled.samples[(i + off) % totalSamples].curvature;
+        const bwd = compiled.samples[(i - off + totalSamples) % totalSamples].curvature;
+        if ((curC * fwd < 0 && Math.abs(fwd) > 0.018) || (curC * bwd < 0 && Math.abs(bwd) > 0.018)) {
+          hasOppositeSign = true;
+          break;
+        }
+      }
+      if (hasOppositeSign) {
+        tryAddBollard(i);
+      }
+    }
+
+    // Pass 2: If fewer than 2 S-bend bollards found, include very tight hairpin apexes
+    if (bollards.length < 2) {
+      for (let i = 1; i < totalSamples - 1; i++) {
+        const prevC = compiled.samples[i - 1].curvature;
+        const curC = compiled.samples[i].curvature;
+        const nextC = compiled.samples[i + 1].curvature;
+        if (Math.abs(curC) > 0.032 && Math.abs(curC) >= Math.abs(prevC) && Math.abs(curC) >= Math.abs(nextC)) {
+          tryAddBollard(i);
+        }
+      }
+    }
+
+    if (bollards.length > 0) {
+      const baseGeo = track(new THREE.CylinderGeometry(0.24, 0.28, 0.08, 10));
+      const baseMat = track(new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 }));
+      const baseInst = new THREE.InstancedMesh(baseGeo, baseMat, bollards.length);
+
+      const postGeo = track(new THREE.CylinderGeometry(0.1, 0.13, 0.88, 10));
+      const postBollardMat = track(
+        new THREE.MeshStandardMaterial({
+          color: 0xf97316,
+          emissive: 0x7c2d12,
+          emissiveIntensity: palette.isNight ? 0.65 : 0.2,
+          roughness: 0.4,
+        }),
+      );
+      bollardPostInst = new THREE.InstancedMesh(postGeo, postBollardMat, bollards.length);
+
+      for (let i = 0; i < bollards.length; i++) {
+        const b = bollards[i];
+        dummy.position.set(b.baseX, b.baseY + 0.04, b.baseZ);
+        dummy.quaternion.copy(b.baseQuat);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        baseInst.setMatrixAt(i, dummy.matrix);
+
+        dummy.position.set(b.x, b.y, b.z);
+        dummy.updateMatrix();
+        bollardPostInst.setMatrixAt(i, dummy.matrix);
+      }
+      baseInst.instanceMatrix.needsUpdate = true;
+      baseInst.computeBoundingSphere();
+      bollardPostInst.instanceMatrix.needsUpdate = true;
+      bollardPostInst.computeBoundingSphere();
+      bollardPostInst.castShadow = true;
+      group.add(baseInst, bollardPostInst);
+    }
+  }
+
+  // 14. Rotating / Moving Distant Landmarks per SceneryTheme (Ferris Wheel, Helicopter, Blimp)
+  const landmarks: AnimatedLandmarkHandles = {};
+  {
+    const span = Math.max(maxTrackX - minTrackX, maxTrackZ - minTrackZ);
+    const scenery = compiled.spec.scenery;
+    const isNightTheme = palette.isNight;
+
+    // Ferris Wheel on Stadium, Street-Night & Coastal circuits
+    if (scenery === 'stadium' || scenery === 'street-night' || scenery === 'coastal') {
+      const wheelDist = Math.max(150, span * 0.54 + 34);
+      for (let a = 0; a < 16; a++) {
+        const ang = (a / 16) * Math.PI * 2 + 0.4;
+        const fx = centerTrackX + Math.cos(ang) * wheelDist;
+        const fz = centerTrackZ + Math.sin(ang) * wheelDist;
+        if (!isSafe(fx, fz, 12)) continue;
+        const fw = buildFerrisWheelLandmark(track, isNightTheme);
+        fw.root.position.set(fx, sampleBaseGroundY(fx, fz), fz);
+        fw.root.rotation.y = Math.atan2(centerTrackX - fx, centerTrackZ - fz);
+        group.add(fw.root);
+        landmarks.ferrisWheel = { wheel: fw.wheel, gondolas: fw.gondolas };
+        break;
+      }
+    }
+
+    // Blimp over Stadium, Forest, Desert & Parkland circuits
+    if (scenery === 'stadium' || scenery === 'forest' || scenery === 'desert' || scenery === 'parkland') {
+      const blimpGroup = buildBlimpLandmark(track, isNightTheme);
+      const rx = Math.max(175, span * 0.46);
+      const rz = Math.max(155, span * 0.41);
+      const baseY = maxTrackY + 66;
+      blimpGroup.position.set(centerTrackX + rx, baseY, centerTrackZ);
+      group.add(blimpGroup);
+      landmarks.blimp = {
+        group: blimpGroup,
+        centerX: centerTrackX,
+        centerZ: centerTrackZ,
+        baseY,
+        rx,
+        rz,
+        angle: 0,
+      };
+    }
+
+    // Broadcast Helicopter over Street-Night, Coastal, Forest, Desert & Parkland circuits
+    if (
+      scenery === 'street-night' ||
+      scenery === 'coastal' ||
+      scenery === 'forest' ||
+      scenery === 'desert' ||
+      scenery === 'parkland'
+    ) {
+      const heli = buildHelicopterLandmark(track, isNightTheme);
+      const rx = Math.max(135, span * 0.37);
+      const rz = Math.max(120, span * 0.33);
+      const baseY = maxTrackY + 42;
+      heli.group.position.set(centerTrackX - rx, baseY, centerTrackZ);
+      group.add(heli.group);
+      landmarks.helicopter = {
+        group: heli.group,
+        mainRotor: heli.mainRotor,
+        tailRotor: heli.tailRotor,
+        centerX: centerTrackX,
+        centerZ: centerTrackZ,
+        baseY,
+        rx,
+        rz,
+        angle: Math.PI,
+      };
+    }
+  }
+
+  let propAnimTime = 0;
+  let wasFinalLap = false;
+  let lastObservedLap: number | null = null;
+  const tumbleEuler = new THREE.Euler();
+  const tumbleQuat = new THREE.Quaternion();
+
+  const updateTrackProps = (
+    dt: number,
+    carStates: TrackPropCarState[] = [],
+    isFinalLap = false,
+  ) => {
+    const safeDt = Math.min(0.05, Math.max(0, dt));
+    propAnimTime += safeDt;
+
+    // 1. Final-lap animated grandstand crowd bobbing
+    if (crowdInst && crowdSpectators.length > 0) {
+      if (isFinalLap) {
+        for (let i = 0; i < crowdSpectators.length; i++) {
+          const sp = crowdSpectators[i];
+          const bob = Math.abs(Math.sin(propAnimTime * sp.speedMult + sp.phase)) * 0.42;
+          dummy.position.set(sp.x, sp.y + bob, sp.z);
+          dummy.rotation.set(0, 0, Math.sin(propAnimTime * sp.speedMult * 0.5 + sp.phase) * 0.08);
+          dummy.scale.set(1, sp.baseScaleY + bob * 0.25, 1);
+          dummy.updateMatrix();
+          crowdInst.setMatrixAt(i, dummy.matrix);
+        }
+        crowdInst.instanceMatrix.needsUpdate = true;
+        wasFinalLap = true;
+      } else if (wasFinalLap) {
+        for (let i = 0; i < crowdSpectators.length; i++) {
+          const sp = crowdSpectators[i];
+          dummy.position.set(sp.x, sp.y, sp.z);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.set(1, sp.baseScaleY, 1);
+          dummy.updateMatrix();
+          crowdInst.setMatrixAt(i, dummy.matrix);
+        }
+        crowdInst.instanceMatrix.needsUpdate = true;
+        wasFinalLap = false;
+      }
+    }
+
+    // 2. Rotating / Moving Distant Landmarks
+    if (landmarks.ferrisWheel) {
+      const fw = landmarks.ferrisWheel;
+      fw.wheel.rotation.z += safeDt * 0.24;
+      for (let i = 0; i < fw.gondolas.length; i++) {
+        fw.gondolas[i].rotation.z = -fw.wheel.rotation.z;
+      }
+    }
+    if (landmarks.blimp) {
+      const bl = landmarks.blimp;
+      bl.angle += safeDt * 0.045;
+      const cosA = Math.cos(bl.angle);
+      const sinA = Math.sin(bl.angle);
+      const vx = -bl.rx * sinA;
+      const vz = bl.rz * cosA;
+      bl.group.position.set(
+        bl.centerX + cosA * bl.rx,
+        bl.baseY + Math.sin(propAnimTime * 0.55) * 2.2,
+        bl.centerZ + sinA * bl.rz,
+      );
+      bl.group.rotation.y = Math.atan2(vx, vz);
+    }
+    if (landmarks.helicopter) {
+      const hl = landmarks.helicopter;
+      hl.angle -= safeDt * 0.14;
+      const cosA = Math.cos(hl.angle);
+      const sinA = Math.sin(hl.angle);
+      const vx = hl.rx * sinA;
+      const vz = -hl.rz * cosA;
+      hl.group.position.set(
+        hl.centerX + cosA * hl.rx,
+        hl.baseY + Math.sin(propAnimTime * 1.1) * 1.4,
+        hl.centerZ + sinA * hl.rz,
+      );
+      hl.group.rotation.set(0.11, Math.atan2(vx, vz), 0);
+      hl.mainRotor.rotation.y += safeDt * 26;
+      hl.tailRotor.rotation.x += safeDt * 34;
+    }
+
+    // 3. Knockable Chicane Apex Bollards (pooled rigid impulse + reset per lap)
+    if (bollardPostInst && bollards.length > 0) {
+      let bollardDirty = false;
+
+      // Detect lap transition across cars to reset knocked bollards cleanly
+      let maxLap = -1;
+      for (let c = 0; c < carStates.length; c++) {
+        const carLap = carStates[c].lap;
+        if (typeof carLap === 'number' && carLap > maxLap) {
+          maxLap = carLap;
+        }
+      }
+      if (maxLap >= 0) {
+        if (lastObservedLap === null) {
+          lastObservedLap = maxLap;
+        } else if (maxLap !== lastObservedLap) {
+          lastObservedLap = maxLap;
+          for (let i = 0; i < bollards.length; i++) {
+            const b = bollards[i];
+            if (b.knocked || b.active) {
+              b.x = b.baseX;
+              b.y = b.baseY + 0.44;
+              b.z = b.baseZ;
+              b.vx = 0;
+              b.vy = 0;
+              b.vz = 0;
+              b.rotX = 0;
+              b.rotZ = 0;
+              b.angVx = 0;
+              b.angVz = 0;
+              b.knocked = false;
+              b.active = false;
+              dummy.position.set(b.x, b.y, b.z);
+              dummy.quaternion.copy(b.baseQuat);
+              dummy.scale.set(1, 1, 1);
+              dummy.updateMatrix();
+              bollardPostInst.setMatrixAt(i, dummy.matrix);
+              bollardDirty = true;
+            }
+          }
+        }
+      }
+
+      // Trigger rigid impulse on car contact
+      const hitRadiusSq = 1.35 * 1.35;
+      for (let i = 0; i < bollards.length; i++) {
+        const b = bollards[i];
+        if (!b.knocked) {
+          for (let c = 0; c < carStates.length; c++) {
+            const car = carStates[c];
+            const dx = b.baseX - car.x;
+            const dz = b.baseZ - car.z;
+            if (dx * dx + dz * dz < hitRadiusSq && Math.abs((car.y ?? b.baseY) - b.baseY) < 2.2) {
+              const cvx = car.vx ?? 0;
+              const cvz = car.vz ?? 0;
+              const vLen = Math.hypot(cvx, cvz);
+              const dirX = vLen > 0.5 ? cvx / vLen : dx / Math.max(0.05, Math.hypot(dx, dz));
+              const dirZ = vLen > 0.5 ? cvz / vLen : dz / Math.max(0.05, Math.hypot(dx, dz));
+              const carSpd = car.speed ?? vLen;
+              const impulse = Math.max(10, Math.min(36, carSpd * 0.45 + 6));
+              b.vx = dirX * impulse;
+              b.vz = dirZ * impulse;
+              b.vy = 4.0 + Math.min(8.5, carSpd * 0.18);
+              b.angVx = (dirZ >= 0 ? 1 : -1) * (8.5 + (i % 3) * 2.5);
+              b.angVz = (dirX >= 0 ? -1 : 1) * (8.5 + (i % 4) * 2.0);
+              b.knocked = true;
+              b.active = true;
+              break;
+            }
+          }
+        }
+
+        if (b.active && safeDt > 0) {
+          b.vy -= 18.0 * safeDt;
+          b.x += b.vx * safeDt;
+          b.y += b.vy * safeDt;
+          b.z += b.vz * safeDt;
+          b.rotX += b.angVx * safeDt;
+          b.rotZ += b.angVz * safeDt;
+          const airDrag = Math.exp(-1.8 * safeDt);
+          b.vx *= airDrag;
+          b.vz *= airDrag;
+
+          const floorY = b.baseY + 0.15;
+          if (b.y < floorY) {
+            b.y = floorY;
+            b.vy = Math.abs(b.vy) * 0.35;
+            b.vx *= 0.65;
+            b.vz *= 0.65;
+            b.angVx *= 0.6;
+            b.angVz *= 0.6;
+            if (Math.hypot(b.vx, b.vz) < 0.25 && Math.abs(b.vy) < 0.3) {
+              b.vx = 0;
+              b.vy = 0;
+              b.vz = 0;
+              b.angVx = 0;
+              b.angVz = 0;
+              b.active = false;
+            }
+          }
+
+          tumbleEuler.set(b.rotX, 0, b.rotZ);
+          tumbleQuat.setFromEuler(tumbleEuler);
+          dummy.position.set(b.x, b.y, b.z);
+          dummy.quaternion.copy(b.baseQuat).multiply(tumbleQuat);
+          dummy.scale.set(1, 1, 1);
+          dummy.updateMatrix();
+          bollardPostInst.setMatrixAt(i, dummy.matrix);
+          bollardDirty = true;
+        }
+      }
+
+      if (bollardDirty) {
+        bollardPostInst.instanceMatrix.needsUpdate = true;
+      }
+    }
+  };
+
   const updateMarshalFlags = (flagState: string, timeSec: number, yellowSectors?: number[]) => {
     for (let i = 0; i < marshalFlags.length; i++) {
       const f = marshalFlags[i];
@@ -1577,6 +2315,7 @@ export function buildTrackEnvironment(
     roadMat,
     updateMarshalFlags,
     setNightLights,
+    updateTrackProps,
     dispose: () => {
       disposables.forEach((d) => d.dispose());
     },
