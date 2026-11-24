@@ -706,6 +706,9 @@ export interface HudSnapshot {
   flashbackAvailable?: boolean;
   peerPings?: Record<string, number>;
   chatMessages?: ChatMessage[];
+  playerHeading?: number;
+  yellowSectors?: [boolean, boolean, boolean];
+  rainIntensity?: number;
 }
 
 export interface RoomPeer {
