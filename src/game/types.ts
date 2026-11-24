@@ -203,6 +203,9 @@ export interface TrackWaypoint {
   banking?: number; // per-node banking in degrees
   tension?: number; // per-node Catmull-Rom tension (0.15 tight .. 0.85 sweeping, default 0.5)
   sceneryProp?: 'none' | 'grandstand' | 'trees' | 'bridge' | 'tunnel';
+  propType?: 'none' | 'grandstand' | 'trees' | 'bridge' | 'tunnel';
+  surfaceLeft?: TrackSurfaceType;
+  surfaceRight?: TrackSurfaceType;
   runoff?: 'asphalt' | 'grass' | 'gravel';
   drsZone?: boolean;
 }
@@ -321,10 +324,14 @@ export type RaceFlagState =
   | 'green'
   | 'yellow'
   | 'double-yellow'
+  | 'vsc'
+  | 'safety-car'
   | 'white'
   | 'black-and-white'
   | 'black'
   | 'checkered';
+
+export type SafetyCarPhase = 'none' | 'vsc' | 'deployed' | 'in-this-lap' | 'restarting';
 
 export type SectorFlag = 'green' | 'yellow';
 
@@ -496,6 +503,8 @@ export interface RaceConfig {
   dailyChallengeDate?: string;
   timeOfDay?: TimeOfDayPreset;
   timeScale?: number;
+  mandatoryServiceStop?: boolean;
+  playlist?: string[];
 }
 
 export interface AiNeuralRadarSlot {
@@ -631,6 +640,10 @@ export interface HudSnapshot {
   postRacePenaltySeconds?: number;
   penaltyReason?: PenaltyReason | null;
   penaltyType?: PenaltyType | null;
+  penaltyServeProgress?: number;
+  penaltyServeRequired?: number;
+  penaltyDeadlineLap?: number | null;
+  penaltyServeInstruction?: string | null;
   raceFlag?: RaceFlagState;
   sectorFlags?: [SectorFlag, SectorFlag, SectorFlag];
   inYellowMicrosector?: boolean;
@@ -638,6 +651,12 @@ export interface HudSnapshot {
   yellowYieldPositions?: number;
   blueFlagActive?: boolean;
   raceControlMessage?: string | null;
+  safetyCarActive?: boolean;
+  safetyCarPhase?: SafetyCarPhase;
+  safetyCarTrackT?: number;
+  safetyCarSpeedKmh?: number;
+  vscActive?: boolean;
+  neutralizationSpeedCapKmh?: number | null;
   isStoppedOnTrack: boolean;
   pitStopRemaining: number;
   pitStopTotal: number;
@@ -738,4 +757,7 @@ export interface RoomState {
   raceStartServerTime?: number;
   trackVotes?: Record<string, string>;
   chatMessages?: ChatMessage[];
+  bannedPeerIds?: string[];
+  playlist?: string[];
+  playlistIndex?: number;
 }

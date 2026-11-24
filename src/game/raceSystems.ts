@@ -6,6 +6,7 @@ import {
   PenaltyReason,
   PenaltyType,
   RaceFlagState,
+  SafetyCarPhase,
   SceneryTheme,
   SectorFlag,
   WeatherCondition,
@@ -556,14 +557,71 @@ export function getErsModeProfile(mode: ErsMode): {
   }
 }
 
-// ==================== 1.2 Authentic Flag Rules & Microsector Race Control ====================
+// ==================== 1.2 Authentic Flag Rules, SC/VSC & Heavy Penalty Race Control ====================
 
 export const MICROSECTOR_COUNT = 18; // 6 microsectors per sector (S1: 0..5, S2: 6..11, S3: 12..17)
+
+export const VSC_SPEED_CAP_KMH = 150;
+export const VSC_SPEED_CAP_MS = VSC_SPEED_CAP_KMH / 3.6;
+export const SAFETY_CAR_MIN_PACE_KMH = 115;
+export const SAFETY_CAR_MAX_PACE_KMH = 135;
+export const SAFETY_CAR_CATCHUP_CAP_KMH = 175;
+export const SAFETY_CAR_LEADER_TARGET_GAP_M = 22.0;
+export const SAFETY_CAR_QUEUE_GAP_M = 14.0;
+
+export const DRIVE_THROUGH_HOLD_SECONDS = 4.0;
+export const DRIVE_THROUGH_MAX_SPEED_KMH = 60;
+export const DRIVE_THROUGH_MAX_SPEED_MS = DRIVE_THROUGH_MAX_SPEED_KMH / 3.6;
+export const STOP_AND_GO_HOLD_SECONDS = 3.0;
+export const STOP_AND_GO_MAX_SPEED_MS = 1.6;
+export const STOP_AND_GO_MIN_OFFLINE_RATIO = 0.42;
+export const HEAVY_PENALTY_LAP_WINDOW = 3;
+export const DRIVE_THROUGH_POST_RACE_SECONDS = 15;
+export const STOP_AND_GO_POST_RACE_SECONDS = 25;
+export const SEVERE_CUTS_FOR_DRIVE_THROUGH = 3;
+export const SEVERE_CUTS_FOR_STOP_AND_GO = 5;
+export const HEAVY_PUNT_IMPACT_THRESHOLD = 19.0;
+export const SEVERE_PUNT_IMPACT_THRESHOLD = 26.0;
 
 export interface YellowYieldObligation {
   targetCarId: string;
   targetName: string;
   positionsToYield: number;
+}
+
+export interface SafetyCarState {
+  phase: SafetyCarPhase;
+  active: boolean;
+  trackT: number;
+  lateralOffset: number;
+  speedMs: number;
+  speedCapMs: number | null;
+  timer: number;
+  inThisLapRemaining: number;
+  minDuration: number;
+  maxDuration: number;
+  cooldownTimer: number;
+  deployedLap: number;
+  leaderTargetGapM: number;
+  greenRestartFlashTimer: number;
+  incidentCountAtTrigger: number;
+}
+
+export interface IncidentMemoryEntry {
+  time: number;
+  trackT: number;
+  impact: number;
+  stopped: boolean;
+}
+
+export interface HeavyPenaltyRecord {
+  penaltyType: 'drive-through' | 'stop-and-go';
+  penaltyReason: PenaltyReason;
+  issuedLap: number;
+  deadlineLap: number;
+  holdProgress: number;
+  requiredHoldSeconds: number;
+  postRaceEscalationSeconds: number;
 }
 
 export interface RaceControlState {
@@ -578,6 +636,15 @@ export interface RaceControlState {
   prevRankByCarId: Map<string, number>;
   yellowOvertakeCooldown: Map<string, number>;
   elapsedRaceTime: number;
+  safetyCar: SafetyCarState;
+  neutralizationSpeedCapMs: number | null;
+  recentIncidentByCarId: Map<string, IncidentMemoryEntry>;
+  heavyPenaltyByCarId: Map<string, HeavyPenaltyRecord>;
+  prevWarningCountByCarId: Map<string, number>;
+  prevExternalCutCountByCarId: Map<string, number>;
+  prevExternalPuntCountByCarId: Map<string, number>;
+  severeCutCountByCarId: Map<string, number>;
+  avoidablePuntCountByCarId: Map<string, number>;
 }
 
 export interface RaceControlCarView {
@@ -610,6 +677,35 @@ export interface RaceControlCarView {
   attackModeUsesRemaining: number;
   attackModeTimer: number;
   specialActive: boolean;
+  neutralizationSpeedCapMs?: number | null;
+  safetyCarQueueTargetSpeedMs?: number | null;
+  safetyCarBunchingGapM?: number | null;
+  heavyPenaltyHoldProgress?: number;
+  heavyPenaltyIssuedLap?: number | null;
+  heavyPenaltyDeadlineLap?: number | null;
+  heavyPenaltySevereCutCount?: number;
+  heavyPenaltyPuntingCount?: number;
+  lastAvoidableContactImpact?: number;
+}
+
+function createInitialSafetyCarState(): SafetyCarState {
+  return {
+    phase: 'none',
+    active: false,
+    trackT: 0,
+    lateralOffset: 0,
+    speedMs: 0,
+    speedCapMs: null,
+    timer: 0,
+    inThisLapRemaining: 0,
+    minDuration: 8.0,
+    maxDuration: 26.0,
+    cooldownTimer: 0,
+    deployedLap: 1,
+    leaderTargetGapM: SAFETY_CAR_LEADER_TARGET_GAP_M,
+    greenRestartFlashTimer: 0,
+    incidentCountAtTrigger: 0,
+  };
 }
 
 export function createRaceControlState(): RaceControlState {
@@ -625,6 +721,15 @@ export function createRaceControlState(): RaceControlState {
     prevRankByCarId: new Map(),
     yellowOvertakeCooldown: new Map(),
     elapsedRaceTime: 0,
+    safetyCar: createInitialSafetyCarState(),
+    neutralizationSpeedCapMs: null,
+    recentIncidentByCarId: new Map(),
+    heavyPenaltyByCarId: new Map(),
+    prevWarningCountByCarId: new Map(),
+    prevExternalCutCountByCarId: new Map(),
+    prevExternalPuntCountByCarId: new Map(),
+    severeCutCountByCarId: new Map(),
+    avoidablePuntCountByCarId: new Map(),
   };
 }
 
@@ -651,9 +756,743 @@ function setRaceControlMessage(rc: RaceControlState, msg: string, duration = 4.0
 }
 
 /**
+ * Forward wrapped track distance in meters from `fromT` ahead to `toT` in [0, trackLen).
+ */
+export function wrappedTrackGapM(fromT: number, toT: number, trackLen: number): number {
+  const safeLen = Math.max(1, trackLen);
+  const dT = wrapT(toT - fromT);
+  return dT * safeLen;
+}
+
+/**
+ * Shortest wrapped track distance in meters between two track positions in [0, trackLen * 0.5].
+ */
+export function wrappedTrackDistanceM(tA: number, tB: number, trackLen: number): number {
+  const safeLen = Math.max(1, trackLen);
+  let dT = Math.abs(wrapT(tA) - wrapT(tB));
+  if (dT > 0.5) dT = 1 - dT;
+  return dT * safeLen;
+}
+
+/**
+ * Computes the Safety Car's controlled pace in m/s (~115–135 km/h) based on local curvature
+ * and how far behind the race leader currently is.
+ */
+export function computeSafetyCarPaceMs(
+  compiledTrack: CompiledTrack,
+  trackT: number,
+  leaderGapM = SAFETY_CAR_LEADER_TARGET_GAP_M,
+): number {
+  const sp = sampleTrackAtT(compiledTrack, wrapT(trackT));
+  const curvPaceKmh = Math.max(
+    SAFETY_CAR_MIN_PACE_KMH,
+    Math.min(SAFETY_CAR_MAX_PACE_KMH, SAFETY_CAR_MAX_PACE_KMH - Math.abs(sp.curvature) * 550),
+  );
+  // Ease slightly toward 115 km/h while the leader is still catching up; hold brisker pace when tight
+  const catchupOffsetKmh = leaderGapM > 65 ? -8 : leaderGapM < 16 ? 5 : 0;
+  const clampedKmh = Math.max(
+    SAFETY_CAR_MIN_PACE_KMH,
+    Math.min(SAFETY_CAR_MAX_PACE_KMH, curvPaceKmh + catchupOffsetKmh),
+  );
+  return clampedKmh / 3.6;
+}
+
+/**
+ * Computes single-file bunching target speed (m/s) for a car queuing behind the Safety Car
+ * or the preceding car in the Safety Car train.
+ */
+export function computeSingleFileBunchingSpeedMs(params: {
+  scSpeedMs: number;
+  gapAheadM: number;
+  targetGapM: number;
+}): number {
+  const { scSpeedMs, gapAheadM, targetGapM } = params;
+  const catchupCapMs = SAFETY_CAR_CATCHUP_CAP_KMH / 3.6;
+  if (gapAheadM > targetGapM + 6.0) {
+    return Math.min(catchupCapMs, scSpeedMs + Math.min(11.0, (gapAheadM - targetGapM - 6.0) * 0.35));
+  }
+  if (gapAheadM < targetGapM - 3.0) {
+    return Math.max(16.0, scSpeedMs - Math.min(14.0, (targetGapM - 3.0 - gapAheadM) * 1.4));
+  }
+  return scSpeedMs;
+}
+
+export interface HeavyPenaltyEvaluationInput {
+  severeCutCount: number;
+  avoidablePuntCount: number;
+  latestCollisionImpact?: number;
+  currentPenaltyType?: PenaltyType | null;
+  currentLap: number;
+}
+
+export interface HeavyPenaltyAssignment {
+  penaltyType: 'drive-through' | 'stop-and-go';
+  penaltyReason: PenaltyReason;
+  requiredHoldSeconds: number;
+  deadlineLap: number;
+  postRaceEscalationSeconds: number;
+}
+
+/**
+ * Evaluates whether repeated severe corner cuts (>=3) or avoidable heavy punting triggers
+ * a serveable on-track 'drive-through' or 'stop-and-go' penalty.
+ */
+export function evaluateHeavyPenaltyAssignment(
+  input: HeavyPenaltyEvaluationInput,
+): HeavyPenaltyAssignment | null {
+  const impact = input.latestCollisionImpact ?? 0;
+  const lapWindowDeadline = input.currentLap + HEAVY_PENALTY_LAP_WINDOW;
+
+  // Heavy avoidable punting takes precedence due to collision severity
+  if (input.avoidablePuntCount >= 2 || (input.avoidablePuntCount >= 1 && impact >= SEVERE_PUNT_IMPACT_THRESHOLD)) {
+    return {
+      penaltyType: 'stop-and-go',
+      penaltyReason: 'avoidable-contact',
+      requiredHoldSeconds: STOP_AND_GO_HOLD_SECONDS,
+      deadlineLap: lapWindowDeadline,
+      postRaceEscalationSeconds: STOP_AND_GO_POST_RACE_SECONDS,
+    };
+  }
+  if (input.avoidablePuntCount >= 1 && impact >= HEAVY_PUNT_IMPACT_THRESHOLD) {
+    if (input.currentPenaltyType === 'stop-and-go') return null;
+    return {
+      penaltyType: 'drive-through',
+      penaltyReason: 'avoidable-contact',
+      requiredHoldSeconds: DRIVE_THROUGH_HOLD_SECONDS,
+      deadlineLap: lapWindowDeadline,
+      postRaceEscalationSeconds: DRIVE_THROUGH_POST_RACE_SECONDS,
+    };
+  }
+
+  // Repeated severe corner cuts (>=3 for drive-through, >=5 for stop-and-go)
+  if (input.severeCutCount >= SEVERE_CUTS_FOR_STOP_AND_GO) {
+    return {
+      penaltyType: 'stop-and-go',
+      penaltyReason: 'corner-cut',
+      requiredHoldSeconds: STOP_AND_GO_HOLD_SECONDS,
+      deadlineLap: lapWindowDeadline,
+      postRaceEscalationSeconds: STOP_AND_GO_POST_RACE_SECONDS,
+    };
+  }
+  if (input.severeCutCount >= SEVERE_CUTS_FOR_DRIVE_THROUGH) {
+    if (input.currentPenaltyType === 'stop-and-go') return null;
+    return {
+      penaltyType: 'drive-through',
+      penaltyReason: 'corner-cut',
+      requiredHoldSeconds: DRIVE_THROUGH_HOLD_SECONDS,
+      deadlineLap: lapWindowDeadline,
+      postRaceEscalationSeconds: DRIVE_THROUGH_POST_RACE_SECONDS,
+    };
+  }
+
+  return null;
+}
+
+export interface PenaltyServeEvaluationInput {
+  penaltyType: PenaltyType | null | undefined;
+  speedMs: number;
+  lateralOffset: number;
+  trackHalfWidth: number;
+  holdProgressSeconds: number;
+  dt: number;
+}
+
+export interface PenaltyServeEvaluationResult {
+  isServing: boolean;
+  holdProgressSeconds: number;
+  requiredSeconds: number;
+  completed: boolean;
+  instruction: string | null;
+}
+
+/**
+ * Pure helper evaluating on-track serving for heavy penalties (since physical pit lanes are excluded):
+ * - 'stop-and-go': requires holding stationary (<= 1.6 m/s) off the racing line for 3.0s
+ * - 'drive-through': requires holding <= 60 km/h (16.67 m/s) speed-cap zone pace for 4.0s
+ */
+export function evaluateOnTrackPenaltyServe(
+  input: PenaltyServeEvaluationInput,
+): PenaltyServeEvaluationResult {
+  const safeDt = Math.max(0, input.dt);
+  if (input.penaltyType === 'stop-and-go') {
+    const minOffLineM = Math.max(2.0, input.trackHalfWidth * STOP_AND_GO_MIN_OFFLINE_RATIO);
+    const isOffLine = Math.abs(input.lateralOffset) >= minOffLineM;
+    const isStationary = input.speedMs <= STOP_AND_GO_MAX_SPEED_MS;
+    const isServing = isOffLine && isStationary;
+    let nextProgress = input.holdProgressSeconds;
+    if (isServing) {
+      nextProgress = Math.min(STOP_AND_GO_HOLD_SECONDS, input.holdProgressSeconds + safeDt);
+    } else if (input.speedMs > 8.0) {
+      // Driving away at speed resets partial stationary hold
+      nextProgress = 0;
+    }
+    const completed = nextProgress >= STOP_AND_GO_HOLD_SECONDS - 1e-6;
+    return {
+      isServing,
+      holdProgressSeconds: nextProgress,
+      requiredSeconds: STOP_AND_GO_HOLD_SECONDS,
+      completed,
+      instruction: `STOP & GO: PULL OFF-LINE & HOLD 0 KM/H (${nextProgress.toFixed(1)}/${STOP_AND_GO_HOLD_SECONDS.toFixed(1)}s)`,
+    };
+  }
+
+  if (input.penaltyType === 'drive-through') {
+    const withinSpeedCap = input.speedMs <= DRIVE_THROUGH_MAX_SPEED_MS + 1e-6;
+    const isMoving = input.speedMs > 1.0;
+    const isServing = withinSpeedCap && isMoving;
+    let nextProgress = input.holdProgressSeconds;
+    if (isServing) {
+      nextProgress = Math.min(DRIVE_THROUGH_HOLD_SECONDS, input.holdProgressSeconds + safeDt);
+    } else if (!withinSpeedCap) {
+      // Exceeding 60 km/h resets the speed-cap zone hold
+      nextProgress = 0;
+    }
+    const completed = nextProgress >= DRIVE_THROUGH_HOLD_SECONDS - 1e-6;
+    return {
+      isServing,
+      holdProgressSeconds: nextProgress,
+      requiredSeconds: DRIVE_THROUGH_HOLD_SECONDS,
+      completed,
+      instruction: `DRIVE-THROUGH: HOLD <=${DRIVE_THROUGH_MAX_SPEED_KMH} KM/H (${nextProgress.toFixed(1)}/${DRIVE_THROUGH_HOLD_SECONDS.toFixed(1)}s)`,
+    };
+  }
+
+  return {
+    isServing: false,
+    holdProgressSeconds: 0,
+    requiredSeconds: 0,
+    completed: false,
+    instruction: null,
+  };
+}
+
+export interface PenaltyEscalationInput {
+  penaltyType: PenaltyType | null | undefined;
+  currentLap: number;
+  issuedLap: number | null | undefined;
+  deadlineLap?: number | null;
+  finished: boolean;
+  existingPostRaceSeconds?: number;
+  lapWindow?: number;
+}
+
+export interface PenaltyEscalationResult {
+  escalated: boolean;
+  addedPostRaceSeconds: number;
+  totalPostRaceSeconds: number;
+  disqualified: boolean;
+  clearActivePenalty: boolean;
+}
+
+/**
+ * Escalates unserved 'drive-through' (+15s) or 'stop-and-go' (+25s) penalties
+ * once 3 laps elapse after issuance or upon crossing the finish line unserved.
+ */
+export function evaluateHeavyPenaltyLapEscalation(
+  input: PenaltyEscalationInput,
+): PenaltyEscalationResult {
+  const basePostRace = input.existingPostRaceSeconds ?? 0;
+  if (input.penaltyType !== 'drive-through' && input.penaltyType !== 'stop-and-go') {
+    return {
+      escalated: false,
+      addedPostRaceSeconds: 0,
+      totalPostRaceSeconds: basePostRace,
+      disqualified: false,
+      clearActivePenalty: false,
+    };
+  }
+
+  const windowLaps = input.lapWindow ?? HEAVY_PENALTY_LAP_WINDOW;
+  const effectiveDeadline = input.deadlineLap ?? ((input.issuedLap ?? input.currentLap) + windowLaps);
+  const expired = input.finished || input.currentLap >= effectiveDeadline;
+  if (!expired) {
+    return {
+      escalated: false,
+      addedPostRaceSeconds: 0,
+      totalPostRaceSeconds: basePostRace,
+      disqualified: false,
+      clearActivePenalty: false,
+    };
+  }
+
+  const added =
+    input.penaltyType === 'stop-and-go'
+      ? STOP_AND_GO_POST_RACE_SECONDS
+      : DRIVE_THROUGH_POST_RACE_SECONDS;
+  const total = basePostRace + added;
+  return {
+    escalated: true,
+    addedPostRaceSeconds: added,
+    totalPostRaceSeconds: total,
+    disqualified: total >= 50,
+    clearActivePenalty: true,
+  };
+}
+
+function clearNeutralizationOnCars(cars: RaceControlCarView[]): void {
+  for (let i = 0; i < cars.length; i++) {
+    cars[i].neutralizationSpeedCapMs = null;
+    cars[i].safetyCarQueueTargetSpeedMs = null;
+    cars[i].safetyCarBunchingGapM = null;
+  }
+}
+
+function releaseNeutralizationToGreen(
+  rc: RaceControlState,
+  ordered: RaceControlCarView[],
+  opts: {
+    incidentsClear: boolean;
+    anyFinished: boolean;
+    cooldownSeconds: number;
+    flashSeconds: number;
+    message: string;
+  },
+): void {
+  const sc = rc.safetyCar;
+  sc.phase = 'none';
+  sc.active = false;
+  sc.speedMs = 0;
+  sc.speedCapMs = null;
+  sc.inThisLapRemaining = 0;
+  sc.cooldownTimer = opts.cooldownSeconds;
+  sc.greenRestartFlashTimer = opts.flashSeconds;
+  rc.neutralizationSpeedCapMs = null;
+  if (opts.incidentsClear) {
+    rc.microsectorYellowTimers.fill(0);
+    rc.microsectorFlags.fill('green');
+    rc.sectorYellowTimers = [0, 0, 0];
+    rc.sectorFlags = ['green', 'green', 'green'];
+  }
+  clearNeutralizationOnCars(ordered);
+  if (!opts.anyFinished) {
+    setRaceControlMessage(rc, opts.message, 3.8);
+  }
+}
+
+function findLargestIncidentCluster(
+  incidents: Map<string, IncidentMemoryEntry>,
+  trackLen: number,
+): IncidentMemoryEntry[] {
+  const entries = Array.from(incidents.values());
+  if (entries.length < 2) return entries;
+  const clusterRadiusM = Math.max(160, Math.min(280, trackLen * 0.09));
+  let bestCluster: IncidentMemoryEntry[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const seed = entries[i];
+    const cluster: IncidentMemoryEntry[] = [];
+    for (let j = 0; j < entries.length; j++) {
+      if (wrappedTrackDistanceM(seed.trackT, entries[j].trackT, trackLen) <= clusterRadiusM) {
+        cluster.push(entries[j]);
+      }
+    }
+    if (cluster.length > bestCluster.length) {
+      bestCluster = cluster;
+    }
+  }
+  return bestCluster;
+}
+
+function stepSafetyCarAndVsc(
+  rc: RaceControlState,
+  ordered: RaceControlCarView[],
+  compiledTrack: CompiledTrack,
+  dt: number,
+  opts: { totalLaps: number; isRace: boolean },
+  anyFinished: boolean,
+  trackLen: number,
+  halfW: number,
+): Set<string> {
+  const waveByCarIds = new Set<string>();
+  const sc = rc.safetyCar;
+  const leader = ordered[0];
+
+  if (sc.cooldownTimer > 0) sc.cooldownTimer = Math.max(0, sc.cooldownTimer - dt);
+  if (sc.greenRestartFlashTimer > 0) sc.greenRestartFlashTimer = Math.max(0, sc.greenRestartFlashTimer - dt);
+
+  const cluster = findLargestIncidentCluster(rc.recentIncidentByCarId, trackLen);
+  const stoppedCount = cluster.filter((e) => e.stopped).length;
+  const heavyImpactCount = cluster.filter((e) => e.impact >= 14.0).length;
+  const extremeImpactCount = cluster.filter((e) => e.impact >= 21.0).length;
+
+  const canDeployNeutralization =
+    opts.isRace &&
+    opts.totalLaps >= 3 &&
+    !anyFinished &&
+    !(leader && leader.lap >= opts.totalLaps && leader.trackT > 0.72);
+
+  // Deployment & VSC -> SC escalation checks
+  if (canDeployNeutralization && cluster.length >= 2) {
+    const needsFullSc =
+      cluster.length >= 3 ||
+      stoppedCount >= 2 ||
+      extremeImpactCount >= 2 ||
+      (stoppedCount >= 1 && heavyImpactCount >= 2);
+
+    if (sc.phase === 'none' && sc.cooldownTimer <= 0) {
+      if (needsFullSc) {
+        sc.phase = 'deployed';
+        sc.active = true;
+        sc.timer = 0;
+        sc.inThisLapRemaining = 0;
+        sc.minDuration = 8.0;
+        sc.maxDuration = 26.0;
+        sc.deployedLap = leader?.lap ?? 1;
+        sc.trackT = wrapT((leader?.trackT ?? 0) + Math.min(0.08, 110 / trackLen));
+        sc.lateralOffset = 0;
+        sc.speedMs = computeSafetyCarPaceMs(compiledTrack, sc.trackT, 110);
+        sc.speedCapMs = sc.speedMs;
+        sc.incidentCountAtTrigger = cluster.length;
+        rc.neutralizationSpeedCapMs = sc.speedMs;
+        setRaceControlMessage(rc, 'SAFETY CAR DEPLOYED — FORM SINGLE FILE, NO OVERTAKING', 5.0);
+      } else {
+        sc.phase = 'vsc';
+        sc.active = false;
+        sc.timer = 0;
+        sc.inThisLapRemaining = 0;
+        sc.minDuration = 5.0;
+        sc.maxDuration = 14.0;
+        sc.deployedLap = leader?.lap ?? 1;
+        sc.speedMs = 0;
+        sc.speedCapMs = VSC_SPEED_CAP_MS;
+        sc.incidentCountAtTrigger = cluster.length;
+        rc.neutralizationSpeedCapMs = VSC_SPEED_CAP_MS;
+        setRaceControlMessage(rc, 'VIRTUAL SAFETY CAR DEPLOYED — RESPECT DELTA SPEED CAP', 4.5);
+      }
+    } else if (sc.phase === 'vsc' && needsFullSc) {
+      sc.phase = 'deployed';
+      sc.active = true;
+      sc.timer = 0;
+      sc.minDuration = 8.0;
+      sc.maxDuration = 26.0;
+      sc.trackT = wrapT((leader?.trackT ?? 0) + Math.min(0.08, 110 / trackLen));
+      sc.lateralOffset = 0;
+      sc.speedMs = computeSafetyCarPaceMs(compiledTrack, sc.trackT, 110);
+      sc.speedCapMs = sc.speedMs;
+      sc.incidentCountAtTrigger = cluster.length;
+      rc.neutralizationSpeedCapMs = sc.speedMs;
+      setRaceControlMessage(rc, 'ESCALATED TO FULL SAFETY CAR — SINGLE FILE BEHIND SC', 5.0);
+    }
+  }
+
+  if (sc.phase === 'none') {
+    rc.neutralizationSpeedCapMs = null;
+    clearNeutralizationOnCars(ordered);
+    return waveByCarIds;
+  }
+
+  sc.timer += dt;
+  const incidentsClear = rc.recentIncidentByCarId.size === 0;
+  const lateFinalLap = Boolean(opts.totalLaps > 0 && leader && leader.lap >= opts.totalLaps);
+
+  if (sc.phase === 'vsc') {
+    sc.speedCapMs = VSC_SPEED_CAP_MS;
+    rc.neutralizationSpeedCapMs = VSC_SPEED_CAP_MS;
+    for (let i = 0; i < ordered.length; i++) {
+      const c = ordered[i];
+      c.neutralizationSpeedCapMs = VSC_SPEED_CAP_MS;
+      c.safetyCarQueueTargetSpeedMs = VSC_SPEED_CAP_MS;
+      c.safetyCarBunchingGapM = null;
+    }
+
+    const shouldReleaseVsc =
+      anyFinished ||
+      lateFinalLap ||
+      (sc.timer >= sc.minDuration && incidentsClear) ||
+      sc.timer >= sc.maxDuration;
+
+    if (shouldReleaseVsc) {
+      releaseNeutralizationToGreen(rc, ordered, {
+        incidentsClear,
+        anyFinished,
+        cooldownSeconds: 15.0,
+        flashSeconds: 2.5,
+        message: 'VSC ENDING — GREEN FLAG! RACE RESUMED',
+      });
+    }
+    return waveByCarIds;
+  }
+
+  // Full Safety Car ('deployed' or 'in-this-lap')
+  const leaderGapToSc = leader ? wrappedTrackGapM(leader.trackT, sc.trackT, trackLen) : sc.leaderTargetGapM;
+  sc.speedMs = computeSafetyCarPaceMs(compiledTrack, sc.trackT, leaderGapToSc);
+  sc.speedCapMs = sc.speedMs;
+  rc.neutralizationSpeedCapMs = sc.speedMs;
+  sc.trackT = wrapT(sc.trackT + (sc.speedMs * dt) / trackLen);
+
+  const targetLat = sc.phase === 'in-this-lap' ? halfW * 0.78 : 0;
+  sc.lateralOffset += (targetLat - sc.lateralOffset) * Math.min(1, dt * 3.5);
+
+  // Single-file bunching rules & lapped car wave-by exemptions
+  const activeQueue: RaceControlCarView[] = [];
+  for (let i = 0; i < ordered.length; i++) {
+    const c = ordered[i];
+    if (c.finished || c.pitStopRemaining > 0 || c.disqualified) {
+      c.neutralizationSpeedCapMs = null;
+      c.safetyCarQueueTargetSpeedMs = null;
+      c.safetyCarBunchingGapM = null;
+      continue;
+    }
+
+    const isLappedBetweenLeaderAndSc =
+      sc.phase === 'deployed' &&
+      leader &&
+      c.id !== leader.id &&
+      leader.totalDistance - c.totalDistance > 0.65 &&
+      wrappedTrackGapM(leader.trackT, c.trackT, trackLen) <
+        wrappedTrackGapM(leader.trackT, sc.trackT, trackLen);
+
+    if (isLappedBetweenLeaderAndSc) {
+      const waveCapMs = SAFETY_CAR_CATCHUP_CAP_KMH / 3.6;
+      waveByCarIds.add(c.id);
+      c.neutralizationSpeedCapMs = waveCapMs;
+      c.safetyCarQueueTargetSpeedMs = waveCapMs;
+      c.safetyCarBunchingGapM = null;
+      continue;
+    }
+
+    activeQueue.push(c);
+  }
+
+  let bunchedCount = 0;
+  for (let q = 0; q < activeQueue.length; q++) {
+    const c = activeQueue[q];
+    const targetGapM = q === 0 ? SAFETY_CAR_LEADER_TARGET_GAP_M : SAFETY_CAR_QUEUE_GAP_M;
+    const gapAheadM =
+      q === 0
+        ? wrappedTrackGapM(c.trackT, sc.trackT, trackLen)
+        : wrappedTrackGapM(c.trackT, activeQueue[q - 1].trackT, trackLen);
+    c.safetyCarBunchingGapM = gapAheadM;
+
+    const queueTargetSpeed = computeSingleFileBunchingSpeedMs({
+      scSpeedMs: sc.speedMs,
+      gapAheadM,
+      targetGapM,
+    });
+    c.safetyCarQueueTargetSpeedMs = queueTargetSpeed;
+    c.neutralizationSpeedCapMs = queueTargetSpeed;
+
+    if (gapAheadM <= (q === 0 ? 75 : 55)) bunchedCount += 1;
+  }
+
+  if (sc.phase === 'deployed') {
+    const packBunched =
+      activeQueue.length === 0 ||
+      (bunchedCount >= Math.max(1, Math.ceil(activeQueue.length * 0.5)) && leaderGapToSc <= 85);
+    const readyToWithdraw =
+      anyFinished ||
+      lateFinalLap ||
+      (sc.timer >= sc.minDuration && incidentsClear && (packBunched || sc.timer >= sc.minDuration + 4.0)) ||
+      sc.timer >= sc.maxDuration - 2.5;
+
+    if (readyToWithdraw) {
+      if (anyFinished || lateFinalLap) {
+        releaseNeutralizationToGreen(rc, ordered, {
+          incidentsClear,
+          anyFinished,
+          cooldownSeconds: 18.0,
+          flashSeconds: 3.0,
+          message: 'GREEN FLAG — SAFETY CAR WITHDRAWN, RACING RESUMES!',
+        });
+      } else {
+        sc.phase = 'in-this-lap';
+        sc.inThisLapRemaining = 2.5;
+        setRaceControlMessage(rc, 'SAFETY CAR IN THIS LAP — PREPARE FOR GREEN FLAG RESTART', 3.5);
+      }
+    }
+  } else if (sc.phase === 'in-this-lap') {
+    sc.inThisLapRemaining = Math.max(0, sc.inThisLapRemaining - dt);
+    if (sc.inThisLapRemaining <= 0 || anyFinished || lateFinalLap) {
+      releaseNeutralizationToGreen(rc, ordered, {
+        incidentsClear,
+        anyFinished,
+        cooldownSeconds: 18.0,
+        flashSeconds: 3.0,
+        message: 'GREEN FLAG — SAFETY CAR WITHDRAWN, RACING RESUMES!',
+      });
+    }
+  }
+
+  return waveByCarIds;
+}
+
+function stepHeavyPenaltiesForCar(
+  rc: RaceControlState,
+  c: RaceControlCarView,
+  dt: number,
+  halfW: number,
+  isRace: boolean,
+): void {
+  // Adopt any pre-populated heavy penalty directly on car state (e.g. from external assignment/tests)
+  if (
+    (c.penaltyType === 'drive-through' || c.penaltyType === 'stop-and-go') &&
+    !rc.heavyPenaltyByCarId.has(c.id)
+  ) {
+    const isStopAndGo = c.penaltyType === 'stop-and-go';
+    const issuedLap = c.heavyPenaltyIssuedLap ?? c.lap;
+    const deadlineLap = c.heavyPenaltyDeadlineLap ?? issuedLap + HEAVY_PENALTY_LAP_WINDOW;
+    rc.heavyPenaltyByCarId.set(c.id, {
+      penaltyType: c.penaltyType,
+      penaltyReason: c.penaltyReason ?? 'corner-cut',
+      issuedLap,
+      deadlineLap,
+      holdProgress: c.heavyPenaltyHoldProgress ?? 0,
+      requiredHoldSeconds: isStopAndGo ? STOP_AND_GO_HOLD_SECONDS : DRIVE_THROUGH_HOLD_SECONDS,
+      postRaceEscalationSeconds: isStopAndGo ? STOP_AND_GO_POST_RACE_SECONDS : DRIVE_THROUGH_POST_RACE_SECONDS,
+    });
+  }
+
+  // Detect new severe cuts or heavy avoidable punting increments
+  const prevWarn = rc.prevWarningCountByCarId.get(c.id) ?? 0;
+  const prevExtCuts = rc.prevExternalCutCountByCarId.get(c.id) ?? 0;
+  const prevExtPunts = rc.prevExternalPuntCountByCarId.get(c.id) ?? 0;
+  let severeCuts = rc.severeCutCountByCarId.get(c.id) ?? 0;
+  let punts = rc.avoidablePuntCountByCarId.get(c.id) ?? 0;
+  const latestImpact = Math.max(c.lastAvoidableContactImpact ?? 0, c.lastCollisionImpact ?? 0);
+
+  if (typeof c.heavyPenaltySevereCutCount === 'number' && c.heavyPenaltySevereCutCount > prevExtCuts) {
+    severeCuts += c.heavyPenaltySevereCutCount - prevExtCuts;
+    rc.prevExternalCutCountByCarId.set(c.id, c.heavyPenaltySevereCutCount);
+  }
+  if (typeof c.heavyPenaltyPuntingCount === 'number' && c.heavyPenaltyPuntingCount > prevExtPunts) {
+    punts += c.heavyPenaltyPuntingCount - prevExtPunts;
+    rc.prevExternalPuntCountByCarId.set(c.id, c.heavyPenaltyPuntingCount);
+  }
+
+  if (c.warningCount > prevWarn) {
+    const deltaWarn = c.warningCount - prevWarn;
+    if (c.penaltyReason === 'corner-cut') {
+      severeCuts += deltaWarn;
+    } else if (c.penaltyReason === 'avoidable-contact' && latestImpact >= HEAVY_PUNT_IMPACT_THRESHOLD) {
+      punts += 1;
+    }
+  } else if (
+    isRace &&
+    !c.finished &&
+    (c.lastAvoidableContactImpact ?? 0) >= HEAVY_PUNT_IMPACT_THRESHOLD &&
+    !rc.heavyPenaltyByCarId.has(c.id)
+  ) {
+    punts += 1;
+    c.lastAvoidableContactImpact = 0;
+  }
+
+  rc.prevWarningCountByCarId.set(c.id, c.warningCount);
+  rc.severeCutCountByCarId.set(c.id, severeCuts);
+  rc.avoidablePuntCountByCarId.set(c.id, punts);
+
+  if (isRace && !c.finished && !c.disqualified) {
+    const existingRecord = rc.heavyPenaltyByCarId.get(c.id);
+    const assignment = evaluateHeavyPenaltyAssignment({
+      severeCutCount: severeCuts,
+      avoidablePuntCount: punts,
+      latestCollisionImpact: latestImpact,
+      currentPenaltyType: existingRecord?.penaltyType ?? c.penaltyType,
+      currentLap: c.lap,
+    });
+
+    if (
+      assignment &&
+      (!existingRecord ||
+        (existingRecord.penaltyType === 'drive-through' && assignment.penaltyType === 'stop-and-go'))
+    ) {
+      rc.heavyPenaltyByCarId.set(c.id, {
+        penaltyType: assignment.penaltyType,
+        penaltyReason: assignment.penaltyReason,
+        issuedLap: c.lap,
+        deadlineLap: assignment.deadlineLap,
+        holdProgress: 0,
+        requiredHoldSeconds: assignment.requiredHoldSeconds,
+        postRaceEscalationSeconds: assignment.postRaceEscalationSeconds,
+      });
+      c.penaltyType = assignment.penaltyType;
+      c.penaltyReason = assignment.penaltyReason;
+      c.penaltyTimeRemaining = 0;
+      c.heavyPenaltyHoldProgress = 0;
+      c.heavyPenaltyIssuedLap = c.lap;
+      c.heavyPenaltyDeadlineLap = assignment.deadlineLap;
+      if (c.isPlayer) {
+        const label = assignment.penaltyType === 'stop-and-go' ? '3.0s OFF-LINE STOP & GO' : '4.0s <=60 KM/H DRIVE-THROUGH';
+        setRaceControlMessage(rc, `STEWARD PENALTY: ${label} (SERVE BY LAP ${assignment.deadlineLap})`, 4.5);
+      }
+    }
+  }
+
+  const activeRecord = rc.heavyPenaltyByCarId.get(c.id);
+  if (!activeRecord) return;
+
+  // Keep car state synced even if physics temporarily altered penaltyType
+  c.penaltyType = activeRecord.penaltyType;
+  c.penaltyReason = activeRecord.penaltyReason;
+  c.heavyPenaltyIssuedLap = activeRecord.issuedLap;
+  c.heavyPenaltyDeadlineLap = activeRecord.deadlineLap;
+
+  // 1) Check 3-lap / finish-line escalation to post-race +15s / +25s penalty
+  const escalation = evaluateHeavyPenaltyLapEscalation({
+    penaltyType: activeRecord.penaltyType,
+    currentLap: c.lap,
+    issuedLap: activeRecord.issuedLap,
+    deadlineLap: activeRecord.deadlineLap,
+    finished: c.finished,
+    existingPostRaceSeconds: c.postRacePenaltySeconds ?? 0,
+  });
+
+  if (escalation.escalated) {
+    c.postRacePenaltySeconds = escalation.totalPostRaceSeconds;
+    if (escalation.disqualified) c.disqualified = true;
+    rc.heavyPenaltyByCarId.delete(c.id);
+    rc.severeCutCountByCarId.set(c.id, 0);
+    rc.avoidablePuntCountByCarId.set(c.id, 0);
+    c.penaltyType = null;
+    c.penaltyReason = null;
+    c.penaltyTimeRemaining = 0;
+    c.heavyPenaltyHoldProgress = 0;
+    c.heavyPenaltyIssuedLap = null;
+    c.heavyPenaltyDeadlineLap = null;
+    if (c.isPlayer) {
+      setRaceControlMessage(
+        rc,
+        `UNSERVED PENALTY ESCALATED — +${escalation.addedPostRaceSeconds}s POST-RACE PENALTY`,
+        4.5,
+      );
+    }
+    return;
+  }
+
+  // 2) Evaluate on-track serving hold
+  const serveRes = evaluateOnTrackPenaltyServe({
+    penaltyType: activeRecord.penaltyType,
+    speedMs: c.speed,
+    lateralOffset: c.lateralOffset,
+    trackHalfWidth: halfW,
+    holdProgressSeconds: activeRecord.holdProgress,
+    dt,
+  });
+
+  activeRecord.holdProgress = serveRes.holdProgressSeconds;
+  c.heavyPenaltyHoldProgress = serveRes.holdProgressSeconds;
+
+  if (serveRes.completed) {
+    const servedType = activeRecord.penaltyType;
+    rc.heavyPenaltyByCarId.delete(c.id);
+    rc.severeCutCountByCarId.set(c.id, 0);
+    rc.avoidablePuntCountByCarId.set(c.id, 0);
+    c.penaltyType = null;
+    c.penaltyReason = null;
+    c.penaltyTimeRemaining = 0;
+    c.heavyPenaltyHoldProgress = 0;
+    c.heavyPenaltyIssuedLap = null;
+    c.heavyPenaltyDeadlineLap = null;
+    if (c.isPlayer) {
+      setRaceControlMessage(rc, `${servedType.replace('-', ' ').toUpperCase()} PENALTY SERVED`, 3.2);
+    }
+  }
+}
+
+/**
  * Steps full Race Control:
  * - Local Yellow flags per microsector (18 microsectors = 6 per sector) on spins, stopped cars, or heavy crashes
- * - Overtaking under yellow strictly gated to active yellow microsectors, with yield-back clearance
+ * - Safety Car ('safety-car') & Virtual Safety Car ('vsc') deployment, speed caps, single-file bunching & green-flag restart
+ * - Serveable on-track 'drive-through' & 'stop-and-go' penalties with 3-lap +15s/+25s escalation
+ * - Overtaking under yellow/SC/VSC with yield-back clearance
  * - Blue flags for slower-class or lapped traffic
  * - White flag (final lap), Black-and-White warning flag, Checkered flag
  * - DRS detection/activation & Formula E Attack Mode zone detection
@@ -685,23 +1524,33 @@ export function stepRaceControl(
   // 1. Sort cars by race progress (highest totalDistance first)
   const ordered = [...cars].sort((a, b) => b.totalDistance - a.totalDistance);
   const rankById = new Map<string, number>();
+  const carById = new Map<string, RaceControlCarView>();
   for (let i = 0; i < ordered.length; i++) {
     rankById.set(ordered[i].id, i);
+    carById.set(ordered[i].id, ordered[i]);
   }
   const leader = ordered[0];
+  const anyFinished = ordered.some((c) => c.finished);
   const trackLen = Math.max(200, compiledTrack.totalLength);
   const halfW = compiledTrack.spec.trackWidth * 0.5;
 
-  // 2. Detect microsector incidents (spun, stopped, or crashed car)
+  // 2. Detect microsector incidents & update rolling pileup memory window
   const microIncidentThisTick = new Array<boolean>(MICROSECTOR_COUNT).fill(false);
 
   for (let i = 0; i < cars.length; i++) {
     const c = cars[i];
-    if (c.finished || c.pitStopRemaining > 0) continue;
+    if (c.finished || c.pitStopRemaining > 0 || c.disqualified) {
+      rc.recentIncidentByCarId.delete(c.id);
+      continue;
+    }
     const mIdx = getMicrosectorIndexForT(c.trackT);
     const isSpun = Math.abs(c.yawRate ?? 0) > 2.65 && c.speed > 7.5;
     const isStoppedOnTrack = rc.elapsedRaceTime > 10.0 && c.speed < 1.6 && c.totalDistance > 0.03;
+    const isStoppedForPileup =
+      c.speed < 2.0 && c.totalDistance > 0.08 && (rc.elapsedRaceTime > 2.5 || c.totalDistance > 0.15);
+    const maxImpact = Math.max(c.lastWallImpact ?? 0, c.lastCollisionImpact ?? 0);
     const isHeavyCrash = (c.lastWallImpact ?? 0) > 18.0 || (c.lastCollisionImpact ?? 0) > 16.0;
+    const isPileupCrash = (c.lastWallImpact ?? 0) >= 16.0 || (c.lastCollisionImpact ?? 0) >= 14.0;
 
     if (isSpun || isStoppedOnTrack || isHeavyCrash) {
       const holdDur = isHeavyCrash ? 4.5 : 2.8;
@@ -712,7 +1561,31 @@ export function stepRaceControl(
       microIncidentThisTick[prevM] = true;
       rc.microsectorYellowTimers[prevM] = Math.max(rc.microsectorYellowTimers[prevM], holdDur * 0.85);
     }
+
+    if (isPileupCrash || isStoppedForPileup) {
+      rc.recentIncidentByCarId.set(c.id, {
+        time: rc.elapsedRaceTime,
+        trackT: wrapT(c.trackT),
+        impact: maxImpact,
+        stopped: isStoppedForPileup,
+      });
+    }
   }
+
+  // Prune expired or recovered incident records from the 6.0s rolling window
+  rc.recentIncidentByCarId.forEach((entry, carId) => {
+    const c = carById.get(carId);
+    const age = rc.elapsedRaceTime - entry.time;
+    const recoveredAndMoving =
+      c !== undefined &&
+      c.speed > 14.0 &&
+      (c.lastWallImpact ?? 0) < 5.0 &&
+      (c.lastCollisionImpact ?? 0) < 5.0 &&
+      age > 2.0;
+    if (!c || c.finished || c.pitStopRemaining > 0 || age > 6.0 || recoveredAndMoving) {
+      rc.recentIncidentByCarId.delete(carId);
+    }
+  });
 
   for (let m = 0; m < MICROSECTOR_COUNT; m++) {
     if (!microIncidentThisTick[m] && rc.microsectorYellowTimers[m] > 0) {
@@ -733,7 +1606,23 @@ export function stepRaceControl(
     rc.sectorFlags[s] = maxTimer > 0 ? 'yellow' : 'green';
   }
 
-  // 3. Overtaking under Yellow (strictly inside active yellow microsectors) + yield-back check
+  // 2b. Safety Car & Virtual Safety Car deployment, bunching, speed caps, and green-flag restart
+  const waveByCarIds = stepSafetyCarAndVsc(
+    rc,
+    ordered,
+    compiledTrack,
+    dt,
+    opts,
+    anyFinished,
+    trackLen,
+    halfW,
+  );
+  const isNeutralized =
+    rc.safetyCar.phase === 'vsc' ||
+    rc.safetyCar.phase === 'deployed' ||
+    rc.safetyCar.phase === 'in-this-lap';
+
+  // 3. Overtaking under Yellow / SC / VSC + yield-back clearance + Heavy Penalties
   for (let idx = 0; idx < ordered.length; idx++) {
     const c = ordered[idx];
     const prevRank = rc.prevRankByCarId.get(c.id);
@@ -757,19 +1646,31 @@ export function stepRaceControl(
       }
     }
 
+    const overtakeProhibited =
+      (inYellowMicro && rc.elapsedRaceTime > 8.0) ||
+      (isNeutralized && rc.safetyCar.timer > 0.2 && !waveByCarIds.has(c.id));
+
     if (
       opts.isRace &&
-      rc.elapsedRaceTime > 8.0 &&
       prevRank !== undefined &&
       idx < prevRank &&
-      inYellowMicro &&
+      overtakeProhibited &&
       !c.finished &&
       c.pitStopRemaining <= 0 &&
       !rc.yellowOvertakeCooldown.has(c.id)
     ) {
-      // Only penalize if overtaken car is genuinely racing on-track at speed (> 18 m/s & inside track bounds)
+      // Only penalize if overtaken car is genuinely racing on-track (not stopped/pitted/serving penalty)
       const passedCar = ordered[idx + 1];
-      if (passedCar && passedCar.speed > 18.0 && Math.abs(passedCar.lateralOffset) < halfW * 1.05) {
+      const passedCarServingHeavy =
+        passedCar?.penaltyType === 'stop-and-go' || passedCar?.penaltyType === 'drive-through';
+      const minPassedSpeed = isNeutralized ? 10.0 : 18.0;
+      if (
+        passedCar &&
+        passedCar.speed > minPassedSpeed &&
+        passedCar.pitStopRemaining <= 0 &&
+        !passedCarServingHeavy &&
+        Math.abs(passedCar.lateralOffset) < halfW * 1.05
+      ) {
         rc.yellowOvertakeCooldown.set(c.id, 10.0);
         c.warningCount += 1;
         c.penaltyReason = 'yellow-overtake';
@@ -783,15 +1684,19 @@ export function stepRaceControl(
           positionsToYield,
         });
         if (c.isPlayer) {
+          const contextLabel = isNeutralized ? 'SAFETY CAR / VSC' : 'YELLOW FLAG';
           setRaceControlMessage(
             rc,
-            `YELLOW FLAG OVERTAKE — YIELD ${positionsToYield} POS TO ${passedCar.name.toUpperCase()} OR SLOW ${c.penaltyTimeRemaining.toFixed(1)}s`,
+            `${contextLabel} OVERTAKE — YIELD ${positionsToYield} POS TO ${passedCar.name.toUpperCase()} OR SLOW ${c.penaltyTimeRemaining.toFixed(1)}s`,
             3.8,
           );
         }
       }
     }
     rc.prevRankByCarId.set(c.id, idx);
+
+    // Serveable on-track heavy penalties ('drive-through' & 'stop-and-go') + 3-lap escalation
+    stepHeavyPenaltiesForCar(rc, c, dt, halfW, opts.isRace);
 
     // Black-and-White flag warning at 5 warnings
     if (c.warningCount >= 5 && !c.blackAndWhiteFlagged) {
@@ -829,8 +1734,8 @@ export function stepRaceControl(
     }
   }
 
-  // 5. DRS Detection/Activation (STRICTLY F1 2021 ONLY) & Formula E Attack Mode Zone
-  const drsAllowedGlobally = opts.isRace ? (leader?.lap ?? 1) >= 2 : true;
+  // 5. DRS Detection/Activation (STRICTLY F1 2021 ONLY; disabled under SC/VSC) & Formula E Attack Mode Zone
+  const drsAllowedGlobally = !isNeutralized && (opts.isRace ? (leader?.lap ?? 1) >= 2 : true);
 
   for (let i = 0; i < cars.length; i++) {
     const c = cars[i];
@@ -894,7 +1799,6 @@ export function stepRaceControl(
   }
 
   // 6. Compute global flag priority
-  const anyFinished = ordered.some((c) => c.finished);
   const anyYellow = rc.sectorFlags[0] === 'yellow' || rc.sectorFlags[1] === 'yellow' || rc.sectorFlags[2] === 'yellow';
   const yellowCount =
     (rc.sectorFlags[0] === 'yellow' ? 1 : 0) +
@@ -903,6 +1807,10 @@ export function stepRaceControl(
 
   if (anyFinished && opts.isRace) {
     rc.globalFlag = 'checkered';
+  } else if (rc.safetyCar.phase === 'deployed' || rc.safetyCar.phase === 'in-this-lap') {
+    rc.globalFlag = 'safety-car';
+  } else if (rc.safetyCar.phase === 'vsc') {
+    rc.globalFlag = 'vsc';
   } else if (yellowCount >= 2) {
     rc.globalFlag = 'double-yellow';
   } else if (anyYellow) {
