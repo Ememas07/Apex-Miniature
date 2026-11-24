@@ -92,13 +92,7 @@ python -u scripts/trainPPO.py --car-class all --updates 1500 --device cuda
 If you recorded human laps (`.jsonl` telemetry files in the project root or `audit/human_demos.jsonl`), you can pre-train the actor via sector-filtered Behavioral Cloning before PPO fine-tuning:
 
 ```powershell
-python -u scripts/trainPPO.py `
-  --car-class HYPERCAR_GTP `
-  --bc-dataset telemetry_spa-francorchamps_ferrari-499p.jsonl `
-  --bc-epochs 18 `
-  --bc-anchor-coef 0.08 `
-  --updates 1500 `
-  --device cuda
+python -u scripts/trainPPO.py --car-class HYPERCAR_GTP --bc-dataset telemetry_spa-francorchamps_ferrari-499p.jsonl   --bc-epochs 18  --bc-anchor-coef 0.08 --updates 1500 --device cuda
 ```
 
 ### Optional B — Two-Stage Track Mastery (Single-Track Solo → All Tracks)
