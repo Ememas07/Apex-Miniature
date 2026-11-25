@@ -23,7 +23,7 @@ import {
   SpectatorCameraMode,
 } from '../game/types';
 import { MotorsportAudioEngine } from './audioEngine';
-import { buildSafetyCarRig, BuiltCarRig, SafetyCarRig } from './carBuilder';
+import { BuiltCarRig } from './carBuilder';
 import {
   CarNametagHandle,
   computeNametagDistanceStyle,
@@ -136,7 +136,6 @@ export class RaceSceneRenderer {
   public trackScene: BuiltTrackScene | null = null;
   public carRigs = new Map<string, BuiltCarRig>();
   public carNametags = new Map<string, CarNametagHandle>();
-  public safetyCarRig: SafetyCarRig | null = null;
   public zoneMarkersGroup: THREE.Group | null = null;
   public broadcastStations: BroadcastCameraStation[] = [];
 
@@ -469,11 +468,6 @@ export class RaceSceneRenderer {
     this.ghostCarGroup.add(ghostHull, ghostHullWire, ghostNose, ghostCanopy, ghostWing, ghostDiffuser);
     scene.add(this.ghostCarGroup);
 
-    // Build 3D Safety Car rig (shown when SC deployed / in-this-lap)
-    this.safetyCarRig = buildSafetyCarRig();
-    this.safetyCarRig.root.visible = false;
-    scene.add(this.safetyCarRig.root);
-
     // 3D Virtual Rear-View Mirror (render target + scissor blit quad)
     this.mirrorCamera = new THREE.PerspectiveCamera(52, MIRROR_RT_WIDTH / MIRROR_RT_HEIGHT, 0.25, 450);
     this.mirrorTarget = new THREE.WebGLRenderTarget(MIRROR_RT_WIDTH, MIRROR_RT_HEIGHT, {
@@ -729,7 +723,6 @@ export class RaceSceneRenderer {
     this.debrisMesh.visible = false;
     this.smokeMesh.visible = false;
     this.ghostCarGroup.visible = false;
-    if (this.safetyCarRig) this.safetyCarRig.root.visible = false;
 
     this.scene.background = new THREE.Color(builtTrack.skyColor);
     this.scene.fog = new THREE.FogExp2(builtTrack.fogColor, 0.0017);
@@ -1376,10 +1369,7 @@ export class RaceSceneRenderer {
     // 4. Sync Car 3D Rigs, Wheels, Damage, Lights, Debris & Smoke
     this.syncCarRigsAndParticles(dt, nowMs, phase, engine);
 
-    // 5. Sync 3D Safety Car Rig when deployed
-    this.syncSafetyCarRig(dt, engine);
-
-    // 6. Sync Nametags, Slipstream Streaks & Rain
+    // 5. Sync Nametags, Slipstream Streaks & Rain
     this.syncNametagsAndAtmosphere(nowMs, phase, sessionMode, playerCar, engine);
 
     // 7. Time-of-Day Sky/Shadows (tight ~85x85m focus frustum), Track Props, Audio Listener, VFX & Post-Processing
@@ -1803,35 +1793,6 @@ export class RaceSceneRenderer {
       this.renderer.setViewport(0, 0, canvasW, canvasH);
       this.renderer.autoClear = prevAutoClear;
     }
-  }
-
-  private syncSafetyCarRig(dt: number, engine: RaceSimulationEngine): void {
-    const rig = this.safetyCarRig;
-    if (!rig) return;
-    const sc = engine.raceControl.safetyCar;
-    const showSc = sc.active && (sc.phase === 'deployed' || sc.phase === 'in-this-lap');
-    rig.root.visible = showSc;
-    if (!showSc) return;
-
-    const sp = sampleTrackAtT(engine.compiledTrack, sc.trackT);
-    const scHeading = Math.atan2(sp.tx, sp.tz);
-    const tilt = computeRoadSurfaceTilt(sp, scHeading);
-    const bankY = sc.lateralOffset * Math.sin(sp.banking || 0);
-    rig.root.position.set(
-      sp.x + sp.nx * sc.lateralOffset,
-      sp.y + bankY + 0.02,
-      sp.z + sp.nz * sc.lateralOffset,
-    );
-    rig.root.rotation.order = 'YXZ';
-    rig.root.rotation.y = scHeading;
-    rig.root.rotation.x = -tilt.pitchRad;
-    rig.root.rotation.z = -tilt.rollRad;
-
-    const wheelSpin = (sc.speedMs / 0.32) * dt;
-    for (const w of rig.allWheels) w.rotation.x += wheelSpin;
-    const steerHint = Math.max(-0.32, Math.min(0.32, (sp.curvature || 0) * 2.8));
-    for (const fw of rig.frontWheels) fw.rotation.y = -steerHint;
-    rig.update(sc.phase, engine.raceElapsed);
   }
 
   private syncCarRigsAndParticles(
@@ -2389,11 +2350,6 @@ export class RaceSceneRenderer {
       tag.dispose();
     });
     this.carNametags.clear();
-    if (this.safetyCarRig) {
-      this.scene.remove(this.safetyCarRig.root);
-      this.safetyCarRig.dispose();
-      this.safetyCarRig = null;
-    }
     this.trackScene?.dispose();
     if (this.zoneMarkersGroup) {
       this.scene.remove(this.zoneMarkersGroup);

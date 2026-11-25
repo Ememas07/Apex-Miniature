@@ -309,22 +309,30 @@ export function ResultsModal({
 
         {/* Footer Actions */}
         <div className="px-4 py-3 sm:px-6 sm:py-4 border-t border-white/10 flex flex-wrap items-center justify-end gap-2 sm:gap-3 bg-[#0d1118]">
-          {recordedCleanLaps.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
+          <button
+            type="button"
+            onClick={() => {
+              if (recordedCleanLaps.length > 0) {
                 const res = telemetryRecorder.downloadDatasetBundle({ cleanOnly: true });
                 if (res.lapCount > 0) {
                   setBcExportLabel(`Exported ${res.lapCount} clean lap(s)`);
                 }
-              }}
-              className="mr-auto px-3 py-2 rounded bg-[#101c2c] hover:bg-[#172840] border border-sky-500/35 text-xs font-semibold text-sky-300 cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
-              title="Export clean human laps as JSONL for scripts/trainPPO.py --bc-dataset"
-            >
-              <Download className="w-3.5 h-3.5" />
-              {bcExportLabel ?? `Export ${recordedCleanLaps.length} BC Lap(s)`}
-            </button>
-          )}
+              } else {
+                const demo = telemetryRecorder.exportManual(true);
+                setBcExportLabel(
+                  demo ? `Exported ${demo.samples.length} frames` : 'No telemetry recorded',
+                );
+              }
+            }}
+            className="mr-auto px-3 py-2 rounded bg-[#101c2c] hover:bg-[#172840] border border-sky-500/35 text-xs font-semibold text-sky-300 cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+            title="Export human laps/telemetry as JSONL for scripts/trainPPO.py --bc-dataset (F8)"
+          >
+            <Download className="w-3.5 h-3.5" />
+            {bcExportLabel ??
+              (recordedCleanLaps.length > 0
+                ? `Export ${recordedCleanLaps.length} BC Lap(s)`
+                : 'Export Telemetry (F8)')}
+          </button>
           {onWatchReplay && snapshot.replayAvailable && (
             <button
               type="button"

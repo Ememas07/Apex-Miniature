@@ -59,12 +59,14 @@ import {
   computeRoadSurfaceTilt,
   computeRollingFormationControl,
   computeStandings,
-  computeUpcomingCornerInfo,
   createCarSimState,
+  getCarDrivetrain,
   getCompoundModifiers,
   getRollingFormationSpeedMs,
+  isCarTcEquipped,
   requestOnTrackPitStop,
   resolveCarCollisions,
+  resolveClassDefaultTc,
   resolveWallContact,
   stepCarPhysics,
   tryStepMecachromeEvent,
@@ -97,29 +99,14 @@ import {
   resolveWinningVotedTrack,
 } from './multiplayer';
 import { RaceReplayRecorder } from './replay';
-import { applyGraphicsPreset, applyWheelPreset, formatSpeed, formatTemp } from './settings';
+import { applyGraphicsPreset, applyWheelPreset, DEFAULT_GAME_SETTINGS, formatSpeed, formatTemp } from './settings';
 import {
-  DRIVE_THROUGH_HOLD_SECONDS,
-  DRIVE_THROUGH_MAX_SPEED_MS,
-  DRIVE_THROUGH_POST_RACE_SECONDS,
-  SAFETY_CAR_CATCHUP_CAP_KMH,
-  SAFETY_CAR_MAX_PACE_KMH,
-  SAFETY_CAR_MIN_PACE_KMH,
-  STOP_AND_GO_HOLD_SECONDS,
-  STOP_AND_GO_POST_RACE_SECONDS,
-  VSC_SPEED_CAP_KMH,
-  VSC_SPEED_CAP_MS,
-  computeSafetyCarPaceMs,
-  computeSingleFileBunchingSpeedMs,
   computeTrackSpecialZones,
   createRaceControlState,
-  evaluateHeavyPenaltyAssignment,
-  evaluateHeavyPenaltyLapEscalation,
-  evaluateOnTrackPenaltyServe,
   stepRaceControl,
 } from './raceSystems';
 import { MotorsportAudioEngine } from '../three/audioEngine';
-import { buildDiecastCar, buildSafetyCarMesh, buildSafetyCarRig } from '../three/carBuilder';
+import { buildDiecastCar } from '../three/carBuilder';
 import { wrapRigInLOD } from '../three/objCarLoader';
 
 test('All requested car classes are unlocked and populated', () => {
@@ -4204,18 +4191,9 @@ test('RaceReplayRecorder: 20Hz capture, interpolated sampling, overtake bookmark
   assert.ok(car.x < beforeX - 100);
 });
 
-test('Upcoming Corner Callout, Binary Telemetry Round-Trip & Settings/Units Formatting', () => {
-  const spa = compileTrack(TRACKS[0]);
-  // Scan around track to verify corner callout detection triggers on real corners
-  let foundCorner = false;
-  for (let i = 0; i < 60; i++) {
-    const info = computeUpcomingCornerInfo(spa, i / 60, 68);
-    if (info && info.distanceM > 0 && info.suggestedGear >= 1) {
-      foundCorner = true;
-      break;
-    }
-  }
-  assert.ok(foundCorner, 'Expected computeUpcomingCornerInfo to detect at least one corner on Spa');
+test('Default Spotter/Racing Line Off, Binary Telemetry Round-Trip & Settings/Units Formatting', () => {
+  assert.equal(DEFAULT_GAME_SETTINGS.engineerVerbosity, 'off');
+  assert.equal(DEFAULT_GAME_SETTINGS.racingLineMode, 'off');
 
   // Binary telemetry encode/decode round-trip
   const pkt = {
@@ -4250,25 +4228,23 @@ test('Upcoming Corner Callout, Binary Telemetry Round-Trip & Settings/Units Form
   assert.equal(lowPreset.bloomEnabled, false);
 });
 
-test('Batch A: Safety Car & VSC deployment, speed caps, single-file bunching, wave-by & green restart', () => {
+test('Race Control: Local yellow flags & time-penalty stewarding without Safety Car or Drive-Through', () => {
   const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
   const zones = computeTrackSpecialZones(monza);
-  const f121 = getCarById('f1-21-mercedes');
+  const gt3 = getCarById('porsche-911-gt3-r');
 
-  const cars = [0, 1, 2, 3].map((slot) =>
+  const cars = [0, 1].map((slot) =>
     createCarSimState({
-      id: `sc-car-${slot}`,
+      id: `rc-car-${slot}`,
       name: `Driver ${slot}`,
       isPlayer: slot === 0,
-      carId: f121.id,
-      livery: f121.defaultLivery,
+      carId: gt3.id,
+      livery: gt3.defaultLivery,
       gridSlot: slot,
       compiledTrack: monza,
       compound: 'soft',
     }),
   );
-
-  // Place leader ahead, two cars in a cluster incident, and a lapped car between leader and SC
   cars[0].lap = 2;
   cars[0].trackT = 0.40;
   cars[0].totalDistance = 1.40;
@@ -4277,229 +4253,36 @@ test('Batch A: Safety Car & VSC deployment, speed caps, single-file bunching, wa
   cars[1].lap = 2;
   cars[1].trackT = 0.25;
   cars[1].totalDistance = 1.25;
-  cars[1].speed = 32;
-  cars[1].lastCollisionImpact = 16.5;
-
-  cars[2].lap = 2;
-  cars[2].trackT = 0.252;
-  cars[2].totalDistance = 1.24;
-  cars[2].speed = 30;
-  cars[2].lastCollisionImpact = 15.5;
-
-  cars[3].lap = 1;
-  cars[3].trackT = 0.42;
-  cars[3].totalDistance = 0.42; // lapped between leader (0.40) and SC (~0.42+)
-  cars[3].speed = 40;
+  cars[1].speed = 0.5;
+  cars[1].lastCollisionImpact = 22.0;
 
   const rc = createRaceControlState();
   stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
+  assert.equal(rc.globalFlag, 'yellow');
 
-  // 2-car non-extreme crash triggers VSC first
-  assert.equal(rc.safetyCar.phase, 'vsc');
-  assert.equal(rc.globalFlag, 'vsc');
-  assert.equal(rc.neutralizationSpeedCapMs, VSC_SPEED_CAP_MS);
-  assert.equal(cars[0].drsEligible, false);
-
-  // Verify physics enforces VSC speed cap when accelerating above VSC_SPEED_CAP_MS
-  const sp0 = sampleTrackAtT(monza, cars[0].trackT);
-  cars[0].x = sp0.x;
-  cars[0].y = sp0.y;
-  cars[0].z = sp0.z;
-  cars[0].heading = Math.atan2(sp0.tx, sp0.tz);
-  cars[0].speed = VSC_SPEED_CAP_MS + 25;
-  for (let i = 0; i < 60; i++) {
-    stepCarPhysics(
-      cars[0],
-      { throttle: 1, brake: 0, steer: 0, specialPressed: false },
-      monza,
-      1 / 60,
-      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: cars },
-    );
-  }
-  assert.ok(
-    cars[0].speed <= VSC_SPEED_CAP_MS + 1.5,
-    `Expected VSC physics cap ~${VSC_SPEED_CAP_KMH} km/h, got ${(cars[0].speed * 3.6).toFixed(1)} km/h`,
-  );
-
-  // Escalate to Full Safety Car by adding stopped cars in the cluster
-  cars[1].speed = 0.5;
-  cars[2].speed = 0.5;
+  // Repeated corner cuts issue slow-down / post-race time penalty (never drive-through or stop-and-go)
+  cars[0].warningCount = 5;
+  cars[0].penaltyReason = 'corner-cut';
   stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
-  assert.equal(rc.safetyCar.phase, 'deployed');
-  assert.equal(rc.safetyCar.active, true);
-  assert.equal(rc.globalFlag, 'safety-car');
-  assert.ok(
-    rc.safetyCar.speedMs * 3.6 >= SAFETY_CAR_MIN_PACE_KMH - 0.1 &&
-      rc.safetyCar.speedMs * 3.6 <= SAFETY_CAR_MAX_PACE_KMH + 0.1,
-  );
-  assert.ok(cars[0].safetyCarBunchingGapM !== null && cars[0].safetyCarBunchingGapM !== undefined);
-
-  // Place lapped car ahead of leader and behind SC -> receives wave-by cap
-  cars[3].trackT = (cars[0].trackT + 0.005) % 1;
-  cars[3].totalDistance = 0.42;
-  stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
-  assert.ok(
-    (cars[3].neutralizationSpeedCapMs ?? 0) * 3.6 >= SAFETY_CAR_CATCHUP_CAP_KMH - 0.5,
-    'Lapped car between leader and SC should receive wave-by speed cap',
-  );
-
-  // Clear incident cars and advance past minDuration -> 'in-this-lap' -> green flag restart
-  cars[1].speed = 35;
-  cars[2].speed = 35;
-  cars[1].lastCollisionImpact = 0;
-  cars[2].lastCollisionImpact = 0;
-  let sawInThisLap = false;
-  for (let step = 0; step < 160; step++) {
-    stepRaceControl(rc, cars, monza, zones, 0.1, { totalLaps: 5, isRace: true });
-    if (rc.safetyCar.phase === 'in-this-lap') sawInThisLap = true;
-    if (rc.safetyCar.phase === 'none') break;
-  }
-  assert.equal(sawInThisLap, true, 'Expected Safety Car to pass through in-this-lap phase');
-  assert.equal(rc.safetyCar.phase, 'none');
-  assert.equal(rc.safetyCar.active, false);
-  assert.equal(rc.globalFlag, 'green');
-  assert.ok(rc.safetyCar.greenRestartFlashTimer > 0);
-  assert.equal(rc.neutralizationSpeedCapMs, null);
-
-  // Direct pace/bunching pure helpers sanity
-  const scPace = computeSafetyCarPaceMs(monza, 0.05, 22);
-  assert.ok(scPace * 3.6 >= SAFETY_CAR_MIN_PACE_KMH && scPace * 3.6 <= SAFETY_CAR_MAX_PACE_KMH);
-  const catchup = computeSingleFileBunchingSpeedMs({ scSpeedMs: scPace, gapAheadM: 50, targetGapM: 14 });
-  assert.ok(catchup > scPace);
+  assert.equal(cars[0].penaltyType, 'time-penalty');
+  assert.ok((cars[0].postRacePenaltySeconds ?? 0) >= 3);
 });
 
-test('Batch A: Serveable drive-through & stop-and-go heavy penalties and 3-lap/finish escalation', () => {
-  const monza = compileTrack(TRACKS.find((t) => t.id === 'monza')!);
-  const zones = computeTrackSpecialZones(monza);
-  const gt3 = getCarById('porsche-911-gt3-r');
+test('Traction Control: IRL equipment check, RWD/FWD drivetrain mapping, and gentle TC intervention', () => {
+  assert.equal(isCarTcEquipped(CarClassId.GT3, 'porsche-911-gt3-r'), true);
+  assert.equal(isCarTcEquipped(CarClassId.F1_2005, 'f1-05-renault'), true);
+  assert.equal(isCarTcEquipped(CarClassId.F1_2026, 'f1-26-mercedes'), false);
+  assert.equal(isCarTcEquipped(CarClassId.F1_2021, 'f1-21-mercedes'), false);
+  assert.equal(isCarTcEquipped(CarClassId.FORMULA_E, 'fe-porsche-99x'), false);
+  assert.equal(isCarTcEquipped(CarClassId.TRACK_COUPE, 'renault-clio-v6'), false);
 
-  // 1. Assignment thresholds
-  assert.equal(
-    evaluateHeavyPenaltyAssignment({ severeCutCount: 2, avoidablePuntCount: 0, currentLap: 1 }),
-    null,
-  );
-  const dtAssign = evaluateHeavyPenaltyAssignment({ severeCutCount: 3, avoidablePuntCount: 0, currentLap: 2 });
-  assert.equal(dtAssign?.penaltyType, 'drive-through');
-  assert.equal(dtAssign?.deadlineLap, 5);
+  assert.equal(resolveClassDefaultTc(CarClassId.F1_2026, 3, 'f1-26-mercedes'), 0);
+  assert.equal(resolveClassDefaultTc(CarClassId.TRACK_COUPE, 2, 'renault-clio-v6'), 0);
+  assert.equal(resolveClassDefaultTc(CarClassId.GT3, 'auto', 'porsche-911-gt3-r'), 2);
 
-  const sgAssign = evaluateHeavyPenaltyAssignment({
-    severeCutCount: 0,
-    avoidablePuntCount: 1,
-    latestCollisionImpact: 27,
-    currentLap: 2,
-  });
-  assert.equal(sgAssign?.penaltyType, 'stop-and-go');
-  assert.equal(sgAssign?.postRaceEscalationSeconds, STOP_AND_GO_POST_RACE_SECONDS);
-
-  // 2. Drive-through on-track serve: <=60 km/h for 4.0s clears; exceeding 60 km/h resets progress
-  const dtRes1 = evaluateOnTrackPenaltyServe({
-    penaltyType: 'drive-through',
-    speedMs: DRIVE_THROUGH_MAX_SPEED_MS - 1.0,
-    lateralOffset: 0,
-    trackHalfWidth: 9,
-    holdProgressSeconds: 2.5,
-    dt: 0.5,
-  });
-  assert.equal(dtRes1.isServing, true);
-  assert.equal(dtRes1.holdProgressSeconds, 3.0);
-  assert.equal(dtRes1.completed, false);
-
-  const dtSpeedReset = evaluateOnTrackPenaltyServe({
-    penaltyType: 'drive-through',
-    speedMs: DRIVE_THROUGH_MAX_SPEED_MS + 4.0,
-    lateralOffset: 0,
-    trackHalfWidth: 9,
-    holdProgressSeconds: dtRes1.holdProgressSeconds,
-    dt: 0.2,
-  });
-  assert.equal(dtSpeedReset.isServing, false);
-  assert.equal(dtSpeedReset.holdProgressSeconds, 0);
-
-  const dtDone = evaluateOnTrackPenaltyServe({
-    penaltyType: 'drive-through',
-    speedMs: 12.0,
-    lateralOffset: 0,
-    trackHalfWidth: 9,
-    holdProgressSeconds: DRIVE_THROUGH_HOLD_SECONDS - 0.25,
-    dt: 0.3,
-  });
-  assert.equal(dtDone.completed, true);
-
-  // 3. Stop-and-go on-track serve inside stepCarPhysics: off-line & stationary for 3.0s
-  const car = createCarSimState({
-    id: 'sg-car',
-    name: 'Penalized',
-    isPlayer: true,
-    carId: gt3.id,
-    livery: gt3.defaultLivery,
-    gridSlot: 0,
-    compiledTrack: monza,
-    compound: 'soft',
-  });
-  car.penaltyType = 'stop-and-go';
-  car.penaltyReason = 'corner-cut';
-  car.heavyPenaltyIssuedLap = 1;
-  car.heavyPenaltyDeadlineLap = 4;
-  car.speed = 0;
-  const sp = sampleTrackAtT(monza, 0.05);
-  const halfW = (sp.width ?? monza.spec.trackWidth) * 0.5;
-  const offLineLat = halfW * 0.65;
-  car.trackT = 0.05;
-  car.lateralOffset = offLineLat;
-  car.x = sp.x + sp.nx * offLineLat;
-  car.y = sp.y;
-  car.z = sp.z + sp.nz * offLineLat;
-  car.heading = Math.atan2(sp.tx, sp.tz);
-
-  for (let i = 0; i < Math.ceil(STOP_AND_GO_HOLD_SECONDS * 60) + 10; i++) {
-    stepCarPhysics(
-      car,
-      { throttle: 0, brake: 0, steer: 0, specialPressed: false },
-      monza,
-      1 / 60,
-      { trackWetness: 0, totalLaps: 5, isQualifying: false, allCars: [car] },
-    );
-  }
-  assert.equal(car.penaltyType, null, 'Stop-and-go penalty should clear after 3.0s stationary off-line');
-  assert.equal(car.heavyPenaltyHoldProgress, 0);
-
-  // 4. Unserved 3-lap escalation & DSQ (>= 50s post-race) via stepRaceControl + helper
-  const escCar = createCarSimState({
-    id: 'esc-car',
-    name: 'Scofflaw',
-    isPlayer: true,
-    carId: gt3.id,
-    livery: gt3.defaultLivery,
-    gridSlot: 1,
-    compiledTrack: monza,
-    compound: 'soft',
-  });
-  escCar.lap = 1;
-  escCar.heavyPenaltySevereCutCount = 3;
-  const rc = createRaceControlState();
-  stepRaceControl(rc, [escCar], monza, zones, 0.1, { totalLaps: 6, isRace: true });
-  assert.equal(escCar.penaltyType, 'drive-through');
-  assert.equal(escCar.heavyPenaltyDeadlineLap, 4);
-
-  // Advance to deadline lap unserved -> escalates to +15s post-race
-  escCar.lap = 4;
-  escCar.speed = 45;
-  stepRaceControl(rc, [escCar], monza, zones, 0.1, { totalLaps: 6, isRace: true });
-  assert.equal(escCar.penaltyType, null);
-  assert.equal(escCar.postRacePenaltySeconds, DRIVE_THROUGH_POST_RACE_SECONDS);
-
-  // Second unserved stop-and-go pushes total >= 50s -> DSQ
-  const dsqCheck = evaluateHeavyPenaltyLapEscalation({
-    penaltyType: 'stop-and-go',
-    currentLap: 5,
-    issuedLap: 2,
-    deadlineLap: 5,
-    finished: false,
-    existingPostRaceSeconds: 25,
-  });
-  assert.equal(dsqCheck.escalated, true);
-  assert.equal(dsqCheck.totalPostRaceSeconds, 50);
-  assert.equal(dsqCheck.disqualified, true);
+  assert.equal(getCarDrivetrain('honda-civic-type-r', CarClassId.TRACK_COUPE), 'fwd');
+  assert.equal(getCarDrivetrain('nissan-gtr-nismo', CarClassId.TRACK_COUPE), 'awd');
+  assert.equal(getCarDrivetrain('porsche-911-gt3-r', CarClassId.GT3), 'rwd');
 });
 
 test('Batch C: MotorsportAudioEngine 3D HRTF Panner & ConvolverNode with StereoPanner/DelayNode fallbacks', () => {
@@ -5024,7 +4807,7 @@ test('Batch F: preloadTrackGeometry lazy hydration & track data alias', async ()
   assert.ok(compiled.totalLength > 1000);
 });
 
-test('Batch A & F: SafetyCarRig lightbar phases & wrapRigInLOD 3-tier LOD wrapping', () => {
+test('Batch F: wrapRigInLOD 3-tier LOD wrapping', () => {
   const prevDocument = (globalThis as { document?: unknown }).document;
   const noopGrad = () => ({ addColorStop: () => {} });
   const ctx2d = new Proxy(
@@ -5064,29 +4847,7 @@ test('Batch A & F: SafetyCarRig lightbar phases & wrapRigInLOD 3-tier LOD wrappi
   };
 
   try {
-    // 1. SafetyCarRig
-    const scRig = buildSafetyCarRig();
-    const scAlias = buildSafetyCarMesh();
-    assert.equal(scRig.allWheels.length, 4);
-    assert.equal(scRig.frontWheels.length, 2);
-    assert.ok(scRig.root.children.length >= 1);
-
-    scRig.update('deployed', 0.04);
-    const deployedLeft = scRig.lightbarLeftMat.emissiveIntensity;
-    const deployedRight = scRig.lightbarRightMat.emissiveIntensity;
-    assert.notEqual(deployedLeft, deployedRight, 'Deployed SC lightbar should alternate left/right amber');
-    assert.ok(deployedLeft > 2.0);
-
-    scRig.update('in-this-lap', 0.05);
-    assert.equal(scRig.lightbarCenterMat.color.getHex(), 0x22c55e);
-
-    scRig.update('none', 0.0);
-    assert.ok(scRig.lightbarCenterMat.emissiveIntensity < 0.2);
-
-    scRig.dispose();
-    scAlias.dispose();
-
-    // 2. wrapRigInLOD
+    // wrapRigInLOD
     const spec = getCarById('porsche-963');
     const rawRig = buildDiecastCar(spec.silhouette, spec.classId, spec.defaultLivery, 1, spec.id);
     const lodRig = wrapRigInLOD(rawRig, spec, spec.defaultLivery);

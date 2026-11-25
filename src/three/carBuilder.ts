@@ -27,11 +27,8 @@ import {
 } from './carGeometryHelpers';
 import {
   ClosedWheelDesign,
-  SafetyCarRig,
   buildClosedWheelCarBody,
   buildFormulaCarBody,
-  buildSafetyCarMesh,
-  buildSafetyCarRig,
   resolveClosedWheelDesign,
 } from './carSilhouetteBuilders';
 
@@ -49,8 +46,6 @@ export {
   buildHullStations,
   createLoftedGreenhouseGeometry,
   buildCabinStations,
-  buildSafetyCarRig,
-  buildSafetyCarMesh,
 };
 
 export type {
@@ -61,7 +56,6 @@ export type {
   HullStationSpec,
   GreenhouseStationSpec,
   ClosedWheelDesign,
-  SafetyCarRig,
 };
 
 /**

@@ -324,14 +324,10 @@ export type RaceFlagState =
   | 'green'
   | 'yellow'
   | 'double-yellow'
-  | 'vsc'
-  | 'safety-car'
   | 'white'
   | 'black-and-white'
   | 'black'
   | 'checkered';
-
-export type SafetyCarPhase = 'none' | 'vsc' | 'deployed' | 'in-this-lap' | 'restarting';
 
 export type SectorFlag = 'green' | 'yellow';
 
@@ -340,7 +336,7 @@ export type PenaltyReason =
   | 'avoidable-contact'
   | 'yellow-overtake';
 
-export type PenaltyType = 'slow-down' | 'time-penalty' | 'drive-through' | 'stop-and-go';
+export type PenaltyType = 'slow-down' | 'time-penalty';
 
 export type AIDifficulty = 'Rookie' | 'Amateur' | 'Pro' | 'Alien';
 
@@ -384,14 +380,6 @@ export type TcLevel = 0 | 1 | 2 | 3;
 export type EngineerVerbosity = 'off' | 'minimal' | 'full';
 
 export type BlindSpotStatus = 'clear' | 'left' | 'right' | 'both';
-
-export interface CornerCallout {
-  direction: 'left' | 'right' | 'chicane';
-  severity: 'hairpin' | 'sharp' | 'medium' | 'fast';
-  distanceM: number;
-  suggestedGear: number;
-  brakingRecommended: boolean;
-}
 
 export interface RaceRadioMessage {
   id: string;
@@ -640,10 +628,6 @@ export interface HudSnapshot {
   postRacePenaltySeconds?: number;
   penaltyReason?: PenaltyReason | null;
   penaltyType?: PenaltyType | null;
-  penaltyServeProgress?: number;
-  penaltyServeRequired?: number;
-  penaltyDeadlineLap?: number | null;
-  penaltyServeInstruction?: string | null;
   raceFlag?: RaceFlagState;
   sectorFlags?: [SectorFlag, SectorFlag, SectorFlag];
   inYellowMicrosector?: boolean;
@@ -651,12 +635,6 @@ export interface HudSnapshot {
   yellowYieldPositions?: number;
   blueFlagActive?: boolean;
   raceControlMessage?: string | null;
-  safetyCarActive?: boolean;
-  safetyCarPhase?: SafetyCarPhase;
-  safetyCarTrackT?: number;
-  safetyCarSpeedKmh?: number;
-  vscActive?: boolean;
-  neutralizationSpeedCapKmh?: number | null;
   isStoppedOnTrack: boolean;
   pitStopRemaining: number;
   pitStopTotal: number;
@@ -705,6 +683,7 @@ export interface HudSnapshot {
   aiNeuralTelemetry?: AiNeuralTelemetrySnapshot | null;
   // Section 5-10: Driving Aids, Live Inputs, Awareness, Radio, Replay, Telemetry & Online
   tcLevel?: TcLevel;
+  tcEquipped?: boolean;
   tcIntervening?: boolean;
   stabilityIntervening?: boolean;
   throttleInput?: number;
@@ -714,7 +693,6 @@ export interface HudSnapshot {
   rearCarGapM?: number | null;
   rearCarClosingKmh?: number;
   rearCarLateralM?: number;
-  upcomingCorner?: CornerCallout | null;
   radioMessage?: RaceRadioMessage | null;
   mecachromeWarning?: boolean;
   mecachromeRemaining?: number;

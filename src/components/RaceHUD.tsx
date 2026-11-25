@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   ChevronDown,
@@ -8,6 +8,7 @@ import {
   Cpu,
   Eye,
   Fuel,
+  GripHorizontal,
   Home,
   Navigation,
   Pause,
@@ -27,8 +28,13 @@ import {
   GameSettings,
   getGameSettings,
   getSemanticPalette,
+  HudWidgetId,
+  HudWidgetOffsets,
   KeybindMap,
+  loadHudWidgetOffsets,
+  saveHudWidgetOffsets,
   subscribeGameSettings,
+  subscribeHudWidgetOffsets,
 } from '../game/settings';
 import {
   AiPaceOrder,
@@ -37,10 +43,121 @@ import {
   MfdPage,
   PitServiceAction,
   PitStrategy,
-  SafetyCarPhase,
   TireCompound,
   TrackSpec,
 } from '../game/types';
+
+interface DraggableHudPanelProps {
+  id: HudWidgetId;
+  offsets: HudWidgetOffsets;
+  hudScale: number;
+  onCommitOffset: (id: HudWidgetId, next: { x: number; y: number }) => void;
+  className?: string;
+  gripPosition?: 'top-right' | 'top-left' | 'top-center';
+  children: ReactNode;
+}
+
+function DraggableHudPanel({
+  id,
+  offsets,
+  hudScale,
+  onCommitOffset,
+  className = '',
+  gripPosition = 'top-right',
+  children,
+}: DraggableHudPanelProps) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const offset = offsets[id] ?? { x: 0, y: 0 };
+  const [liveOffset, setLiveOffset] = useState<{ x: number; y: number } | null>(null);
+  const activeOffset = liveOffset ?? offset;
+
+  const handleGripPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const originX = offset.x;
+      const originY = offset.y;
+      const scale = Math.max(0.5, hudScale || 1);
+      const rect = panelRef.current?.getBoundingClientRect();
+      const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+      const vh = typeof window !== 'undefined' ? window.innerHeight : 720;
+
+      const clampDelta = (rawX: number, rawY: number) => {
+        let nx = rawX;
+        let ny = rawY;
+        if (rect) {
+          const dx = rawX - originX;
+          const dy = rawY - originY;
+          const minDx = -rect.left + 8;
+          const maxDx = vw - rect.right - 8;
+          const minDy = -rect.top + 8;
+          const maxDy = vh - rect.bottom - 8;
+          nx = originX + Math.max(minDx, Math.min(maxDx, dx)) / scale;
+          ny = originY + Math.max(minDy, Math.min(maxDy, dy)) / scale;
+        }
+        return { x: Math.round(nx), y: Math.round(ny) };
+      };
+
+      let latest = { x: originX, y: originY };
+      const onMove = (ev: PointerEvent) => {
+        ev.stopPropagation();
+        const rawX = originX + (ev.clientX - startX) / scale;
+        const rawY = originY + (ev.clientY - startY) / scale;
+        latest = clampDelta(rawX, rawY);
+        setLiveOffset(latest);
+      };
+      const onUp = (ev: PointerEvent) => {
+        ev.stopPropagation();
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        setLiveOffset(null);
+        onCommitOffset(id, latest);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    },
+    [hudScale, id, offset.x, offset.y, onCommitOffset],
+  );
+
+  const gripPosClass =
+    gripPosition === 'top-left'
+      ? '-top-2 left-1.5'
+      : gripPosition === 'top-center'
+      ? '-top-2 left-1/2 -translate-x-1/2'
+      : '-top-2 right-1.5';
+
+  return (
+    <div
+      ref={panelRef}
+      data-hud-widget={id}
+      className={`relative group ${className}`}
+      style={
+        activeOffset.x !== 0 || activeOffset.y !== 0
+          ? { transform: `translate3d(${activeOffset.x}px, ${activeOffset.y}px, 0)` }
+          : undefined
+      }
+    >
+      <button
+        type="button"
+        tabIndex={-1}
+        onPointerDown={handleGripPointerDown}
+        title="Drag to reposition HUD panel"
+        aria-label={`Move ${id} HUD panel`}
+        className={`absolute ${gripPosClass} z-30 pointer-events-auto px-1.5 py-0.2 rounded-full bg-[#0b0e13]/90 border border-white/20 text-slate-400 hover:text-amber-300 hover:border-amber-400/60 opacity-45 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-grab active:cursor-grabbing shadow`}
+      >
+        <GripHorizontal className="w-3 h-3" />
+      </button>
+      {children}
+    </div>
+  );
+}
 
 function formatClockMMSS(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
@@ -112,12 +229,27 @@ export function RaceHUD({
   const [showAiVisualizer, setShowAiVisualizer] = useState(false);
   const [localMfdPage, setLocalMfdPage] = useState<MfdPage>('tires-brakes');
   const [gameSettings, setGameSettings] = useState<GameSettings>(() => getGameSettings());
+  const [hudOffsets, setHudOffsets] = useState<HudWidgetOffsets>(() => loadHudWidgetOffsets());
   const keybinds: KeybindMap = gameSettings.keybinds;
   const activeMfdPage: MfdPage = externalMfdPage ?? localMfdPage;
 
   useEffect(() => {
     return subscribeGameSettings((next) => {
       setGameSettings({ ...next, keybinds: { ...next.keybinds } });
+    });
+  }, []);
+
+  useEffect(() => {
+    return subscribeHudWidgetOffsets((next) => {
+      setHudOffsets({ ...next });
+    });
+  }, []);
+
+  const commitHudOffset = useCallback((id: HudWidgetId, next: { x: number; y: number }) => {
+    setHudOffsets((prev) => {
+      const updated = { ...prev, [id]: next };
+      saveHudWidgetOffsets(updated);
+      return updated;
     });
   }, []);
 
@@ -161,20 +293,6 @@ export function RaceHUD({
     !show3dVirtualMirror &&
     ((hud.rearCarGapM !== null && hud.rearCarGapM !== undefined) ||
       Boolean(hud.blindSpot && hud.blindSpot !== 'clear'));
-  const scPhase: SafetyCarPhase =
-    hud.safetyCarPhase ??
-    (hud.vscActive ? 'vsc' : hud.safetyCarActive ? 'deployed' : 'none');
-  const showSafetyCarBanner =
-    hud.countdown <= 0 &&
-    (scPhase !== 'none' ||
-      Boolean(hud.vscActive) ||
-      Boolean(hud.safetyCarActive) ||
-      hud.raceFlag === 'vsc' ||
-      hud.raceFlag === 'safety-car');
-  const isHeavyPenalty =
-    !isAiRace &&
-    hud.countdown <= 0 &&
-    (hud.penaltyType === 'drive-through' || hud.penaltyType === 'stop-and-go');
   const playerStanding = !isAiRace ? hud.standings.find((s) => s.isPlayer) ?? null : null;
 
   // Relative standings slice for player races (cars immediately ahead and behind)
@@ -272,146 +390,17 @@ export function RaceHUD({
           : undefined
       }
     >
-      {/* Section 7 Top-Center Awareness Stack: 3D Virtual Mirror Bezel / Fallback Rear-View Pill, Corner Callout & Mecachrome Alert */}
-      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-25 pointer-events-none flex flex-col items-center gap-1.5 max-w-[92vw]">
-        {show3dVirtualMirror && (
-          <div
-            data-testid="virtual-mirror-frame"
-            data-camera-mode={hud.cameraMode}
-            className="relative w-[320px] h-[84px] max-w-[82vw] rounded-md border-2 border-white/35 bg-transparent shadow-[0_6px_28px_rgba(0,0,0,0.75)] overflow-hidden"
-          >
-            {(hud.blindSpot === 'left' || hud.blindSpot === 'both') && (
-              <div className="absolute inset-y-0 left-0 w-1.5 bg-amber-400 animate-pulse" />
-            )}
-            {(hud.blindSpot === 'right' || hud.blindSpot === 'both') && (
-              <div className="absolute inset-y-0 right-0 w-1.5 bg-amber-400 animate-pulse" />
-            )}
-            <div className="absolute top-0.5 left-1.5 px-1 rounded bg-black/60 text-[8px] font-mono uppercase tracking-widest text-slate-300">
-              Rear Mirror
-            </div>
-            {hud.rearCarGapM !== null && hud.rearCarGapM !== undefined && (
-              <div className="absolute top-0.5 right-1.5 px-1.5 rounded bg-black/65 text-[9px] font-telemetry font-bold text-white tabular-nums">
-                {hud.rearCarGapM.toFixed(1)}m
-              </div>
-            )}
-          </div>
-        )}
-
-        {showTextVirtualMirror && (
-          <div
-            data-testid="virtual-mirror-fallback"
-            className="flex items-center gap-2 bg-[#0b0e13]/90 border border-white/20 rounded-md px-3 py-1 shadow-xl"
-          >
-            <span
-              className={`text-[11px] font-black tracking-wider px-1.5 py-0.5 rounded ${
-                hud.blindSpot === 'left' || hud.blindSpot === 'both'
-                  ? 'bg-amber-500 text-slate-950 animate-pulse'
-                  : 'text-slate-600'
-              }`}
-            >
-              ◀ L
-            </span>
-            <div className="text-center min-w-[110px]">
-              <div className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">
-                Rear Mirror
-              </div>
-              {hud.rearCarGapM !== null && hud.rearCarGapM !== undefined ? (
-                <div className="text-xs font-telemetry font-bold text-white tabular-nums">
-                  {hud.rearCarGapM.toFixed(1)}m{' '}
-                  <span
-                    className={
-                      (hud.rearCarClosingKmh ?? 0) > 8
-                        ? 'text-rose-400'
-                        : 'text-emerald-400'
-                    }
-                  >
-                    {(hud.rearCarClosingKmh ?? 0) >= 0 ? '+' : ''}
-                    {(() => {
-                      const spd = formatSpeed(Math.abs(hud.rearCarClosingKmh ?? 0), units);
-                      return `${spd.value} ${spd.unit}`;
-                    })()}
-                  </span>
-                </div>
-              ) : (
-                <div className="text-[10px] font-bold text-amber-300 uppercase">Side-by-Side</div>
-              )}
-            </div>
-            <span
-              className={`text-[11px] font-black tracking-wider px-1.5 py-0.5 rounded ${
-                hud.blindSpot === 'right' || hud.blindSpot === 'both'
-                  ? 'bg-amber-500 text-slate-950 animate-pulse'
-                  : 'text-slate-600'
-              }`}
-            >
-              R ▶
-            </span>
-          </div>
-        )}
-
-        {gameSettings.showCornerCallouts && !isAiRace && hud.upcomingCorner && (
-          <div
-            className={`flex items-center gap-2 px-3 py-1 rounded-md border shadow-lg text-xs font-display font-bold ${
-              hud.upcomingCorner.brakingRecommended
-                ? 'bg-rose-950/90 border-rose-400/70 text-rose-100'
-                : 'bg-[#0b0e13]/85 border-white/15 text-slate-100'
-            }`}
-          >
-            <span className="text-base leading-none">
-              {hud.upcomingCorner.direction === 'left'
-                ? '↰'
-                : hud.upcomingCorner.direction === 'right'
-                ? '↱'
-                : '⇄'}
-            </span>
-            <span className="uppercase tracking-wider text-[11px]">
-              {hud.upcomingCorner.severity} {hud.upcomingCorner.direction}
-            </span>
-            <span className="font-telemetry text-[11px] text-sky-300 tabular-nums">
-              {hud.upcomingCorner.distanceM}m
-            </span>
-            <span className="px-1.5 py-0.5 rounded bg-white/10 font-telemetry text-[10px]">
-              G{hud.upcomingCorner.suggestedGear}
-            </span>
-            {hud.upcomingCorner.brakingRecommended && (
-              <span className="px-1.5 py-0.5 rounded bg-red-600 text-white text-[10px] font-black animate-pulse">
-                BRAKE
-              </span>
-            )}
-          </div>
-        )}
-
-        {hud.mecachromeWarning && (
-          <div className="px-4 py-1.5 rounded-md bg-red-950/95 border-2 border-red-500 text-red-100 font-display font-black text-xs uppercase tracking-wider shadow-2xl animate-pulse">
-            ENGINE FAILURE — GETTING MECACHROMED ({(hud.mecachromeRemaining ?? 0).toFixed(1)}s)
-          </div>
-        )}
-
-        {hud.radioMessage && (
-          <div className="px-3.5 py-1.5 rounded-md bg-[#0b1220]/92 border border-sky-400/50 text-sky-100 text-xs shadow-xl flex items-center gap-2">
-            <span className="px-1.5 py-0.5 rounded bg-sky-500/25 border border-sky-400/50 text-[9px] font-black uppercase tracking-widest text-sky-300">
-              {hud.radioMessage.sender}
-            </span>
-            <span className="font-semibold">{hud.radioMessage.text}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Subtle Top-Right Performance & Time-of-Day Pill */}
-      {(gameSettings.showFpsCounter || hud.timeOfDayHours !== undefined) && (
-        <div className="fixed top-2 right-1/2 translate-x-[230px] hidden lg:flex items-center gap-2 px-2 py-0.5 rounded bg-[#0b0e13]/80 border border-white/10 text-[10px] font-mono text-slate-300 pointer-events-none">
-          {hud.timeOfDayHours !== undefined && <span>{formatTimeOfDay(hud.timeOfDayHours)}</span>}
-          {gameSettings.showFpsCounter && hud.fps !== undefined && (
-            <span className={hud.fps < 45 ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
-              {hud.fps} FPS
-            </span>
-          )}
-        </div>
-      )}
-
       {/* TOP BAR CORNERS */}
       <div className="flex items-start justify-between gap-2 sm:gap-4 short:gap-2">
         {/* Top-Left Cluster: Broadcast AI Race / Practice / Race Standings */}
-        <div className="bg-[#0b0e13]/92 border border-white/12 rounded-md px-2.5 py-2 sm:px-4 sm:py-3 short:px-2 short:py-1.5 min-w-0 max-w-[205px] sm:max-w-[290px] md:min-w-[260px] md:max-w-[330px] short:min-w-0 short:max-w-[186px] shadow-lg">
+        <DraggableHudPanel
+          id="standings"
+          offsets={hudOffsets}
+          hudScale={hudScale}
+          onCommitOffset={commitHudOffset}
+          gripPosition="top-right"
+          className="bg-[#0b0e13]/92 border border-white/12 rounded-md px-2.5 py-2 sm:px-3.5 sm:py-2.5 short:px-2 short:py-1.5 min-w-0 max-w-[205px] sm:max-w-[276px] md:min-w-[244px] md:max-w-[300px] short:min-w-0 short:max-w-[186px] max-h-[calc(100vh-280px)] overflow-y-auto custom-scroll shadow-lg"
+        >
           {isAiRace ? (
             <>
               <div className="flex items-center justify-between gap-2 sm:gap-3">
@@ -834,7 +823,6 @@ export function RaceHUD({
           {!isAiRace &&
             (hud.inSlipstream ||
               hud.penaltyTimeRemaining > 0 ||
-              isHeavyPenalty ||
               (mandatoryServiceStop && !isHotlapMode && hud.countdown <= 0) ||
               (hud.postRacePenaltySeconds ?? 0) > 0 ||
               hud.warningCount > 0 ||
@@ -856,12 +844,6 @@ export function RaceHUD({
                     {(playerStanding?.pitStops ?? 0) > 0
                       ? 'MANDATORY SERVICE: COMPLETED'
                       : 'MANDATORY ON-TRACK SERVICE REQUIRED'}
-                  </div>
-                )}
-                {isHeavyPenalty && hud.penaltyTimeRemaining <= 0 && (
-                  <div className="text-red-400 font-bold">
-                    {hud.penaltyType === 'stop-and-go' ? 'STOP & GO PENALTY' : 'DRIVE-THROUGH PENALTY'}
-                    {hud.penaltyDeadlineLap != null ? ` (BY LAP ${hud.penaltyDeadlineLap})` : ''}
                   </div>
                 )}
                 {hud.blueFlagActive && (
@@ -926,14 +908,103 @@ export function RaceHUD({
                 )}
               </div>
             )}
-        </div>
+        </DraggableHudPanel>
 
-        {/* Top-Center: Start Lights Countdown + Launch RPM Gauge, SC/VSC, Flags & Penalties */}
-        <div
-          className={`flex flex-col items-center gap-1.5 max-w-[360px] ${
-            show3dVirtualMirror ? 'mt-[98px]' : ''
-          }`}
-        >
+        {/* Top-Center: Unified Awareness Stack (Virtual Mirror + Start Lights + Flags + Radio + Live Delta) */}
+        <div className="flex-1 min-w-0 flex flex-col items-center gap-1.5">
+          {(show3dVirtualMirror || showTextVirtualMirror) && (
+            <DraggableHudPanel
+              id="virtualMirror"
+              offsets={hudOffsets}
+              hudScale={hudScale}
+              onCommitOffset={commitHudOffset}
+              gripPosition="top-right"
+              className="flex flex-col items-center"
+            >
+              {show3dVirtualMirror && (
+                <div
+                  data-testid="virtual-mirror-frame"
+                  data-camera-mode={hud.cameraMode}
+                  className="relative w-[300px] h-[78px] max-w-[78vw] rounded-md border-2 border-white/35 bg-transparent shadow-[0_6px_28px_rgba(0,0,0,0.75)] overflow-hidden"
+                >
+                  {(hud.blindSpot === 'left' || hud.blindSpot === 'both') && (
+                    <div className="absolute inset-y-0 left-0 w-1.5 bg-amber-400 animate-pulse" />
+                  )}
+                  {(hud.blindSpot === 'right' || hud.blindSpot === 'both') && (
+                    <div className="absolute inset-y-0 right-0 w-1.5 bg-amber-400 animate-pulse" />
+                  )}
+                  <div className="absolute top-0.5 left-1.5 px-1 rounded bg-black/60 text-[8px] font-mono uppercase tracking-widest text-slate-300">
+                    Rear Mirror
+                  </div>
+                  {hud.rearCarGapM !== null && hud.rearCarGapM !== undefined && (
+                    <div className="absolute top-0.5 right-1.5 px-1.5 rounded bg-black/65 text-[9px] font-telemetry font-bold text-white tabular-nums">
+                      {hud.rearCarGapM.toFixed(1)}m
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {showTextVirtualMirror && (
+                <div
+                  data-testid="virtual-mirror-fallback"
+                  className="flex items-center gap-2 bg-[#0b0e13]/90 border border-white/20 rounded-md px-3 py-1 shadow-xl"
+                >
+                  <span
+                    className={`text-[11px] font-black tracking-wider px-1.5 py-0.5 rounded ${
+                      hud.blindSpot === 'left' || hud.blindSpot === 'both'
+                        ? 'bg-amber-500 text-slate-950 animate-pulse'
+                        : 'text-slate-600'
+                    }`}
+                  >
+                    ◀ L
+                  </span>
+                  <div className="text-center min-w-[110px]">
+                    <div className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">
+                      Rear Mirror
+                    </div>
+                    {hud.rearCarGapM !== null && hud.rearCarGapM !== undefined ? (
+                      <div className="text-xs font-telemetry font-bold text-white tabular-nums">
+                        {hud.rearCarGapM.toFixed(1)}m{' '}
+                        <span
+                          className={
+                            (hud.rearCarClosingKmh ?? 0) > 8
+                              ? 'text-rose-400'
+                              : 'text-emerald-400'
+                          }
+                        >
+                          {(hud.rearCarClosingKmh ?? 0) >= 0 ? '+' : ''}
+                          {(() => {
+                            const spd = formatSpeed(Math.abs(hud.rearCarClosingKmh ?? 0), units);
+                            return `${spd.value} ${spd.unit}`;
+                          })()}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="text-[10px] font-bold text-amber-300 uppercase">Side-by-Side</div>
+                    )}
+                  </div>
+                  <span
+                    className={`text-[11px] font-black tracking-wider px-1.5 py-0.5 rounded ${
+                      hud.blindSpot === 'right' || hud.blindSpot === 'both'
+                        ? 'bg-amber-500 text-slate-950 animate-pulse'
+                        : 'text-slate-600'
+                    }`}
+                  >
+                    R ▶
+                  </span>
+                </div>
+              )}
+            </DraggableHudPanel>
+          )}
+
+          <DraggableHudPanel
+            id="topCenter"
+            offsets={hudOffsets}
+            hudScale={hudScale}
+            onCommitOffset={commitHudOffset}
+            gripPosition="top-right"
+            className="flex flex-col items-center gap-1.5 max-w-[360px]"
+          >
           {hud.countdown > 0 ? (
             <div
               className={`bg-[#0b0e13]/95 border rounded-md px-6 py-3 short:px-3.5 short:py-1.5 text-center shadow-xl ${
@@ -1065,137 +1136,20 @@ export function RaceHUD({
             </div>
           ) : null}
 
-          {/* Prominent Safety Car / VSC Banner */}
-          {showSafetyCarBanner && (
-            <div
-              data-testid="hud-safety-car-banner"
-              className={`border-2 rounded-md px-4 py-1.5 text-center shadow-2xl min-w-[240px] ${
-                scPhase === 'restarting'
-                  ? 'bg-emerald-950/95 border-emerald-400 text-emerald-100'
-                  : 'bg-amber-950/95 border-amber-400 text-amber-100'
-              }`}
-            >
-              <div className="flex items-center justify-center gap-2">
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-black tracking-widest uppercase ${
-                    scPhase === 'restarting'
-                      ? 'bg-emerald-400 text-slate-950'
-                      : 'bg-amber-400 text-slate-950 animate-pulse'
-                  }`}
-                >
-                  {scPhase === 'vsc' ? 'VSC' : 'SC'}
-                </span>
-                <span className="text-xs font-display font-extrabold tracking-widest uppercase">
-                  {scPhase === 'vsc'
-                    ? 'VIRTUAL SAFETY CAR'
-                    : scPhase === 'in-this-lap'
-                    ? 'SAFETY CAR IN THIS LAP'
-                    : scPhase === 'restarting'
-                    ? 'SAFETY CAR RESTARTING'
-                    : 'SAFETY CAR DEPLOYED'}
-                </span>
-              </div>
-              <div className="mt-1 flex flex-wrap items-center justify-center gap-2 text-[10px] font-telemetry font-bold">
-                <span className="text-amber-200 uppercase font-sans">
-                  {scPhase === 'restarting'
-                    ? 'GREEN FLAG IMMINENT'
-                    : scPhase === 'in-this-lap'
-                    ? 'LIGHTS OUT · NO OVERTAKING'
-                    : scPhase === 'vsc'
-                    ? 'HOLD DELTA · NO OVERTAKING'
-                    : 'SINGLE FILE · NO OVERTAKING'}
-                </span>
-                {hud.neutralizationSpeedCapKmh != null && Number.isFinite(hud.neutralizationSpeedCapKmh) && (
-                  <span
-                    className={`px-1.5 py-0.5 rounded tabular-nums ${
-                      hud.speedKmh > hud.neutralizationSpeedCapKmh + 5
-                        ? 'bg-red-600 text-white animate-pulse'
-                        : 'bg-black/40 text-amber-300 border border-amber-400/35'
-                    }`}
-                  >
-                    MAX{' '}
-                    {(() => {
-                      const cap = formatSpeed(hud.neutralizationSpeedCapKmh, units);
-                      return `${cap.value} ${cap.unit}`;
-                    })()}
-                  </span>
-                )}
-                {hud.safetyCarSpeedKmh != null &&
-                  Number.isFinite(hud.safetyCarSpeedKmh) &&
-                  scPhase !== 'vsc' && (
-                    <span className="px-1.5 py-0.5 rounded bg-black/40 text-slate-200 border border-white/15 tabular-nums">
-                      SC{' '}
-                      {(() => {
-                        const scSpd = formatSpeed(hud.safetyCarSpeedKmh, units);
-                        return `${scSpd.value} ${scSpd.unit}`;
-                      })()}
-                    </span>
-                  )}
-              </div>
+          {hud.mecachromeWarning && (
+            <div className="px-4 py-1.5 rounded-md bg-red-950/95 border-2 border-red-500 text-red-100 font-display font-black text-xs uppercase tracking-wider shadow-2xl animate-pulse">
+              ENGINE FAILURE — GETTING MECACHROMED ({(hud.mecachromeRemaining ?? 0).toFixed(1)}s)
             </div>
           )}
 
-          {/* Serveable Heavy Penalty HUD Card (Drive-Through / Stop-and-Go) */}
-          {isHeavyPenalty && (() => {
-            const isStopGo = hud.penaltyType === 'stop-and-go';
-            const requiredSec =
-              hud.penaltyServeRequired && hud.penaltyServeRequired > 0
-                ? hud.penaltyServeRequired
-                : isStopGo
-                ? 3.0
-                : 4.0;
-            const progressSec = Math.max(0, Math.min(requiredSec, hud.penaltyServeProgress ?? 0));
-            const progressPct = Math.round((progressSec / requiredSec) * 100);
-            const urgentDeadline =
-              hud.penaltyDeadlineLap != null && hud.lap >= hud.penaltyDeadlineLap;
-            return (
-              <div
-                data-testid="hud-heavy-penalty-card"
-                className="bg-red-950/95 border-2 border-red-500 rounded-md px-4 py-2 shadow-2xl min-w-[250px] max-w-[340px] text-left"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-display font-black tracking-wider uppercase text-red-200">
-                    {isStopGo ? 'STOP & GO PENALTY' : 'DRIVE-THROUGH PENALTY'}
-                  </span>
-                  {hud.penaltyDeadlineLap != null && (
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-telemetry font-bold uppercase ${
-                        urgentDeadline
-                          ? 'bg-red-600 text-white animate-pulse'
-                          : 'bg-black/45 text-amber-300 border border-amber-400/40'
-                      }`}
-                    >
-                      BY LAP {hud.penaltyDeadlineLap}
-                    </span>
-                  )}
-                </div>
-                {hud.penaltyReason && (
-                  <div className="text-[10px] font-mono uppercase text-rose-300 mt-0.5">
-                    Stewards: {hud.penaltyReason.replace(/-/g, ' ')}
-                  </div>
-                )}
-                <div className="text-[11px] font-semibold text-white mt-1 leading-snug">
-                  {hud.penaltyServeInstruction ||
-                    (isStopGo
-                      ? `Pull off racing line & hold 0 km/h for ${requiredSec.toFixed(1)}s`
-                      : `Hold <= 60 km/h for ${requiredSec.toFixed(1)}s to serve`)}
-                </div>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <div className="flex-1 h-2 rounded bg-black/50 border border-white/15 overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-75 ${
-                        progressPct > 0 ? 'bg-emerald-400' : 'bg-amber-400'
-                      }`}
-                      style={{ width: `${progressPct}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] font-telemetry font-bold text-amber-200 tabular-nums shrink-0">
-                    {progressSec.toFixed(1)}/{requiredSec.toFixed(1)}s
-                  </span>
-                </div>
-              </div>
-            );
-          })()}
+          {hud.radioMessage && (
+            <div className="px-3.5 py-1.5 rounded-md bg-[#0b1220]/92 border border-sky-400/50 text-sky-100 text-xs shadow-xl flex items-center gap-2">
+              <span className="px-1.5 py-0.5 rounded bg-sky-500/25 border border-sky-400/50 text-[9px] font-black uppercase tracking-widest text-sky-300">
+                {hud.radioMessage.sender}
+              </span>
+              <span className="font-semibold">{hud.radioMessage.text}</span>
+            </div>
+          )}
 
           {/* Prominent Yield Penalty Banner (shows exact time and/or position to yield) */}
           {!isAiRace && hud.countdown <= 0 && hud.penaltyTimeRemaining > 0 && hud.pitStopRemaining <= 0 && (
@@ -1264,10 +1218,18 @@ export function RaceHUD({
               Objective: {hud.scenarioObjective}
             </div>
           )}
+          </DraggableHudPanel>
         </div>
 
-        {/* Top-Right Cluster: Compact Minimap & Utility Icon Buttons */}
-        <div className="flex flex-col items-end gap-1.5 sm:gap-2 short:gap-1 shrink-0">
+        {/* Top-Right Cluster: Compact Minimap, Weather, Time/FPS & Utility Icon Buttons */}
+        <DraggableHudPanel
+          id="topRight"
+          offsets={hudOffsets}
+          hudScale={hudScale}
+          onCommitOffset={commitHudOffset}
+          gripPosition="top-left"
+          className="flex flex-col items-end gap-1.5 sm:gap-2 short:gap-1 shrink-0"
+        >
           <div className="flex items-center gap-1 sm:gap-1.5 short:gap-1 pointer-events-auto">
             {hud.aiNeuralTelemetry && (
               <button
@@ -1402,17 +1364,35 @@ export function RaceHUD({
               )}
             </div>
           )}
-        </div>
+
+          {/* Integrated Time-of-Day & FPS Pill (inside Top-Right stack — zero overlap) */}
+          {(gameSettings.showFpsCounter || hud.timeOfDayHours !== undefined) && (
+            <div className="hidden lg:flex items-center gap-2 px-2 py-0.5 rounded bg-[#0b0e13]/85 border border-white/10 text-[10px] font-mono text-slate-300">
+              {hud.timeOfDayHours !== undefined && <span>{formatTimeOfDay(hud.timeOfDayHours)}</span>}
+              {gameSettings.showFpsCounter && hud.fps !== undefined && (
+                <span className={hud.fps < 45 ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                  {hud.fps} FPS
+                </span>
+              )}
+            </div>
+          )}
+        </DraggableHudPanel>
       </div>
 
       {/* BOTTOM CORNERS */}
       <div
-        className={`flex items-end gap-3 sm:gap-4 ${
+        className={`flex items-end gap-2 sm:gap-3 ${
           touchControlsActive && !isAiRace ? 'flex-col items-center justify-end' : 'justify-between'
         }`}
       >
-        {/* Bottom-Left: Freecam Flight Hint or On-Track Pit Crew */}
-        <div className={touchControlsActive && !isAiRace ? 'w-full flex justify-center' : ''}>
+        {/* Bottom-Left Column: MFD/Inputs + Freecam Hint + AI Director + On-Track Pit Crew (stacked cleanly, never overlapping) */}
+        <div
+          className={
+            touchControlsActive && !isAiRace
+              ? 'w-full flex flex-col items-center gap-2'
+              : 'flex flex-col items-start gap-2 min-w-0 shrink-0'
+          }
+        >
           {isAiRace && spectatorMode === 'freecam' && (
             <div
               data-testid="freecam-controls-hint"
@@ -1433,6 +1413,13 @@ export function RaceHUD({
 
           {/* AI Race Engineer / Director Panel (AI Race Spectate Mode — No Pit Lanes, On-Track Service Orders) */}
           {isAiRace && spectatorMode !== 'freecam' && spectatedEntry && onSetAiPaceOrder && (
+            <DraggableHudPanel
+              id="aiDirector"
+              offsets={hudOffsets}
+              hudScale={hudScale}
+              onCommitOffset={commitHudOffset}
+              gripPosition="top-right"
+            >
             <div
               data-testid="ai-director-panel"
               className="hidden sm:block bg-[#0b0e13]/94 border border-amber-500/35 rounded-md p-3 pointer-events-auto space-y-2 w-72 shadow-xl"
@@ -1564,9 +1551,18 @@ export function RaceHUD({
                 </div>
               )}
             </div>
+            </DraggableHudPanel>
           )}
 
           {showOnTrackPitPrompt && (
+            <DraggableHudPanel
+              id="pitPrompt"
+              offsets={hudOffsets}
+              hudScale={hudScale}
+              onCommitOffset={commitHudOffset}
+              gripPosition="top-right"
+              className={touchControlsActive ? 'w-full flex justify-center' : ''}
+            >
             <div
               data-testid="on-track-pit-prompt"
               className={`bg-[#0b0e13]/95 border border-amber-500/50 rounded-md p-3 pointer-events-auto space-y-2.5 w-full max-w-[310px] sm:w-80 shadow-xl ${
@@ -1674,10 +1670,322 @@ export function RaceHUD({
                 </button>
               </div>
             </div>
+            </DraggableHudPanel>
+          )}
+
+          {/* Section 7 Bottom-Left Compact 4-Page MFD & Live Pedal Input Trace (inline in Bottom-Left stack — zero overlap) */}
+          {!isAiRace && hudPreset === 'full' && !touchControlsActive && (
+            <DraggableHudPanel
+              id="mfd"
+              offsets={hudOffsets}
+              hudScale={hudScale}
+              onCommitOffset={commitHudOffset}
+              gripPosition="top-right"
+              className="pointer-events-auto hidden md:flex flex-col gap-2 w-52"
+            >
+              {gameSettings.showPedalTrace && (
+                <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md p-2 space-y-1 shadow-lg">
+                  <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                    <span>Live Inputs</span>
+                    <span className="font-mono text-slate-300">
+                      {(() => {
+                        const spd = formatSpeed(hud.speedKmh, units);
+                        return `${spd.value} ${spd.unit}`;
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[9px] font-mono">
+                    <span className="w-7 text-slate-400">THR</span>
+                    <div className="flex-1 h-1.5 rounded bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full transition-all duration-75"
+                        style={{
+                          width: `${Math.round((hud.throttleInput ?? 0) * 100)}%`,
+                          backgroundColor: palette.throttle,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[9px] font-mono">
+                    <span className="w-7 text-slate-400">BRK</span>
+                    <div className="flex-1 h-1.5 rounded bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full transition-all duration-75"
+                        style={{
+                          width: `${Math.round((hud.brakeInput ?? 0) * 100)}%`,
+                          backgroundColor: palette.brake,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[9px] font-mono">
+                    <span className="w-7 text-slate-400">STR</span>
+                    <div className="flex-1 h-1.5 rounded bg-slate-800 relative overflow-hidden">
+                      <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/30" />
+                      <div
+                        className="absolute top-0 bottom-0 bg-sky-400"
+                        style={{
+                          left: (hud.steerInput ?? 0) >= 0 ? '50%' : `${50 + (hud.steerInput ?? 0) * 50}%`,
+                          width: `${Math.abs(hud.steerInput ?? 0) * 50}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 4-Page Multi-Function Display (Tab to cycle) */}
+              <div className="bg-[#0b0e13]/92 border border-white/15 rounded-md p-2.5 shadow-xl space-y-2 text-[11px]">
+                <div className="flex items-center justify-between border-b border-white/10 pb-1">
+                  <span className="text-[10px] font-display font-bold uppercase tracking-wider text-sky-300">
+                    MFD · {activeMfdPage.replace('-', ' & ')}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={cycleMfd}
+                    className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[9px] font-mono text-slate-200 cursor-pointer"
+                    title={`Cycle MFD (${formatKeyCode(keybinds.mfdCycle)})`}
+                  >
+                    {formatKeyCode(keybinds.mfdCycle)} ▸
+                  </button>
+                </div>
+
+                {activeMfdPage === 'tires-brakes' && (
+                  <div className="grid grid-cols-2 gap-1.5 font-telemetry text-[10px] tabular-nums">
+                    <div className="bg-[#121722] rounded p-1.5 border border-white/5">
+                      <div className="text-slate-400 text-[9px]">FL / FR TEMP</div>
+                      <div className="text-white font-bold">
+                        {formatTemp(hud.tires?.fl.temp ?? hud.tireTemp, units)} ·{' '}
+                        {formatTemp(hud.tires?.fr.temp ?? hud.tireTemp, units)}
+                      </div>
+                    </div>
+                    <div className="bg-[#121722] rounded p-1.5 border border-white/5">
+                      <div className="text-slate-400 text-[9px]">RL / RR TEMP</div>
+                      <div className="text-white font-bold">
+                        {formatTemp(hud.tires?.rl.temp ?? hud.tireTemp, units)} ·{' '}
+                        {formatTemp(hud.tires?.rr.temp ?? hud.tireTemp, units)}
+                      </div>
+                    </div>
+                    <div className="bg-[#121722] rounded p-1.5 border border-white/5 col-span-2 flex items-center justify-between">
+                      <span className="text-slate-400 text-[9px]">BRAKES F / R</span>
+                      <span className="text-amber-300 font-bold">
+                        {formatTemp(hud.brakeTempFront ?? 280, units)} / {formatTemp(hud.brakeTempRear ?? 250, units)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {activeMfdPage === 'strategy' && (
+                  <div className="space-y-1 text-[10px] font-telemetry">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Fuel Remaining</span>
+                      <span className="text-white font-bold">
+                        {Math.round(hud.fuel)}% (~{hud.fuelLapsRemaining.toFixed(1)} laps)
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Tyre Life</span>
+                      <span className="text-white font-bold">
+                        {Math.round(hud.tireWear)}% ({hud.compound.toUpperCase()})
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Track Temp</span>
+                      <span className="text-sky-300 font-bold">
+                        {formatTemp(hud.trackTempC ?? 28, units)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {activeMfdPage === 'electronics' && (
+                  <div className="space-y-1.5 text-[10px]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Traction Control</span>
+                      {hud.tcEquipped === false ? (
+                        <span className="px-2 py-0.5 rounded font-mono font-bold bg-slate-900 text-slate-500 border border-white/5">
+                          N/A (NO TC)
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={onCycleTcLevel}
+                          className={`px-2 py-0.5 rounded font-mono font-bold cursor-pointer ${
+                            hud.tcIntervening
+                              ? 'bg-amber-500 text-slate-950'
+                              : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                          }`}
+                        >
+                          TC {hud.tcLevel ?? 0} {hud.tcIntervening ? 'ACT' : ''}
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Brake Bias</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => onAdjustBrakeBalance?.(-0.5)}
+                          className="px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
+                        >
+                          -
+                        </button>
+                        <span className="font-mono text-white font-bold">
+                          {(hud.brakeBalance ?? 56).toFixed(1)}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onAdjustBrakeBalance?.(0.5)}
+                          className="px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    {hud.hasErs && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">ERS Mode</span>
+                        <button
+                          type="button"
+                          onClick={onCycleErsMode}
+                          className="px-2 py-0.5 rounded bg-sky-500/25 border border-sky-400/40 text-sky-200 font-mono font-bold uppercase cursor-pointer"
+                        >
+                          {hud.ersMode}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeMfdPage === 'sectors' && (
+                  <div className="grid grid-cols-3 gap-1 font-telemetry text-[10px] text-center">
+                    {[0, 1, 2].map((sIdx) => {
+                      const t = hud.sectorTimes?.[sIdx] ?? hud.lastLapSectorTimes?.[sIdx] ?? null;
+                      const best = hud.sessionBestSectorTimes?.[sIdx] ?? null;
+                      const isPurple = t !== null && best !== null && t <= best + 0.01;
+                      return (
+                        <div
+                          key={sIdx}
+                          className={`p-1 rounded border ${
+                            isPurple
+                              ? 'bg-fuchsia-950/60 border-fuchsia-400/60 text-fuchsia-200'
+                              : 'bg-[#121722] border-white/5 text-slate-200'
+                          }`}
+                        >
+                          <div className="text-[8px] text-slate-400">S{sIdx + 1}</div>
+                          <div className="font-bold">{t !== null ? t.toFixed(2) : '--.--'}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {(onTriggerFlashback || onOpenPhotoMode) && (
+                  <div className="flex items-center gap-1.5 pt-1 border-t border-white/10">
+                    {onTriggerFlashback && hud.flashbackAvailable && (
+                      <button
+                        type="button"
+                        onClick={onTriggerFlashback}
+                        className="flex-1 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-200 text-[9px] font-bold uppercase cursor-pointer"
+                      >
+                        Rewind [{formatKeyCode(keybinds.flashback)}]
+                      </button>
+                    )}
+                    {onOpenPhotoMode && (
+                      <button
+                        type="button"
+                        onClick={onOpenPhotoMode}
+                        className="flex-1 py-1 rounded bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-sky-200 text-[9px] font-bold uppercase cursor-pointer"
+                      >
+                        Photo [{formatKeyCode(keybinds.photoMode)}]
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </DraggableHudPanel>
           )}
         </div>
 
+        {/* Bottom-Center: Proximity Car Radar (inline flex center — zero overlap with MFD or Telemetry) */}
+        <div className="hidden lg:flex flex-1 justify-center items-end min-w-0">
+          {!isAiRace &&
+            hud.countdown <= 0 &&
+            hud.proximityCars &&
+            hud.proximityCars.length > 0 && (
+              <DraggableHudPanel
+                id="radar"
+                offsets={hudOffsets}
+                hudScale={hudScale}
+                onCommitOffset={commitHudOffset}
+                gripPosition="top-center"
+              >
+                <div data-testid="hud-proximity-radar">
+                  {(() => {
+                    const hasSideBySide = hud.proximityCars!.some(
+                      (c) => Math.abs(c.dz) < 4.8 && Math.abs(c.dx) < 4.5,
+                    );
+                    const scale = 50 / 18;
+                    return (
+                      <svg
+                        viewBox="-60 -60 120 120"
+                        className="w-[104px] h-[104px]"
+                        aria-label="Proximity Car Radar"
+                      >
+                        <circle
+                          cx="0"
+                          cy="0"
+                          r="54"
+                          fill="rgba(11,14,19,0.78)"
+                          stroke={hasSideBySide ? '#ef4444' : 'rgba(255,255,255,0.22)'}
+                          strokeWidth={hasSideBySide ? '2.5' : '1.2'}
+                        />
+                        <circle
+                          cx="0"
+                          cy="0"
+                          r="27"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.12)"
+                          strokeDasharray="3 3"
+                        />
+                        <line x1="-52" y1="0" x2="52" y2="0" stroke="rgba(255,255,255,0.08)" />
+                        <line x1="0" y1="-52" x2="0" y2="52" stroke="rgba(255,255,255,0.08)" />
+                        <rect x="-4.5" y="-8.5" width="9" height="17" rx="2" fill="#f8fafc" stroke="#ef4444" strokeWidth="1.2" />
+                        {hud.proximityCars!.map((p) => {
+                          const cx = Math.max(-48, Math.min(48, p.dx * scale));
+                          const cy = Math.max(-48, Math.min(48, -p.dz * scale));
+                          const close = Math.hypot(p.dx, p.dz) < 6.5;
+                          return (
+                            <rect
+                              key={p.id}
+                              x={cx - 4.5}
+                              y={cy - 8}
+                              width="9"
+                              height="16"
+                              rx="2"
+                              fill={close ? '#ef4444' : CAR_CLASSES[p.classId].plateColor}
+                              stroke="#0b0e13"
+                              strokeWidth="1"
+                            />
+                          );
+                        })}
+                      </svg>
+                    );
+                  })()}
+                </div>
+              </DraggableHudPanel>
+            )}
+        </div>
+
         {/* Bottom-Right Cluster: Telemetry (Player or Spectated AI Car) or Freecam Badge */}
+        <DraggableHudPanel
+          id="telemetry"
+          offsets={hudOffsets}
+          hudScale={hudScale}
+          onCommitOffset={commitHudOffset}
+          gripPosition="top-left"
+          className="shrink-0"
+        >
         {isAiRace && spectatorMode === 'freecam' ? (
           <div className="hidden sm:block bg-[#0b0e13]/90 border border-white/12 rounded-md px-4 py-3 shadow-lg text-right">
             <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold">
@@ -1738,7 +2046,7 @@ export function RaceHUD({
           </div>
         ) : (
           /* 4-Module Driving HUD Cluster: 1. Tyres & Brakes, 2. Fuel (L + %), 3. Gear/Speed/RPM, 4. Damage */
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-[448px] sm:w-[448px] items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-[424px] sm:w-[424px] items-end">
             {/* MODULE 2: FUEL (Liters + %, no fuel temperature) */}
             <div
               data-testid="hud-module-fuel"
@@ -2178,78 +2486,22 @@ export function RaceHUD({
             </div>
           </div>
         )}
+        </DraggableHudPanel>
       </div>
-
-      {/* Proximity Car Radar (auto-visible only when cars are within 18m) */}
-      {!isAiRace &&
-        hud.countdown <= 0 &&
-        hud.proximityCars &&
-        hud.proximityCars.length > 0 && (
-          <div
-            data-testid="hud-proximity-radar"
-            className="fixed left-1/2 -translate-x-1/2 bottom-5 sm:bottom-6 pointer-events-none"
-          >
-            {(() => {
-              const hasSideBySide = hud.proximityCars!.some(
-                (c) => Math.abs(c.dz) < 4.8 && Math.abs(c.dx) < 4.5,
-              );
-              const scale = 50 / 18; // 18m radius maps to 50px
-              return (
-                <svg
-                  viewBox="-60 -60 120 120"
-                  className="w-[112px] h-[112px]"
-                  aria-label="Proximity Car Radar"
-                >
-                  <circle
-                    cx="0"
-                    cy="0"
-                    r="54"
-                    fill="rgba(11,14,19,0.78)"
-                    stroke={hasSideBySide ? '#ef4444' : 'rgba(255,255,255,0.22)'}
-                    strokeWidth={hasSideBySide ? '2.5' : '1.2'}
-                  />
-                  <circle
-                    cx="0"
-                    cy="0"
-                    r="27"
-                    fill="none"
-                    stroke="rgba(255,255,255,0.12)"
-                    strokeDasharray="3 3"
-                  />
-                  <line x1="-52" y1="0" x2="52" y2="0" stroke="rgba(255,255,255,0.08)" />
-                  <line x1="0" y1="-52" x2="0" y2="52" stroke="rgba(255,255,255,0.08)" />
-                  {/* Player car box centered */}
-                  <rect x="-4.5" y="-8.5" width="9" height="17" rx="2" fill="#f8fafc" stroke="#ef4444" strokeWidth="1.2" />
-                  {/* Nearby rival cars */}
-                  {hud.proximityCars!.map((p) => {
-                    const cx = Math.max(-48, Math.min(48, p.dx * scale));
-                    const cy = Math.max(-48, Math.min(48, -p.dz * scale));
-                    const close = Math.hypot(p.dx, p.dz) < 6.5;
-                    return (
-                      <rect
-                        key={p.id}
-                        x={cx - 4.5}
-                        y={cy - 8}
-                        width="9"
-                        height="16"
-                        rx="2"
-                        fill={close ? '#ef4444' : CAR_CLASSES[p.classId].plateColor}
-                        stroke="#0b0e13"
-                        strokeWidth="1"
-                      />
-                    );
-                  })}
-                </svg>
-              );
-            })()}
-          </div>
-        )}
 
       {/* Section 4.2.2: In-Game AI Neural Telemetry & Visualizer Overlay (Pro/Debug Mode) */}
       {showAiVisualizer && hud.aiNeuralTelemetry && (
+        <DraggableHudPanel
+          id="aiVisualizer"
+          offsets={hudOffsets}
+          hudScale={hudScale}
+          onCommitOffset={commitHudOffset}
+          gripPosition="top-left"
+          className="fixed right-3 top-48 sm:right-5 sm:top-52 z-25"
+        >
         <div
           data-testid="hud-ai-neural-visualizer"
-          className="fixed right-3 top-44 sm:right-5 sm:top-48 w-[264px] bg-[#0b0e13]/92 border border-sky-500/35 rounded-md p-3 text-[11px] text-slate-200 shadow-2xl pointer-events-auto space-y-2.5 z-20"
+          className="w-[264px] bg-[#0b0e13]/92 border border-sky-500/35 rounded-md p-3 text-[11px] text-slate-200 shadow-2xl pointer-events-auto space-y-2.5"
         >
           <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5">
             <div className="min-w-0">
@@ -2394,226 +2646,7 @@ export function RaceHUD({
             </div>
           )}
         </div>
-      )}
-
-      {/* Section 7 Bottom-Left Compact 4-Page MFD & Live Pedal Input Trace (when HUD is full & not AI Race) */}
-      {!isAiRace && hudPreset === 'full' && !touchControlsActive && (
-        <div className="fixed bottom-4 left-4 z-22 pointer-events-auto hidden md:flex flex-col gap-2 w-60">
-          {gameSettings.showPedalTrace && (
-            <div className="bg-[#0b0e13]/90 border border-white/12 rounded-md p-2 space-y-1 shadow-lg">
-              <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                <span>Live Inputs</span>
-                <span className="font-mono text-slate-300">
-                  {(() => {
-                    const spd = formatSpeed(hud.speedKmh, units);
-                    return `${spd.value} ${spd.unit}`;
-                  })()}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[9px] font-mono">
-                <span className="w-7 text-slate-400">THR</span>
-                <div className="flex-1 h-1.5 rounded bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full transition-all duration-75"
-                    style={{
-                      width: `${Math.round((hud.throttleInput ?? 0) * 100)}%`,
-                      backgroundColor: palette.throttle,
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5 text-[9px] font-mono">
-                <span className="w-7 text-slate-400">BRK</span>
-                <div className="flex-1 h-1.5 rounded bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full transition-all duration-75"
-                    style={{
-                      width: `${Math.round((hud.brakeInput ?? 0) * 100)}%`,
-                      backgroundColor: palette.brake,
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5 text-[9px] font-mono">
-                <span className="w-7 text-slate-400">STR</span>
-                <div className="flex-1 h-1.5 rounded bg-slate-800 relative overflow-hidden">
-                  <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/30" />
-                  <div
-                    className="absolute top-0 bottom-0 bg-sky-400"
-                    style={{
-                      left: (hud.steerInput ?? 0) >= 0 ? '50%' : `${50 + (hud.steerInput ?? 0) * 50}%`,
-                      width: `${Math.abs(hud.steerInput ?? 0) * 50}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 4-Page Multi-Function Display (Tab to cycle) */}
-          <div className="bg-[#0b0e13]/92 border border-white/15 rounded-md p-2.5 shadow-xl space-y-2 text-[11px]">
-            <div className="flex items-center justify-between border-b border-white/10 pb-1">
-              <span className="text-[10px] font-display font-bold uppercase tracking-wider text-sky-300">
-                MFD · {activeMfdPage.replace('-', ' & ')}
-              </span>
-              <button
-                type="button"
-                onClick={cycleMfd}
-                className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[9px] font-mono text-slate-200 cursor-pointer"
-                title={`Cycle MFD (${formatKeyCode(keybinds.mfdCycle)})`}
-              >
-                {formatKeyCode(keybinds.mfdCycle)} ▸
-              </button>
-            </div>
-
-            {activeMfdPage === 'tires-brakes' && (
-              <div className="grid grid-cols-2 gap-1.5 font-telemetry text-[10px] tabular-nums">
-                <div className="bg-[#121722] rounded p-1.5 border border-white/5">
-                  <div className="text-slate-400 text-[9px]">FL / FR TEMP</div>
-                  <div className="text-white font-bold">
-                    {formatTemp(hud.tires?.fl.temp ?? hud.tireTemp, units)} ·{' '}
-                    {formatTemp(hud.tires?.fr.temp ?? hud.tireTemp, units)}
-                  </div>
-                </div>
-                <div className="bg-[#121722] rounded p-1.5 border border-white/5">
-                  <div className="text-slate-400 text-[9px]">RL / RR TEMP</div>
-                  <div className="text-white font-bold">
-                    {formatTemp(hud.tires?.rl.temp ?? hud.tireTemp, units)} ·{' '}
-                    {formatTemp(hud.tires?.rr.temp ?? hud.tireTemp, units)}
-                  </div>
-                </div>
-                <div className="bg-[#121722] rounded p-1.5 border border-white/5 col-span-2 flex items-center justify-between">
-                  <span className="text-slate-400 text-[9px]">BRAKES F / R</span>
-                  <span className="text-amber-300 font-bold">
-                    {formatTemp(hud.brakeTempFront ?? 280, units)} / {formatTemp(hud.brakeTempRear ?? 250, units)}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {activeMfdPage === 'strategy' && (
-              <div className="space-y-1 text-[10px] font-telemetry">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Fuel Remaining</span>
-                  <span className="text-white font-bold">
-                    {Math.round(hud.fuel)}% (~{hud.fuelLapsRemaining.toFixed(1)} laps)
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Tyre Life</span>
-                  <span className="text-white font-bold">
-                    {Math.round(hud.tireWear)}% ({hud.compound.toUpperCase()})
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Track Temp</span>
-                  <span className="text-sky-300 font-bold">
-                    {formatTemp(hud.trackTempC ?? 28, units)}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {activeMfdPage === 'electronics' && (
-              <div className="space-y-1.5 text-[10px]">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Traction Control</span>
-                  <button
-                    type="button"
-                    onClick={onCycleTcLevel}
-                    className={`px-2 py-0.5 rounded font-mono font-bold cursor-pointer ${
-                      hud.tcIntervening
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-                    }`}
-                  >
-                    TC {hud.tcLevel ?? 0} {hud.tcIntervening ? 'ACT' : ''}
-                  </button>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Brake Bias</span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onAdjustBrakeBalance?.(-0.5)}
-                      className="px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
-                    >
-                      -
-                    </button>
-                    <span className="font-mono text-white font-bold">
-                      {(hud.brakeBalance ?? 56).toFixed(1)}%
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => onAdjustBrakeBalance?.(0.5)}
-                      className="px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-                {hud.hasErs && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400">ERS Mode</span>
-                    <button
-                      type="button"
-                      onClick={onCycleErsMode}
-                      className="px-2 py-0.5 rounded bg-sky-500/25 border border-sky-400/40 text-sky-200 font-mono font-bold uppercase cursor-pointer"
-                    >
-                      {hud.ersMode}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeMfdPage === 'sectors' && (
-              <div className="grid grid-cols-3 gap-1 font-telemetry text-[10px] text-center">
-                {[0, 1, 2].map((sIdx) => {
-                  const t = hud.sectorTimes?.[sIdx] ?? hud.lastLapSectorTimes?.[sIdx] ?? null;
-                  const best = hud.sessionBestSectorTimes?.[sIdx] ?? null;
-                  const isPurple = t !== null && best !== null && t <= best + 0.01;
-                  return (
-                    <div
-                      key={sIdx}
-                      className={`p-1 rounded border ${
-                        isPurple
-                          ? 'bg-fuchsia-950/60 border-fuchsia-400/60 text-fuchsia-200'
-                          : 'bg-[#121722] border-white/5 text-slate-200'
-                      }`}
-                    >
-                      <div className="text-[8px] text-slate-400">S{sIdx + 1}</div>
-                      <div className="font-bold">{t !== null ? t.toFixed(2) : '--.--'}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {(onTriggerFlashback || onOpenPhotoMode) && (
-              <div className="flex items-center gap-1.5 pt-1 border-t border-white/10">
-                {onTriggerFlashback && hud.flashbackAvailable && (
-                  <button
-                    type="button"
-                    onClick={onTriggerFlashback}
-                    className="flex-1 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-200 text-[9px] font-bold uppercase cursor-pointer"
-                  >
-                    Rewind [{formatKeyCode(keybinds.flashback)}]
-                  </button>
-                )}
-                {onOpenPhotoMode && (
-                  <button
-                    type="button"
-                    onClick={onOpenPhotoMode}
-                    className="flex-1 py-1 rounded bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-sky-200 text-[9px] font-bold uppercase cursor-pointer"
-                  >
-                    Photo [{formatKeyCode(keybinds.photoMode)}]
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+        </DraggableHudPanel>
       )}
     </div>
   );

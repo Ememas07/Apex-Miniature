@@ -2288,7 +2288,7 @@ export function buildTrackEnvironment(
     for (let i = 0; i < marshalFlags.length; i++) {
       const f = marshalFlags[i];
       const sectorYellow = yellowSectors?.includes(f.sector) ?? false;
-      const isYellow = flagState === 'yellow' || flagState === 'vsc' || flagState === 'safety-car' || sectorYellow;
+      const isYellow = flagState === 'yellow' || sectorYellow;
       const isRed = flagState === 'red';
       const isCheckered = flagState === 'checkered';
       const colorHex = isRed ? 0xef4444 : isYellow ? 0xfacc15 : isCheckered ? 0xf8fafc : 0x22c55e;

@@ -376,11 +376,7 @@ function recordAvoidablePuntStewarding(offender: CarSimState, closingSpeed: numb
   offender.warningCount += 1;
   offender.penaltyReason = 'avoidable-contact';
   offender.lastAvoidableContactImpact = Math.max(offender.lastAvoidableContactImpact ?? 0, closingSpeed);
-  if (
-    offender.warningCount >= 3 &&
-    offender.penaltyType !== 'drive-through' &&
-    offender.penaltyType !== 'stop-and-go'
-  ) {
+  if (offender.warningCount >= 3) {
     offender.penaltyType = 'time-penalty';
     offender.postRacePenaltySeconds = (offender.postRacePenaltySeconds ?? 0) + 5;
   }

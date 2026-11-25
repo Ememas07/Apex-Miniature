@@ -149,8 +149,8 @@ export function PauseModal({
           </div>
         </div>
 
-        {/* Behavioral Cloning Dataset Export (visible once laps are recorded) */}
-        {recordedLaps.length > 0 && (
+        {/* Behavioral Cloning Dataset Export */}
+        {recordedLaps.length > 0 ? (
           <div
             data-testid="bc-export-panel"
             className="p-3 rounded-lg bg-[#0c121b] border border-sky-500/25 space-y-2"
@@ -207,6 +207,27 @@ export function PauseModal({
             >
               <Download className="w-3.5 h-3.5" />
               Export {selectedCount} Lap(s) JSONL for trainPPO.py
+            </button>
+            {bcExportMsg && (
+              <div className="text-[10px] text-emerald-400 text-center">{bcExportMsg}</div>
+            )}
+          </div>
+        ) : (
+          <div data-testid="bc-export-panel" className="space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                const demo = telemetryRecorder.exportManual(true);
+                setBcExportMsg(
+                  demo
+                    ? `Exported ${demo.samples.length} telemetry frames`
+                    : 'No telemetry samples recorded yet',
+                );
+              }}
+              className="w-full py-2 px-3 rounded-lg bg-[#0c121b] hover:bg-[#131d2b] border border-sky-500/30 text-xs font-semibold text-sky-300 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export Telemetry (F8)
             </button>
             {bcExportMsg && (
               <div className="text-[10px] text-emerald-400 text-center">{bcExportMsg}</div>

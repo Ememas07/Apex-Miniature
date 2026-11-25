@@ -4,12 +4,6 @@ import { CompiledTrack, computeTrackWallHalfWidth, projectOntoTrack, sampleTrack
 import { getAiPaceOrderModifiers } from './scenarios';
 import { computeRacecraftOverlay } from './aiRacecraft';
 import {
-  DRIVE_THROUGH_MAX_SPEED_MS,
-  evaluateOnTrackPenaltyServe,
-  STOP_AND_GO_MIN_OFFLINE_RATIO,
-  VSC_SPEED_CAP_MS,
-} from './raceSystems';
-import {
   classifyTrackSurface,
   computeWheelGripFactor,
   createInitialFourWheelTires,
@@ -43,12 +37,13 @@ import {
   computeDynamicAiPackPace,
   computeRollingFormationControl,
   computeStandings,
-  computeUpcomingCornerInfo,
   formatLapTime,
+  getCarDrivetrain,
   getClassFuelCapacityLiters,
   getDifficultyMultiplier,
   getPitServiceDuration,
   getRollingFormationSpeedMs,
+  isCarTcEquipped,
   requestOnTrackPitStop,
   resolveClassDefaultTc,
   tryStepMecachromeEvent,
@@ -112,9 +107,10 @@ export {
   requestOnTrackPitStop,
   computeStandings,
   formatLapTime,
+  getCarDrivetrain,
+  isCarTcEquipped,
   resolveClassDefaultTc,
   tryStepMecachromeEvent,
-  computeUpcomingCornerInfo,
 } from './physicsStandings';
 
 export interface ControlInput {
@@ -178,6 +174,8 @@ export interface CarSimState {
   slipstreamStrength?: number; // 0..1 continuous exponential aerodynamic tow intensity
   understeerFactor: number; // 0..1
   lateralSlip: number; // 0..1 tire lateral scrub intensity
+  frontAxleSlip?: number; // 0..1 front-axle lateral/understeer slip (used for FWD TC)
+  rearAxleSlip?: number; // 0..1 rear-axle lateral/oversteer slip (used for RWD TC)
   onKerb: boolean; // currently riding corner kerb rumble strips
   warningCount: number;
   offTrackCooldown: number;
@@ -242,15 +240,6 @@ export interface CarSimState {
   postRacePenaltySeconds?: number;
   penaltyReason?: PenaltyReason | null;
   penaltyType?: PenaltyType | null;
-  // SC/VSC & serveable heavy penalties (synced with RaceControlCarView)
-  neutralizationSpeedCapMs?: number | null;
-  safetyCarQueueTargetSpeedMs?: number | null;
-  safetyCarBunchingGapM?: number | null;
-  heavyPenaltyHoldProgress?: number;
-  heavyPenaltyIssuedLap?: number | null;
-  heavyPenaltyDeadlineLap?: number | null;
-  heavyPenaltySevereCutCount?: number;
-  heavyPenaltyPuntingCount?: number;
   lastAvoidableContactImpact?: number;
   launchBoostTimer?: number; // >0 seconds of standing-start perfect-launch traction bonus
   debrisBurstIntensity?: number; // >0 transient impact debris cue for 3D VFX
@@ -404,14 +393,6 @@ export function createCarSimState(params: {
     postRacePenaltySeconds: 0,
     penaltyReason: null,
     penaltyType: null,
-    neutralizationSpeedCapMs: null,
-    safetyCarQueueTargetSpeedMs: null,
-    safetyCarBunchingGapM: null,
-    heavyPenaltyHoldProgress: 0,
-    heavyPenaltyIssuedLap: null,
-    heavyPenaltyDeadlineLap: null,
-    heavyPenaltySevereCutCount: 0,
-    heavyPenaltyPuntingCount: 0,
     lastAvoidableContactImpact: 0,
     launchBoostTimer: 0,
     debrisBurstIntensity: 0,
@@ -425,6 +406,8 @@ export function createCarSimState(params: {
     inSlipstream: false,
     understeerFactor: 0,
     lateralSlip: 0,
+    frontAxleSlip: 0,
+    rearAxleSlip: 0,
     onKerb: false,
     warningCount: 0,
     offTrackCooldown: 0,
@@ -443,7 +426,7 @@ export function createCarSimState(params: {
     rpmNormalized: 0.18,
     transmissionMode: params.transmissionMode ?? 'auto',
     semiAutoHoldTimer: 0,
-    tcLevel: params.tcLevel ?? 0,
+    tcLevel: isCarTcEquipped(carSpec.classId, carSpec.id) ? (params.tcLevel ?? 0) : 0,
     tcIntervening: false,
     stabilityControl: params.stabilityControl ?? false,
     stabilityIntervening: false,
@@ -690,7 +673,6 @@ export function stepCarPhysics(
     drsZoneEnforced?: boolean;
     damageLevel?: DamageLevel;
     absLevel?: AbsLevel;
-    neutralizationSpeedCapMs?: number | null;
   },
 ): void {
   if (car.finished) {
@@ -730,16 +712,13 @@ export function stepCarPhysics(
   car.puddleIntensity = puddleIntensity;
   car.trackRubber = trackRubber;
 
-  const rawNeutralCap = opts.neutralizationSpeedCapMs ?? car.neutralizationSpeedCapMs;
-  const isNeutralized = typeof rawNeutralCap === 'number' && Number.isFinite(rawNeutralCap) && rawNeutralCap > 0;
-
   // Class / car-specific special toggle activation (press once ON, press again OFF, auto-OFF on depletion/expiry)
   const { specialType, hasHybridErs } = updateCarSpecialActivation(
     car,
     input,
     dt,
     opts.drsZoneEnforced,
-    isNeutralized,
+    false,
   );
 
   // Realistic exponential aerodynamic slipstream wake (begins ~48m back, ramps sharply closer in) — applies equally to Player & AI
@@ -863,10 +842,8 @@ export function stepCarPhysics(
     }
     if (car.penaltyTimeRemaining <= 0) {
       car.penaltyTimeRemaining = 0;
-      if (car.penaltyType !== 'drive-through' && car.penaltyType !== 'stop-and-go') {
-        car.penaltyReason = null;
-        car.penaltyType = null;
-      }
+      car.penaltyReason = null;
+      car.penaltyType = null;
     }
   }
 
@@ -884,7 +861,7 @@ export function stepCarPhysics(
     ? 1.0
     : Math.max(0.88, Math.min(1.04, 1.0 + (effectiveAiPace - 1.0) * 0.35));
   const dragVmaxFactor = Math.pow(tuning.dragScale * setupMod.dragMult, -0.22);
-  let effectiveMaxSpeed =
+  const effectiveMaxSpeed =
     maxSpeedBase *
     setupMod.topSpeedMult *
     specialSpeedMult *
@@ -896,10 +873,6 @@ export function stepCarPhysics(
     penaltyCap *
     aiStraightScale *
     dragVmaxFactor;
-
-  if (isNeutralized) {
-    effectiveMaxSpeed = Math.min(effectiveMaxSpeed, rawNeutralCap!);
-  }
 
   // Longitudinal acceleration, braking & transmission drivetrain
   const throttle = Math.max(0, Math.min(1, input.throttle));
@@ -1013,13 +986,8 @@ export function stepCarPhysics(
       const lowSpeedSpool = isFE ? 1.0 : 0.88 + 0.12 * Math.min(1, car.speed / 18.0);
       const powerCurveFactor = lowSpeedSpool * (1 - highSpeedPowerTaper * Math.pow(speedRatio, isFormula && !isFE ? 1.18 : 1.45));
       const mecachromeMult = car.mecachromeActive ? 0.08 : 1.0;
-      // Electronic SC/VSC speed limiter tapers drive power cleanly to 0 at neutralization cap
-      const neutralThrottleLimiter =
-        isNeutralized && car.speed >= rawNeutralCap! - 1.5
-          ? Math.max(0, Math.min(1, (rawNeutralCap! - car.speed) / 1.5))
-          : 1.0;
       const pWheelW =
-        powerWatts * specialAccelMult * fuelFactor * throttle * neutralThrottleLimiter * powerCurveFactor * mecachromeMult;
+        powerWatts * specialAccelMult * fuelFactor * throttle * powerCurveFactor * mecachromeMult;
       const fPowerN = pWheelW / Math.max(4.5, car.speed);
 
       // Tire traction limit (static launch grip + aero downforce load + crest load + differential exit traction + perfect launch boost)
@@ -1034,17 +1002,35 @@ export function stepCarPhysics(
       const fTractionN =
         effectiveMassKg * (launchGripG * GRAVITY * tireLaunchFactor + downforceTractionCoeff * car.speed * car.speed);
 
-      // Traction Control (TC 1-3): smoothly trims wheel torque when cornering slip or launch wheelspin exceeds threshold
+      // Traction Control (TC 1-3):
+      // - Disabled completely on cars that do not have TC IRL
+      // - Monitors ONLY rear slide on RWD cars, front slip on FWD cars, or both on AWD cars
+      // - Gentle progressive torque trim so TC 1 never bogs down corner exits
       let tcTorqueScale = 1.0;
-      const tcLvl = car.tcLevel ?? 0;
-      if (tcLvl > 0 && car.speed > 2.5) {
-        const slipThreshold = tcLvl === 3 ? 0.18 : tcLvl === 2 ? 0.28 : 0.40;
-        const cornerThrottleDemand = (car.lateralSlip ?? 0) + (effectiveWetness * 0.22);
-        const overTraction = fPowerN > fTractionN * (1.06 - tcLvl * 0.04);
-        if (cornerThrottleDemand > slipThreshold || (overTraction && Math.abs(input.steer) > 0.18)) {
-          const excess = Math.max(0, cornerThrottleDemand - slipThreshold);
-          tcTorqueScale = Math.max(0.45, 1.0 - excess * (0.35 + tcLvl * 0.18) - (overTraction ? 0.08 * tcLvl : 0));
-          car.tcIntervening = tcTorqueScale < 0.96;
+      const tcEquipped = isCarTcEquipped(classId, car.carSpec.id);
+      if (!tcEquipped) {
+        car.tcLevel = 0;
+        car.tcIntervening = false;
+      }
+      const tcLvl = tcEquipped ? (car.tcLevel ?? 0) : 0;
+      if (tcLvl > 0 && car.speed > 3.5) {
+        const drivetrain = getCarDrivetrain(car.carSpec.id, classId);
+        const rearSlip = car.rearAxleSlip ?? 0;
+        const frontSlip = car.frontAxleSlip ?? 0;
+        const drivenAxleSlip =
+          drivetrain === 'fwd'
+            ? frontSlip
+            : drivetrain === 'awd'
+              ? Math.max(rearSlip, frontSlip) * 0.9
+              : rearSlip;
+        const slipThreshold = tcLvl === 3 ? 0.26 : tcLvl === 2 ? 0.36 : 0.48;
+        const slipDemand = drivenAxleSlip + effectiveWetness * 0.10;
+        if (slipDemand > slipThreshold) {
+          const excess = Math.min(1, slipDemand - slipThreshold);
+          const gain = tcLvl === 3 ? 0.40 : tcLvl === 2 ? 0.28 : 0.16;
+          const minFloor = tcLvl === 3 ? 0.74 : tcLvl === 2 ? 0.82 : 0.89;
+          tcTorqueScale = Math.max(minFloor, 1.0 - excess * gain);
+          car.tcIntervening = tcTorqueScale < 0.985;
         }
       }
 
@@ -1079,8 +1065,7 @@ export function stepCarPhysics(
 
     // Natural aero/rolling drag & realistic RPM/gear-dependent engine braking when coasting or above effectiveMaxSpeed
     if (car.speed > effectiveMaxSpeed) {
-      const pullRate = isNeutralized ? 4.8 : 3.8;
-      car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * pullRate);
+      car.speed -= (car.speed - effectiveMaxSpeed) * Math.min(1, dt * 3.8);
     } else if (throttle < 0.05 && brake < 0.05) {
       const coastRpm = Math.max(0, Math.min(1, car.rpmNormalized));
       const gearFactor = totalGears <= 1
@@ -1357,6 +1342,8 @@ export function stepCarPhysics(
 
   car.stabilityIntervening = false;
   let understeerAccum = 0;
+  let frontSlipAccum = 0;
+  let rearSlipAccum = 0;
   let dHeadingAccum = 0;
   if (car.speed < 0.35 && Math.abs(throttle) < 0.05 && Math.abs(brake) < 0.05) {
     vLat = 0;
@@ -1446,6 +1433,12 @@ export function stepCarPhysics(
       if (Math.abs(alphaF) > 0.14 && frontRatio > 0.78) {
         understeerAccum = Math.max(understeerAccum, Math.min(1, (Math.abs(alphaF) - 0.14) * 3.4));
       }
+      if (car.speed > 3.5) {
+        const fSlipNorm = Math.max(0, (Math.abs(alphaF) - 0.08) * 3.6);
+        const rSlipNorm = Math.max(0, (Math.abs(alphaR) - 0.07) * 4.2);
+        frontSlipAccum = Math.max(frontSlipAccum, Math.min(1, fSlipNorm));
+        rearSlipAccum = Math.max(rearSlipAccum, Math.min(1, rSlipNorm));
+      }
     }
   }
 
@@ -1465,6 +1458,14 @@ export function stepCarPhysics(
   car.vx = newFwdX * (car.speed * moveSign) + newRightX * vLat;
   car.vz = newFwdZ * (car.speed * moveSign) + newRightZ * vLat;
 
+  car.frontAxleSlip = Math.min(
+    1,
+    Math.max(frontSlipAccum, car.understeerFactor * 0.85) * (car.speed > 3.5 ? 1 : 0),
+  );
+  car.rearAxleSlip = Math.min(
+    1,
+    Math.max(rearSlipAccum, (Math.abs(vLat) / 6.0) * (car.speed > 3.5 ? 1 : 0)),
+  );
   car.lateralSlip = Math.min(
     1,
     (Math.abs(vLat) / 5.5 + car.understeerFactor * 0.70) * (car.speed > 5 ? 1 : 0),
@@ -1532,27 +1533,6 @@ export function stepCarPhysics(
 
   if (car.pitCooldown > 0) car.pitCooldown = Math.max(0, car.pitCooldown - dt);
 
-  // Evaluate serveable on-track heavy penalties ('drive-through' & 'stop-and-go') via raceSystems helper
-  if (car.penaltyType === 'drive-through' || car.penaltyType === 'stop-and-go') {
-    const serveRes = evaluateOnTrackPenaltyServe({
-      penaltyType: car.penaltyType,
-      speedMs: car.speed,
-      lateralOffset: car.lateralOffset,
-      trackHalfWidth: sampleHalfW,
-      holdProgressSeconds: car.heavyPenaltyHoldProgress ?? 0,
-      dt,
-    });
-    car.heavyPenaltyHoldProgress = serveRes.holdProgressSeconds;
-    if (serveRes.completed) {
-      car.penaltyType = null;
-      car.penaltyReason = null;
-      car.penaltyTimeRemaining = 0;
-      car.heavyPenaltyHoldProgress = 0;
-      car.heavyPenaltyIssuedLap = null;
-      car.heavyPenaltyDeadlineLap = null;
-    }
-  }
-
   // Track limits corner cutting check
   if (car.offTrackCooldown > 0) car.offTrackCooldown = Math.max(0, car.offTrackCooldown - dt);
   const KERB_WIDTH = 1.8;
@@ -1567,18 +1547,14 @@ export function stepCarPhysics(
   if (isCuttingInside && car.offTrackCooldown <= 0 && car.speed > 16) {
     car.warningCount += 1;
     car.offTrackCooldown = 3.0;
-    if (car.warningCount <= 3) {
-      car.heavyPenaltySevereCutCount = (car.heavyPenaltySevereCutCount ?? 0) + 1;
-    } else if (car.penaltyType !== 'drive-through' && car.penaltyType !== 'stop-and-go') {
-      // Cap slow-down penalties at 0.5s–1.2s max; repeated violations also accrue +3s steward penalty
+    if (car.warningCount >= 3) {
+      // Cap slow-down penalties at 0.6s–1.5s max; repeated violations also accrue +3s post-race time penalty
       car.penaltyReason = 'corner-cut';
-      car.penaltyType = car.warningCount >= 6 ? 'time-penalty' : 'slow-down';
-      car.penaltyTimeRemaining = Math.min(1.2, Math.max(0.6, car.penaltyTimeRemaining + 0.8));
-      if (car.warningCount >= 6) {
+      car.penaltyType = car.warningCount >= 5 ? 'time-penalty' : 'slow-down';
+      car.penaltyTimeRemaining = Math.min(1.5, Math.max(0.6, car.penaltyTimeRemaining + 0.8));
+      if (car.warningCount >= 5) {
         car.postRacePenaltySeconds = (car.postRacePenaltySeconds ?? 0) + 3;
       }
-    } else {
-      car.heavyPenaltySevereCutCount = (car.heavyPenaltySevereCutCount ?? 0) + 1;
     }
   }
 
@@ -1701,10 +1677,9 @@ export function stepCarPhysics(
   const avgBurnRatePerLap = Math.max(4.0, 8.8 * efficiencyFactor * 0.78 * overboostFuelMult);
   car.fuelLapsRemaining = Number((car.fuel / avgBurnRatePerLap).toFixed(1));
 
-  // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 1.5s while racing (and not serving stop-and-go),
+  // Anti-Stuck Watchdog: if an AI car's speed remains < 5 km/h for 1.5s while racing,
   // smoothly reset aligned with nearest spline point at 35 km/h (9.72 m/s) in an unoccupied lateral lane
-  const isHoldingStopAndGo = car.penaltyType === 'stop-and-go' && !car.finished;
-  if (!car.isPlayer && car.pitStopRemaining <= 0 && !isHoldingStopAndGo) {
+  if (!car.isPlayer && car.pitStopRemaining <= 0) {
     if (car.speed < 5 / SPEED_KMH_FACTOR) {
       car.aiStuckTimer = (car.aiStuckTimer || 0) + dt;
       if (car.aiStuckTimer >= 1.5) {
@@ -1826,16 +1801,6 @@ export function computeAIControl(
   const minSafeLane = Math.min(-0.5, -halfW + boundaryMargin);
   const maxSafeLane = Math.max(0.5, halfW - boundaryMargin);
 
-  // SC / VSC neutralization & heavy penalty serving state
-  const neutralizationCapMs = car.safetyCarQueueTargetSpeedMs ?? car.neutralizationSpeedCapMs ?? null;
-  const isNeutralized =
-    typeof neutralizationCapMs === 'number' && Number.isFinite(neutralizationCapMs) && neutralizationCapMs > 0;
-  const isWaveBy =
-    isNeutralized && car.safetyCarBunchingGapM == null && neutralizationCapMs > VSC_SPEED_CAP_MS + 0.5;
-  const isSafetyCarQueue = isNeutralized && car.safetyCarBunchingGapM != null;
-  const isServingStopAndGo = !car.finished && !car.aiPendingStop && car.penaltyType === 'stop-and-go';
-  const isServingDriveThrough = !car.finished && !car.aiPendingStop && car.penaltyType === 'drive-through';
-
   // ==================== 1. FULL SPATIAL AWARENESS (ALL CARS INCLUDING PLAYER) ====================
   car.aiPassTimer = Math.max(0, car.aiPassTimer - dt);
 
@@ -1938,38 +1903,17 @@ export function computeAIControl(
   }
 
   dynamicRacingLine = Math.max(minSafeLane, Math.min(maxSafeLane, dynamicRacingLine));
-  let desiredOffset = isSafetyCarQueue ? dynamicRacingLine * 0.45 : dynamicRacingLine;
+  let desiredOffset = dynamicRacingLine;
 
   // Layer 2: Proactive Overtaking Lane Selection when closing on slower car ahead within 60m
-  // Under SC/VSC (except lapped wave-bys), overtake only if the car ahead is stopped/servicing/serving a penalty!
   const overtakeRef = leadCar ?? passTargetCar;
-  const overtakeRefObstacleOnly = Boolean(
-    overtakeRef &&
-      (overtakeRef.speed < 8.0 ||
-        overtakeRef.pitStopRemaining > 0 ||
-        overtakeRef.penaltyType === 'stop-and-go' ||
-        overtakeRef.penaltyType === 'drive-through'),
-  );
-  const overtakeAllowed = !isNeutralized || isWaveBy || overtakeRefObstacleOnly;
-  if (!overtakeAllowed) {
-    car.aiPassTimer = 0;
-  }
   const isBattlingTraffic = Boolean(
-    overtakeAllowed &&
-      overtakeRef &&
+    overtakeRef &&
       (leadCar ? leadDs : passTargetDs) < Math.max(48, car.speed * 1.5) &&
       car.speed > overtakeRef.speed - 2.5,
   );
 
-  if (isServingStopAndGo || isServingDriveThrough) {
-    // Pull politely off the racing line onto a clear outer edge to serve heavy penalty
-    const rightPref = Math.min(maxSafeLane, Math.max(2.2, halfW * 0.65));
-    const leftPref = Math.max(minSafeLane, -Math.max(2.2, halfW * 0.65));
-    const rightBlocked = sideCarRightLat !== null && sideCarRightLat > car.lateralOffset;
-    const leftBlocked = sideCarLeftLat !== null && sideCarLeftLat < car.lateralOffset;
-    desiredOffset = rightBlocked && !leftBlocked ? leftPref : rightPref;
-    car.aiPassTimer = 0;
-  } else if (isBattlingTraffic && overtakeRef) {
+  if (isBattlingTraffic && overtakeRef) {
     const clearance = CAR_WIDTH * 1.35; // >= 1.35 * carWidth lateral clearance
     const leftUpper = Math.min(maxSafeLane, overtakeRef.lateralOffset - clearance);
     const rightLower = Math.max(minSafeLane, overtakeRef.lateralOffset + clearance);
@@ -1999,17 +1943,15 @@ export function computeAIControl(
   }
 
   // Section 4.1: Multi-Class Traffic Projection, Blue-Flag Etiquette & One-Move Defensive Racecraft
-  const racecraftOverlay = (!isNeutralized || isWaveBy) && !isServingStopAndGo && !isServingDriveThrough
-    ? computeRacecraftOverlay(
-        car,
-        compiledTrack,
-        allCars,
-        dt,
-        halfW,
-        minSafeLane,
-        maxSafeLane,
-      )
-    : { overrideTargetOffset: null, maneuver: 'racing' as const, throttleMultiplier: 1.0, suppressStraightBraking: false };
+  const racecraftOverlay = computeRacecraftOverlay(
+    car,
+    compiledTrack,
+    allCars,
+    dt,
+    halfW,
+    minSafeLane,
+    maxSafeLane,
+  );
 
   if (racecraftOverlay.overrideTargetOffset !== null) {
     desiredOffset = racecraftOverlay.overrideTargetOffset;
@@ -2107,12 +2049,10 @@ export function computeAIControl(
     const closingSpeed = car.speed - leadCar.speed;
     const hasLateralOverlap = Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.35;
     const pullingOutToPass =
-      overtakeAllowed &&
       Math.abs(car.aiTargetOffset - leadCar.lateralOffset) >= CAR_WIDTH * 1.45 &&
       Math.abs(leadCar.lateralOffset - car.lateralOffset) < CAR_WIDTH * 1.45;
 
     const canBumpDraftStraight =
-      !isNeutralized &&
       maxBrakeRatio < 0.30 &&
       Math.abs(currentSample.curvature) < 0.008 &&
       car.speed > 35 &&
@@ -2186,10 +2126,7 @@ export function computeAIControl(
     isBattlingTraffic ||
     car.aiPassTimer > 0 ||
     sideCarLeftLat !== null ||
-    sideCarRightLat !== null ||
-    isSafetyCarQueue ||
-    isServingStopAndGo ||
-    isServingDriveThrough;
+    sideCarRightLat !== null;
   const effectiveLookaheadOffset = isContested ? steerTargetOffset : targetLineOffset;
 
   const targetX = targetSample.x + targetSample.nx * effectiveLookaheadOffset;
@@ -2244,12 +2181,12 @@ export function computeAIControl(
   const resolvedSpecial = resolveCarSpecial(car.carSpec);
   const onStraight = nearCurv < 0.01 && Math.abs(steer) < 0.18 && maxBrakeRatio < 0.5;
 
-  // Aggressive Hybrid ERS Mode management (harvest under SC/VSC)
+  // Aggressive Hybrid ERS Mode management
   if (carHasHybridErs(car.carSpec)) {
     const batt = car.ersBattery ?? 0;
     const isBattling = Boolean(leadCar || car.aiDefenseCommitted || car.aiPassTimer > 0);
     const acceleratingHard = throttle > 0.65 && brake < 0.08 && car.speed > 18;
-    if (isNeutralized || batt < 10) {
+    if (batt < 10) {
       car.ersMode = 'harvest';
     } else if (brake > 0.25 && batt < 85) {
       car.ersMode = 'harvest';
@@ -2262,11 +2199,9 @@ export function computeAIControl(
     }
   }
 
-  // Trigger Class / Car Special aggressively on straights & corner exits (suppressed under SC/VSC or penalty serving)
+  // Trigger Class / Car Special aggressively on straights & corner exits
   let specialPressed = false;
-  if (isNeutralized || isServingStopAndGo || isServingDriveThrough) {
-    if (car.specialActive) specialPressed = true;
-  } else if (resolvedSpecial.specialType === 'drs') {
+  if (resolvedSpecial.specialType === 'drs') {
     if (car.drsEligible && onStraight && !car.specialActive && car.speed > 24) {
       specialPressed = true;
     } else if ((!onStraight || brake > 0.2) && car.specialActive) {
@@ -2298,26 +2233,13 @@ export function computeAIControl(
   // Blue Flag Multi-Class Yielding
   if (racecraftOverlay.throttleMultiplier < 0.999) {
     throttle *= racecraftOverlay.throttleMultiplier;
-  } else if (car.blueFlagActive && !isNeutralized && car.speed > 14 && Math.abs(car.lateralOffset) < halfW * 0.72) {
+  } else if (car.blueFlagActive && car.speed > 14 && Math.abs(car.lateralOffset) < halfW * 0.72) {
     const yieldSide = car.lateralOffset >= 0 ? Math.min(maxSafeLane, halfW * 0.68) : Math.max(minSafeLane, -halfW * 0.68);
     car.aiTargetOffset += (yieldSide - car.aiTargetOffset) * Math.min(1, dt * 3.5);
     throttle *= 0.90;
   }
 
-  // Safety Car / VSC pace & bunching speed cap modulation
-  if (isNeutralized && neutralizationCapMs !== null) {
-    const targetCap = Math.max(12, neutralizationCapMs);
-    if (car.speed > targetCap + 1.5) {
-      throttle = 0;
-      brake = Math.max(brake, Math.min(0.85, (car.speed - targetCap - 1.0) * 0.14));
-    } else if (car.speed > targetCap - 0.3) {
-      throttle = Math.min(throttle, Math.max(0, (targetCap - car.speed + 0.3) * 0.35));
-    } else {
-      throttle = Math.min(throttle, Math.max(0.18, Math.min(1.0, (targetCap - car.speed) * 0.28 + 0.35)));
-    }
-  }
-
-  // AI Race Engineer pace orders, pending on-track service stop, and heavy penalty serving
+  // AI Race Engineer pace orders & pending on-track service stop
   if (car.aiPendingStop) {
     // Pull smoothly toward right edge and brake to a stop to trigger on-track service (NO pit lane!)
     const pullSide = Math.min(maxSafeLane, halfW * 0.72);
@@ -2328,27 +2250,7 @@ export function computeAIControl(
       const ok = requestOnTrackPitStop(car, car.aiPendingStop.action, car.aiPendingStop.compound);
       if (ok) car.aiPendingStop = null;
     }
-  } else if (isServingStopAndGo) {
-    const minOffLineM = Math.max(2.0, halfW * STOP_AND_GO_MIN_OFFLINE_RATIO);
-    if (Math.abs(car.lateralOffset) >= minOffLineM) {
-      throttle = 0;
-      brake = car.speed > 1.0 ? 0.88 : 1.0;
-    } else {
-      const crawlTarget = 10.0;
-      throttle = car.speed < crawlTarget ? 0.35 : 0;
-      brake = car.speed > crawlTarget + 1.5 ? 0.5 : 0;
-    }
-  } else if (isServingDriveThrough) {
-    const targetSpeedMs = DRIVE_THROUGH_MAX_SPEED_MS * 0.86; // ~51.6 km/h safely <= 60 km/h
-    if (car.speed > targetSpeedMs + 0.6) {
-      throttle = 0;
-      brake = Math.max(brake, Math.min(0.85, (car.speed - targetSpeedMs) * 0.16));
-    } else if (car.speed < targetSpeedMs - 0.6) {
-      throttle = Math.min(throttle, 0.45);
-    } else {
-      throttle = Math.min(throttle, 0.16);
-    }
-  } else if (!isNeutralized && car.aiPaceOrder && car.aiPaceOrder !== 'balanced') {
+  } else if (car.aiPaceOrder && car.aiPaceOrder !== 'balanced') {
     const mod = getAiPaceOrderModifiers(car.aiPaceOrder);
     if (mod.paceMultiplier < 1) {
       throttle *= mod.paceMultiplier;
