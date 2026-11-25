@@ -26,6 +26,7 @@ import {
 } from './src/game/customTracks';
 import { compileTrack, getTrackById } from './src/game/tracks';
 import { SceneryTheme, TrackSpec, TrackSurfaceType } from './src/game/types';
+import { loadChangelogPayload } from './src/game/changelogLoader';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1206,6 +1207,11 @@ async function startServer() {
 
     ws.on('close', cleanup);
     ws.on('error', cleanup);
+  });
+
+  app.get(['/api/changelog', '/Apex-Miniature/api/changelog'], (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.json(loadChangelogPayload(__dirname));
   });
 
   app.post(['/api/telemetry', '/Apex-Miniature/api/telemetry'], (req, res) => {

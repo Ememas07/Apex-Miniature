@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Compass,
   Flag,
+  GitCommitHorizontal,
   History,
   Home,
   Layers,
@@ -36,6 +37,7 @@ interface TitleOverlayProps {
   onOpenLiveryStudio: () => void;
   onOpenSoundStudio: () => void;
   onOpenSettings: () => void;
+  onOpenChangelog: () => void;
 }
 
 function ApexLogo() {
@@ -132,6 +134,7 @@ export function TitleOverlay({
   onOpenLiveryStudio,
   onOpenSoundStudio,
   onOpenSettings,
+  onOpenChangelog,
 }: TitleOverlayProps) {
   const [showLegacyConfirm, setShowLegacyConfirm] = useState(false);
   const car = getCarById(raceConfig.playerCarId);
@@ -197,6 +200,15 @@ export function TitleOverlay({
           >
             <History className="w-3.5 h-3.5 text-amber-400" />
             <span>Go to Legacy Version</span>
+          </button>
+          <button
+            type="button"
+            data-testid="btn-open-changelog"
+            onClick={onOpenChangelog}
+            className="px-3 py-1.5 rounded bg-[#0b0e13]/72 hover:bg-[#141a24]/90 border border-sky-400/30 hover:border-sky-400/60 text-xs font-semibold text-sky-200 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <GitCommitHorizontal className="w-3.5 h-3.5 text-sky-400" />
+            <span>Changelog</span>
           </button>
           <button
             type="button"

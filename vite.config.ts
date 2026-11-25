@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { loadChangelogPayload } from './src/game/changelogLoader';
 
 interface LowPolyCarManifestEntry {
   id: string;
@@ -193,12 +194,45 @@ function servePolicyBinariesManifestPlugin(): Plugin {
   };
 }
 
+function gitChangelogPlugin(): Plugin {
+  const virtualId = 'virtual:git-changelog';
+  const resolvedId = '\0' + virtualId;
+
+  return {
+    name: 'git-changelog-plugin',
+    resolveId(id) {
+      if (id === virtualId) return resolvedId;
+      return undefined;
+    },
+    load(id) {
+      if (id !== resolvedId) return undefined;
+      const payload = loadChangelogPayload(__dirname);
+      return `export const gitChangelog = ${JSON.stringify(payload)};\n`;
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const rawUrl = String(req.url || '').split('?')[0];
+        if (rawUrl !== '/api/changelog' && rawUrl !== '/Apex-Miniature/api/changelog') {
+          next();
+          return;
+        }
+        const payload = loadChangelogPayload(__dirname);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.end(JSON.stringify(payload));
+      });
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     base: './',
     plugins: [
       react(),
       tailwindcss(),
+      gitChangelogPlugin(),
       serveLowPolyCarsPlugin(),
       servePolicyBinariesManifestPlugin(),
       VitePWA({

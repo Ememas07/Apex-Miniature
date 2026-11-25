@@ -110,6 +110,9 @@ const TracksShowcaseModal = lazy(() =>
 const TrackStudioModal = lazy(() =>
   import('./components/TrackStudioModal').then((m) => ({ default: m.TrackStudioModal })),
 );
+const ChangelogModal = lazy(() =>
+  import('./components/ChangelogModal').then((m) => ({ default: m.ChangelogModal })),
+);
 
 const MFD_PAGE_ORDER: MfdPage[] = ['tires-brakes', 'strategy', 'electronics', 'sectors'];
 const HUD_PRESET_ORDER: HudPreset[] = ['full', 'minimal', 'pro', 'off'];
@@ -162,6 +165,7 @@ export default function App() {
   const [liveryStudioOpen, setLiveryStudioOpen] = useState(false);
   const [soundStudioOpen, setSoundStudioOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const [carSetupOpen, setCarSetupOpen] = useState(false);
   const [editingCustomTrack, setEditingCustomTrack] = useState<TrackSpec | undefined>(undefined);
   const [activeChampionship, setActiveChampionship] = useState<ActiveChampionshipState | null>(() =>
@@ -614,6 +618,10 @@ export default function App() {
       if (inInput) return;
 
       if (e.code === 'Escape') {
+        if (changelogOpen) {
+          setChangelogOpen(false);
+          return;
+        }
         if (settingsOpen) {
           setSettingsOpen(false);
           return;
@@ -677,7 +685,8 @@ export default function App() {
         trackStudioOpen ||
         liveryStudioOpen ||
         soundStudioOpen ||
-        settingsOpen
+        settingsOpen ||
+        changelogOpen
       ) {
         return;
       }
@@ -700,6 +709,7 @@ export default function App() {
     liveryStudioOpen,
     soundStudioOpen,
     settingsOpen,
+    changelogOpen,
     carSetupOpen,
     handleStartSession,
   ]);
@@ -966,6 +976,7 @@ export default function App() {
     liveryStudioOpen ||
     soundStudioOpen ||
     settingsOpen ||
+    changelogOpen ||
     carSetupOpen ||
     Boolean(phase === 'qualifying' && qualiBanner);
 
@@ -978,6 +989,10 @@ export default function App() {
 
   const gamepadBackHandlerRef = useRef<() => boolean>(() => false);
   gamepadBackHandlerRef.current = () => {
+    if (changelogOpen) {
+      setChangelogOpen(false);
+      return true;
+    }
     if (settingsOpen) return false;
     if (carSetupOpen) {
       setCarSetupOpen(false);
@@ -1190,6 +1205,7 @@ export default function App() {
           onOpenLiveryStudio={() => setLiveryStudioOpen(true)}
           onOpenSoundStudio={() => setSoundStudioOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenChangelog={() => setChangelogOpen(true)}
         />
       )}
 
@@ -1490,6 +1506,9 @@ export default function App() {
       <Suspense fallback={null}>
         {/* Settings Modal (accessible from Title Paddock & Pause Menu) */}
         {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+
+        {/* In-Game Changelog & Git Commit History Modal */}
+        {changelogOpen && <ChangelogModal onClose={() => setChangelogOpen(false)} />}
 
         {/* Garage Car Setup & BoP Workbench Modal */}
         {carSetupOpen && (

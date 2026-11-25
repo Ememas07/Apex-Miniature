@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  classifyCommitSubject,
+  parseChangelogMarkdown,
+  parseGitLogOutput,
+} from './changelog';
+import { loadChangelogPayload } from './changelogLoader';
+import {
   CARS,
   CAR_CLASSES,
   computeBoPEquilibriumScore,
@@ -4864,6 +4870,36 @@ test('Batch F: wrapRigInLOD 3-tier LOD wrapping', () => {
     (globalThis as { document?: unknown }).document = prevDocument;
   }
 });
+
+test('Changelog parser & git commit history loader', () => {
+  const sampleLog = [
+    'abc1234567\x1fabc1234\x1f2026-11-25 08:58\x1fMarc Mas\x1ffeat(ui): add changelog modal',
+    'def8901234\x1fdef8901\x1f2026-11-24 18:46\x1fMarc Mas\x1fMerge branch \'main\' of example',
+    '1112223334\x1f1112223\x1f2026-11-23 16:00\x1fMarc Mas\x1fRandom commit note',
+  ].join('\x1e');
+
+  const parsedCommits = parseGitLogOutput(sampleLog);
+  assert.equal(parsedCommits.length, 3);
+  assert.equal(parsedCommits[0].category, 'feat');
+  assert.equal(parsedCommits[0].isMerge, false);
+  assert.equal(parsedCommits[1].category, 'merge');
+  assert.equal(parsedCommits[1].isMerge, true);
+  assert.equal(parsedCommits[2].category, 'update');
+  assert.equal(classifyCommitSubject('fix(physics): clamp delta').category, 'fix');
+
+  const parsedMd = parseChangelogMarkdown(
+    '# Changelog\n\n## 2026-11-25 08:58\n- First bullet\n- Second bullet\n\n## 2026-11-15 21:27\n- Initial release\n',
+  );
+  assert.equal(parsedMd.length, 2);
+  assert.equal(parsedMd[0].date, '2026-11-25 08:58');
+  assert.deepEqual(parsedMd[0].items, ['First bullet', 'Second bullet']);
+
+  const payload = loadChangelogPayload(process.cwd());
+  assert.ok(payload.commits.length >= 160, `Expected full git commit history, got ${payload.commits.length}`);
+  assert.ok(payload.sections.length >= 10, `Expected backfilled CHANGELOG.md sections, got ${payload.sections.length}`);
+  assert.equal(payload.sections[payload.sections.length - 1].date, '2026-11-15 21:27');
+});
+
 
 
 

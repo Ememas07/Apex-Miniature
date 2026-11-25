@@ -4,6 +4,10 @@ All notable changes to **Apex Miniature** are documented in this file, ordered f
 
 ---
 
+## 2026-11-25 08:58
+- Added an in-game **Changelog** button in the top-right paddock header that opens a searchable **Changelog & Git History** modal displaying the full git commit log (with category badges, commit hashes, authors, timestamps, and merge filtering) alongside curated Release Notes.
+- Backfilled `CHANGELOG.md` with all previously missing historical commits and milestones from the project's initial launch on 2026-11-15 through 2026-11-22.
+
 ## 2026-11-25 08:54
 - Made the AI telemetry export button always visible in both the Pause menu and the Post-Race Results screen (falling back to exporting the current/last telemetry buffer when no completed clean laps are listed yet), alongside the existing `F8` quick-export shortcut.
 
@@ -57,6 +61,9 @@ All notable changes to **Apex Miniature** are documented in this file, ordered f
 - Added class-specific racing systems: track-defined DRS detection and activation zones, multi-mode hybrid ERS battery management (`Harvest`, `Balanced`, `Overtake`, `Quali`), Formula E illuminated off-line Attack Mode loops, and Push-to-Pass tracking.
 - Upgraded weather from a simple rain loop to multi-stage forecast timelines (`Clear`, `Overcast`, `Light Drizzle`, `Rain`, `Heavy Storm`, `Drying Track`) with a faster-drying racing line, standing puddles, asphalt rubbering, and track temperature simulation.
 
+## 2026-11-22 10:56
+- Added per-class trained neural AI policy support (`public/models/policies/class_*.bin`) alongside the AI Policy Mix panel so each racing class can use its own specialized driving model.
+
 ## 2026-11-22 07:28
 - Upgraded vehicle physics with individual 4-wheel tyre wear, temperatures, flat-spots, and graining; brake disc heating, fade, and wheel lock-ups; weight transfer, dirty-air aero wash, crest unloading over hills, and surface-specific physics for gravel, grass, astroturf, and sausage kerbs.
 - Added localized mechanical and visual damage (Front Wing, Rear Wing, Engine, Suspension) with configurable damage realism levels and on-track repair stops.
@@ -69,7 +76,35 @@ All notable changes to **Apex Miniature** are documented in this file, ordered f
 - Introduced a dedicated `starts` AI policy and launch assist to eliminate lap-1 standing-start stalls and pileups, plus straight-line bump-drafting so AI cars commit to slipstream tows without lifting early.
 - Upgraded neural AI inference to flat typed-array math and added compact `ANB1` binary weights and binary worker IPC for faster training and zero-stutter runtime performance.
 
+## 2026-11-21 17:20
+- Added custom keyboard binding remapping and improved AI wet-weather driving grip and braking behavior.
+
 ## 2026-11-21 04:00
 - Raised the default Chase and Spectate camera angle for a clearer view down the road ahead, preserving manual mouse/stick pitch and yaw while smoothly auto-leveling only camera roll after idle.
 - Finalized the translucent, full-bleed Modern Main Menu UI so the live 3D attract-mode circuit remains unobstructed behind paddock controls.
 - Hardened neural policy loading with strict matrix/NaN validation and zero-allocation runtime buffers.
+
+## 2026-11-20 18:56
+- Added Balance of Performance (BoP) tuning across car classes, safe-area inset padding, and compact short-viewport menu layouts.
+- Added automated geometric hood camera mounting so every car class gets a clean, unobstructed forward sightline, alongside smoother camera transitions and re-exported low-poly car meshes.
+- Upgraded the neural AI architecture with physics-aware policy improvements and consolidated training weights.
+
+## 2026-11-19 21:38
+- Replaced the separate garage/setup screens with the Unified Race Menu, added Solo Practice mode, and introduced Host AI Race & Spectator camera modes.
+- Added rigid-body car-to-car collision physics, improved high-speed steering stability, and refined vehicle numberplate meshes and normals.
+- Added full controller/gamepad support with `X` button special mapping, implemented blended neural AI policies with self-play snapshots, and fixed multiplayer room creation and lobby state handling.
+
+## 2026-11-18 14:49
+- Launched Sound Studio (`SoundEditorModal`) for live engine acoustic synthesis tuning, added multiplayer room lobbies, subpath routing (`/Apex-Miniature`), and pit management controls.
+- Added driving telemetry recording and expanded low-poly vehicle imports including LMP2 Oreca 07 and Porsche 963 updates.
+
+## 2026-11-17 22:48
+- Converted `.kn5` race car models into low-poly 3D OBJ/MTL meshes, consolidated F1 2026, F1 2021, and LMP2 into shared models with selectable team liveries, and launched 3D Livery Studio with UV export.
+- Added Car and Track search bars, implemented 3D track surface projection, and introduced per-class physics tuning profiles and multi-class BoP benchmarks.
+
+## 2026-11-16 22:42
+- Integrated real-world RacingCircuits.info SVG layouts for all 43 circuits and Copernicus DEM real-world elevation profiles.
+- Added the GT4 racing class and expanded the vehicle roster to 76 bespoke cars with 1:1 metric track scaling, wall-sliding, pit walls, corner banking, and kerb collision fixes.
+
+## 2026-11-15 21:27
+- Initial release of **Apex Miniature** featuring 3D miniature motorsport racing, Track Studio custom circuit builder, vehicle physics engine, real-time WebSocket multiplayer sync, and hub navigation.
