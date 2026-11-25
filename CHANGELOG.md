@@ -27,6 +27,22 @@ All notable changes to **Apex Miniature** are documented in this file, ordered f
 - Added multiplayer host ban/unban moderation, multi-race circuit playlists, a mandatory on-track service stop rule, minimum valid lap-time anti-cheat bounds, per-segment shoulder/prop painting in Track Studio, and a shareable community circuit gallery (`/api/tracks`).
 - Upgraded car models to Meshopt-compressed `.glb` assets with 3-tier distance LODs and shader pre-warming, added code-split lazy loading for circuit geometry/elevation data, split core car/physics/viewport modules with an optional Web Worker simulation mode, crafted sculpted custom procedural 3D meshes across all flagship racing classes, and added a 43-circuit × 10-class soak suite plus HTTP/WebSocket server smoke tests.
 
+## 2026-11-25 08:00
+- Removed the upcoming corner callout badge (such as "Sharp Right") from the race HUD and Settings menu.
+- Decluttered the in-race HUD to eliminate overlapping panels (stacking the virtual mirror, status flags, radio subtitles, live inputs, MFD, on-track service crew, FPS/time badge, and proximity radar cleanly) and added drag-grip handles to every HUD widget with saved positions and a "Reset HUD Positions" button in Settings.
+- Removed Safety Cars and Virtual Safety Cars completely while preserving local sector yellow flags for on-track incidents.
+- Removed Drive-Through and Stop-and-Go penalties (replacing repeated infractions with slow-down yields and post-race time penalties) and removed pit-lane entry/exit corridor markings from Track Studio while keeping trackside pit walls and on-track stops for tyres, fuel, and repairs.
+- Set Spotter/Engineer radio chatter and the Dynamic Racing Line ("ideal line") to Off by default.
+- Overhauled Traction Control so it is much gentler across all levels (especially TC 1), triggers only on rear-axle slide for RWD cars or front-axle slip for FWD cars, and is completely disabled on cars without TC in real life (F1 2026, F1 2021, Formula E, and Renault Clio V6).
+
+## 2026-11-25 07:41
+- Added Safety Car (with a miniature 3D Safety Car and flashing amber/green roof lightbar) and Virtual Safety Car periods during multi-car pileups, plus serveable on-track Drive-Through and Stop-and-Go penalties with clear HUD instructions and deadline tracking.
+- Upgraded trackside atmosphere and graphics with player-centered up to 2048×2048 sun shadows, Start/Finish timing towers, final-lap grandstand crowd movement, themed moving landmarks (Ferris wheels, helicopters, blimps), knockable chicane bollards, high-speed motion streaks, hood visor raindrops, and an optional live 3D virtual rear-view mirror in hood, bumper, and cockpit cameras.
+- Upgraded audio spatialization to full 3D HRTF positioning synced with the camera and added procedural tunnel reverberation acoustics.
+- Added steering wheel calibration presets (Logitech G29/G923, Thrustmaster T300, Fanatec, and Combined Pedals), pedal polarity/combined-axis toggles, full D-Pad/A/B controller navigation across all menus, and an async track/car loading progress overlay.
+- Added multiplayer host ban/unban moderation, multi-race circuit playlists, a mandatory on-track service stop rule, minimum valid lap-time anti-cheat bounds, per-segment shoulder/prop painting in Track Studio, and a shareable community circuit gallery (`/api/tracks`).
+- Upgraded car models to Meshopt-compressed `.glb` assets with 3-tier distance LODs and shader pre-warming, added code-split lazy loading for circuit geometry/elevation data, split core car/physics/viewport modules with an optional Web Worker simulation mode, crafted sculpted custom procedural 3D meshes across all flagship racing classes, and added a 43-circuit × 10-class soak suite plus HTTP/WebSocket server smoke tests.
+
 ## 2026-11-23 06:30
 - Added full Time-of-Day lighting (`Midday`, `Dawn`, `Golden Hour`, `Dusk`, `Night`, and accelerated `Dynamic 24h` cycles) with automatic night headlight cones, trackside floodlights, glowing carbon brake rotors, FIA wet rain lights, storm lightning, wet road sheen, and player-centered shadows.
 - Added a pooled racing VFX and post-processing suite featuring tyre smoke, gravel dust, wet rooster-tail spray, exhaust backfires, floor sparks, persistent skidmarks, dynamic 3D racing line, animated marshal flags, selective HDR bloom, miniature tilt-shift depth-of-field, and high-speed peripheral blur.
