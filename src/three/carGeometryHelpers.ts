@@ -229,7 +229,24 @@ export function computeRigHoodMount(
 ): HoodMountOffset {
   const fallback = computeDefaultHoodMount(classId, dimensions);
   root.updateMatrixWorld(true);
-  _hoodBox.setFromObject(bodyGroup);
+  _hoodBox.makeEmpty();
+  const tmpChildBox = new THREE.Box3();
+  bodyGroup.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh && mesh.visible && mesh.geometry) {
+      let vis = true;
+      for (let p: THREE.Object3D | null = obj; p; p = p.parent) {
+        if (!p.visible) {
+          vis = false;
+          break;
+        }
+        if (p === bodyGroup) break;
+      }
+      if (!vis) return;
+      tmpChildBox.setFromObject(mesh);
+      if (!tmpChildBox.isEmpty()) _hoodBox.union(tmpChildBox);
+    }
+  });
   if (_hoodBox.isEmpty()) return fallback;
 
   _hoodBox.getSize(_hoodSize);
@@ -440,8 +457,8 @@ export function buildHullStations(
   isStreetCar: boolean,
 ): HullStationSpec[] {
   const halfLen = length * 0.5;
-  const archR = wheelRadius + 0.048;
-  const innerTubX = Math.max(0.42, trackHalfX - wheelWidth * 0.5 - 0.035);
+  const archR = wheelRadius + 0.054;
+  const innerTubX = Math.max(0.39, trackHalfX - wheelWidth * 0.5 - 0.055);
 
   // Build dense longitudinal sample points including exact circular wheel-well stations around front & rear axles
   const zRaw: number[] = [];
@@ -509,20 +526,20 @@ export function buildHullStations(
     } else if (t <= 0.56) {
       // Side doors / coke-bottle waist
       const pinch = Math.sin(((t - 0.29) / 0.27) * Math.PI);
-      const minWFactor = isProto ? 0.415 : isHatch ? 0.475 : isStreetCar ? 0.46 : 0.455;
+      const minWFactor = isProto ? 0.405 : isHatch ? 0.475 : isStreetCar ? 0.445 : 0.450;
       const startW = isProto ? 0.475 : 0.49;
       halfW = width * (startW - pinch * (startW - minWFactor));
       ySill = Math.max(0.18, archLipY);
-      yBelt = Math.max(archLipY + 0.04, isProto ? 0.54 : isHatch ? 0.60 : 0.56);
-      yCrown = isProto ? 0.53 : isHatch ? 0.61 : 0.58;
+      yBelt = Math.max(archLipY + 0.04, isProto ? 0.535 : isHatch ? 0.60 : 0.555);
+      yCrown = isProto ? 0.515 : isHatch ? 0.61 : 0.575;
     } else if (t <= 0.875) {
       // Front wheel arch & fenders
       const baseFender = isProto ? 0.47 : 0.485;
-      halfW = width * (baseFender + fenderEnv * (isProto ? 0.035 : 0.03));
+      halfW = width * (baseFender + fenderEnv * (isProto ? 0.038 : 0.032));
       ySill = Math.max(0.18, archLipY);
-      yBelt = Math.max(archTopTarget + 0.025, (isProto ? 0.56 : 0.59) + fenderEnv * 0.09);
+      yBelt = Math.max(archTopTarget + 0.025, (isProto ? 0.565 : 0.59) + fenderEnv * 0.095);
       if (isPontoon) {
-        yCrown = 0.45 + (1 - fenderEnv) * 0.03;
+        yCrown = (isProto ? 0.415 : 0.445) + (1 - fenderEnv) * 0.03;
       } else if (isPowerDome) {
         yCrown = 0.57 + fenderEnv * 0.02;
       } else {
@@ -533,18 +550,18 @@ export function buildHullStations(
       const frac = (t - 0.875) / 0.125;
       const smoothFrac = frac * frac * (3 - 2 * frac);
       const baseNose = isProto ? 0.47 : 0.485;
-      halfW = width * (baseNose - smoothFrac * (isProto ? 0.11 : 0.075));
-      ySill = 0.17;
+      halfW = width * (baseNose - smoothFrac * (isProto ? 0.12 : 0.08));
+      ySill = 0.165;
       yBelt = (isProto ? 0.54 : 0.57) * (1 - smoothFrac * 0.44) * Math.max(0.75, design.noseHeightRatio);
       if (isPontoon) {
-        yCrown = (0.45 - smoothFrac * 0.18) * Math.max(0.78, design.noseHeightRatio);
+        yCrown = ((isProto ? 0.415 : 0.445) - smoothFrac * 0.175) * Math.max(0.78, design.noseHeightRatio);
       } else if (isPowerDome) {
         yCrown = (0.57 - smoothFrac * 0.25) * Math.max(0.78, design.noseHeightRatio);
       } else {
         yCrown = (0.54 - smoothFrac * 0.23) * Math.max(0.78, design.noseHeightRatio);
       }
-      yBelt = Math.max(0.24, yBelt);
-      yCrown = Math.max(0.23, yCrown);
+      yBelt = Math.max(0.23, yBelt);
+      yCrown = Math.max(0.22, yCrown);
     }
 
     // Smoothly blend inner wheel-arch recess depth across the arch edge so there are zero vertical creases
@@ -747,28 +764,30 @@ export function createAirfoilWingGeometry(
   spanWidth: number,
   chord = 0.30,
   thickness = 0.052,
-): THREE.ExtrudeGeometry {
+): THREE.BufferGeometry {
   const halfC = chord * 0.5;
   const airfoil = new THREE.Shape();
   airfoil.moveTo(halfC, 0.0);
-  airfoil.quadraticCurveTo(0.0, thickness * 0.55, -halfC, thickness * 0.65);
-  airfoil.lineTo(-halfC, thickness * 0.15);
-  airfoil.quadraticCurveTo(0.0, -thickness * 0.25, halfC, -thickness * 0.12);
+  airfoil.quadraticCurveTo(0.0, thickness * 0.58, -halfC, thickness * 0.68);
+  airfoil.lineTo(-halfC, thickness * 0.14);
+  airfoil.quadraticCurveTo(0.0, -thickness * 0.24, halfC, -thickness * 0.12);
   airfoil.closePath();
 
-  const geo = new THREE.ExtrudeGeometry(airfoil, {
+  const rawGeo = new THREE.ExtrudeGeometry(airfoil, {
     depth: spanWidth,
     bevelEnabled: true,
-    bevelThickness: 0.012,
-    bevelSize: 0.01,
-    bevelSegments: 2,
+    bevelThickness: 0.01,
+    bevelSize: 0.008,
+    bevelSegments: 1,
   });
-  geo.rotateY(Math.PI / 2);
-  geo.translate(-spanWidth * 0.5, 0, 0);
-  return geo;
+  rawGeo.rotateY(Math.PI / 2);
+  rawGeo.translate(-spanWidth * 0.5, 0, 0);
+  const uvGeo = applySixZoneCarUVs(rawGeo, undefined, { isAero: true });
+  rawGeo.dispose();
+  return uvGeo;
 }
 
-export function createSharkFinGeometry(length = 1.05, height = 0.30): THREE.ExtrudeGeometry {
+export function createSharkFinGeometry(length = 1.05, height = 0.30): THREE.BufferGeometry {
   const fin = new THREE.Shape();
   fin.moveTo(0, 0);
   fin.lineTo(length, 0);
@@ -777,16 +796,351 @@ export function createSharkFinGeometry(length = 1.05, height = 0.30): THREE.Extr
   fin.lineTo(0, 0.02);
   fin.closePath();
 
-  const geo = new THREE.ExtrudeGeometry(fin, {
+  const rawGeo = new THREE.ExtrudeGeometry(fin, {
     depth: 0.036,
     bevelEnabled: true,
     bevelThickness: 0.008,
     bevelSize: 0.006,
     bevelSegments: 1,
   });
-  geo.rotateY(Math.PI / 2);
-  geo.translate(-0.018, 0, 0);
-  return geo;
+  rawGeo.rotateY(Math.PI / 2);
+  rawGeo.translate(-0.018, 0, 0);
+  const uvGeo = applySixZoneCarUVs(rawGeo, undefined, { isAero: true });
+  rawGeo.dispose();
+  return uvGeo;
+}
+
+/**
+ * Creates a sculpted chamfered aero wing endplate with swept leading/trailing edges
+ * and clean WINGS_AERO_TRIM six-zone UVs.
+ */
+export function createWingEndplateGeometry(
+  height: number,
+  length: number,
+  thickness = 0.032,
+  sweepTop = 0.06,
+): THREE.BufferGeometry {
+  const halfL = length * 0.5;
+  const halfH = height * 0.5;
+  const plate = new THREE.Shape();
+  plate.moveTo(-halfL, -halfH * 0.85);
+  plate.lineTo(halfL * 0.88, -halfH);
+  plate.quadraticCurveTo(halfL, -halfH * 0.25, halfL - sweepTop, halfH);
+  plate.lineTo(-halfL + sweepTop * 0.35, halfH * 0.96);
+  plate.quadraticCurveTo(-halfL - 0.02, 0, -halfL, -halfH * 0.85);
+  plate.closePath();
+
+  const rawGeo = new THREE.ExtrudeGeometry(plate, {
+    depth: thickness,
+    bevelEnabled: true,
+    bevelThickness: 0.005,
+    bevelSize: 0.004,
+    bevelSegments: 1,
+  });
+  rawGeo.rotateY(Math.PI / 2);
+  rawGeo.translate(-thickness * 0.5, 0, 0);
+  const uvGeo = applySixZoneCarUVs(rawGeo, undefined, { isAero: true });
+  rawGeo.dispose();
+  return uvGeo;
+}
+
+/**
+ * Creates a curved aerodynamic swan-neck rear wing pylon hooking over the wing mainplane.
+ * Local origin sits at the base (y=0, z=0) and sweeps backward (-Z) and up (+Y).
+ */
+export function createSwanNeckPylonGeometry(
+  height = 0.36,
+  reachZ = 0.22,
+  thickness = 0.034,
+): THREE.BufferGeometry {
+  const s = new THREE.Shape();
+  // Shape XY maps to (Z, Y) after rotateY(Math.PI/2): +X in shape becomes -Z in world!
+  s.moveTo(-0.06, 0);
+  s.lineTo(0.05, 0);
+  s.quadraticCurveTo(0.11, height * 0.55, reachZ + 0.06, height + 0.04);
+  s.lineTo(reachZ - 0.04, height + 0.045);
+  s.lineTo(reachZ - 0.06, height - 0.02);
+  s.quadraticCurveTo(0.02, height * 0.52, -0.06, 0);
+  s.closePath();
+
+  const rawGeo = new THREE.ExtrudeGeometry(s, {
+    depth: thickness,
+    bevelEnabled: true,
+    bevelThickness: 0.004,
+    bevelSize: 0.004,
+    bevelSegments: 1,
+  });
+  rawGeo.rotateY(Math.PI / 2);
+  rawGeo.translate(-thickness * 0.5, 0, 0);
+  const uvGeo = applySixZoneCarUVs(rawGeo, undefined, { isAero: true });
+  rawGeo.dispose();
+  return uvGeo;
+}
+
+/**
+ * Creates a sculpted rear Venturi diffuser with angled extractor ceiling, vertical carbon strakes,
+ * and an integrated central FIA rain-light diffuser pod.
+ */
+export function createVenturiDiffuserGroup(params: {
+  width: number;
+  depth: number;
+  height: number;
+  strakeCount: number;
+  rainLightMat: THREE.Material;
+  carbonMat: THREE.Material;
+  matteTrimMat: THREE.Material;
+  track: TrackDisposable;
+  hasRainPod?: boolean;
+}): THREE.Group {
+  const { width, depth, height, strakeCount, rainLightMat, carbonMat, matteTrimMat, track, hasRainPod = true } = params;
+  const group = new THREE.Group();
+  group.name = 'venturi_diffuser';
+
+  // Angled Venturi extractor ramp rising smoothly toward rear exit
+  const rampGeo = track(new THREE.BoxGeometry(width, 0.032, depth));
+  const rampMesh = new THREE.Mesh(rampGeo, matteTrimMat);
+  rampMesh.position.set(0, height * 0.42, 0);
+  rampMesh.rotation.x = 0.24;
+  group.add(rampMesh);
+
+  // Outer diffuser side fences + inner Venturi channel strakes
+  const strakeGeo = track(new THREE.BoxGeometry(0.020, height, depth * 1.02));
+  const n = Math.max(2, strakeCount);
+  for (let i = 0; i < n; i++) {
+    const frac = n === 1 ? 0 : (i / (n - 1)) * 2 - 1;
+    const sx = frac * (width * 0.47);
+    const strake = new THREE.Mesh(strakeGeo, carbonMat);
+    strake.position.set(sx, height * 0.50, -0.005);
+    group.add(strake);
+  }
+
+  // Central FIA rain-light crash pod + glowing rain-light LED array
+  if (hasRainPod) {
+    const podHousing = new THREE.Mesh(track(new THREE.BoxGeometry(0.14, height * 0.85, depth * 0.72)), matteTrimMat);
+    podHousing.position.set(0, height * 0.56, -depth * 0.16);
+    group.add(podHousing);
+
+    const rainLens = new THREE.Mesh(track(new THREE.BoxGeometry(0.095, height * 0.62, 0.028)), rainLightMat);
+    rainLens.name = 'rain_light_pod';
+    rainLens.position.set(0, height * 0.56, -depth * 0.51);
+    group.add(rainLens);
+  }
+
+  return group;
+}
+
+/**
+ * Creates a swept aerodynamic mirror stalk + tapered teardrop mirror pod + reflective glass face.
+ */
+export function createAeroMirrorGroup(params: {
+  sideSign: -1 | 1;
+  stalkLen: number;
+  bodyMat: THREE.Material;
+  trimMat: THREE.Material;
+  mirrorGlassMat: THREE.Material;
+  track: TrackDisposable;
+}): THREE.Group {
+  const { sideSign, stalkLen, bodyMat, trimMat, mirrorGlassMat, track } = params;
+  const g = new THREE.Group();
+  g.name = 'aero_mirror';
+
+  const stalk = new THREE.Mesh(track(new THREE.BoxGeometry(stalkLen, 0.018, 0.028)), trimMat);
+  stalk.position.set(sideSign * (stalkLen * 0.45), -0.012, 0.006);
+  stalk.rotation.z = sideSign * 0.24;
+  g.add(stalk);
+
+  // Tapered teardrop mirror shell (narrowed outer tip, rounded nose)
+  const podGeo = track(new THREE.BoxGeometry(0.095, 0.044, 0.068));
+  const pod = new THREE.Mesh(podGeo, bodyMat);
+  pod.position.set(sideSign * stalkLen, 0.005, -0.008);
+  pod.rotation.y = sideSign * -0.22;
+  pod.castShadow = true;
+  g.add(pod);
+
+  const glass = new THREE.Mesh(track(new THREE.BoxGeometry(0.076, 0.030, 0.010)), mirrorGlassMat);
+  glass.position.set(sideSign * stalkLen, 0.005, -0.040);
+  glass.rotation.y = sideSign * -0.22;
+  g.add(glass);
+
+  return g;
+}
+
+export interface FormulaHullStationSpec {
+  z: number;
+  halfW: number;
+  yBottom: number;
+  yShoulder: number;
+  yDeck: number;
+  cockpitDepth: number;
+  cockpitHalfW: number;
+}
+
+/**
+ * Lofts a multi-station sculpted single-seater monocoque with tapered nosecone,
+ * recessed cockpit tub + raised headrest surround, and coke-bottle engine cover.
+ */
+export function createLoftedFormulaHullGeometry(
+  stations: FormulaHullStationSpec[],
+): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  const nStations = stations.length;
+  // 11 cross-section points per station:
+  // bottom-left, left-shoulder, left-coaming, left-tub-inner, tub-center, right-tub-inner, right-coaming, right-shoulder, bottom-right
+  const nPoints = 9;
+  const positions = new Float32Array(nStations * nPoints * 3);
+  const indices: number[] = [];
+
+  for (let i = 0; i < nStations; i++) {
+    const st = stations[i];
+    const z = st.z;
+    const hw = Math.max(0.05, st.halfW);
+    const cw = Math.min(hw * 0.72, Math.max(0.02, st.cockpitHalfW));
+    const yTub = st.yDeck - Math.max(0, st.cockpitDepth);
+    const yCoam = st.yDeck;
+    const ySh = Math.min(yCoam - 0.01, st.yShoulder);
+    const wBottom = hw * 0.76;
+
+    const pts: [number, number, number][] = [
+      [-wBottom, st.yBottom, z],
+      [-hw, ySh, z],
+      [-cw * 1.15, yCoam, z],
+      [-cw * 0.85, yTub, z],
+      [0, yTub + (st.cockpitDepth > 0.01 ? 0.0 : 0.022), z],
+      [cw * 0.85, yTub, z],
+      [cw * 1.15, yCoam, z],
+      [hw, ySh, z],
+      [wBottom, st.yBottom, z],
+    ];
+
+    const base = i * nPoints;
+    for (let p = 0; p < nPoints; p++) {
+      const idx = (base + p) * 3;
+      positions[idx] = pts[p][0];
+      positions[idx + 1] = pts[p][1];
+      positions[idx + 2] = pts[p][2];
+    }
+  }
+
+  for (let i = 0; i < nStations - 1; i++) {
+    const r0 = i * nPoints;
+    const r1 = (i + 1) * nPoints;
+    for (let k = 0; k < nPoints - 1; k++) {
+      const a = r0 + k;
+      const b = r1 + k;
+      const c = r1 + k + 1;
+      const d = r0 + k + 1;
+      indices.push(a, b, c, a, c, d);
+    }
+    // Bottom keel closure
+    indices.push(r0 + nPoints - 1, r1 + nPoints - 1, r1 + 0);
+    indices.push(r0 + nPoints - 1, r1 + 0, r0 + 0);
+  }
+
+  // Rear & Front end caps
+  for (let k = 1; k < nPoints - 2; k++) {
+    indices.push(0, k, nPoints - 1 - k);
+    indices.push(k, k + 1, nPoints - 1 - k);
+  }
+  const rf = (nStations - 1) * nPoints;
+  for (let k = 1; k < nPoints - 2; k++) {
+    indices.push(rf + 0, rf + nPoints - 1 - k, rf + k);
+    indices.push(rf + k, rf + nPoints - 1 - k, rf + nPoints - 2 - k);
+  }
+
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  const creased = toCreasedNormals(geo, 0.72);
+  geo.dispose();
+  const uvGeo = applySixZoneCarUVs(creased);
+  creased.dispose();
+  return uvGeo;
+}
+
+export interface FormulaSidepodStationSpec {
+  z: number;
+  xInner: number;
+  xOuterFloor: number;
+  xOuterShoulder: number;
+  yFloor: number;
+  yMid: number;
+  yTop: number;
+}
+
+/**
+ * Creates a sculpted sidepod (left or right via sideSign = -1 | 1) with true aero undercut
+ * and coke-bottle rear taper, cleanly UV-mapped into the 6-zone atlas.
+ */
+export function createFormulaSidepodGeometry(
+  stations: FormulaSidepodStationSpec[],
+  sideSign: -1 | 1,
+): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  const nStations = stations.length;
+  const nPoints = 6;
+  const positions = new Float32Array(nStations * nPoints * 3);
+  const indices: number[] = [];
+
+  for (let i = 0; i < nStations; i++) {
+    const st = stations[i];
+    const z = st.z;
+    const pts: [number, number, number][] = [
+      [sideSign * st.xInner, st.yFloor, z],
+      [sideSign * st.xOuterFloor, st.yFloor + 0.015, z],
+      [sideSign * st.xOuterShoulder, st.yMid, z],
+      [sideSign * (st.xOuterShoulder * 0.90), st.yTop, z],
+      [sideSign * (st.xInner + (st.xOuterShoulder - st.xInner) * 0.25), st.yTop + 0.015, z],
+      [sideSign * st.xInner, st.yTop - 0.01, z],
+    ];
+    const base = i * nPoints;
+    for (let p = 0; p < nPoints; p++) {
+      const idx = (base + p) * 3;
+      positions[idx] = pts[p][0];
+      positions[idx + 1] = pts[p][1];
+      positions[idx + 2] = pts[p][2];
+    }
+  }
+
+  for (let i = 0; i < nStations - 1; i++) {
+    const r0 = i * nPoints;
+    const r1 = (i + 1) * nPoints;
+    for (let k = 0; k < nPoints; k++) {
+      const kn = (k + 1) % nPoints;
+      const a = r0 + k;
+      const b = r1 + k;
+      const c = r1 + kn;
+      const d = r0 + kn;
+      if (sideSign > 0) {
+        indices.push(a, b, c, a, c, d);
+      } else {
+        indices.push(a, c, b, a, d, c);
+      }
+    }
+  }
+
+  // Front & Rear caps
+  for (let k = 1; k < nPoints - 1; k++) {
+    if (sideSign > 0) {
+      indices.push(0, k, k + 1);
+    } else {
+      indices.push(0, k + 1, k);
+    }
+  }
+  const rf = (nStations - 1) * nPoints;
+  for (let k = 1; k < nPoints - 1; k++) {
+    if (sideSign > 0) {
+      indices.push(rf, rf + k + 1, rf + k);
+    } else {
+      indices.push(rf, rf + k, rf + k + 1);
+    }
+  }
+
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  const creased = toCreasedNormals(geo, 0.72);
+  geo.dispose();
+  const uvGeo = applySixZoneCarUVs(creased);
+  creased.dispose();
+  return uvGeo;
 }
 
 export function createDiecastWheel(
@@ -805,19 +1159,19 @@ export function createDiecastWheel(
   const rimRadius = radius * 0.66;
 
   // Open-ended tire tread band + annular sidewalls so wheel center is truly hollow
-  const tireGeo = track(new THREE.CylinderGeometry(radius, radius, width, 28, 1, true));
+  const tireGeo = track(new THREE.CylinderGeometry(radius, radius, width, 22, 1, true));
   tireGeo.rotateZ(Math.PI / 2);
   const tireMesh = new THREE.Mesh(tireGeo, tireMat);
   tireMesh.castShadow = true;
   wheelGroup.add(tireMesh);
 
-  const outerWallGeo = track(new THREE.RingGeometry(rimRadius, radius, 28));
+  const outerWallGeo = track(new THREE.RingGeometry(rimRadius, radius, 22));
   outerWallGeo.rotateY(outSign > 0 ? Math.PI / 2 : -Math.PI / 2);
   const outerWall = new THREE.Mesh(outerWallGeo, tireMat);
   outerWall.position.x = outSign * width * 0.5;
   wheelGroup.add(outerWall);
 
-  const innerWallGeo = track(new THREE.RingGeometry(rimRadius, radius, 28));
+  const innerWallGeo = track(new THREE.RingGeometry(rimRadius, radius, 22));
   innerWallGeo.rotateY(outSign > 0 ? -Math.PI / 2 : Math.PI / 2);
   const innerWall = new THREE.Mesh(innerWallGeo, tireMat);
   innerWall.position.x = -outSign * width * 0.5;
@@ -826,7 +1180,7 @@ export function createDiecastWheel(
   if (isGrooved && grooveMat) {
     const grooveOffsets = [-width * 0.32, -width * 0.11, width * 0.11, width * 0.32];
     for (const gx of grooveOffsets) {
-      const gGeo = track(new THREE.CylinderGeometry(radius + 0.003, radius + 0.003, width * 0.08, 24, 1, true));
+      const gGeo = track(new THREE.CylinderGeometry(radius + 0.003, radius + 0.003, width * 0.08, 18, 1, true));
       gGeo.rotateZ(Math.PI / 2);
       const gMesh = new THREE.Mesh(gGeo, grooveMat);
       gMesh.position.x = gx;
@@ -843,54 +1197,83 @@ export function createDiecastWheel(
       side: THREE.DoubleSide,
     }),
   );
-  const rimGeo = track(new THREE.CylinderGeometry(rimRadius, rimRadius, width * 0.96, 24, 1, true));
+  const rimGeo = track(new THREE.CylinderGeometry(rimRadius, rimRadius, width * 0.96, 18, 1, true));
   rimGeo.rotateZ(Math.PI / 2);
   const rimMesh = new THREE.Mesh(rimGeo, barrelMat);
   wheelGroup.add(rimMesh);
 
   // Outer alloy rim lip on outward wheel face
-  const lipGeo = track(new THREE.TorusGeometry(rimRadius, 0.015, 8, 28));
+  const lipGeo = track(new THREE.TorusGeometry(rimRadius, 0.014, 6, 20));
   lipGeo.rotateY(Math.PI / 2);
   const lipMesh = new THREE.Mesh(lipGeo, rimMat);
   lipMesh.position.x = outSign * width * 0.49;
   wheelGroup.add(lipMesh);
 
-  // Split 5-spoke / Y-spoke alloy wheel face clearly visible on outward side
+  // Concave split 5-spoke / Y-spoke motorsport wheel face + sculpted hub flange & center-lock nut
   const spokeGroup = new THREE.Group();
-  spokeGroup.position.x = outSign * width * 0.36;
-  const spokeGeo = track(new THREE.BoxGeometry(width * 0.14, rimRadius * 0.95, rimRadius * 0.11));
+  spokeGroup.position.x = outSign * width * 0.35;
+  const spokeGeo = track(new THREE.BoxGeometry(width * 0.11, rimRadius * 0.78, rimRadius * 0.095));
   for (let s = 0; s < 5; s++) {
     const baseAngle = (s * 2 * Math.PI) / 5;
-    for (const forkOffset of [-0.14, 0.14]) {
+    for (const forkOffset of [-0.15, 0.15]) {
       const spoke = new THREE.Mesh(spokeGeo, rimMat);
-      spoke.rotation.x = baseAngle + forkOffset;
+      const ang = baseAngle + forkOffset;
+      spoke.position.set(0, Math.cos(ang) * rimRadius * 0.55, Math.sin(ang) * rimRadius * 0.55);
+      spoke.rotation.x = ang;
       spokeGroup.add(spoke);
     }
   }
-  const hubGeo = track(new THREE.CylinderGeometry(rimRadius * 0.24, rimRadius * 0.24, width * 0.18, 16));
+  const hubGeo = track(new THREE.CylinderGeometry(rimRadius * 0.25, rimRadius * 0.28, width * 0.16, 12));
   hubGeo.rotateZ(Math.PI / 2);
   const hubMesh = new THREE.Mesh(hubGeo, rimMat);
   spokeGroup.add(hubMesh);
 
-  const nutGeo = track(new THREE.CylinderGeometry(rimRadius * 0.11, rimRadius * 0.11, width * 0.22, 12));
+  const collarGeo = track(new THREE.CylinderGeometry(rimRadius * 0.16, rimRadius * 0.16, width * 0.19, 10));
+  collarGeo.rotateZ(Math.PI / 2);
+  const collarMesh = new THREE.Mesh(collarGeo, barrelMat);
+  spokeGroup.add(collarMesh);
+
+  const nutGeo = track(new THREE.CylinderGeometry(rimRadius * 0.10, rimRadius * 0.11, width * 0.23, 8));
   nutGeo.rotateZ(Math.PI / 2);
   const nutMesh = new THREE.Mesh(nutGeo, caliperMat);
   spokeGroup.add(nutMesh);
   wheelGroup.add(spokeGroup);
 
-  // Slotted brake rotor & painted brake caliper recessed behind spokes
+  // Two-piece slotted brake rotor + inner rotor hat & multi-piston brake caliper
   const rotorRadius = rimRadius * 0.82;
-  const rotorGeo = track(new THREE.CylinderGeometry(rotorRadius, rotorRadius, width * 0.10, 20));
+  const rotorGeo = track(new THREE.CylinderGeometry(rotorRadius, rotorRadius, width * 0.085, 16));
   rotorGeo.rotateZ(Math.PI / 2);
   const rotorMesh = new THREE.Mesh(rotorGeo, rotorMat);
+  rotorMesh.name = 'brake_rotor';
   rotorMesh.position.x = outSign * width * 0.12;
   wheelGroup.add(rotorMesh);
 
-  const caliperGeo = track(new THREE.BoxGeometry(width * 0.20, rotorRadius * 0.42, rotorRadius * 0.34));
-  const caliperMesh = new THREE.Mesh(caliperGeo, caliperMat);
-  caliperMesh.position.set(outSign * width * 0.15, rotorRadius * 0.68, rotorRadius * 0.30);
-  caliperMesh.rotation.x = -0.42;
-  wheelGroup.add(caliperMesh);
+  const bellGeo = track(new THREE.CylinderGeometry(rotorRadius * 0.44, rotorRadius * 0.44, width * 0.11, 12));
+  bellGeo.rotateZ(Math.PI / 2);
+  const bellMesh = new THREE.Mesh(bellGeo, barrelMat);
+  bellMesh.name = 'brake_bell';
+  bellMesh.position.x = outSign * width * 0.12;
+  wheelGroup.add(bellMesh);
+
+  const caliperGroup = new THREE.Group();
+  caliperGroup.name = 'brake_caliper';
+  caliperGroup.position.set(outSign * width * 0.15, rotorRadius * 0.66, rotorRadius * 0.34);
+  caliperGroup.rotation.x = -0.46;
+
+  const caliperBody = new THREE.Mesh(
+    track(new THREE.BoxGeometry(width * 0.20, rotorRadius * 0.44, rotorRadius * 0.34)),
+    caliperMat,
+  );
+  caliperGroup.add(caliperBody);
+
+  const caliperBridge = new THREE.Mesh(
+    track(new THREE.BoxGeometry(width * 0.23, rotorRadius * 0.24, rotorRadius * 0.20)),
+    caliperMat,
+  );
+  caliperBridge.position.set(outSign * width * 0.02, 0, rotorRadius * 0.08);
+  caliperGroup.add(caliperBridge);
+
+  wheelGroup.add(caliperGroup);
 
   return wheelGroup;
 }

@@ -239,11 +239,10 @@ export function buildDiecastCar(
     }
   }
 
-  // FIA Rear Rain Light & Night Volumetric Headlight Beam Cones
-  const rainLamp = new THREE.Mesh(track(new THREE.BoxGeometry(0.11, 0.16, 0.05)), materials.rainLightMat);
-  rainLamp.position.set(0, 0.44, -length * 0.49);
-  bodyGroup.add(rainLamp);
+  const realDims = carId ? getRealWorldCarDimensions(carId, classId) : undefined;
+  const hoodMount = computeRigHoodMount(root, bodyGroup, classId, realDims);
 
+  // Night Volumetric Headlight Beam Cones (mounted after computeRigHoodMount so invisible cones never skew hood bounds)
   const headlightCones: THREE.Mesh[] = [];
   if (!isOpenWheel) {
     const coneGeo = track(new THREE.ConeGeometry(1.35, 11.5, 14, 1, true));
@@ -267,9 +266,6 @@ export function buildDiecastCar(
       headlightCones.push(cone);
     }
   }
-
-  const realDims = carId ? getRealWorldCarDimensions(carId, classId) : undefined;
-  const hoodMount = computeRigHoodMount(root, bodyGroup, classId, realDims);
 
   return {
     root,

@@ -102,6 +102,7 @@ export interface CarMaterialSet {
   tertiaryMat: THREE.MeshStandardMaterial;
   carbonMat: THREE.MeshStandardMaterial;
   matteTrimMat: THREE.MeshStandardMaterial;
+  titaniumMat: THREE.MeshStandardMaterial;
   canopyMat: THREE.MeshPhysicalMaterial;
   tireMat: THREE.MeshStandardMaterial;
   tireGrooveMat: THREE.MeshStandardMaterial;
@@ -201,6 +202,15 @@ export function createCarMaterials(
       color: 0x15181e,
       roughness: 0.82,
       metalness: 0.1,
+    }),
+  );
+
+  const titaniumMat = track(
+    new THREE.MeshStandardMaterial({
+      name: 'TITANIUM_HALO',
+      color: 0x9ca3af,
+      roughness: 0.26,
+      metalness: 0.88,
     }),
   );
 
@@ -323,6 +333,7 @@ export function createCarMaterials(
     tertiaryMat,
     carbonMat,
     matteTrimMat,
+    titaniumMat,
     canopyMat,
     tireMat,
     tireGrooveMat,
