@@ -31,6 +31,7 @@ import {
   KeybindMap,
   ParticleDensitySetting,
   RacingLineMode,
+  resetHudWidgetOffsets,
   setGameSettings,
   ShadowQuality,
   SteeringLockCurve,
@@ -1193,17 +1194,28 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     onChange={(v) => patch({ showPedalTrace: v })}
                   />
                   <ToggleRow
-                    label="Upcoming Corner Callout Badge"
-                    description="Direction arrow, recommended gear & distance countdown"
-                    checked={settings.showCornerCallouts}
-                    onChange={(v) => patch({ showCornerCallouts: v })}
-                  />
-                  <ToggleRow
                     label="Floating Driver Nametags"
                     description="Show car labels above nearby rivals on track (toggle with N)"
                     checked={settings.showNametags}
                     onChange={(v) => patch({ showNametags: v })}
                   />
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-white/10">
+                  <div>
+                    <div className="text-xs font-bold text-white/90">HUD Widget Layout</div>
+                    <div className="text-[11px] text-white/50">
+                      Drag any HUD panel by its grip handle in-race to reposition it
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => resetHudWidgetOffsets()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/10 hover:bg-white/15 border border-white/15 text-white/90 cursor-pointer transition"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reset HUD Positions
+                  </button>
                 </div>
               </section>
             </div>

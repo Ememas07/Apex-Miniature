@@ -197,7 +197,6 @@ export interface GameSettings {
   hudScale: number; // 0.75..1.25
   showVirtualMirror: boolean;
   showPedalTrace: boolean;
-  showCornerCallouts: boolean;
   showNametags: boolean;
   minimapRotate: boolean;
   units: UnitsSystem;
@@ -222,7 +221,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   tcDefault: 'auto',
   stabilityControl: true,
   autoRecovery: true,
-  racingLineMode: 'corners-only',
+  racingLineMode: 'off',
   steerDeadzone: 0.08,
   steerLinearity: 1.35,
   steerSensitivity: 1.0,
@@ -256,7 +255,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   collisionVolume: 0.85,
   uiRadioVolume: 0.85,
   musicVolume: 0.35,
-  engineerVerbosity: 'full',
+  engineerVerbosity: 'off',
   radioVoiceEnabled: false,
 
   fovOffset: 0,
@@ -269,7 +268,6 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   hudScale: 1.0,
   showVirtualMirror: true,
   showPedalTrace: true,
-  showCornerCallouts: true,
   showNametags: true,
   minimapRotate: false,
   units: 'metric',
@@ -503,7 +501,6 @@ function sanitizeSettings(raw: unknown): GameSettings {
     hudScale: clampNum(p.hudScale, 0.75, 1.25, d.hudScale),
     showVirtualMirror: typeof p.showVirtualMirror === 'boolean' ? p.showVirtualMirror : d.showVirtualMirror,
     showPedalTrace: typeof p.showPedalTrace === 'boolean' ? p.showPedalTrace : d.showPedalTrace,
-    showCornerCallouts: typeof p.showCornerCallouts === 'boolean' ? p.showCornerCallouts : d.showCornerCallouts,
     showNametags: typeof p.showNametags === 'boolean' ? p.showNametags : d.showNametags,
     minimapRotate: typeof p.minimapRotate === 'boolean' ? p.minimapRotate : d.minimapRotate,
     units: isOneOf(p.units, ['metric', 'imperial'] as const) ? p.units : d.units,
@@ -563,6 +560,74 @@ export function subscribeGameSettings(listener: SettingsListener): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
+  };
+}
+
+export type HudWidgetId =
+  | 'standings'
+  | 'topCenter'
+  | 'virtualMirror'
+  | 'topRight'
+  | 'mfd'
+  | 'telemetry'
+  | 'pitPrompt'
+  | 'radar'
+  | 'aiDirector'
+  | 'aiVisualizer';
+
+export type HudWidgetOffsets = Partial<Record<HudWidgetId, { x: number; y: number }>>;
+
+const HUD_LAYOUT_STORAGE_KEY = 'apex_hud_layout_v1';
+const hudLayoutListeners = new Set<(offsets: HudWidgetOffsets) => void>();
+
+export function loadHudWidgetOffsets(): HudWidgetOffsets {
+  try {
+    if (typeof localStorage === 'undefined') return {};
+    const raw = localStorage.getItem(HUD_LAYOUT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: HudWidgetOffsets = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v && typeof v === 'object') {
+        const pt = v as { x?: unknown; y?: unknown };
+        if (typeof pt.x === 'number' && Number.isFinite(pt.x) && typeof pt.y === 'number' && Number.isFinite(pt.y)) {
+          out[k as HudWidgetId] = { x: pt.x, y: pt.y };
+        }
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveHudWidgetOffsets(offsets: HudWidgetOffsets): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(HUD_LAYOUT_STORAGE_KEY, JSON.stringify(offsets));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+  hudLayoutListeners.forEach((fn) => fn(offsets));
+}
+
+export function resetHudWidgetOffsets(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(HUD_LAYOUT_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  hudLayoutListeners.forEach((fn) => fn({}));
+}
+
+export function subscribeHudWidgetOffsets(listener: (offsets: HudWidgetOffsets) => void): () => void {
+  hudLayoutListeners.add(listener);
+  return () => {
+    hudLayoutListeners.delete(listener);
   };
 }
 

@@ -5,7 +5,6 @@ import {
   AIDifficulty,
   CarClassId,
   CarSpec,
-  CornerCallout,
   DriverStandingsEntry,
   PitServiceAction,
   TcLevel,
@@ -290,16 +289,58 @@ export function formatLapTime(seconds: number | null): string {
   return `${mins}:${secs < 10 ? '0' : ''}${secs.toFixed(2)}`;
 }
 
+export type CarDrivetrain = 'rwd' | 'fwd' | 'awd';
+
 /**
- * Resolves the authentic class-default Traction Control level when settings.tractionControl === 'auto'.
+ * Resolves the real-world drivetrain layout for a car so TC only monitors
+ * rear-axle slip on RWD cars, front-axle slip on FWD cars, and both on AWD cars.
  */
-export function resolveClassDefaultTc(classId: CarClassId, setting: 'auto' | TcLevel): TcLevel {
+export function getCarDrivetrain(carId: string, classId: CarClassId): CarDrivetrain {
+  if (carId === 'honda-civic-type-r') return 'fwd';
+  if (
+    carId === 'nissan-gtr-nismo' ||
+    carId === 'porsche-918-spyder' ||
+    classId === CarClassId.FORMULA_E
+  ) {
+    return 'awd';
+  }
+  return 'rwd';
+}
+
+/**
+ * Returns whether the car is equipped with Traction Control in real life.
+ * F1 2026, F1 2021, Formula E, and the Renault Clio V6 Phase 2 do not have TC IRL.
+ */
+export function isCarTcEquipped(classId: CarClassId, carId?: string): boolean {
+  if (carId === 'renault-clio-v6') return false;
+  if (
+    classId === CarClassId.F1_2026 ||
+    classId === CarClassId.F1_2021 ||
+    classId === CarClassId.FORMULA_E
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Resolves the authentic class-default Traction Control level when settings.tcDefault === 'auto'.
+ * Forces TC OFF (0) on cars that do not have Traction Control IRL.
+ */
+export function resolveClassDefaultTc(
+  classId: CarClassId,
+  setting: 'auto' | TcLevel,
+  carId?: string,
+): TcLevel {
+  if (!isCarTcEquipped(classId, carId)) return 0;
   if (setting !== 'auto') return setting;
   switch (classId) {
     case CarClassId.GT3:
     case CarClassId.GT4:
       return 2;
     case CarClassId.HYPERCAR_GTP:
+    case CarClassId.LMP2:
+    case CarClassId.F1_2005:
     case CarClassId.SUPERCAR:
     case CarClassId.TRACK_COUPE:
       return 1;
@@ -346,66 +387,4 @@ export function tryStepMecachromeEvent(
     }
   }
   return false;
-}
-
-/**
- * Scans the compiled track ahead of the car to detect the next major braking zone / corner
- * for HUD corner callout badges (direction, severity, distance, suggested gear).
- */
-export function computeUpcomingCornerInfo(
-  track: CompiledTrack,
-  trackT: number,
-  speedMs: number,
-): CornerCallout | null {
-  const totalLen = Math.max(100, track.totalLength);
-  const lookaheadM = Math.max(70, Math.min(240, speedMs * 3.4));
-  const stepM = 12;
-  let peakCurv = 0;
-  let peakDist = 0;
-  let peakSign = 0;
-  let signFlips = 0;
-  let prevSign = 0;
-
-  for (let d = 18; d <= lookaheadM; d += stepM) {
-    const t = (((trackT + d / totalLen) % 1) + 1) % 1;
-    const s1 = sampleTrackAtT(track, t);
-    const s2 = sampleTrackAtT(track, (((t + 10 / totalLen) % 1) + 1) % 1);
-    const h1 = Math.atan2(s1.tx, s1.tz);
-    const h2 = Math.atan2(s2.tx, s2.tz);
-    let dh = h2 - h1;
-    while (dh > Math.PI) dh -= Math.PI * 2;
-    while (dh < -Math.PI) dh += Math.PI * 2;
-    const curv = Math.abs(dh) / 10; // rad/m
-    const sign = dh > 0.018 ? 1 : dh < -0.018 ? -1 : 0;
-    if (sign !== 0) {
-      if (prevSign !== 0 && sign !== prevSign && curv > 0.006) {
-        signFlips++;
-      }
-      prevSign = sign;
-    }
-    if (curv > peakCurv) {
-      peakCurv = curv;
-      peakDist = d;
-      peakSign = dh >= 0 ? 1 : -1;
-    }
-  }
-
-  if (peakCurv < 0.0065) return null;
-
-  const severity: CornerCallout['severity'] =
-    peakCurv > 0.026 ? 'hairpin' : peakCurv > 0.017 ? 'sharp' : peakCurv > 0.011 ? 'medium' : 'fast';
-  const direction: CornerCallout['direction'] =
-    signFlips >= 1 && peakCurv > 0.011 ? 'chicane' : peakSign > 0 ? 'left' : 'right';
-  const suggestedGear =
-    severity === 'hairpin' ? 1 : severity === 'sharp' ? 2 : severity === 'medium' ? 3 : 5;
-  const cornerSafeSpeedMs = Math.sqrt(18 / Math.max(0.004, peakCurv));
-  const brakingRecommended = speedMs > cornerSafeSpeedMs * 1.12 && peakDist < Math.max(95, speedMs * 2.2);
-
-  return {
-    direction,
-    severity,
-    distanceM: Math.round(peakDist / 5) * 5,
-    suggestedGear,
-    brakingRecommended,
-  };
 }

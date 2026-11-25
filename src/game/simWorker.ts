@@ -35,7 +35,6 @@ import {
   PitStrategy,
   RaceFlagState,
   RaceStartType,
-  SafetyCarPhase,
   SectorFlag,
   TcLevel,
   TireCompound,
@@ -151,12 +150,6 @@ export interface SimWorkerCarTelemetry {
   postRacePenaltySeconds: number;
   penaltyReason: PenaltyReason | null;
   penaltyType: PenaltyType | null;
-  heavyPenaltyHoldProgress: number;
-  heavyPenaltyIssuedLap: number | null;
-  heavyPenaltyDeadlineLap: number | null;
-  neutralizationSpeedCapMs: number | null;
-  safetyCarQueueTargetSpeedMs: number | null;
-  safetyCarBunchingGapM: number | null;
   surfaceType: TrackSurfaceType;
   crestLoadFactor: number;
   dirtyAirStrength: number;
@@ -189,12 +182,6 @@ export interface SimWorkerRaceControlSummary {
   globalFlag: RaceFlagState;
   sectorFlags: [SectorFlag, SectorFlag, SectorFlag];
   message: string | null;
-  safetyCarActive: boolean;
-  safetyCarPhase: SafetyCarPhase;
-  safetyCarTrackT: number;
-  safetyCarLateralOffset: number;
-  safetyCarSpeedMs: number;
-  neutralizationSpeedCapMs: number | null;
   trackWetness: number;
   rainIntensity: number;
   trackRubber: number;
@@ -441,12 +428,6 @@ function buildTelemetryForCar(c: CarSimState): SimWorkerCarTelemetry {
     postRacePenaltySeconds: c.postRacePenaltySeconds ?? 0,
     penaltyReason: c.penaltyReason ?? null,
     penaltyType: c.penaltyType ?? null,
-    heavyPenaltyHoldProgress: c.heavyPenaltyHoldProgress ?? 0,
-    heavyPenaltyIssuedLap: c.heavyPenaltyIssuedLap ?? null,
-    heavyPenaltyDeadlineLap: c.heavyPenaltyDeadlineLap ?? null,
-    neutralizationSpeedCapMs: c.neutralizationSpeedCapMs ?? null,
-    safetyCarQueueTargetSpeedMs: c.safetyCarQueueTargetSpeedMs ?? null,
-    safetyCarBunchingGapM: c.safetyCarBunchingGapM ?? null,
     surfaceType: c.surfaceType ?? 'asphalt',
     crestLoadFactor: c.crestLoadFactor ?? 1,
     dirtyAirStrength: c.dirtyAirStrength ?? 0,
@@ -749,12 +730,6 @@ if (isDedicatedWorkerEnv()) {
         globalFlag: rt.raceControl.globalFlag,
         sectorFlags: [...rt.raceControl.sectorFlags] as [SectorFlag, SectorFlag, SectorFlag],
         message: rt.raceControl.message,
-        safetyCarActive: rt.raceControl.safetyCar.active,
-        safetyCarPhase: rt.raceControl.safetyCar.phase,
-        safetyCarTrackT: rt.raceControl.safetyCar.trackT,
-        safetyCarLateralOffset: rt.raceControl.safetyCar.lateralOffset,
-        safetyCarSpeedMs: rt.raceControl.safetyCar.speedMs,
-        neutralizationSpeedCapMs: rt.raceControl.neutralizationSpeedCapMs,
         trackWetness: rt.weatherSystem.trackWetness,
         rainIntensity: rt.weatherSystem.rainIntensity,
         trackRubber: rt.weatherSystem.trackRubber,

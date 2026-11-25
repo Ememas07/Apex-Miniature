@@ -732,24 +732,8 @@ export function TrackStudioModal({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Pit lane corridor line (ordered smoothly across S/F t=0.88 -> 1.0 -> 0.10)
-        const pitSideSign = trackSpec.pitSide === 'right' ? 1 : -1;
-        const nSamples = compiledTrack.samples.length;
-        const startIdx = Math.floor(nSamples * 0.88);
-        const endSpan = Math.floor(nSamples * 0.22);
-        ctx.beginPath();
-        for (let k = 0; k <= endSpan; k += 2) {
-          const s = compiledTrack.samples[(startIdx + k) % nSamples];
-          const pitLat = pitSideSign * (trackSpec.trackWidth * 0.5 + 5.2);
-          const pt = toScreen(s.x + s.nx * pitLat, s.z + s.nz * pitLat);
-          if (k === 0) ctx.moveTo(pt.sx, pt.sy);
-          else ctx.lineTo(pt.sx, pt.sy);
-        }
-        ctx.strokeStyle = '#facc15';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-
         // Per-segment propType trackside badges
+        const nSamples = compiledTrack.samples.length;
         for (let idx = 0; idx < nWps; idx++) {
           const wp = trackSpec.waypoints[idx] as StudioTrackWaypoint;
           const prop = wp.propType ?? wp.sceneryProp;
@@ -2357,9 +2341,9 @@ export function TrackStudioModal({
                 </div>
               </div>
 
-              {/* Pit Lane Side */}
+              {/* Pit Wall & Paddock Side */}
               <div className="flex items-center justify-between pt-1">
-                <span className="text-slate-300 font-medium">Pit Lane Placement</span>
+                <span className="text-slate-300 font-medium">Pit Wall / Paddock Side</span>
                 <div className="flex rounded bg-black/40 border border-white/10 p-0.5">
                   <button
                     type="button"

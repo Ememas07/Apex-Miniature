@@ -7,10 +7,10 @@ import {
   CarSimState,
   computeRollingFormationControl,
   computeStandings,
-  computeUpcomingCornerInfo,
   createCarSimState,
   getClassFuelCapacityLiters,
   getRollingFormationSpeedMs,
+  isCarTcEquipped,
   requestOnTrackPitStop,
   resolveCarCollisions,
   resolveClassDefaultTc,
@@ -24,8 +24,6 @@ import {
   createRaceControlState,
   createWeatherSystemState,
   cycleErsMode,
-  DRIVE_THROUGH_HOLD_SECONDS,
-  evaluateOnTrackPenaltyServe,
   evaluateStandingStartLaunch,
   isCarInYellowMicrosector,
   LAUNCH_RPM_SWEET_SPOT,
@@ -33,7 +31,6 @@ import {
   sampleLocalTrackSurfaceWeather,
   stepRaceControl,
   stepWeatherSystem,
-  STOP_AND_GO_HOLD_SECONDS,
   TrackSpecialZones,
   WeatherSystemState,
 } from '../game/raceSystems';
@@ -279,12 +276,6 @@ class SimWorkerBridge {
       car.postRacePenaltySeconds = t.postRacePenaltySeconds;
       car.penaltyReason = t.penaltyReason;
       car.penaltyType = t.penaltyType;
-      car.heavyPenaltyHoldProgress = t.heavyPenaltyHoldProgress;
-      car.heavyPenaltyIssuedLap = t.heavyPenaltyIssuedLap;
-      car.heavyPenaltyDeadlineLap = t.heavyPenaltyDeadlineLap;
-      car.neutralizationSpeedCapMs = t.neutralizationSpeedCapMs;
-      car.safetyCarQueueTargetSpeedMs = t.safetyCarQueueTargetSpeedMs;
-      car.safetyCarBunchingGapM = t.safetyCarBunchingGapM;
       car.surfaceType = t.surfaceType;
       car.crestLoadFactor = t.crestLoadFactor;
       car.dirtyAirStrength = t.dirtyAirStrength;
@@ -317,12 +308,6 @@ class SimWorkerBridge {
     raceControl.globalFlag = rc.globalFlag;
     raceControl.sectorFlags = rc.sectorFlags;
     raceControl.message = rc.message;
-    raceControl.safetyCar.active = rc.safetyCarActive;
-    raceControl.safetyCar.phase = rc.safetyCarPhase;
-    raceControl.safetyCar.trackT = rc.safetyCarTrackT;
-    raceControl.safetyCar.lateralOffset = rc.safetyCarLateralOffset;
-    raceControl.safetyCar.speedMs = rc.safetyCarSpeedMs;
-    raceControl.neutralizationSpeedCapMs = rc.neutralizationSpeedCapMs;
 
     weatherSystem.trackWetness = rc.trackWetness;
     weatherSystem.rainIntensity = rc.rainIntensity;
@@ -690,7 +675,7 @@ export class RaceSimulationEngine {
           damageLevel: cfg.damageLevel ?? 'light',
           absLevel: cfg.absLevel ?? 'low',
           transmissionMode: ctx.settings.transmissionMode,
-          tcLevel: resolveClassDefaultTc(playerSpec.classId, ctx.settings.tcDefault),
+          tcLevel: resolveClassDefaultTc(playerSpec.classId, ctx.settings.tcDefault, playerSpec.id),
           stabilityControl: ctx.settings.stabilityControl,
         };
         const pCar = createCarSimState({ ...initSpec, compiledTrack: compiled });
@@ -975,7 +960,7 @@ export class RaceSimulationEngine {
     const pCar = this.cars.find((c) => c.isPlayer);
     if (pCar) {
       pCar.transmissionMode = settings.transmissionMode;
-      pCar.tcLevel = resolveClassDefaultTc(pCar.carSpec.classId, settings.tcDefault);
+      pCar.tcLevel = resolveClassDefaultTc(pCar.carSpec.classId, settings.tcDefault, pCar.carSpec.id);
       pCar.stabilityControl = settings.stabilityControl;
       if (this.workerBridge.isActive(this.workerRequested)) {
         this.workerBridge.queueCommand({
@@ -1023,6 +1008,12 @@ export class RaceSimulationEngine {
   public cycleTcLevel(): TcLevel | null {
     const pCar = this.cars.find((c) => c.isPlayer);
     if (!pCar) return null;
+    if (!isCarTcEquipped(pCar.carSpec.classId, pCar.carSpec.id)) {
+      pCar.tcLevel = 0;
+      this.raceControl.message = 'TRACTION CONTROL: NOT EQUIPPED ON THIS CAR';
+      this.raceControl.messageTimer = 1.8;
+      return 0;
+    }
     const next = (((pCar.tcLevel ?? 0) + 1) % 4) as TcLevel;
     pCar.tcLevel = next;
     this.raceControl.message = `TRACTION CONTROL: ${next === 0 ? 'OFF' : `LEVEL ${next}`}`;
@@ -1857,44 +1848,6 @@ export class RaceSimulationEngine {
     }
     const activeSub = this.raceRadio.getSubtitle(this.raceElapsed);
 
-    // Serveable heavy penalty ('drive-through' | 'stop-and-go') HUD telemetry
-    const heavyPenalty = this.raceControl.heavyPenaltyByCarId.get(hudFocusCar.id);
-    const activePenaltyType = hudFocusCar.penaltyType ?? heavyPenalty?.penaltyType ?? null;
-    const isHeavyPenalty =
-      activePenaltyType === 'drive-through' || activePenaltyType === 'stop-and-go';
-    const roadHalfW = this.compiledTrack.spec.trackWidth * 0.5;
-    const penaltyServeProgress = isHeavyPenalty
-      ? heavyPenalty?.holdProgress ?? hudFocusCar.heavyPenaltyHoldProgress ?? 0
-      : undefined;
-    const penaltyServeRequired = isHeavyPenalty
-      ? heavyPenalty?.requiredHoldSeconds ??
-        (activePenaltyType === 'stop-and-go'
-          ? STOP_AND_GO_HOLD_SECONDS
-          : DRIVE_THROUGH_HOLD_SECONDS)
-      : undefined;
-    const penaltyDeadlineLap = isHeavyPenalty
-      ? heavyPenalty?.deadlineLap ?? hudFocusCar.heavyPenaltyDeadlineLap ?? null
-      : null;
-    const penaltyServeInstruction = isHeavyPenalty
-      ? evaluateOnTrackPenaltyServe({
-          penaltyType: activePenaltyType,
-          speedMs: hudFocusCar.speed,
-          lateralOffset: hudFocusCar.lateralOffset,
-          trackHalfWidth: roadHalfW,
-          holdProgressSeconds: penaltyServeProgress ?? 0,
-          dt: 0,
-        }).instruction
-      : null;
-
-    // Safety Car & VSC HUD telemetry
-    const sc = this.raceControl.safetyCar;
-    const rawCapMs =
-      hudFocusCar.neutralizationSpeedCapMs ?? this.raceControl.neutralizationSpeedCapMs ?? sc.speedCapMs;
-    const neutralizationSpeedCapKmh =
-      typeof rawCapMs === 'number' && Number.isFinite(rawCapMs) && rawCapMs > 0
-        ? Math.round(rawCapMs * SPEED_KMH_FACTOR)
-        : null;
-
     return {
       phase: ctx.phase,
       countdown: this.countdown,
@@ -1986,19 +1939,9 @@ export class RaceSimulationEngine {
         this.raceControl.yellowYieldByCarId.get(hudFocusCar.id)?.positionsToYield ?? 0,
       blueFlagActive: Boolean(hudFocusCar.blueFlagActive),
       raceControlMessage: this.raceControl.message,
-      safetyCarActive: sc.active,
-      safetyCarPhase: sc.phase,
-      safetyCarTrackT: sc.trackT,
-      safetyCarSpeedKmh: Math.round(sc.speedMs * SPEED_KMH_FACTOR),
-      vscActive: sc.phase === 'vsc',
-      neutralizationSpeedCapKmh,
       postRacePenaltySeconds: hudFocusCar.postRacePenaltySeconds ?? 0,
       penaltyReason: hudFocusCar.penaltyReason ?? null,
-      penaltyType: activePenaltyType,
-      penaltyServeProgress,
-      penaltyServeRequired,
-      penaltyDeadlineLap,
-      penaltyServeInstruction,
+      penaltyType: hudFocusCar.penaltyType ?? null,
       launchStatus: this.launchStatus,
       launchRpmSweetSpot: LAUNCH_RPM_SWEET_SPOT,
       hasErs: carHasHybridErs(hudFocusCar.carSpec),
@@ -2066,6 +2009,7 @@ export class RaceSimulationEngine {
         return nearestAi?.aiLastTelemetry ?? null;
       })(),
       tcLevel: hudFocusCar.tcLevel ?? 0,
+      tcEquipped: isCarTcEquipped(hudFocusCar.carSpec.classId, hudFocusCar.carSpec.id),
       tcIntervening: Boolean(hudFocusCar.tcIntervening),
       stabilityIntervening: Boolean(hudFocusCar.stabilityIntervening),
       throttleInput: hudFocusCar.lastInputThrottle ?? 0,
@@ -2077,11 +2021,6 @@ export class RaceSimulationEngine {
       rearCarClosingKmh: rearClosingKmh,
       rearCarLateralM: rearLatM,
       radioMessage: activeSub ? this.lastRadioMessage : null,
-      upcomingCorner: computeUpcomingCornerInfo(
-        this.compiledTrack,
-        hudFocusCar.trackT,
-        hudFocusCar.speed,
-      ),
       mecachromeWarning: Boolean(hudFocusCar.mecachromeActive),
       mecachromeRemaining: Number((hudFocusCar.mecachromeTimer ?? 0).toFixed(1)),
       fps: Math.round(fpsSmoothed),
